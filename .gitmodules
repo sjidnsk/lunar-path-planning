@@ -1,0 +1,14 @@
+[submodule "path-planner"]
+	path = path-planner
+	url = https://github.com/sjidnsk/path-planner.git
+	branch = codex/phase2-postprocess
+
+[submodule "model-explorer"]
+	path = model-explorer
+	url = https://github.com/sjidnsk/model-explorer.git
+	branch = codex/candidate-list-policy-baseline
+
+[submodule "dev-platform-constraints"]
+	path = dev-platform-constraints
+	url = https://github.com/sjidnsk/dev-platform-constraints.git
+	branch = dev-platform-constraints
