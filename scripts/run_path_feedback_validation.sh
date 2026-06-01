@@ -133,6 +133,11 @@ case "$DIAGNOSTIC_PROFILE" in
     ;;
 esac
 
+ACCEPTANCE_GATE="custom"
+if [[ "$SCENARIO_SET" == "all" && "$DIAGNOSTIC_PROFILE" == "all" && "$TOP_K" == "3" ]]; then
+  ACCEPTANCE_GATE="semi-real-closed-loop"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [[ "$OUTPUT_ROOT" != /* ]]; then
@@ -312,8 +317,13 @@ required_keys = (
     "iris_requested_count",
     "iris_report_count",
     "iris_status_counts",
+    "iris_fallback_count",
+    "iris_failure_count",
+    "iris_region_count_total",
+    "iris_fallback_reasons",
     "region_graph_source_counts",
     "region_graph_fallback_count",
+    "region_graph_fallback_reasons",
     "region_graph_start_goal_disconnected_count",
     "scenario_group_summary",
     "selection_changed_count",
@@ -393,6 +403,7 @@ PY
 cat <<INFO
 Repository: $REPO_ROOT
 Output root: $OUTPUT_ROOT
+Acceptance gate: $ACCEPTANCE_GATE
 Top-K: $TOP_K
 Scenario set: $SCENARIO_SET
 Diagnostic profile: $DIAGNOSTIC_PROFILE

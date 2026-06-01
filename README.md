@@ -75,8 +75,14 @@ bash scripts/run_path_feedback_validation.sh --top-k 3
 bash scripts/run_path_feedback_validation.sh --scenario-set stress --top-k 3
 bash scripts/run_path_feedback_validation.sh --scenario-set all --simulate-tracking
 bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile iris
-bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all
+bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3
 ```
+
+The next-stage acceptance gate is the final command above:
+`--scenario-set all --diagnostic-profile all --top-k 3`. It exercises smoke and
+stress scenarios, forwards execution and optional workspace IRIS diagnostics,
+and still treats IRIS/region-graph output as diagnostic evidence only. It does
+not introduce a GCS trajectory backend or a rover motion-feasibility solver.
 
 The script initializes/checks the three submodules, generates the fixed `.npz`
 validation maps, exports paired `model-explorer-contract/v1` and
@@ -117,6 +123,13 @@ at least one stress scenario produces a path-planning failure or replan
 diagnostic, so stress validation cannot silently degrade into another easy smoke
 run. Mixed-stress scenarios additionally require at least one reachable
 candidate and at least one failure or replan diagnostic.
+
+The summary metric surface is part of the next-stage contract. At minimum it
+must retain `selection_changed_rate`, `path_planning_failure_count`,
+`replan_count`, `tracking_safety_violation_count`,
+`trajectory_optimization_fallback_count`, `region_graph_disconnected_count`,
+and `coverage_per_path_cost`, plus IRIS and region-graph status/source/fallback
+aggregates for scenario-group comparison.
 
 ## Ubuntu One-Click Conda Setup
 
