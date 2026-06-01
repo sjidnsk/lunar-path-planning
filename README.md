@@ -138,6 +138,49 @@ must retain `selection_changed_rate`, `path_planning_failure_count`,
 and `coverage_per_path_cost`, plus IRIS and region-graph status/source/fallback
 aggregates for scenario-group comparison.
 
+## Semi-Real Batch Closed-Loop Evaluation v1
+
+The batch entrypoint keeps the single-run validation script as the execution
+unit and only adds orchestration, traceability, and aggregation:
+
+```bash
+bash scripts/run_batch_path_feedback_validation.sh --matrix configs/path_feedback_batch_dataset_v1.json --validate-only
+bash scripts/run_batch_path_feedback_validation.sh --matrix configs/path_feedback_batch_dataset_v1.json --dry-run
+bash scripts/run_batch_path_feedback_validation.sh --matrix configs/path_feedback_batch_dataset_v1.json --output-root outputs/path_feedback_batch_smoke
+```
+
+The matrix supports `run_id`, `scenario_set`, `diagnostic_profile`, `top_k`,
+batch or per-run `output_root`, and optional `sample_quality_profile` metadata.
+`sample_quality_profile` is recorded for downstream audit/stability work only;
+Batch v1 does not run training, change PPO behavior, or alter any stable JSON
+contract.
+
+Each run writes the original single-run artifacts under its isolated output
+directory:
+
+- `path-feedback-manifest.json`
+- `path-feedback-summary.json`
+- `path-feedback-summary.md`
+- `maps/`
+- `path_planner_sidecars/`
+
+The batch root writes:
+
+- `batch-run-index.json`: run id, command arguments, source paths, acceptance
+  metadata, parent/submodule git SHAs, pass/fail status, and machine-readable
+  failure reason codes.
+- `batch-evaluation-summary.json`: pass/fail counts, open-grid fallback gate
+  results, scenario-group aggregates, path failure/replan totals, IRIS fallback
+  totals, region-graph fallback/disconnect totals, and source summary paths for
+  later sample-quality or stability consumers.
+
+The default batch continues after an individual run fails so the index and
+summary remain auditable. Its final exit code is nonzero when any run fails.
+This remains a semi-real/quasi-real closed-loop evaluation pipeline only: it
+does not implement GCS graph search, a GCS trajectory backend, Ackermann,
+skid-steer, or differential-drive feasibility solving, and it does not claim
+quasi-real or mask-stress results are real-world generalization performance.
+
 `model-explorer` can consume the resulting `path-feedback-summary/v1` JSON via
 optional `train.system_calibration`. That system summary joins v5
 `calibration_recommendation` with teacher gates and path-feedback gates for

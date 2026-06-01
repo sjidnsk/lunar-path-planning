@@ -1,0 +1,35 @@
+{
+  "schema_version": "path-feedback-batch-matrix/v1",
+  "description": "Semi-Real Batch Closed-Loop Evaluation v1 matrix. sample_quality_profile is recorded for downstream audit only and is not executed by this batch runner.",
+  "output_root": "outputs/path_feedback_batch",
+  "runs": [
+    {
+      "run_id": "smoke-baseline-k1",
+      "scenario_set": "smoke",
+      "diagnostic_profile": "baseline",
+      "top_k": 1,
+      "sample_quality_profile": "record-only"
+    },
+    {
+      "run_id": "stress-execution-k3",
+      "scenario_set": "stress",
+      "diagnostic_profile": "execution",
+      "top_k": 3,
+      "sample_quality_profile": "record-only"
+    },
+    {
+      "run_id": "all-iris-k3",
+      "scenario_set": "all",
+      "diagnostic_profile": "iris",
+      "top_k": 3,
+      "sample_quality_profile": "record-only"
+    },
+    {
+      "run_id": "all-all-k3",
+      "scenario_set": "all",
+      "diagnostic_profile": "all",
+      "top_k": 3,
+      "sample_quality_profile": "record-only"
+    }
+  ]
+}

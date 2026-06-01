@@ -52,6 +52,17 @@ outputs/path_feedback_batch/batch-run-index.json
 outputs/path_feedback_batch/batch-evaluation-summary.json
 ```
 
+Implemented entrypoint:
+
+```bash
+bash scripts/run_batch_path_feedback_validation.sh --matrix configs/path_feedback_batch_dataset_v1.json --output-root outputs/path_feedback_batch_smoke
+```
+
+Batch v1 preserves the single-run script and writes each run to an isolated
+directory under the batch output root. It records optional
+`sample_quality_profile` metadata for later audit/stability stages, but does not
+execute sample-quality filtering or training.
+
 ## Batch v1 Scope
 
 The first batch matrix should support:
@@ -81,6 +92,9 @@ The first batch matrix should support:
 - path-planning failure and replan counts;
 - IRIS fallback and region-graph fallback/disconnect counts;
 - source summary paths for later sample-quality audit consumption.
+
+The default batch runner continues after a run failure, writes both batch JSON
+files, and returns a nonzero final exit code when any run fails.
 
 ## Follow-On Phases
 
