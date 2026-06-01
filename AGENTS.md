@@ -1,5 +1,9 @@
 # Agent Notes
 
+## 沟通语言
+
+- 默认使用中文回答，除非用户明确要求使用其他语言。
+
 ## Notion 导出规则
 
 - `D:\codex\project\lunar-path-planning\docs\月面巡视探索.md` 是 Notion 页面“月面巡视探索”的单向导出副本。
