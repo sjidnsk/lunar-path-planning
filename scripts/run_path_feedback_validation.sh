@@ -326,12 +326,19 @@ required_keys = (
     "region_graph_fallback_reasons",
     "region_graph_start_goal_disconnected_count",
     "scenario_group_summary",
+    "diagnostic_interpretation",
     "selection_changed_count",
     "selection_changed_rate",
 )
 missing = [key for key in required_keys if key not in summary]
 if missing:
     raise SystemExit(f"{summary_path}: missing required summary keys: {', '.join(missing)}")
+
+diagnostic_interpretation = summary.get("diagnostic_interpretation")
+if not isinstance(diagnostic_interpretation, dict):
+    raise SystemExit(f"{summary_path}: diagnostic_interpretation must be an object")
+if not isinstance(diagnostic_interpretation.get("scenario_group_interpretation"), dict):
+    raise SystemExit(f"{summary_path}: diagnostic_interpretation.scenario_group_interpretation must be an object")
 
 scenario_ids = {item.get("scenario_id") for item in summary.get("scenarios", [])}
 if scenario_ids != expected_ids:
@@ -348,6 +355,18 @@ for item in summary.get("scenarios", []):
             f"{summary_path}: expected {item.get('scenario_id')} scenario_group={expected_group!r}, "
             f"got {item.get('scenario_group')!r}"
         )
+    scenario_interpretation = item.get("diagnostic_interpretation")
+    if not isinstance(scenario_interpretation, dict):
+        raise SystemExit(f"{summary_path}: {item.get('scenario_id')} missing diagnostic_interpretation")
+    if "target_replacement_reason" not in scenario_interpretation:
+        raise SystemExit(f"{summary_path}: {item.get('scenario_id')} missing target_replacement_reason")
+    for candidate in item.get("path_feedback", {}).get("candidates", []):
+        candidate_interpretation = candidate.get("diagnostic_interpretation")
+        if not isinstance(candidate_interpretation, dict):
+            raise SystemExit(
+                f"{summary_path}: {item.get('scenario_id')} candidate {candidate.get('action_index')} "
+                "missing diagnostic_interpretation"
+            )
 
 if scenario_set in {"stress", "all"}:
     stress_items = [

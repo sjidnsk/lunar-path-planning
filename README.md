@@ -76,6 +76,7 @@ bash scripts/run_path_feedback_validation.sh --scenario-set stress --top-k 3
 bash scripts/run_path_feedback_validation.sh --scenario-set all --simulate-tracking
 bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile iris
 bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3
+bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3 --output-root outputs/path_feedback_validation_next_stage
 ```
 
 The next-stage acceptance gate is the final command above:
@@ -101,6 +102,10 @@ root script can forward optional execution diagnostics with
 default remains lightweight and Drake-free. `--diagnostic-profile execution`
 forwards tracking simulation plus fixed-corridor optimization, `iris` forwards
 optional workspace IRIS diagnostics, and `all` forwards both groups.
+The Markdown report now includes Diagnostic Interpretation and Candidate
+Diagnostics tables so stress and mixed-stress runs can explain target
+replacement, path-planning failure, replan triggers, IRIS fallback, region-graph
+fallback/disconnection, and open-grid fallback separately.
 
 By default, generated artifacts are written under
 `outputs/path_feedback_validation/`:
@@ -115,7 +120,7 @@ By default, generated artifacts are written under
 The script fails if the summary does not contain the expected
 `path-feedback-summary/v1` shape, the expected scenario set, at least three
 evaluated candidates, the core path feedback metrics, selection-change metrics,
-or
+scenario/candidate diagnostic interpretation fields, or
 `open_grid_fallback_used = false`. The final condition is the credibility gate:
 semi-real conclusions must use the sidecar `cost` and `passable_mask`, not the
 open-grid smoke fallback. For `stress` and `all`, the script also fails unless
