@@ -146,8 +146,14 @@ IRIS fallback, region-graph disconnect/fallback, and `open_grid_fallback_used`
 are calibration/exclusion/downweighting signals only; they are not evidence of
 real-world performance improvement. When explicitly enabled,
 `system_calibration.sample_quality` writes `sample_quality_summary` records
-with machine-readable filtering/downweighting `reason_codes`; without that
-config, training data selection keeps the old behavior. Quasi-real and mask-stress rows keep
+with machine-readable filtering/downweighting `reason_codes`; without
+`system_calibration.sample_quality.enabled = true`, training data selection
+keeps the old behavior. Semi-Real Calibration Dataset Application v2 also writes
+`sample_quality_audit_summary`, aggregating records by scenario, group/ROI,
+reason code, action, source summary path, acceptance metadata, scenario set,
+diagnostic profile, and `top_k`. `open_grid_fallback` is a hard exclusion; path
+failure, replan, IRIS fallback, and region-graph disconnect/fallback remain
+calibration/downweighting signals only. Quasi-real and mask-stress rows keep
 `data_class = quasi_real`, `mask_stress_augmented`, and
 `not real-world generalization benchmark` labels.
 
