@@ -46,7 +46,7 @@ PYTHONPATH=src python scripts/export_path_planner_sidecars.py --scenario-config 
 The export produces paired `model-explorer-contract/v1` and
 `path-planner-sidecar/v1` files for the shadow corridor, rock field, and
 low-confidence risk-band smoke scenarios. Use `--scenario-set stress` for
-near-blocked, high-risk, and dense-rock regression scenarios, or
+near-blocked, high-risk, dense-rock, and mixed reachable/blocked regression scenarios, or
 `--scenario-set all` to generate both sets.
 
 Then run `model-explorer` path feedback summary from a manifest that pairs each
@@ -59,8 +59,10 @@ PYTHONPATH=src python -m model_explorer path-feedback run path-feedback.json
 
 The summary records target selection before and after path feedback, path
 planning failures, replan counts, baseline-vs-feedback path cost deltas,
-selection changed counts/rates, safety/optimization fallback indicators, region
-graph disconnect diagnostics, and whether any open-grid fallback was used.
+selection changed counts/rates, safety/optimization fallback indicators, IRIS
+status/fallback diagnostics, region graph source/fallback/disconnect
+diagnostics, scenario-group aggregates, and whether any open-grid fallback was
+used.
 
 ## One-Click Semi-Real Closed-Loop Validation
 
@@ -72,6 +74,8 @@ bash scripts/run_path_feedback_validation.sh --dry-run
 bash scripts/run_path_feedback_validation.sh --top-k 3
 bash scripts/run_path_feedback_validation.sh --scenario-set stress --top-k 3
 bash scripts/run_path_feedback_validation.sh --scenario-set all --simulate-tracking
+bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile iris
+bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all
 ```
 
 The script initializes/checks the three submodules, generates the fixed `.npz`
@@ -88,7 +92,9 @@ The `path-feedback run` command prints a compact stdout summary and writes the
 full experiment JSON plus Markdown report to the configured output files. The
 root script can forward optional execution diagnostics with
 `--simulate-tracking`, `--optimize-trajectory`, and `--drake-iris-regions`; the
-default remains lightweight and Drake-free.
+default remains lightweight and Drake-free. `--diagnostic-profile execution`
+forwards tracking simulation plus fixed-corridor optimization, `iris` forwards
+optional workspace IRIS diagnostics, and `all` forwards both groups.
 
 By default, generated artifacts are written under
 `outputs/path_feedback_validation/`:
@@ -109,7 +115,8 @@ semi-real conclusions must use the sidecar `cost` and `passable_mask`, not the
 open-grid smoke fallback. For `stress` and `all`, the script also fails unless
 at least one stress scenario produces a path-planning failure or replan
 diagnostic, so stress validation cannot silently degrade into another easy smoke
-run.
+run. Mixed-stress scenarios additionally require at least one reachable
+candidate and at least one failure or replan diagnostic.
 
 ## Ubuntu One-Click Conda Setup
 

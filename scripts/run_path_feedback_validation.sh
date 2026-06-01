@@ -5,6 +5,7 @@ DRY_RUN=0
 OUTPUT_ROOT="outputs/path_feedback_validation"
 TOP_K=3
 SCENARIO_SET="smoke"
+DIAGNOSTIC_PROFILE="baseline"
 PLANNER_EXTRA_ARGS=()
 MODULES=(path-planner model-explorer dev-platform-constraints)
 
@@ -20,6 +21,9 @@ Options:
                         Default: outputs/path_feedback_validation
   --top-k N            Number of candidate goals per scenario to evaluate. Default: 3
   --scenario-set NAME   Validation scenario set: smoke, stress, or all. Default: smoke
+  --diagnostic-profile NAME
+                        Diagnostic profile: baseline, execution, iris, or all.
+                        Default: baseline
   --simulate-tracking  Forward path-planner tracking simulation diagnostics.
   --optimize-trajectory
                         Forward fixed-corridor trajectory optimization diagnostics.
@@ -55,6 +59,11 @@ while [[ $# -gt 0 ]]; do
       SCENARIO_SET="$2"
       shift 2
       ;;
+    --diagnostic-profile)
+      require_value "$1" "${2:-}"
+      DIAGNOSTIC_PROFILE="$2"
+      shift 2
+      ;;
     --simulate-tracking|--optimize-trajectory|--drake-iris-regions)
       PLANNER_EXTRA_ARGS+=("$1")
       shift
@@ -86,6 +95,41 @@ case "$SCENARIO_SET" in
   *)
     echo "--scenario-set must be one of: smoke, stress, all" >&2
     exit 2
+    ;;
+esac
+
+case "$DIAGNOSTIC_PROFILE" in
+  baseline|execution|iris|all)
+    ;;
+  *)
+    echo "--diagnostic-profile must be one of: baseline, execution, iris, all" >&2
+    exit 2
+    ;;
+esac
+
+append_planner_arg() {
+  local candidate="$1"
+  local arg
+  for arg in "${PLANNER_EXTRA_ARGS[@]}"; do
+    if [[ "$arg" == "$candidate" ]]; then
+      return
+    fi
+  done
+  PLANNER_EXTRA_ARGS+=("$candidate")
+}
+
+case "$DIAGNOSTIC_PROFILE" in
+  execution)
+    append_planner_arg "--simulate-tracking"
+    append_planner_arg "--optimize-trajectory"
+    ;;
+  iris)
+    append_planner_arg "--drake-iris-regions"
+    ;;
+  all)
+    append_planner_arg "--simulate-tracking"
+    append_planner_arg "--optimize-trajectory"
+    append_planner_arg "--drake-iris-regions"
     ;;
 esac
 
@@ -192,6 +236,7 @@ for item in payload["scenarios"]:
     scenarios.append(
         {
             "scenario_id": scenario_id,
+            "scenario_group": item.get("scenario_group", "unknown"),
             "contract": str(export_dir / f"{scenario_id}.contract.json"),
             "sidecar": str(export_dir / f"{scenario_id}.path-planner-sidecar.json"),
             "current_cell": item["start_cell"],
@@ -264,6 +309,13 @@ required_keys = (
     "tracking_safety_violation_count",
     "trajectory_optimization_fallback_count",
     "region_graph_disconnected_count",
+    "iris_requested_count",
+    "iris_report_count",
+    "iris_status_counts",
+    "region_graph_source_counts",
+    "region_graph_fallback_count",
+    "region_graph_start_goal_disconnected_count",
+    "scenario_group_summary",
     "selection_changed_count",
     "selection_changed_rate",
 )
@@ -274,6 +326,18 @@ if missing:
 scenario_ids = {item.get("scenario_id") for item in summary.get("scenarios", [])}
 if scenario_ids != expected_ids:
     raise SystemExit(f"{summary_path}: expected scenarios {sorted(expected_ids)}, got {sorted(scenario_ids)}")
+
+groups_by_id = {
+    item["scenario_id"]: item.get("scenario_group", "unknown")
+    for item in scenario_config["scenarios"]
+}
+for item in summary.get("scenarios", []):
+    expected_group = groups_by_id.get(item.get("scenario_id"), "unknown")
+    if item.get("scenario_group") != expected_group:
+        raise SystemExit(
+            f"{summary_path}: expected {item.get('scenario_id')} scenario_group={expected_group!r}, "
+            f"got {item.get('scenario_group')!r}"
+        )
 
 if scenario_set in {"stress", "all"}:
     stress_items = [
@@ -293,6 +357,22 @@ if scenario_set in {"stress", "all"}:
     )
     if stress_replan_or_failure < 1:
         raise SystemExit(f"{summary_path}: stress scenarios must produce at least one failure or replan diagnostic")
+    mixed_items = [
+        item
+        for item in summary.get("scenarios", [])
+        if item.get("scenario_group") == "mixed_stress"
+    ]
+    if mixed_items:
+        mixed_reachable = sum(int(item.get("path_feedback", {}).get("reachable_count", 0)) for item in mixed_items)
+        mixed_replan_or_failure = sum(
+            int(item.get("path_feedback", {}).get("failure_count", 0))
+            + int(item.get("path_feedback", {}).get("replan_count", 0))
+            for item in mixed_items
+        )
+        if mixed_reachable < 1:
+            raise SystemExit(f"{summary_path}: mixed stress scenarios must include at least one reachable candidate")
+        if mixed_replan_or_failure < 1:
+            raise SystemExit(f"{summary_path}: mixed stress scenarios must produce failure or replan diagnostics")
 
 print(
     json.dumps(
@@ -315,6 +395,7 @@ Repository: $REPO_ROOT
 Output root: $OUTPUT_ROOT
 Top-K: $TOP_K
 Scenario set: $SCENARIO_SET
+Diagnostic profile: $DIAGNOSTIC_PROFILE
 Planner extra args: ${PLANNER_EXTRA_ARGS[*]:-(none)}
 INFO
 
