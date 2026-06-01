@@ -6,3 +6,7 @@
 - Notion 为主源，本地 Markdown 文件为副本。
 - Notion 内容更新后，需要重新导出覆盖本地文件。
 - 本地文件应保持 UTF-8 编码。
+
+## Goal 模式规则
+
+- Goal 模式的 prompt 不能超过 4000 字符。
