@@ -87,8 +87,9 @@ not introduce a GCS trajectory backend or a rover motion-feasibility solver.
 
 The script initializes/checks the three submodules, generates the fixed `.npz`
 validation maps, exports paired `model-explorer-contract/v1` and
-`path-planner-sidecar/v1` JSON files, writes a `path-feedback-manifest/v1`, and
-runs:
+`path-planner-sidecar/v1` JSON files, writes a `path-feedback-manifest/v1`
+with `scenario_set`, `diagnostic_profile`, `acceptance_gate`, `top_k`,
+planner extra args, and open-grid fallback gate metadata, and runs:
 
 ```bash
 PYTHONPATH=src python3 -m model_explorer path-feedback validate <manifest>
@@ -97,7 +98,8 @@ PYTHONPATH=src python3 -m model_explorer path-feedback run <manifest>
 
 The `path-feedback run` command prints a compact stdout summary and writes the
 full experiment JSON plus Markdown report to the configured output files. The
-root script can forward optional execution diagnostics with
+JSON summary repeats the same `acceptance_metadata` and records the actual
+`open_grid_fallback_used_gate` result. The root script can forward optional execution diagnostics with
 `--simulate-tracking`, `--optimize-trajectory`, and `--drake-iris-regions`; the
 default remains lightweight and Drake-free. `--diagnostic-profile execution`
 forwards tracking simulation plus fixed-corridor optimization, `iris` forwards
@@ -142,7 +144,10 @@ optional `train.system_calibration`. That system summary joins v5
 source, teacher weight, curriculum profile, and seed. Path failures, replans,
 IRIS fallback, region-graph disconnect/fallback, and `open_grid_fallback_used`
 are calibration/exclusion/downweighting signals only; they are not evidence of
-real-world performance improvement. Quasi-real and mask-stress rows keep
+real-world performance improvement. When explicitly enabled,
+`system_calibration.sample_quality` writes `sample_quality_summary` records
+with machine-readable filtering/downweighting `reason_codes`; without that
+config, training data selection keeps the old behavior. Quasi-real and mask-stress rows keep
 `data_class = quasi_real`, `mask_stress_augmented`, and
 `not real-world generalization benchmark` labels.
 

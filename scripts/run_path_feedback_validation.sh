@@ -220,7 +220,7 @@ write_manifest() {
     return
   fi
 
-  python3 - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$PATH_PLANNER_ROOT" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
+  python3 - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -231,8 +231,11 @@ manifest_path = Path(sys.argv[3])
 summary_path = Path(sys.argv[4])
 report_path = Path(sys.argv[5])
 top_k = int(sys.argv[6])
-path_planner_root = Path(sys.argv[7])
-extra_args = sys.argv[8:]
+scenario_set = sys.argv[7]
+diagnostic_profile = sys.argv[8]
+acceptance_gate = sys.argv[9]
+path_planner_root = Path(sys.argv[10])
+extra_args = sys.argv[11:]
 
 payload = json.loads(scenario_config.read_text(encoding="utf-8"))
 scenarios = []
@@ -250,7 +253,32 @@ for item in payload["scenarios"]:
 
 manifest = {
     "schema_version": "path-feedback-manifest/v1",
+    "scenario_set": scenario_set,
+    "diagnostic_profile": diagnostic_profile,
+    "acceptance_gate": acceptance_gate,
     "top_k": top_k,
+    "planner_extra_args": extra_args,
+    "acceptance_metadata": {
+        "schema_version": "path-feedback-acceptance-metadata/v1",
+        "scenario_set": scenario_set,
+        "diagnostic_profile": diagnostic_profile,
+        "acceptance_gate": acceptance_gate,
+        "top_k": top_k,
+        "planner_extra_args": extra_args,
+        "open_grid_fallback_used": None,
+        "open_grid_fallback_used_gate": {
+            "status": "pending",
+            "expected": False,
+            "actual": None,
+            "reason_codes": ["open_grid_fallback_gate_pending"],
+        },
+    },
+    "open_grid_fallback_used_gate": {
+        "status": "pending",
+        "expected": False,
+        "actual": None,
+        "reason_codes": ["open_grid_fallback_gate_pending"],
+    },
     "planner": {
         "backend": "path_planner_route",
         "path_planner_root": str(path_planner_root),
@@ -280,15 +308,21 @@ assert_output_files() {
 }
 
 validate_summary() {
-  python3 - "$SUMMARY_PATH" "$SCENARIO_CONFIG" "$SCENARIO_SET" <<'PY'
+  python3 - "$SUMMARY_PATH" "$MANIFEST_PATH" "$SCENARIO_CONFIG" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$TOP_K" "$ACCEPTANCE_GATE" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 summary_path = Path(sys.argv[1])
-scenario_config_path = Path(sys.argv[2])
-scenario_set = sys.argv[3]
+manifest_path = Path(sys.argv[2])
+scenario_config_path = Path(sys.argv[3])
+scenario_set = sys.argv[4]
+diagnostic_profile = sys.argv[5]
+top_k = int(sys.argv[6])
+acceptance_gate = sys.argv[7]
+planner_extra_args = sys.argv[8:]
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 scenario_config = json.loads(scenario_config_path.read_text(encoding="utf-8"))
 expected_ids = {item["scenario_id"] for item in scenario_config["scenarios"]}
 expected_count = len(expected_ids)
@@ -302,6 +336,46 @@ for key, expected in required_values.items():
     actual = summary.get(key)
     if actual != expected:
         raise SystemExit(f"{summary_path}: expected {key}={expected!r}, got {actual!r}")
+
+expected_metadata = {
+    "scenario_set": scenario_set,
+    "diagnostic_profile": diagnostic_profile,
+    "acceptance_gate": acceptance_gate,
+    "top_k": top_k,
+    "planner_extra_args": planner_extra_args,
+}
+for key, expected in expected_metadata.items():
+    actual = summary.get(key)
+    if actual != expected:
+        raise SystemExit(f"{summary_path}: expected {key}={expected!r}, got {actual!r}")
+    manifest_actual = manifest.get(key)
+    if manifest_actual != expected:
+        raise SystemExit(f"{manifest_path}: expected {key}={expected!r}, got {manifest_actual!r}")
+
+acceptance_metadata = summary.get("acceptance_metadata")
+if not isinstance(acceptance_metadata, dict):
+    raise SystemExit(f"{summary_path}: acceptance_metadata must be an object")
+for key, expected in expected_metadata.items():
+    actual = acceptance_metadata.get(key)
+    if actual != expected:
+        raise SystemExit(f"{summary_path}: expected acceptance_metadata.{key}={expected!r}, got {actual!r}")
+open_grid_gate = acceptance_metadata.get("open_grid_fallback_used_gate")
+if not isinstance(open_grid_gate, dict) or open_grid_gate.get("status") != "passed":
+    raise SystemExit(f"{summary_path}: open_grid_fallback_used_gate must pass")
+if summary.get("open_grid_fallback_used_gate") != open_grid_gate:
+    raise SystemExit(f"{summary_path}: top-level open_grid_fallback_used_gate must mirror acceptance metadata")
+
+manifest["open_grid_fallback_used_gate"] = dict(open_grid_gate)
+manifest_metadata = manifest.get("acceptance_metadata")
+manifest_metadata = manifest_metadata if isinstance(manifest_metadata, dict) else {}
+manifest_metadata.update(
+    {
+        "open_grid_fallback_used": summary.get("open_grid_fallback_used"),
+        "open_grid_fallback_used_gate": dict(open_grid_gate),
+    }
+)
+manifest["acceptance_metadata"] = manifest_metadata
+manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
 candidate_count = summary.get("candidate_count")
 if not isinstance(candidate_count, int) or candidate_count < 3:
@@ -412,6 +486,9 @@ print(
             "candidate_count": summary["candidate_count"],
             "selection_changed_count": summary["selection_changed_count"],
             "open_grid_fallback_used": summary["open_grid_fallback_used"],
+            "acceptance_gate": summary["acceptance_gate"],
+            "scenario_set": summary["scenario_set"],
+            "diagnostic_profile": summary["diagnostic_profile"],
         },
         ensure_ascii=False,
     )
