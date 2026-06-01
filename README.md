@@ -19,14 +19,14 @@ The three subprojects now form a staged research prototype:
 | Subproject | Role | Current status |
 |---|---|---|
 | `dev-platform-constraints` | Modeling foundation | P0/P1/P2 are runnable: map contracts, terrain features, platform configs, hard constraints, confidence update, coverage-aware goal candidates, sequence scoring, and `model-explorer-contract/v1` reports. |
-| `model-explorer` | Decision orchestration | Runnable synthetic decision/benchmark stack exists: contract loading, goal selection, loop/replan reasons, policy experiments, and planning-result feedback abstractions. The main gap is live conversion from upstream contracts into `path-planner` requests. |
+| `model-explorer` | Decision orchestration | Runnable synthetic decision/benchmark stack exists: contract loading, goal selection, loop/replan reasons, policy experiments, planning-result feedback, and CLI-backed `path-planner` route evaluation. The main gap is broadening the semi-real evaluation matrix and interpreting stress diagnostics. |
 | `path-planner` | Path execution evaluation | Rebuilt from scratch through Phase 8: platform-aware A*, postprocess corridors, smoothing, curvature checks, trackable path, tracking simulation, fixed-corridor optimization, execution-aware metrics, and optional Drake IRIS/region graph diagnostics. |
 
-Near-term integration should focus on the `dev-platform-constraints -> model-explorer
+Near-term integration focuses on the `dev-platform-constraints -> model-explorer
 -> path-planner` JSON loop: generate `model-explorer-contract/v1`, select Top-K
 goals, emit `path-planner-request/v1`, consume `path-planner-route/v1`, then feed
-reachability, cost, safety, and fallback diagnostics back into goal ranking and
-replanning triggers.
+reachability, cost, safety, and fallback diagnostics back into goal ranking,
+replanning triggers, and smoke/stress experiment reports.
 
 `model-explorer` now has a `path_planner_route` planning backend for this loop.
 It runs `path-planner` through the CLI/JSON boundary by default and keeps direct
@@ -39,13 +39,15 @@ Semi-real validation starts by exporting sibling JSON artifacts:
 
 ```bash
 cd dev-platform-constraints
-python scripts/generate_npz_validation_maps.py --output-dir data/validation_maps --scenario-config outputs/npz_validation_scenarios.generated.json
+python scripts/generate_npz_validation_maps.py --scenario-set smoke --output-dir data/validation_maps --scenario-config outputs/npz_validation_scenarios.generated.json
 PYTHONPATH=src python scripts/export_path_planner_sidecars.py --scenario-config outputs/npz_validation_scenarios.generated.json --output-dir outputs/path_planner_sidecars
 ```
 
 The export produces paired `model-explorer-contract/v1` and
 `path-planner-sidecar/v1` files for the shadow corridor, rock field, and
-low-confidence risk-band scenarios.
+low-confidence risk-band smoke scenarios. Use `--scenario-set stress` for
+near-blocked, high-risk, and dense-rock regression scenarios, or
+`--scenario-set all` to generate both sets.
 
 Then run `model-explorer` path feedback summary from a manifest that pairs each
 contract with its sidecar:
@@ -56,9 +58,9 @@ PYTHONPATH=src python -m model_explorer path-feedback run path-feedback.json
 ```
 
 The summary records target selection before and after path feedback, path
-planning failures, replan counts, safety/optimization fallback indicators,
-region graph disconnect diagnostics, and whether any open-grid fallback was
-used.
+planning failures, replan counts, baseline-vs-feedback path cost deltas,
+selection changed counts/rates, safety/optimization fallback indicators, region
+graph disconnect diagnostics, and whether any open-grid fallback was used.
 
 ## One-Click Semi-Real Closed-Loop Validation
 
@@ -68,6 +70,8 @@ current semi-real loop:
 ```bash
 bash scripts/run_path_feedback_validation.sh --dry-run
 bash scripts/run_path_feedback_validation.sh --top-k 3
+bash scripts/run_path_feedback_validation.sh --scenario-set stress --top-k 3
+bash scripts/run_path_feedback_validation.sh --scenario-set all --simulate-tracking
 ```
 
 The script initializes/checks the three submodules, generates the fixed `.npz`
@@ -80,6 +84,12 @@ PYTHONPATH=src python3 -m model_explorer path-feedback validate <manifest>
 PYTHONPATH=src python3 -m model_explorer path-feedback run <manifest>
 ```
 
+The `path-feedback run` command prints a compact stdout summary and writes the
+full experiment JSON plus Markdown report to the configured output files. The
+root script can forward optional execution diagnostics with
+`--simulate-tracking`, `--optimize-trajectory`, and `--drake-iris-regions`; the
+default remains lightweight and Drake-free.
+
 By default, generated artifacts are written under
 `outputs/path_feedback_validation/`:
 
@@ -91,11 +101,15 @@ By default, generated artifacts are written under
 - `path-feedback-summary.md`
 
 The script fails if the summary does not contain the expected
-`path-feedback-summary/v1` shape, all three semi-real scenarios, at least three
-evaluated candidates, the core path feedback metrics, or
+`path-feedback-summary/v1` shape, the expected scenario set, at least three
+evaluated candidates, the core path feedback metrics, selection-change metrics,
+or
 `open_grid_fallback_used = false`. The final condition is the credibility gate:
 semi-real conclusions must use the sidecar `cost` and `passable_mask`, not the
-open-grid smoke fallback.
+open-grid smoke fallback. For `stress` and `all`, the script also fails unless
+at least one stress scenario produces a path-planning failure or replan
+diagnostic, so stress validation cannot silently degrade into another easy smoke
+run.
 
 ## Ubuntu One-Click Conda Setup
 

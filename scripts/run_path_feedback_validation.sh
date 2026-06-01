@@ -4,12 +4,9 @@ set -euo pipefail
 DRY_RUN=0
 OUTPUT_ROOT="outputs/path_feedback_validation"
 TOP_K=3
+SCENARIO_SET="smoke"
+PLANNER_EXTRA_ARGS=()
 MODULES=(path-planner model-explorer dev-platform-constraints)
-SCENARIOS=(
-  npz_shadow_corridor
-  npz_rock_field_multi_pose
-  npz_low_confidence_risk_band
-)
 
 usage() {
   cat <<'USAGE'
@@ -22,6 +19,11 @@ Options:
   --output-root PATH    Output root for generated maps, sidecars, manifest, and reports.
                         Default: outputs/path_feedback_validation
   --top-k N            Number of candidate goals per scenario to evaluate. Default: 3
+  --scenario-set NAME   Validation scenario set: smoke, stress, or all. Default: smoke
+  --simulate-tracking  Forward path-planner tracking simulation diagnostics.
+  --optimize-trajectory
+                        Forward fixed-corridor trajectory optimization diagnostics.
+  --drake-iris-regions Forward optional Drake workspace Iris diagnostics.
   --dry-run            Print planned commands without writing validation outputs.
   -h, --help           Show this help.
 USAGE
@@ -48,6 +50,15 @@ while [[ $# -gt 0 ]]; do
       TOP_K="$2"
       shift 2
       ;;
+    --scenario-set)
+      require_value "$1" "${2:-}"
+      SCENARIO_SET="$2"
+      shift 2
+      ;;
+    --simulate-tracking|--optimize-trajectory|--drake-iris-regions)
+      PLANNER_EXTRA_ARGS+=("$1")
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -68,6 +79,15 @@ if ! [[ "$TOP_K" =~ ^[0-9]+$ ]] || [[ "$TOP_K" -lt 1 ]]; then
   echo "--top-k must be a positive integer" >&2
   exit 2
 fi
+
+case "$SCENARIO_SET" in
+  smoke|stress|all)
+    ;;
+  *)
+    echo "--scenario-set must be one of: smoke, stress, all" >&2
+    exit 2
+    ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -151,7 +171,7 @@ write_manifest() {
     return
   fi
 
-  python3 - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$PATH_PLANNER_ROOT" <<'PY'
+  python3 - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$PATH_PLANNER_ROOT" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -163,6 +183,7 @@ summary_path = Path(sys.argv[4])
 report_path = Path(sys.argv[5])
 top_k = int(sys.argv[6])
 path_planner_root = Path(sys.argv[7])
+extra_args = sys.argv[8:]
 
 payload = json.loads(scenario_config.read_text(encoding="utf-8"))
 scenarios = []
@@ -190,6 +211,8 @@ manifest = {
         "report": str(report_path),
     },
 }
+if extra_args:
+    manifest["planner"]["extra_args"] = extra_args
 manifest_path.parent.mkdir(parents=True, exist_ok=True)
 manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 print(json.dumps({"manifest": str(manifest_path), "scenario_count": len(scenarios)}, ensure_ascii=False))
@@ -207,17 +230,22 @@ assert_output_files() {
 }
 
 validate_summary() {
-  python3 - "$SUMMARY_PATH" <<'PY'
+  python3 - "$SUMMARY_PATH" "$SCENARIO_CONFIG" "$SCENARIO_SET" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 summary_path = Path(sys.argv[1])
+scenario_config_path = Path(sys.argv[2])
+scenario_set = sys.argv[3]
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
+scenario_config = json.loads(scenario_config_path.read_text(encoding="utf-8"))
+expected_ids = {item["scenario_id"] for item in scenario_config["scenarios"]}
+expected_count = len(expected_ids)
 
 required_values = {
     "schema_version": "path-feedback-summary/v1",
-    "scenario_count": 3,
+    "scenario_count": expected_count,
     "open_grid_fallback_used": False,
 }
 for key, expected in required_values.items():
@@ -236,19 +264,35 @@ required_keys = (
     "tracking_safety_violation_count",
     "trajectory_optimization_fallback_count",
     "region_graph_disconnected_count",
+    "selection_changed_count",
+    "selection_changed_rate",
 )
 missing = [key for key in required_keys if key not in summary]
 if missing:
     raise SystemExit(f"{summary_path}: missing required summary keys: {', '.join(missing)}")
 
 scenario_ids = {item.get("scenario_id") for item in summary.get("scenarios", [])}
-expected_ids = {
-    "npz_shadow_corridor",
-    "npz_rock_field_multi_pose",
-    "npz_low_confidence_risk_band",
-}
 if scenario_ids != expected_ids:
     raise SystemExit(f"{summary_path}: expected scenarios {sorted(expected_ids)}, got {sorted(scenario_ids)}")
+
+if scenario_set in {"stress", "all"}:
+    stress_items = [
+        item
+        for item in summary.get("scenarios", [])
+        if str(item.get("scenario_id", "")).startswith("npz_")
+        and item.get("scenario_id") not in {
+            "npz_shadow_corridor",
+            "npz_rock_field_multi_pose",
+            "npz_low_confidence_risk_band",
+        }
+    ]
+    stress_replan_or_failure = sum(
+        int(item.get("path_feedback", {}).get("failure_count", 0))
+        + int(item.get("path_feedback", {}).get("replan_count", 0))
+        for item in stress_items
+    )
+    if stress_replan_or_failure < 1:
+        raise SystemExit(f"{summary_path}: stress scenarios must produce at least one failure or replan diagnostic")
 
 print(
     json.dumps(
@@ -257,6 +301,7 @@ print(
             "summary": str(summary_path),
             "scenario_count": summary["scenario_count"],
             "candidate_count": summary["candidate_count"],
+            "selection_changed_count": summary["selection_changed_count"],
             "open_grid_fallback_used": summary["open_grid_fallback_used"],
         },
         ensure_ascii=False,
@@ -269,7 +314,8 @@ cat <<INFO
 Repository: $REPO_ROOT
 Output root: $OUTPUT_ROOT
 Top-K: $TOP_K
-Scenarios: ${SCENARIOS[*]}
+Scenario set: $SCENARIO_SET
+Planner extra args: ${PLANNER_EXTRA_ARGS[*]:-(none)}
 INFO
 
 ensure_submodules
@@ -282,6 +328,7 @@ fi
 
 run_cmd "$DEV_ROOT" \
   python3 scripts/generate_npz_validation_maps.py \
+  --scenario-set "$SCENARIO_SET" \
   --output-dir "$MAP_DIR" \
   --scenario-config "$SCENARIO_CONFIG"
 
