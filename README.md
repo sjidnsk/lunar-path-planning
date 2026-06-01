@@ -60,6 +60,43 @@ planning failures, replan counts, safety/optimization fallback indicators,
 region graph disconnect diagnostics, and whether any open-grid fallback was
 used.
 
+## One-Click Semi-Real Closed-Loop Validation
+
+The parent repository provides a reproducible validation entrypoint for the
+current semi-real loop:
+
+```bash
+bash scripts/run_path_feedback_validation.sh --dry-run
+bash scripts/run_path_feedback_validation.sh --top-k 3
+```
+
+The script initializes/checks the three submodules, generates the fixed `.npz`
+validation maps, exports paired `model-explorer-contract/v1` and
+`path-planner-sidecar/v1` JSON files, writes a `path-feedback-manifest/v1`, and
+runs:
+
+```bash
+PYTHONPATH=src python3 -m model_explorer path-feedback validate <manifest>
+PYTHONPATH=src python3 -m model_explorer path-feedback run <manifest>
+```
+
+By default, generated artifacts are written under
+`outputs/path_feedback_validation/`:
+
+- `npz_validation_scenarios.json`
+- `path_planner_sidecars/*.contract.json`
+- `path_planner_sidecars/*.path-planner-sidecar.json`
+- `path-feedback-manifest.json`
+- `path-feedback-summary.json`
+- `path-feedback-summary.md`
+
+The script fails if the summary does not contain the expected
+`path-feedback-summary/v1` shape, all three semi-real scenarios, at least three
+evaluated candidates, the core path feedback metrics, or
+`open_grid_fallback_used = false`. The final condition is the credibility gate:
+semi-real conclusions must use the sidecar `cost` and `passable_mask`, not the
+open-grid smoke fallback.
+
 ## Ubuntu One-Click Conda Setup
 
 Target environment:

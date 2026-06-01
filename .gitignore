@@ -5,5 +5,8 @@
 __pycache__/
 *.py[cod]
 
+# Generated validation outputs.
+/outputs/
+
 # vscode settings and workspace files.
 .vscode/
