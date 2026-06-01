@@ -19,7 +19,7 @@ The three subprojects now form a staged research prototype:
 | Subproject | Role | Current status |
 |---|---|---|
 | `dev-platform-constraints` | Modeling foundation | P0/P1/P2 are runnable: map contracts, terrain features, platform configs, hard constraints, confidence update, coverage-aware goal candidates, sequence scoring, and `model-explorer-contract/v1` reports. |
-| `model-explorer` | Decision orchestration | Runnable synthetic decision/benchmark stack exists: contract loading, goal selection, loop/replan reasons, policy experiments, planning-result feedback, and CLI-backed `path-planner` route evaluation. The main gap is broadening the semi-real evaluation matrix and interpreting stress diagnostics. |
+| `model-explorer` | Decision orchestration | Runnable synthetic decision/benchmark stack exists: contract loading, goal selection, loop/replan reasons, policy experiments, planning-result feedback, CLI-backed `path-planner` route evaluation, and optional system-level semi-real calibration that gates v5 distillation runs with path-feedback diagnostics. |
 | `path-planner` | Path execution evaluation | Rebuilt from scratch through Phase 8: platform-aware A*, postprocess corridors, smoothing, curvature checks, trackable path, tracking simulation, fixed-corridor optimization, execution-aware metrics, and optional Drake IRIS/region graph diagnostics. |
 
 Near-term integration focuses on the `dev-platform-constraints -> model-explorer
@@ -135,6 +135,16 @@ must retain `selection_changed_rate`, `path_planning_failure_count`,
 `trajectory_optimization_fallback_count`, `region_graph_disconnected_count`,
 and `coverage_per_path_cost`, plus IRIS and region-graph status/source/fallback
 aggregates for scenario-group comparison.
+
+`model-explorer` can consume the resulting `path-feedback-summary/v1` JSON via
+optional `train.system_calibration`. That system summary joins v5
+`calibration_recommendation` with teacher gates and path-feedback gates for
+source, teacher weight, curriculum profile, and seed. Path failures, replans,
+IRIS fallback, region-graph disconnect/fallback, and `open_grid_fallback_used`
+are calibration/exclusion/downweighting signals only; they are not evidence of
+real-world performance improvement. Quasi-real and mask-stress rows keep
+`data_class = quasi_real`, `mask_stress_augmented`, and
+`not real-world generalization benchmark` labels.
 
 ## Ubuntu One-Click Conda Setup
 
