@@ -10,3 +10,7 @@
 ## Goal 模式规则
 
 - Goal 模式的 prompt 不能超过 4000 字符。
+
+## 开发环境
+
+- 项目开发和验证默认使用 Conda 环境 `lunar-explorer`：`/home/kai/anaconda3/envs/lunar-explorer`。
