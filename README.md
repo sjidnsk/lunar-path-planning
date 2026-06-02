@@ -181,6 +181,38 @@ does not implement GCS graph search, a GCS trajectory backend, Ackermann,
 skid-steer, or differential-drive feasibility solving, and it does not claim
 quasi-real or mask-stress results are real-world generalization performance.
 
+## Dataset / Decision Stability v1
+
+Batch outputs can now be consumed by a stability analysis entrypoint:
+
+```bash
+bash scripts/run_path_feedback_stability_analysis.sh --batch-root outputs/path_feedback_batch_current_analysis
+```
+
+The analyzer reads `batch-run-index.json`, `batch-evaluation-summary.json`,
+and each run's `path-feedback-summary/v1`. It validates source paths, schema
+versions, acceptance metadata, open-grid fallback gates, failed batch runs, and
+parent/submodule git provenance before writing:
+
+- `batch-stability-summary.json`: `batch-stability-summary/v1`, with run,
+  scenario set, diagnostic profile, `top_k`, and scenario-group aggregates for
+  pass/fail, open-grid fallback, path failure, replan, IRIS fallback,
+  region-graph fallback, and region-graph disconnect.
+- `dataset-quality-stability-summary.json`:
+  `dataset-quality-stability-summary/v1`, with scenario, group, reason-code,
+  and action aggregates for downstream sample-quality/stability consumers.
+- `decision-stability-summary.json`: `decision-stability-summary/v1`, with
+  target replacement, selection-changed, and failure-source stability across
+  runs, profiles, and `top_k`.
+
+Validation failures are machine-readable. Missing source summaries, schema
+mismatches, acceptance metadata mismatches, open-grid fallback, and failed batch
+runs produce reason codes in the output JSON; the command returns nonzero when
+the input batch is not stability-clean. This stage does not run training, change
+PPO, alter the network or action space, modify stable path-feedback JSON
+fields, implement GCS or vehicle feasibility solving, or claim
+Ackermann-feasible or real-world-generalized trajectories.
+
 `model-explorer` can consume the resulting `path-feedback-summary/v1` JSON via
 optional `train.system_calibration`. That system summary joins v5
 `calibration_recommendation` with teacher gates and path-feedback gates for

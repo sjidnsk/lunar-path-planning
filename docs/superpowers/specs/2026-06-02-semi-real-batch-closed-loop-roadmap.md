@@ -24,11 +24,11 @@ bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-pro
 
 ## Selected Next Direction
 
-The next phase prioritizes option A: batch CLI first.
+The first selected direction was option A: batch CLI first.
 
-The immediate target is **Semi-Real Batch Closed-Loop Evaluation v1**. It should
-turn the current single-run acceptance gate into a repeatable batch experiment
-entrypoint while preserving the existing single-run script and JSON contracts.
+The completed **Semi-Real Batch Closed-Loop Evaluation v1** turns the current
+single-run acceptance gate into a repeatable batch experiment entrypoint while
+preserving the existing single-run script and JSON contracts.
 
 Recommended entrypoint:
 
@@ -62,6 +62,28 @@ Batch v1 preserves the single-run script and writes each run to an isolated
 directory under the batch output root. It records optional
 `sample_quality_profile` metadata for later audit/stability stages, but does not
 execute sample-quality filtering or training.
+
+The current implemented direction is **Dataset / Decision Stability v1**. It
+consumes a completed batch root and writes stability JSON without rerunning
+training or changing the path-feedback contract:
+
+```bash
+bash scripts/run_path_feedback_stability_analysis.sh --batch-root outputs/path_feedback_batch_current_analysis
+```
+
+Implemented stability outputs:
+
+```text
+outputs/path_feedback_batch_current_analysis/batch-stability-summary.json
+outputs/path_feedback_batch_current_analysis/dataset-quality-stability-summary.json
+outputs/path_feedback_batch_current_analysis/decision-stability-summary.json
+```
+
+The analyzer validates `batch-run-index.json`, `batch-evaluation-summary.json`,
+source `path-feedback-summary/v1` files, acceptance metadata, open-grid fallback
+gates, failed batch runs, and parent/submodule git provenance. Validation
+failures remain auditable through machine-readable reason codes; the command
+returns nonzero when the input batch is not stability-clean.
 
 ## Batch v1 Scope
 
@@ -107,6 +129,8 @@ After Batch Closed-Loop Evaluation v1, continue with:
    - Produce machine-readable stability summaries such as
      `batch-stability-summary/v1`, `dataset-quality-stability-summary/v1`, and
      `decision-stability-summary/v1`.
+   - Implemented as
+     `scripts/run_path_feedback_stability_analysis.sh --batch-root <batch-root>`.
 
 2. **Sample-Quality-Aware Training Application v1**
    - Compare legacy data selection against explicit sample-quality profiles:
