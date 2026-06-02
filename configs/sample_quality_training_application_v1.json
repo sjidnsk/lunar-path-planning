@@ -1,0 +1,62 @@
+{
+  "schema_version": "sample-quality-training-application-config/v1",
+  "description": "Sample-Quality-Aware Training Application v1 audit config. This consumes batch and stability outputs to produce training sample selection JSON only; it does not run PPO or change network/action-space behavior.",
+  "legacy_profile_id": "legacy",
+  "sample_quality_aware_profile_id": "soft_downweight_diagnostics",
+  "output_files": {
+    "application_summary": "sample-quality-training-application-summary.json",
+    "selection_stability_summary": "training-selection-stability-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "selection": {
+    "min_observations_for_stable_selection": 2,
+    "metric": "average_sample_weight",
+    "policy": "audit_quality_score"
+  },
+  "profiles": [
+    {
+      "id": "legacy",
+      "description": "Legacy selection audit: record reason codes but keep every sample with weight 1.0.",
+      "legacy_mode": true,
+      "exclude_reason_codes": [],
+      "downweight_reason_codes": [],
+      "downweight_factor": 1.0
+    },
+    {
+      "id": "hard_exclude_open_grid",
+      "description": "Hard exclude open-grid fallback samples; keep other diagnostic samples.",
+      "legacy_mode": false,
+      "exclude_reason_codes": ["open_grid_fallback"],
+      "downweight_reason_codes": [],
+      "downweight_factor": 1.0
+    },
+    {
+      "id": "soft_downweight_diagnostics",
+      "description": "Hard exclude open-grid fallback and soft-downweight path/diagnostic warning samples.",
+      "legacy_mode": false,
+      "exclude_reason_codes": ["open_grid_fallback"],
+      "downweight_reason_codes": [
+        "path_planning_failure",
+        "replan_required",
+        "iris_fallback",
+        "region_graph_disconnected",
+        "region_graph_fallback"
+      ],
+      "downweight_factor": 0.5
+    }
+  ],
+  "non_goals": [
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_gcs_graph_search",
+    "no_gcs_trajectory_backend",
+    "no_vehicle_motion_feasibility_solver",
+    "no_ackermann_feasible_trajectory_claim",
+    "iris_and_region_graph_are_diagnostics_only",
+    "quasi_real_is_not_real_world_generalization_performance"
+  ]
+}

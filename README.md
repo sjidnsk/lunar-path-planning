@@ -232,6 +232,42 @@ calibration/downweighting signals only. Quasi-real and mask-stress rows keep
 `data_class = quasi_real`, `mask_stress_augmented`, and
 `not real-world generalization benchmark` labels.
 
+## Sample-Quality-Aware Training Application v1
+
+Batch and stability outputs can now be consumed by a training application audit
+entrypoint:
+
+```bash
+bash scripts/run_sample_quality_training_application.sh --batch-root outputs/path_feedback_batch_training_input --config configs/sample_quality_training_application_v1.json
+```
+
+The command reads `batch-run-index.json`, `batch-evaluation-summary.json`,
+`batch-stability-summary.json`, `dataset-quality-stability-summary.json`,
+`decision-stability-summary.json`, and each run's `path-feedback-summary/v1`.
+It writes:
+
+- `sample-quality-training-application-summary.json`:
+  `sample-quality-training-application-summary/v1`, with legacy,
+  `hard_exclude_open_grid`, and `soft_downweight_diagnostics` profile results,
+  source summary provenance, acceptance metadata, parent/submodule git SHAs,
+  sample keep/downweight/exclude counts, reason-code distributions, and
+  scenario/run/group aggregates.
+- `training-selection-stability-summary.json`:
+  `training-selection-stability-summary/v1`, comparing legacy and
+  sample-quality-aware best-run/profile audit selections without treating the
+  comparison as a training metric improvement claim.
+
+Validation failures remain machine-readable. Missing source JSON, schema
+mismatches, open-grid fallback, failed batch or stability inputs, acceptance
+metadata mismatches, and git provenance mismatches are recorded as reason codes;
+the command exits nonzero when any such failure is present.
+
+This stage applies quality signals to sample-selection and best-run/profile
+audit JSON only. It does not run large-scale training, change PPO behavior,
+alter network architecture, expand the action space, implement GCS graph search
+or vehicle motion feasibility, claim Ackermann-feasible trajectories, or treat
+IRIS/region-graph diagnostics as GCS or vehicle-feasibility proof.
+
 ## Ubuntu One-Click Conda Setup
 
 Target environment:

@@ -85,6 +85,34 @@ gates, failed batch runs, and parent/submodule git provenance. Validation
 failures remain auditable through machine-readable reason codes; the command
 returns nonzero when the input batch is not stability-clean.
 
+The current implemented direction is **Sample-Quality-Aware Training
+Application v1**. It consumes the current batch root plus stability summaries and
+writes training application audit JSON without running PPO or changing the
+network/action space:
+
+```bash
+bash scripts/run_sample_quality_training_application.sh --batch-root outputs/path_feedback_batch_training_input --config configs/sample_quality_training_application_v1.json
+```
+
+Implemented training application outputs:
+
+```text
+outputs/path_feedback_batch_training_input/sample-quality-training-application-summary.json
+outputs/path_feedback_batch_training_input/training-selection-stability-summary.json
+```
+
+The application summary validates and records `batch-run-index.json`,
+`batch-evaluation-summary.json`, `batch-stability-summary.json`,
+`dataset-quality-stability-summary.json`, `decision-stability-summary.json`,
+source `path-feedback-summary/v1` files, acceptance metadata, and git
+provenance. It compares `legacy`, `hard_exclude_open_grid`, and
+`soft_downweight_diagnostics` profiles. `open_grid_fallback` is a hard
+exclusion for sample-quality-aware profiles; path failure, replan, IRIS
+fallback, region-graph fallback, and region-graph disconnect are soft
+downweighting signals. The selection stability summary compares legacy and
+sample-quality-aware best-run/profile audit choices and explicitly labels the
+result as no-training-metric evidence, not a single-run improvement claim.
+
 ## Batch v1 Scope
 
 The first batch matrix should support:
@@ -139,6 +167,8 @@ After Batch Closed-Loop Evaluation v1, continue with:
      fallback.
    - Measure whether best-run selection becomes more stable across runs, not
      whether a single metric improves once.
+   - Implemented as
+     `scripts/run_sample_quality_training_application.sh --batch-root <batch-root> --config configs/sample_quality_training_application_v1.json`.
 
 3. **Policy Decision Robustness v1**
    - Use stable path-feedback and sample-quality signals to improve candidate
