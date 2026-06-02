@@ -463,6 +463,26 @@ def _build_evaluation_summary(
         "iris_fallback_count": _sum_summary_int(parsed_summaries, "iris_fallback_count"),
         "region_graph_fallback_count": _sum_summary_int(parsed_summaries, "region_graph_fallback_count"),
         "region_graph_disconnected_count": _sum_region_graph_disconnected(parsed_summaries),
+        "sampled_region_path_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_selected_count",
+        ),
+        "sampled_region_path_fallback_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_fallback_count",
+        ),
+        "sampled_region_path_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_status_counts",
+        ),
+        "sampled_region_path_source_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_source_counts",
+        ),
+        "sampled_region_path_fallback_reasons": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_fallback_reasons",
+        ),
         "scenario_group_summary": _aggregate_scenario_groups(parsed_summaries),
         "source_summary_paths": [
             record["source_paths"]["summary"]
@@ -549,6 +569,20 @@ def _sum_summary_int(summaries: list[dict[str, Any]], key: str) -> int:
         if isinstance(value, int):
             total += value
     return total
+
+
+def _aggregate_summary_counter(summaries: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for summary in summaries:
+        payload = summary.get(key, {})
+        if not isinstance(payload, dict):
+            continue
+        for item_key, value in payload.items():
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                counts[str(item_key)] += value
+    return dict(sorted(counts.items()))
 
 
 def _sum_region_graph_disconnected(summaries: list[dict[str, Any]]) -> int:

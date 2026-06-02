@@ -131,6 +131,12 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                     item["region_graph_start_goal_disconnected_count"]
                     for item in scenario_groups.values()
                 )
+                sampled_selected = sum(
+                    item["candidate_count"] for group, item in scenario_groups.items() if group != "stress"
+                )
+                sampled_fallback = sum(
+                    item["candidate_count"] for group, item in scenario_groups.items() if group == "stress"
+                )
                 gate = {
                     "status": "failed" if open_grid else "passed",
                     "expected": False,
@@ -162,6 +168,16 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                     "region_graph_fallback_count": region_fallback,
                     "region_graph_start_goal_disconnected_count": region_disconnect,
                     "region_graph_disconnected_count": region_disconnect,
+                    "sampled_region_path_selected_count": sampled_selected,
+                    "sampled_region_path_fallback_count": sampled_fallback,
+                    "sampled_region_path_status_counts": {
+                        "selected": sampled_selected,
+                        "fallback": sampled_fallback,
+                    },
+                    "sampled_region_path_source_counts": {"grid_box": sampled_selected + sampled_fallback},
+                    "sampled_region_path_fallback_reasons": (
+                        {"sampled_candidate_not_better": sampled_fallback} if sampled_fallback else {}
+                    ),
                     "open_grid_fallback_used": open_grid,
                     "open_grid_fallback_used_gate": gate,
                     "acceptance_metadata": acceptance_metadata,
@@ -358,6 +374,12 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(summary["iris_fallback_count"], 7)
         self.assertEqual(summary["region_graph_fallback_count"], 7)
         self.assertEqual(summary["region_graph_disconnected_count"], 3)
+        self.assertEqual(summary["sampled_region_path_selected_count"], 4)
+        self.assertEqual(summary["sampled_region_path_fallback_count"], 3)
+        self.assertEqual(summary["sampled_region_path_status_counts"]["selected"], 4)
+        self.assertEqual(summary["sampled_region_path_status_counts"]["fallback"], 3)
+        self.assertEqual(summary["sampled_region_path_source_counts"]["grid_box"], 7)
+        self.assertEqual(summary["sampled_region_path_fallback_reasons"]["sampled_candidate_not_better"], 3)
         self.assertEqual(summary["scenario_group_summary"]["smoke"]["scenario_count"], 2)
         self.assertEqual(summary["scenario_group_summary"]["stress"]["failure_count"], 3)
         self.assertEqual(
