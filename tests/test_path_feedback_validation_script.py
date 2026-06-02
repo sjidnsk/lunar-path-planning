@@ -1,4 +1,6 @@
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +113,39 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("--planning-backend region_graph_guided", completed.stdout)
+        self.assertFalse(output_root.exists())
+
+    def test_dry_run_uses_auditable_python_executable_for_all_python_commands(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        output_root = Path(tempfile.mkdtemp(prefix="path-feedback-python-")) / "out"
+        env = os.environ.copy()
+        env["PYTHON"] = sys.executable
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--diagnostic-profile",
+                "iris",
+                "--output-root",
+                str(output_root),
+            ],
+            cwd=repo_root,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn(f"Python executable: {sys.executable}", completed.stdout)
+        self.assertIn(f"{sys.executable} scripts/generate_npz_validation_maps.py", completed.stdout)
+        self.assertIn(f"PYTHONPATH=src {sys.executable} scripts/export_path_planner_sidecars.py", completed.stdout)
+        self.assertIn(f"PYTHONPATH=src {sys.executable} -m model_explorer path-feedback validate", completed.stdout)
+        self.assertIn(f"PYTHONPATH=src {sys.executable} -m model_explorer path-feedback run", completed.stdout)
+        self.assertNotIn(" python3 ", completed.stdout)
         self.assertFalse(output_root.exists())
 
 

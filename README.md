@@ -92,14 +92,18 @@ with `scenario_set`, `diagnostic_profile`, `acceptance_gate`, `top_k`,
 planner extra args, and open-grid fallback gate metadata, and runs:
 
 ```bash
-PYTHONPATH=src python3 -m model_explorer path-feedback validate <manifest>
-PYTHONPATH=src python3 -m model_explorer path-feedback run <manifest>
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTHONPATH=src $PY -m model_explorer path-feedback validate <manifest>
+PYTHONPATH=src $PY -m model_explorer path-feedback run <manifest>
 ```
 
 The `path-feedback run` command prints a compact stdout summary and writes the
 full experiment JSON plus Markdown report to the configured output files. The
 JSON summary repeats the same `acceptance_metadata` and records the actual
-`open_grid_fallback_used_gate` result. The root script can forward optional execution diagnostics with
+`open_grid_fallback_used_gate` result. The root script defaults to the shared
+Conda Python and can be overridden with `PYTHON=/path/to/python`; the chosen
+interpreter is recorded in the manifest, summary metadata, and batch index.
+The root script can forward optional execution diagnostics with
 `--simulate-tracking`, `--optimize-trajectory`, and `--drake-iris-regions`; the
 default remains lightweight and Drake-free. `--diagnostic-profile execution`
 forwards tracking simulation plus fixed-corridor optimization, `iris` forwards

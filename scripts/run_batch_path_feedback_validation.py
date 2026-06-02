@@ -334,6 +334,11 @@ def _record_run_result(
 
     status = "failed" if reason_codes else "passed"
     acceptance_metadata = _acceptance_metadata_from_summary(summary)
+    python_executable = (
+        acceptance_metadata.get("python_executable")
+        if isinstance(acceptance_metadata.get("python_executable"), str)
+        else None
+    )
     return {
         "run_id": run["run_id"],
         "status": status,
@@ -344,6 +349,7 @@ def _record_run_result(
             "scenario_set": run["scenario_set"],
             "diagnostic_profile": run["diagnostic_profile"],
             "top_k": run["top_k"],
+            "python_executable": python_executable,
             "output_root": _display_path(run_root, repo_root),
             "planner_extra_args": list(run["planner_extra_args"]),
         },

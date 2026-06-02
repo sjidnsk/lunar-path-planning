@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -39,6 +40,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 #!/usr/bin/env bash
                 set -euo pipefail
 
+                python_bin="${PYTHON:-/home/kai/anaconda3/envs/lunar-explorer/bin/python}"
                 output_root=""
                 scenario_set=""
                 diagnostic_profile=""
@@ -86,7 +88,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                   exit 7
                 fi
 
-                python3 - "$output_root" "$scenario_set" "$diagnostic_profile" "$top_k" <<'PY'
+                "$python_bin" - "$output_root" "$scenario_set" "$diagnostic_profile" "$top_k" <<'PY'
                 import json
                 import sys
                 from pathlib import Path
@@ -141,6 +143,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                     "diagnostic_profile": diagnostic_profile,
                     "acceptance_gate": "semi-real-closed-loop" if scenario_set == "all" and diagnostic_profile == "all" and top_k == 3 else "custom",
                     "top_k": top_k,
+                    "python_executable": sys.executable,
                     "planner_extra_args": [],
                     "open_grid_fallback_used": open_grid,
                     "open_grid_fallback_used_gate": gate,
@@ -300,6 +303,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(first_run["command_args"]["scenario_set"], "smoke")
         self.assertEqual(first_run["command_args"]["diagnostic_profile"], "baseline")
         self.assertEqual(first_run["command_args"]["top_k"], 1)
+        self.assertEqual(first_run["command_args"]["python_executable"], sys.executable)
         self.assertEqual(first_run["sample_quality_profile"], "audit-only")
         self.assertTrue(first_run["source_paths"]["summary"].endswith("smoke-baseline-k1/path-feedback-summary.json"))
         self.assertTrue(first_run["source_paths"]["report"].endswith("smoke-baseline-k1/path-feedback-summary.md"))

@@ -8,6 +8,16 @@ SCENARIO_SET="smoke"
 DIAGNOSTIC_PROFILE="baseline"
 PLANNER_EXTRA_ARGS=()
 MODULES=(path-planner model-explorer dev-platform-constraints)
+DEFAULT_PYTHON="/home/kai/anaconda3/envs/lunar-explorer/bin/python"
+PYTHON_BIN="${PYTHON:-$DEFAULT_PYTHON}"
+
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  if [[ -n "${PYTHON:-}" ]]; then
+    echo "Configured PYTHON is not executable: $PYTHON_BIN" >&2
+    exit 2
+  fi
+  PYTHON_BIN="python3"
+fi
 
 usage() {
   cat <<'USAGE'
@@ -235,7 +245,7 @@ write_manifest() {
     return
   fi
 
-  python3 - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
+  "$PYTHON_BIN" - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "$PYTHON_BIN" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -250,7 +260,8 @@ scenario_set = sys.argv[7]
 diagnostic_profile = sys.argv[8]
 acceptance_gate = sys.argv[9]
 path_planner_root = Path(sys.argv[10])
-extra_args = sys.argv[11:]
+python_executable = sys.argv[11]
+extra_args = sys.argv[12:]
 
 payload = json.loads(scenario_config.read_text(encoding="utf-8"))
 scenarios = []
@@ -279,6 +290,7 @@ manifest = {
         "diagnostic_profile": diagnostic_profile,
         "acceptance_gate": acceptance_gate,
         "top_k": top_k,
+        "python_executable": python_executable,
         "planner_extra_args": extra_args,
         "open_grid_fallback_used": None,
         "open_grid_fallback_used_gate": {
@@ -297,6 +309,7 @@ manifest = {
     "planner": {
         "backend": "path_planner_route",
         "path_planner_root": str(path_planner_root),
+        "python_executable": python_executable,
     },
     "scenarios": scenarios,
     "outputs": {
@@ -323,7 +336,7 @@ assert_output_files() {
 }
 
 validate_summary() {
-  python3 - "$SUMMARY_PATH" "$MANIFEST_PATH" "$SCENARIO_CONFIG" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$TOP_K" "$ACCEPTANCE_GATE" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
+  "$PYTHON_BIN" - "$SUMMARY_PATH" "$MANIFEST_PATH" "$SCENARIO_CONFIG" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$TOP_K" "$ACCEPTANCE_GATE" "$PYTHON_BIN" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -335,7 +348,8 @@ scenario_set = sys.argv[4]
 diagnostic_profile = sys.argv[5]
 top_k = int(sys.argv[6])
 acceptance_gate = sys.argv[7]
-planner_extra_args = sys.argv[8:]
+python_executable = sys.argv[8]
+planner_extra_args = sys.argv[9:]
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 scenario_config = json.loads(scenario_config_path.read_text(encoding="utf-8"))
@@ -367,6 +381,15 @@ for key, expected in expected_metadata.items():
     if manifest_actual != expected:
         raise SystemExit(f"{manifest_path}: expected {key}={expected!r}, got {manifest_actual!r}")
 
+planner = manifest.get("planner")
+if not isinstance(planner, dict):
+    raise SystemExit(f"{manifest_path}: planner must be an object")
+if planner.get("python_executable") != python_executable:
+    raise SystemExit(
+        f"{manifest_path}: expected planner.python_executable={python_executable!r}, "
+        f"got {planner.get('python_executable')!r}"
+    )
+
 acceptance_metadata = summary.get("acceptance_metadata")
 if not isinstance(acceptance_metadata, dict):
     raise SystemExit(f"{summary_path}: acceptance_metadata must be an object")
@@ -374,6 +397,11 @@ for key, expected in expected_metadata.items():
     actual = acceptance_metadata.get(key)
     if actual != expected:
         raise SystemExit(f"{summary_path}: expected acceptance_metadata.{key}={expected!r}, got {actual!r}")
+if acceptance_metadata.get("python_executable") != python_executable:
+    raise SystemExit(
+        f"{summary_path}: expected acceptance_metadata.python_executable={python_executable!r}, "
+        f"got {acceptance_metadata.get('python_executable')!r}"
+    )
 open_grid_gate = acceptance_metadata.get("open_grid_fallback_used_gate")
 if not isinstance(open_grid_gate, dict) or open_grid_gate.get("status") != "passed":
     raise SystemExit(f"{summary_path}: open_grid_fallback_used_gate must pass")
@@ -514,6 +542,7 @@ PY
 cat <<INFO
 Repository: $REPO_ROOT
 Output root: $OUTPUT_ROOT
+Python executable: $PYTHON_BIN
 Acceptance gate: $ACCEPTANCE_GATE
 Top-K: $TOP_K
 Scenario set: $SCENARIO_SET
@@ -530,13 +559,13 @@ else
 fi
 
 run_cmd "$DEV_ROOT" \
-  python3 scripts/generate_npz_validation_maps.py \
+  "$PYTHON_BIN" scripts/generate_npz_validation_maps.py \
   --scenario-set "$SCENARIO_SET" \
   --output-dir "$MAP_DIR" \
   --scenario-config "$SCENARIO_CONFIG"
 
 run_pythonpath_cmd "$DEV_ROOT" \
-  python3 scripts/export_path_planner_sidecars.py \
+  "$PYTHON_BIN" scripts/export_path_planner_sidecars.py \
   --scenario-config "$SCENARIO_CONFIG" \
   --output-dir "$EXPORT_DIR" \
   --top-k "$TOP_K"
@@ -544,10 +573,10 @@ run_pythonpath_cmd "$DEV_ROOT" \
 write_manifest
 
 run_pythonpath_cmd "$MODEL_ROOT" \
-  python3 -m model_explorer path-feedback validate "$MANIFEST_PATH"
+  "$PYTHON_BIN" -m model_explorer path-feedback validate "$MANIFEST_PATH"
 
 run_pythonpath_cmd "$MODEL_ROOT" \
-  python3 -m model_explorer path-feedback run "$MANIFEST_PATH"
+  "$PYTHON_BIN" -m model_explorer path-feedback run "$MANIFEST_PATH"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "[DRY RUN] validate summary gates: $SUMMARY_PATH"

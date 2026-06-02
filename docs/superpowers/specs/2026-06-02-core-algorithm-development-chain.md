@@ -158,6 +158,12 @@ Non-goals:
 Purpose: improve the quality and usability of workspace IRIS regions before
 using them as a stronger region graph source.
 
+Current implementation note: Stage 2 keeps IRIS behind the optional
+`--drake-iris-regions` diagnostic switch. The batch/single-run validation chain
+must use the configured Conda Python consistently so Drake availability is
+auditable. Workspace IRIS diagnostics may use merged blocked rectangles and
+safe-component domain boxes, but route output remains a geometric path.
+
 Implementation target:
 
 - improve workspace `Iris` seed and domain selection while staying in 2D
