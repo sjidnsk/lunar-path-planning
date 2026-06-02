@@ -491,6 +491,30 @@ def _build_evaluation_summary(
             parsed_summaries,
             "sampled_region_path_candidate_ranking_count",
         ),
+        "sampled_region_path_anchor_region_added_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_anchor_region_added_count",
+        ),
+        "sampled_region_path_anchor_region_connected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_anchor_region_connected_count",
+        ),
+        "sampled_region_path_start_classification_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_start_classification_counts",
+        ),
+        "sampled_region_path_goal_classification_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_goal_classification_counts",
+        ),
+        "sampled_region_path_connector_attempt_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_connector_attempt_count",
+        ),
+        "sampled_region_path_connector_strategy_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_connector_strategy_counts",
+        ),
         "sampled_region_path_candidate_audit": _aggregate_summary_list(
             parsed_summaries,
             "sampled_region_path_candidate_audit",

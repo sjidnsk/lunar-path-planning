@@ -139,6 +139,9 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 )
                 sampled_attempts = sampled_selected * 4 + sampled_fallback * 3
                 sampled_rankings = sampled_selected + sampled_fallback
+                sampled_anchor_added = sampled_selected
+                sampled_anchor_connected = sampled_selected
+                sampled_connector_attempts = sampled_rankings
                 gate = {
                     "status": "failed" if open_grid else "passed",
                     "expected": False,
@@ -182,6 +185,16 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                     ),
                     "sampled_region_path_sample_attempt_count": sampled_attempts,
                     "sampled_region_path_candidate_ranking_count": sampled_rankings,
+                    "sampled_region_path_anchor_region_added_count": sampled_anchor_added,
+                    "sampled_region_path_anchor_region_connected_count": sampled_anchor_connected,
+                    "sampled_region_path_goal_classification_counts": {
+                        "goal_outside_region_coverage": sampled_anchor_added,
+                        "covered": sampled_fallback,
+                    },
+                    "sampled_region_path_connector_attempt_count": sampled_connector_attempts,
+                    "sampled_region_path_connector_strategy_counts": {
+                        "cost_aware_constrained_astar": sampled_connector_attempts,
+                    },
                     "sampled_region_path_candidate_audit": [
                         {
                             "scenario_id": run_id,
@@ -190,7 +203,13 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                             "status": "fallback" if sampled_fallback else "selected",
                             "fallback_reason": "sampled_candidate_not_better" if sampled_fallback else None,
                             "region_sequence": [0, 1],
-                            "start_goal_anchoring": {"start_region_id": 0, "goal_region_id": 1},
+                            "start_goal_anchoring": {
+                                "start_region_id": 0,
+                                "goal_region_id": 1,
+                                "goal_classification": "covered" if sampled_fallback else "goal_outside_region_coverage",
+                                "goal_anchor_region_added": not sampled_fallback,
+                                "goal_anchor_region_connected": not sampled_fallback,
+                            },
                             "edge_transition_count": 1,
                             "sample_attempt_count": sampled_attempts,
                             "candidate_ranking_count": sampled_rankings,
@@ -401,6 +420,15 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(summary["sampled_region_path_fallback_reasons"]["sampled_candidate_not_better"], 3)
         self.assertEqual(summary["sampled_region_path_sample_attempt_count"], 25)
         self.assertEqual(summary["sampled_region_path_candidate_ranking_count"], 7)
+        self.assertEqual(summary["sampled_region_path_anchor_region_added_count"], 4)
+        self.assertEqual(summary["sampled_region_path_anchor_region_connected_count"], 4)
+        self.assertEqual(summary["sampled_region_path_goal_classification_counts"]["goal_outside_region_coverage"], 4)
+        self.assertEqual(summary["sampled_region_path_goal_classification_counts"]["covered"], 3)
+        self.assertEqual(summary["sampled_region_path_connector_attempt_count"], 7)
+        self.assertEqual(
+            summary["sampled_region_path_connector_strategy_counts"]["cost_aware_constrained_astar"],
+            7,
+        )
         self.assertEqual(len(summary["sampled_region_path_candidate_audit"]), 2)
         self.assertEqual(
             summary["sampled_region_path_candidate_audit"][1]["fallback_reason"],
