@@ -1,7 +1,10 @@
 {
   "schema_version": "path-feedback-batch-matrix/v1",
-  "description": "Semi-Real Batch Closed-Loop Evaluation v1 matrix. sample_quality_profile is recorded for downstream audit only and is not executed by this batch runner.",
+  "description": "Semi-Real Batch Closed-Loop Evaluation v1 matrix. sample_quality_profile is recorded for downstream audit only and is not executed by this batch runner. Core Algorithm Stage 1 opts into path-planner region_graph_guided planning through planner_extra_args while leaving path-planner's default CLI backend as astar.",
   "output_root": "outputs/path_feedback_batch",
+  "defaults": {
+    "planner_extra_args": ["--planning-backend", "region_graph_guided"]
+  },
   "runs": [
     {
       "run_id": "smoke-baseline-k1",

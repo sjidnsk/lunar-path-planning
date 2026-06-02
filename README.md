@@ -150,10 +150,12 @@ bash scripts/run_batch_path_feedback_validation.sh --matrix configs/path_feedbac
 ```
 
 The matrix supports `run_id`, `scenario_set`, `diagnostic_profile`, `top_k`,
-batch or per-run `output_root`, and optional `sample_quality_profile` metadata.
-`sample_quality_profile` is recorded for downstream audit/stability work only;
-Batch v1 does not run training, change PPO behavior, or alter any stable JSON
-contract.
+batch or per-run `output_root`, optional `planner_extra_args`, and optional
+`sample_quality_profile` metadata. The current Stage 1 matrix opts into
+`--planning-backend region_graph_guided` through `planner_extra_args`; the
+path-planner CLI default remains `astar`. `sample_quality_profile` is recorded
+for downstream audit/stability work only; Batch v1 does not run training, change
+PPO behavior, or alter any stable JSON contract.
 
 Each run writes the original single-run artifacts under its isolated output
 directory:

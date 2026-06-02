@@ -181,6 +181,10 @@ def _build_batch_plan(
         sample_quality_profile = merged.get("sample_quality_profile")
         if sample_quality_profile is not None and not isinstance(sample_quality_profile, (str, dict)):
             raise MatrixError(f"runs[{index}].sample_quality_profile must be a string or object when present")
+        planner_extra_args = _optional_string_list(
+            merged.get("planner_extra_args", ()),
+            f"runs[{index}].planner_extra_args",
+        )
 
         if cli_output_root is None and isinstance(raw_run.get("output_root"), str):
             run_output_root = _resolve_path(raw_run["output_root"], repo_root)
@@ -199,6 +203,7 @@ def _build_batch_plan(
             "--output-root",
             str(run_output_root),
         ]
+        argv.extend(planner_extra_args)
         runs.append(
             {
                 "run_id": run_id,
@@ -206,6 +211,7 @@ def _build_batch_plan(
                 "diagnostic_profile": diagnostic_profile,
                 "top_k": top_k,
                 "sample_quality_profile": sample_quality_profile,
+                "planner_extra_args": planner_extra_args,
                 "output_root": run_output_root,
                 "argv": argv,
             }
@@ -238,6 +244,16 @@ def _require_positive_int(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise MatrixError(f"{label} must be a positive integer")
     return value
+
+
+def _optional_string_list(value: Any, label: str) -> list[str]:
+    if value in (None, ()):
+        return []
+    if not isinstance(value, list):
+        raise MatrixError(f"{label} must be an array of strings when present")
+    if any(not isinstance(item, str) or item == "" for item in value):
+        raise MatrixError(f"{label} must contain only non-empty strings")
+    return list(value)
 
 
 def _execute_run(run: dict[str, Any], *, repo_root: Path, git_snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -329,6 +345,7 @@ def _record_run_result(
             "diagnostic_profile": run["diagnostic_profile"],
             "top_k": run["top_k"],
             "output_root": _display_path(run_root, repo_root),
+            "planner_extra_args": list(run["planner_extra_args"]),
         },
         "sample_quality_profile": run["sample_quality_profile"],
         "source_paths": {

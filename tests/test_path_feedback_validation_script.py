@@ -88,6 +88,31 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--simulate-tracking", execution.stdout)
         self.assertIn("--optimize-trajectory", execution.stdout)
 
+    def test_region_graph_guided_backend_is_reflected_in_dry_run_commands(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        output_root = Path(tempfile.mkdtemp(prefix="path-feedback-backend-")) / "out"
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--planning-backend",
+                "region_graph_guided",
+                "--output-root",
+                str(output_root),
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("--planning-backend region_graph_guided", completed.stdout)
+        self.assertFalse(output_root.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

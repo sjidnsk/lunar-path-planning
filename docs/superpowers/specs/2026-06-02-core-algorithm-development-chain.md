@@ -110,6 +110,12 @@ Exit condition:
 Purpose: make `region_graph_report` influence geometric path generation, rather
 than only explaining failures after A*.
 
+Current implementation note: Stage 1 is implemented as an opt-in
+`path-planner` backend selected by `--planning-backend region_graph_guided`.
+The default backend remains `astar`. The parent batch matrix opts into this
+backend through `planner_extra_args` so validation exercises the Stage 1 path
+without changing `path-planner` default CLI behavior.
+
 Implementation target:
 
 - add an optional `path-planner` planning backend such as
@@ -122,6 +128,13 @@ Implementation target:
   fails;
 - record backend source, fallback reason, segment count, and comparison against
   baseline A* in optional additive diagnostics.
+
+Implemented diagnostic surface:
+
+- optional top-level `planning_backend_report`;
+- `requested_backend`, `selected_backend`, `status`, and `fallback_reason`;
+- `segment_count`, `skeleton_cells`, and baseline/candidate path summaries;
+- `comparison` and `region_graph_candidate` blocks for path-feedback consumers.
 
 Acceptance criteria:
 

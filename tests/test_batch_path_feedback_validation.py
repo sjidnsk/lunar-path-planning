@@ -201,6 +201,9 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
             {
                 "schema_version": "path-feedback-batch-matrix/v1",
                 "output_root": str(output_root),
+                "defaults": {
+                    "planner_extra_args": ["--planning-backend", "region_graph_guided"],
+                },
                 "runs": [
                     {
                         "run_id": "smoke-baseline-k1",
@@ -224,6 +227,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(dry_run.returncode, 0, dry_run.stdout + dry_run.stderr)
         self.assertIn("[DRY RUN]", dry_run.stdout)
         self.assertIn("smoke-baseline-k1", dry_run.stdout)
+        self.assertIn("--planning-backend region_graph_guided", dry_run.stdout)
         self.assertFalse(output_root.exists())
 
     def test_invalid_matrix_is_rejected_before_execution(self) -> None:

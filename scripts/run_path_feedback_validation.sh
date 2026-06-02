@@ -28,6 +28,8 @@ Options:
   --optimize-trajectory
                         Forward fixed-corridor trajectory optimization diagnostics.
   --drake-iris-regions Forward optional Drake workspace Iris diagnostics.
+  --planning-backend NAME
+                        Forward path-planner planning backend: astar or region_graph_guided.
   --dry-run            Print planned commands without writing validation outputs.
   -h, --help           Show this help.
 USAGE
@@ -67,6 +69,19 @@ while [[ $# -gt 0 ]]; do
     --simulate-tracking|--optimize-trajectory|--drake-iris-regions)
       PLANNER_EXTRA_ARGS+=("$1")
       shift
+      ;;
+    --planning-backend)
+      require_value "$1" "${2:-}"
+      case "$2" in
+        astar|region_graph_guided)
+          ;;
+        *)
+          echo "--planning-backend must be one of: astar, region_graph_guided" >&2
+          exit 2
+          ;;
+      esac
+      PLANNER_EXTRA_ARGS+=("$1" "$2")
+      shift 2
       ;;
     --dry-run)
       DRY_RUN=1
