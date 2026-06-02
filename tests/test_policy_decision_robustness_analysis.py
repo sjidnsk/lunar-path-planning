@@ -433,6 +433,34 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
         self.assertFalse((self.batch_root / "policy-decision-robustness-summary.json").exists())
         self.assertFalse((self.batch_root / "policy-decision-selection-comparison-summary.json").exists())
 
+    def test_wrapper_uses_default_config_when_config_is_omitted(self) -> None:
+        self._write_batch(
+            [
+                {
+                    "run_id": "smoke-baseline-k1",
+                    "scenario_set": "smoke",
+                    "diagnostic_profile": "baseline",
+                    "top_k": 1,
+                    "summary": self._summary(
+                        scenario_set="smoke",
+                        diagnostic_profile="baseline",
+                        top_k=1,
+                        scenario_id="npz_shadow_corridor",
+                        scenario_group="smoke",
+                        selected_before=[2, 2],
+                        selected_after=[2, 2],
+                        candidates=[self._candidate(0, [2, 2], utility=0.9, path_cost=12.0)],
+                    ),
+                }
+            ]
+        )
+
+        completed = self._run_analysis("--batch-root", str(self.batch_root), "--validate-only")
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("config validated", completed.stdout)
+        self.assertIn('"config": "configs/policy_decision_robustness_v1.json"', completed.stdout)
+
     def test_analysis_consumes_sources_and_writes_profile_decision_summaries(self) -> None:
         self._write_batch(
             [
