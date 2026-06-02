@@ -137,6 +137,8 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 sampled_fallback = sum(
                     item["candidate_count"] for group, item in scenario_groups.items() if group == "stress"
                 )
+                sampled_attempts = sampled_selected * 4 + sampled_fallback * 3
+                sampled_rankings = sampled_selected + sampled_fallback
                 gate = {
                     "status": "failed" if open_grid else "passed",
                     "expected": False,
@@ -178,6 +180,23 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                     "sampled_region_path_fallback_reasons": (
                         {"sampled_candidate_not_better": sampled_fallback} if sampled_fallback else {}
                     ),
+                    "sampled_region_path_sample_attempt_count": sampled_attempts,
+                    "sampled_region_path_candidate_ranking_count": sampled_rankings,
+                    "sampled_region_path_candidate_audit": [
+                        {
+                            "scenario_id": run_id,
+                            "action_index": 0,
+                            "region_source": "grid_box",
+                            "status": "fallback" if sampled_fallback else "selected",
+                            "fallback_reason": "sampled_candidate_not_better" if sampled_fallback else None,
+                            "region_sequence": [0, 1],
+                            "start_goal_anchoring": {"start_region_id": 0, "goal_region_id": 1},
+                            "edge_transition_count": 1,
+                            "sample_attempt_count": sampled_attempts,
+                            "candidate_ranking_count": sampled_rankings,
+                            "candidate_metrics": {"candidate_cost_delta": 1.0 if sampled_fallback else -1.0},
+                        }
+                    ],
                     "open_grid_fallback_used": open_grid,
                     "open_grid_fallback_used_gate": gate,
                     "acceptance_metadata": acceptance_metadata,
@@ -380,6 +399,13 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(summary["sampled_region_path_status_counts"]["fallback"], 3)
         self.assertEqual(summary["sampled_region_path_source_counts"]["grid_box"], 7)
         self.assertEqual(summary["sampled_region_path_fallback_reasons"]["sampled_candidate_not_better"], 3)
+        self.assertEqual(summary["sampled_region_path_sample_attempt_count"], 25)
+        self.assertEqual(summary["sampled_region_path_candidate_ranking_count"], 7)
+        self.assertEqual(len(summary["sampled_region_path_candidate_audit"]), 2)
+        self.assertEqual(
+            summary["sampled_region_path_candidate_audit"][1]["fallback_reason"],
+            "sampled_candidate_not_better",
+        )
         self.assertEqual(summary["scenario_group_summary"]["smoke"]["scenario_count"], 2)
         self.assertEqual(summary["scenario_group_summary"]["stress"]["failure_count"], 3)
         self.assertEqual(

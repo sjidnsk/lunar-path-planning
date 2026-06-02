@@ -483,6 +483,18 @@ def _build_evaluation_summary(
             parsed_summaries,
             "sampled_region_path_fallback_reasons",
         ),
+        "sampled_region_path_sample_attempt_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_sample_attempt_count",
+        ),
+        "sampled_region_path_candidate_ranking_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_candidate_ranking_count",
+        ),
+        "sampled_region_path_candidate_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "sampled_region_path_candidate_audit",
+        ),
         "scenario_group_summary": _aggregate_scenario_groups(parsed_summaries),
         "source_summary_paths": [
             record["source_paths"]["summary"]
@@ -583,6 +595,15 @@ def _aggregate_summary_counter(summaries: list[dict[str, Any]], key: str) -> dic
             if isinstance(value, int):
                 counts[str(item_key)] += value
     return dict(sorted(counts.items()))
+
+
+def _aggregate_summary_list(summaries: list[dict[str, Any]], key: str) -> list[Any]:
+    items: list[Any] = []
+    for summary in summaries:
+        payload = summary.get(key, [])
+        if isinstance(payload, list):
+            items.extend(payload)
+    return items
 
 
 def _sum_region_graph_disconnected(summaries: list[dict[str, Any]]) -> int:
