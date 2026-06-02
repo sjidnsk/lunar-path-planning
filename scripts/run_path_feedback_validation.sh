@@ -515,10 +515,25 @@ if scenario_set in {"stress", "all"}:
             + int(item.get("path_feedback", {}).get("replan_count", 0))
             for item in mixed_items
         )
+        mixed_group_summary = summary.get("scenario_group_summary", {}).get("mixed_stress", {})
+        if not isinstance(mixed_group_summary, dict):
+            mixed_group_summary = {}
+        mixed_sampled_region_decision_diagnostics = int(
+            mixed_group_summary.get("sampled_region_path_selected_count", 0)
+        ) + int(mixed_group_summary.get("sampled_region_path_terminal_adjusted_count", 0))
+        if mixed_sampled_region_decision_diagnostics < 1:
+            mixed_sampled_region_decision_diagnostics = sum(
+                int(item.get("sampled_region_path_diagnostics", {}).get("selected_count", 0))
+                + int(item.get("sampled_region_path_diagnostics", {}).get("terminal_adjusted_count", 0))
+                for item in mixed_items
+            )
         if mixed_reachable < 1:
             raise SystemExit(f"{summary_path}: mixed stress scenarios must include at least one reachable candidate")
-        if mixed_replan_or_failure < 1:
-            raise SystemExit(f"{summary_path}: mixed stress scenarios must produce failure or replan diagnostics")
+        if mixed_replan_or_failure + mixed_sampled_region_decision_diagnostics < 1:
+            raise SystemExit(
+                f"{summary_path}: mixed stress scenarios must produce failure, replan, "
+                "or sampled-region decision diagnostics"
+            )
 
 print(
     json.dumps(

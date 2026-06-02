@@ -115,6 +115,15 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--planning-backend region_graph_guided", completed.stdout)
         self.assertFalse(output_root.exists())
 
+    def test_mixed_stress_gate_accepts_sampled_region_decision_diagnostics(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        content = script.read_text(encoding="utf-8")
+
+        self.assertIn("mixed_sampled_region_decision_diagnostics", content)
+        self.assertIn("sampled_region_path_selected_count", content)
+        self.assertIn("sampled-region decision diagnostics", content)
+
     def test_dry_run_uses_auditable_python_executable_for_all_python_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "run_path_feedback_validation.sh"

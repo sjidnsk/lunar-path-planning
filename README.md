@@ -133,7 +133,8 @@ open-grid smoke fallback. For `stress` and `all`, the script also fails unless
 at least one stress scenario produces a path-planning failure or replan
 diagnostic, so stress validation cannot silently degrade into another easy smoke
 run. Mixed-stress scenarios additionally require at least one reachable
-candidate and at least one failure or replan diagnostic.
+candidate and at least one failure, replan, or sampled-region decision
+diagnostic.
 
 The summary metric surface is part of the next-stage contract. At minimum it
 must retain `selection_changed_rate`, `path_planning_failure_count`,
