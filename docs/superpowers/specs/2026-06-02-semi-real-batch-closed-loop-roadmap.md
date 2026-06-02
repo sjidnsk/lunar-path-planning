@@ -175,11 +175,34 @@ After Batch Closed-Loop Evaluation v1, continue with:
      ranking sensitivity to unreachable targets, high replan risk, high path
      cost, and repeated diagnostic warnings.
    - Preserve the candidate-list action space.
+   - Implemented as
+     `scripts/run_policy_decision_robustness_analysis.sh --batch-root <batch-root> --config configs/policy_decision_robustness_v1.json`.
+   - Writes `policy-decision-robustness-summary/v1` and
+     `policy-decision-selection-comparison-summary/v1` for `legacy`,
+     `feedback_aware`, and `sample_quality_aware` audit profiles, with
+     `no_training_metric_evaluated` recorded in the selection comparison.
 
-4. **Execution-Layer Readiness**
-   - Only after the batch and stability stages show sustained diagnostic value,
-     evaluate workspace IRIS quality gates, region-graph readiness, GCS backend
-     interface design, and a separate motion-feasibility layer.
+4. **Policy-Robustness Application Smoke v1**
+   - Apply the selected robustness profile to lightweight smoke decision logs
+     and compare legacy versus robustness-aware selected action/cell deltas.
+   - Implemented as
+     `scripts/run_policy_robustness_application_smoke.sh --batch-root <batch-root> --robustness-summary <batch-root>/policy-decision-robustness-summary.json --config configs/policy_robustness_application_smoke_v1.json`.
+   - Writes `policy-robustness-application-summary/v1` and
+     `policy-robustness-application-comparison-summary/v1`, with
+     `no_large_scale_training`, `no_real_world_performance_claim`, and
+     `no_single_metric_improvement_claim` recorded.
+
+5. **Core Algorithm Development Chain**
+   - The next reference is
+     `docs/superpowers/specs/2026-06-02-core-algorithm-development-chain.md`.
+   - The endpoint is core algorithm development, not another standalone
+     interpretability or readiness-report phase.
+   - After the integration/provenance gate, start with
+     **Region-Graph-Guided Geometric Search v1** so that region-graph signals
+     begin to change `path-planner` geometric path generation behavior.
+   - Later stages split workspace IRIS quality, sampled region paths, Drake GCS
+     geometric backend work, motion-feasibility reporting, and the
+     execution-aware explorer loop.
 
 ## Non-Goals
 

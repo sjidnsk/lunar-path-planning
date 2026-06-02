@@ -268,6 +268,110 @@ alter network architecture, expand the action space, implement GCS graph search
 or vehicle motion feasibility, claim Ackermann-feasible trajectories, or treat
 IRIS/region-graph diagnostics as GCS or vehicle-feasibility proof.
 
+## Policy Decision Robustness v1
+
+Current-HEAD batch, stability, and sample-quality evidence can now be consumed
+by a candidate-ranking robustness audit entrypoint:
+
+```bash
+bash scripts/run_policy_decision_robustness_analysis.sh --batch-root outputs/path_feedback_batch_policy_input --config configs/policy_decision_robustness_v1.json
+```
+
+The command reads `batch-run-index.json`, `batch-evaluation-summary.json`,
+`batch-stability-summary.json`, `dataset-quality-stability-summary.json`,
+`decision-stability-summary.json`,
+`sample-quality-training-application-summary.json`,
+`training-selection-stability-summary.json`, and each run's
+`path-feedback-summary/v1`. It writes:
+
+- `policy-decision-robustness-summary.json`:
+  `policy-decision-robustness-summary/v1`, comparing `legacy`,
+  `feedback_aware`, and `sample_quality_aware` audit profiles. The summary
+  records source summaries, acceptance metadata, parent/submodule git SHAs,
+  candidate ordering before/after profile scoring, selected action/cell,
+  rank deltas, score and penalty components, reason-code distributions, and
+  scenario/run/group aggregates.
+- `policy-decision-selection-comparison-summary.json`:
+  `policy-decision-selection-comparison-summary/v1`, comparing profile
+  selection stability by scenario without treating the comparison as a training
+  metric improvement claim. It always records `no_training_metric_evaluated`.
+
+Validation failures remain machine-readable. Missing source JSON, schema
+mismatches, open-grid fallback, failed batch/stability/application inputs,
+acceptance metadata mismatches, and git provenance mismatches are recorded as
+reason codes; the command exits nonzero when any such failure is present.
+
+This stage only audits candidate sorting robustness. It does not run PPO,
+change PPO behavior, alter network architecture, expand the candidate-list
+action space, implement GCS graph search or vehicle motion feasibility, claim
+Ackermann-feasible trajectories, or treat IRIS/region-graph diagnostics as GCS
+or vehicle-feasibility proof.
+
+## Policy-Robustness Application Smoke v1
+
+Policy Decision Robustness v1 outputs can now be applied to lightweight smoke
+decision logs without running training:
+
+```bash
+bash scripts/run_policy_robustness_application_smoke.sh --batch-root outputs/path_feedback_batch_policy_input --robustness-summary outputs/path_feedback_batch_policy_input/policy-decision-robustness-summary.json --config configs/policy_robustness_application_smoke_v1.json
+```
+
+The command reads `policy-decision-robustness-summary/v1`,
+`policy-decision-selection-comparison-summary/v1`,
+`sample-quality-training-application-summary/v1`,
+`training-selection-stability-summary/v1`, and the referenced
+`path-feedback-summary/v1` files. It writes:
+
+- `policy-robustness-application-summary.json`:
+  `policy-robustness-application-summary/v1`, with the applied robustness
+  profile, baseline profile, source summaries, acceptance metadata,
+  parent/submodule git SHAs, lightweight episode/decision deltas, selected
+  action/cell before and after application, failure/replan exposure,
+  sample-quality reason codes, and scenario/group aggregates.
+- `policy-robustness-application-comparison-summary.json`:
+  `policy-robustness-application-comparison-summary/v1`, comparing legacy and
+  robustness-aware smoke decisions with `no_large_scale_training`,
+  `no_real_world_performance_claim`, and
+  `no_single_metric_improvement_claim` recorded.
+
+Validation failures remain machine-readable. Missing robustness inputs, schema
+mismatches, open-grid fallback, failed upstream summaries, acceptance metadata
+mismatches, and git provenance mismatches are recorded as reason codes; the
+command exits nonzero when any such failure is present.
+
+This stage only applies already-audited robustness decisions to lightweight
+smoke decision records. It does not run large-scale training, claim performance
+improvement, change PPO behavior, alter network architecture, expand the
+candidate-list action space, implement GCS or vehicle feasibility, claim
+Ackermann-feasible trajectories, or treat IRIS/region-graph diagnostics as GCS
+or vehicle-feasibility proof.
+
+## Core Algorithm Development Chain
+
+The next implementation stages should follow:
+
+```text
+A* geometric path baseline
+  -> region-graph-guided geometric search
+  -> workspace IRIS region quality
+  -> sampled region path backend
+  -> Drake GCS geometric backend
+  -> motion-feasibility layer
+  -> execution-aware explorer loop
+```
+
+The project-level reference is
+`docs/superpowers/specs/2026-06-02-core-algorithm-development-chain.md`.
+Future `/goal` prompts should choose the first incomplete stage in that chain
+unless current repo evidence proves a different algorithm stage is blocking.
+
+The immediate algorithm target is **Region-Graph-Guided Geometric Search v1**,
+after the current robustness/application smoke changes are integrated and the
+evidence root is regenerated from the committed HEAD. This target moves
+region-graph signals into `path-planner` path generation behavior while keeping
+`path-planner-route/v1`, `trajectory_kind=geometric_path`, PPO, network
+architecture, and candidate-list action space stable.
+
 ## Ubuntu One-Click Conda Setup
 
 Target environment:

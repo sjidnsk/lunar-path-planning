@@ -1,0 +1,37 @@
+{
+  "schema_version": "policy-robustness-application-smoke-config/v1",
+  "description": "Policy-Robustness Application Smoke v1 config. This applies a selected robustness audit profile to lightweight decision-log smoke records only; it does not run PPO, train policies, or change network/action-space behavior.",
+  "baseline_profile_id": "legacy",
+  "selected_profile_id": "sample_quality_aware",
+  "output_files": {
+    "application_summary": "policy-robustness-application-summary.json",
+    "comparison_summary": "policy-robustness-application-comparison-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "profiles": [
+    {
+      "id": "legacy",
+      "description": "Baseline decision smoke profile using the legacy candidate ordering from Policy Decision Robustness v1."
+    },
+    {
+      "id": "sample_quality_aware",
+      "description": "Selected robustness-aware smoke profile using sample-quality-aware Policy Decision Robustness v1 decisions."
+    }
+  ],
+  "non_goals": [
+    "no_large_scale_training",
+    "no_real_world_performance_claim",
+    "no_single_metric_improvement_claim",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_gcs_graph_search",
+    "no_gcs_trajectory_backend",
+    "no_vehicle_motion_feasibility_solver",
+    "no_ackermann_feasible_trajectory_claim",
+    "iris_and_region_graph_are_diagnostics_only"
+  ]
+}
