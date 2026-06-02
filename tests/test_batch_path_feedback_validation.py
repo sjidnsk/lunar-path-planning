@@ -142,6 +142,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 sampled_anchor_added = sampled_selected
                 sampled_anchor_connected = sampled_selected
                 sampled_connector_attempts = sampled_rankings
+                sampled_terminal_candidate_count = sampled_selected * 2
                 gate = {
                     "status": "failed" if open_grid else "passed",
                     "expected": False,
@@ -195,6 +196,34 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                     "sampled_region_path_connector_strategy_counts": {
                         "cost_aware_constrained_astar": sampled_connector_attempts,
                     },
+                    "sampled_region_path_terminal_adjusted_count": sampled_selected,
+                    "sampled_region_path_terminal_adjustment_candidate_count": sampled_terminal_candidate_count,
+                    "sampled_region_path_terminal_adjustment_status_counts": (
+                        {"selected": sampled_selected, "not_required": sampled_fallback}
+                        if sampled_fallback
+                        else {"selected": sampled_selected}
+                    ),
+                    "sampled_region_path_terminal_adjustment_reason_counts": (
+                        {
+                            "terminal_adjustment_selected": sampled_selected,
+                            "terminal_adjustment_not_required": sampled_fallback,
+                        }
+                        if sampled_fallback
+                        else {"terminal_adjustment_selected": sampled_selected}
+                    ),
+                    "sampled_region_path_execution_tie_break_status_counts": (
+                        {"selected": sampled_selected, "fallback": sampled_fallback}
+                        if sampled_fallback
+                        else {"selected": sampled_selected}
+                    ),
+                    "sampled_region_path_execution_tie_break_reason_counts": (
+                        {
+                            "execution_tie_break_improved": sampled_selected,
+                            "execution_tie_break_no_alternative": sampled_fallback,
+                        }
+                        if sampled_fallback
+                        else {"execution_tie_break_improved": sampled_selected}
+                    ),
                     "sampled_region_path_candidate_audit": [
                         {
                             "scenario_id": run_id,
@@ -214,6 +243,21 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                             "sample_attempt_count": sampled_attempts,
                             "candidate_ranking_count": sampled_rankings,
                             "candidate_metrics": {"candidate_cost_delta": 1.0 if sampled_fallback else -1.0},
+                            "terminal_adjustment_report": {
+                                "reason_code": (
+                                    "terminal_adjustment_not_required"
+                                    if sampled_fallback
+                                    else "terminal_adjustment_selected"
+                                ),
+                                "target_adjusted": not sampled_fallback,
+                            },
+                            "execution_tie_break": {
+                                "reason": (
+                                    "execution_tie_break_no_alternative"
+                                    if sampled_fallback
+                                    else "execution_tie_break_improved"
+                                )
+                            },
                         }
                     ],
                     "open_grid_fallback_used": open_grid,
@@ -429,10 +473,30 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
             summary["sampled_region_path_connector_strategy_counts"]["cost_aware_constrained_astar"],
             7,
         )
+        self.assertEqual(summary["sampled_region_path_terminal_adjusted_count"], 4)
+        self.assertEqual(summary["sampled_region_path_terminal_adjustment_candidate_count"], 8)
+        self.assertEqual(summary["sampled_region_path_terminal_adjustment_status_counts"]["selected"], 4)
+        self.assertEqual(summary["sampled_region_path_terminal_adjustment_status_counts"]["not_required"], 3)
+        self.assertEqual(
+            summary["sampled_region_path_terminal_adjustment_reason_counts"]["terminal_adjustment_selected"],
+            4,
+        )
+        self.assertEqual(
+            summary["sampled_region_path_execution_tie_break_reason_counts"]["execution_tie_break_improved"],
+            4,
+        )
+        self.assertEqual(
+            summary["sampled_region_path_execution_tie_break_reason_counts"]["execution_tie_break_no_alternative"],
+            3,
+        )
         self.assertEqual(len(summary["sampled_region_path_candidate_audit"]), 2)
         self.assertEqual(
             summary["sampled_region_path_candidate_audit"][1]["fallback_reason"],
             "sampled_candidate_not_better",
+        )
+        self.assertEqual(
+            summary["sampled_region_path_candidate_audit"][0]["execution_tie_break"]["reason"],
+            "execution_tie_break_improved",
         )
         self.assertEqual(summary["scenario_group_summary"]["smoke"]["scenario_count"], 2)
         self.assertEqual(summary["scenario_group_summary"]["stress"]["failure_count"], 3)

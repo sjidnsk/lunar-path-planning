@@ -515,6 +515,30 @@ def _build_evaluation_summary(
             parsed_summaries,
             "sampled_region_path_connector_strategy_counts",
         ),
+        "sampled_region_path_terminal_adjusted_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_terminal_adjusted_count",
+        ),
+        "sampled_region_path_terminal_adjustment_candidate_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_terminal_adjustment_candidate_count",
+        ),
+        "sampled_region_path_terminal_adjustment_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_terminal_adjustment_status_counts",
+        ),
+        "sampled_region_path_terminal_adjustment_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_terminal_adjustment_reason_counts",
+        ),
+        "sampled_region_path_execution_tie_break_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_execution_tie_break_status_counts",
+        ),
+        "sampled_region_path_execution_tie_break_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_execution_tie_break_reason_counts",
+        ),
         "sampled_region_path_candidate_audit": _aggregate_summary_list(
             parsed_summaries,
             "sampled_region_path_candidate_audit",
