@@ -463,6 +463,258 @@ def _build_evaluation_summary(
         "iris_fallback_count": _sum_summary_int(parsed_summaries, "iris_fallback_count"),
         "region_graph_fallback_count": _sum_summary_int(parsed_summaries, "region_graph_fallback_count"),
         "region_graph_disconnected_count": _sum_region_graph_disconnected(parsed_summaries),
+        "convex_region_report_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_report_count",
+        ),
+        "convex_region_count_total": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_count_total",
+        ),
+        "convex_region_backend_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "convex_region_backend_counts",
+        ),
+        "convex_region_fallback_used_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_fallback_used_count",
+        ),
+        "convex_region_gcs_ready_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_gcs_ready_count",
+        ),
+        "convex_region_blocked_cell_violation_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_blocked_cell_violation_count",
+        ),
+        "convex_region_coverage_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "convex_region_coverage_status_counts",
+        ),
+        "convex_region_gcs_ready_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "convex_region_gcs_ready_reason_counts",
+        ),
+        "convex_region_start_contained_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_start_contained_count",
+        ),
+        "convex_region_goal_contained_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_goal_contained_count",
+        ),
+        "convex_region_adjacent_overlap_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_adjacent_overlap_count",
+        ),
+        "convex_region_portal_count": _sum_summary_int(
+            parsed_summaries,
+            "convex_region_portal_count",
+        ),
+        "convex_region_candidate_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "convex_region_candidate_audit",
+        ),
+        "gcs_trajectory_report_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_trajectory_report_count",
+        ),
+        "gcs_trajectory_attempted_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_trajectory_attempted_count",
+        ),
+        "gcs_trajectory_success_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_trajectory_success_count",
+        ),
+        "gcs_trajectory_collision_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_trajectory_collision_count",
+        ),
+        "gcs_trajectory_region_count_total": _sum_summary_int(
+            parsed_summaries,
+            "gcs_trajectory_region_count_total",
+        ),
+        "gcs_trajectory_sample_count_total": _sum_summary_int(
+            parsed_summaries,
+            "gcs_trajectory_sample_count_total",
+        ),
+        "gcs_trajectory_backend_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_trajectory_backend_counts",
+        ),
+        "gcs_trajectory_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_trajectory_reason_counts",
+        ),
+        "gcs_trajectory_result_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_trajectory_result_status_counts",
+        ),
+        "gcs_trajectory_candidate_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "gcs_trajectory_candidate_audit",
+        ),
+        "gcs_candidate_report_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_report_count",
+        ),
+        "gcs_candidate_attempted_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_attempted_count",
+        ),
+        "gcs_candidate_available_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_available_count",
+        ),
+        "gcs_candidate_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_selected_count",
+        ),
+        "gcs_candidate_collision_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_collision_count",
+        ),
+        "gcs_candidate_fallback_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_candidate_fallback_reason_counts",
+        ),
+        "gcs_candidate_selection_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_candidate_selection_reason_counts",
+        ),
+        "gcs_candidate_cost_delta_vs_baseline_negative_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_cost_delta_vs_baseline_negative_count",
+        ),
+        "gcs_candidate_cost_delta_vs_baseline_positive_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_cost_delta_vs_baseline_positive_count",
+        ),
+        "gcs_candidate_cost_delta_vs_baseline_zero_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_candidate_cost_delta_vs_baseline_zero_count",
+        ),
+        "gcs_candidate_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "gcs_candidate_audit",
+        ),
+        "gcs_motion_feasibility_report_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_motion_feasibility_report_count",
+        ),
+        "gcs_motion_feasibility_evaluated_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_motion_feasibility_evaluated_count",
+        ),
+        "gcs_motion_feasibility_feasible_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_motion_feasibility_feasible_count",
+        ),
+        "gcs_motion_feasibility_infeasible_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_motion_feasibility_infeasible_count",
+        ),
+        "gcs_motion_feasibility_diagnostic_only_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_motion_feasibility_diagnostic_only_count",
+        ),
+        "gcs_motion_feasibility_curvature_violation_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_motion_feasibility_curvature_violation_count",
+        ),
+        "gcs_motion_feasibility_heading_violation_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_motion_feasibility_heading_violation_count",
+        ),
+        "gcs_motion_feasibility_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_motion_feasibility_status_counts",
+        ),
+        "gcs_motion_feasibility_fallback_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_motion_feasibility_fallback_reason_counts",
+        ),
+        "gcs_motion_feasibility_motion_model_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_motion_feasibility_motion_model_counts",
+        ),
+        "gcs_motion_feasibility_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "gcs_motion_feasibility_audit",
+        ),
+        "gcs_curvature_constrained_report_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_report_count",
+        ),
+        "gcs_curvature_constrained_attempted_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_attempted_count",
+        ),
+        "gcs_curvature_constrained_available_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_available_count",
+        ),
+        "gcs_curvature_constrained_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_selected_count",
+        ),
+        "gcs_curvature_constrained_repair_success_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_repair_success_count",
+        ),
+        "gcs_curvature_constrained_infeasible_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_infeasible_count",
+        ),
+        "gcs_curvature_constrained_diagnostic_only_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_diagnostic_only_count",
+        ),
+        "gcs_curvature_constrained_curvature_violation_count_before": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_curvature_violation_count_before",
+        ),
+        "gcs_curvature_constrained_curvature_violation_count_after": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_curvature_violation_count_after",
+        ),
+        "gcs_curvature_constrained_heading_violation_count_before": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_heading_violation_count_before",
+        ),
+        "gcs_curvature_constrained_heading_violation_count_after": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_heading_violation_count_after",
+        ),
+        "gcs_curvature_constrained_collision_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_collision_count",
+        ),
+        "gcs_curvature_constrained_region_containment_violation_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_curvature_constrained_region_containment_violation_count",
+        ),
+        "gcs_curvature_constrained_status_before_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_curvature_constrained_status_before_counts",
+        ),
+        "gcs_curvature_constrained_status_after_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_curvature_constrained_status_after_counts",
+        ),
+        "gcs_curvature_constrained_fallback_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_curvature_constrained_fallback_reason_counts",
+        ),
+        "gcs_curvature_constrained_repair_strategy_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_curvature_constrained_repair_strategy_counts",
+        ),
+        "gcs_curvature_constrained_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "gcs_curvature_constrained_audit",
+        ),
         "sampled_region_path_selected_count": _sum_summary_int(
             parsed_summaries,
             "sampled_region_path_selected_count",
@@ -499,6 +751,26 @@ def _build_evaluation_summary(
             parsed_summaries,
             "sampled_region_path_anchor_region_connected_count",
         ),
+        "sampled_region_path_anchor_closure_attempt_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_anchor_closure_attempt_count",
+        ),
+        "sampled_region_path_anchor_closure_connected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_anchor_closure_connected_count",
+        ),
+        "sampled_region_path_anchor_closure_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_anchor_closure_status_counts",
+        ),
+        "sampled_region_path_anchor_closure_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_anchor_closure_reason_counts",
+        ),
+        "sampled_region_path_anchor_closure_connection_kind_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_anchor_closure_connection_kind_counts",
+        ),
         "sampled_region_path_start_classification_counts": _aggregate_summary_counter(
             parsed_summaries,
             "sampled_region_path_start_classification_counts",
@@ -515,6 +787,70 @@ def _build_evaluation_summary(
             parsed_summaries,
             "sampled_region_path_connector_strategy_counts",
         ),
+        "sampled_region_path_bridge_aware_connector_attempt_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_connector_attempt_count",
+        ),
+        "sampled_region_path_bridge_aware_connector_available_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_connector_available_count",
+        ),
+        "sampled_region_path_bridge_aware_connector_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_connector_selected_count",
+        ),
+        "sampled_region_path_bridge_aware_connector_rejected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_connector_rejected_count",
+        ),
+        "sampled_region_path_bridge_aware_connector_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_connector_status_counts",
+        ),
+        "sampled_region_path_bridge_aware_fallback_reasons": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_fallback_reasons",
+        ),
+        "sampled_region_path_bridge_aware_bridge_cell_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_bridge_cell_count",
+        ),
+        "sampled_region_path_bridge_aware_mask_added_cell_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_aware_mask_added_cell_count",
+        ),
+        "sampled_region_path_bridge_corridor_connector_attempt_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_connector_attempt_count",
+        ),
+        "sampled_region_path_bridge_corridor_connector_available_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_connector_available_count",
+        ),
+        "sampled_region_path_bridge_corridor_connector_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_connector_selected_count",
+        ),
+        "sampled_region_path_bridge_corridor_connector_rejected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_connector_rejected_count",
+        ),
+        "sampled_region_path_bridge_corridor_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_status_counts",
+        ),
+        "sampled_region_path_bridge_corridor_fallback_reasons": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_fallback_reasons",
+        ),
+        "sampled_region_path_bridge_corridor_radius_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_radius_counts",
+        ),
+        "sampled_region_path_bridge_corridor_added_cell_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_bridge_corridor_added_cell_count",
+        ),
         "sampled_region_path_terminal_adjusted_count": _sum_summary_int(
             parsed_summaries,
             "sampled_region_path_terminal_adjusted_count",
@@ -530,6 +866,70 @@ def _build_evaluation_summary(
         "sampled_region_path_terminal_adjustment_reason_counts": _aggregate_summary_counter(
             parsed_summaries,
             "sampled_region_path_terminal_adjustment_reason_counts",
+        ),
+        "sampled_region_path_reachable_component_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_reachable_component_status_counts",
+        ),
+        "sampled_region_path_reachable_component_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_reachable_component_reason_counts",
+        ),
+        "sampled_region_path_reachable_component_disconnected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_reachable_component_disconnected_count",
+        ),
+        "sampled_region_path_reachable_component_replacement_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_reachable_component_replacement_selected_count",
+        ),
+        "sampled_region_path_reachable_component_terminal_candidate_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_reachable_component_terminal_candidate_count",
+        ),
+        "sampled_region_path_reachable_terminal_rescue_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_reachable_terminal_rescue_count",
+        ),
+        "sampled_region_path_proxy_goal_anchor_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_proxy_goal_anchor_selected_count",
+        ),
+        "sampled_region_path_goal_rescue_candidate_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_goal_rescue_candidate_count",
+        ),
+        "sampled_region_path_benefit_surface_present_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_benefit_surface_present_count",
+        ),
+        "sampled_region_path_path_duplicate_with_baseline_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_path_duplicate_with_baseline_count",
+        ),
+        "sampled_region_path_baseline_equivalent_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_baseline_equivalent_count",
+        ),
+        "sampled_region_path_no_quality_gain_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_no_quality_gain_count",
+        ),
+        "sampled_region_path_fixture_no_benefit_surface_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_fixture_no_benefit_surface_count",
+        ),
+        "sampled_region_path_candidate_missing_metrics_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_candidate_missing_metrics_count",
+        ),
+        "sampled_region_path_constrained_connector_failed_count": _sum_summary_int(
+            parsed_summaries,
+            "sampled_region_path_constrained_connector_failed_count",
+        ),
+        "sampled_region_path_complexity_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "sampled_region_path_complexity_reason_counts",
         ),
         "sampled_region_path_execution_tie_break_status_counts": _aggregate_summary_counter(
             parsed_summaries,

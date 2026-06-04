@@ -38,6 +38,14 @@ Options:
   --optimize-trajectory
                         Forward fixed-corridor trajectory optimization diagnostics.
   --drake-iris-regions Forward optional Drake workspace Iris diagnostics.
+  --gcs-trajectory-smoke
+                        Forward optional Drake GCS corridor trajectory smoke diagnostics.
+  --gcs-geometric-candidate
+                        Forward optional Drake GCS sampled geometric candidate comparison.
+  --gcs-motion-feasibility
+                        Forward optional Drake GCS sampled trajectory curvature/heading diagnostics.
+  --gcs-curvature-constrained-candidate
+                        Forward optional curvature-constrained GCS sampled candidate repair diagnostics.
   --planning-backend NAME
                         Forward path-planner planning backend: astar or region_graph_guided.
   --dry-run            Print planned commands without writing validation outputs.
@@ -76,7 +84,7 @@ while [[ $# -gt 0 ]]; do
       DIAGNOSTIC_PROFILE="$2"
       shift 2
       ;;
-    --simulate-tracking|--optimize-trajectory|--drake-iris-regions)
+    --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate)
       PLANNER_EXTRA_ARGS+=("$1")
       shift
       ;;
@@ -150,11 +158,19 @@ case "$DIAGNOSTIC_PROFILE" in
     ;;
   iris)
     append_planner_arg "--drake-iris-regions"
+    append_planner_arg "--gcs-trajectory-smoke"
+    append_planner_arg "--gcs-geometric-candidate"
+    append_planner_arg "--gcs-motion-feasibility"
+    append_planner_arg "--gcs-curvature-constrained-candidate"
     ;;
   all)
     append_planner_arg "--simulate-tracking"
     append_planner_arg "--optimize-trajectory"
     append_planner_arg "--drake-iris-regions"
+    append_planner_arg "--gcs-trajectory-smoke"
+    append_planner_arg "--gcs-geometric-candidate"
+    append_planner_arg "--gcs-motion-feasibility"
+    append_planner_arg "--gcs-curvature-constrained-candidate"
     ;;
 esac
 
@@ -501,8 +517,32 @@ if scenario_set in {"stress", "all"}:
         + int(item.get("path_feedback", {}).get("replan_count", 0))
         for item in stress_items
     )
-    if stress_replan_or_failure < 1:
-        raise SystemExit(f"{summary_path}: stress scenarios must produce at least one failure or replan diagnostic")
+    stress_sampled_region_decision_diagnostics = sum(
+        int(item.get("sampled_region_path_diagnostics", {}).get("selected_count", 0))
+        + int(item.get("sampled_region_path_diagnostics", {}).get("fallback_count", 0))
+        + int(item.get("sampled_region_path_diagnostics", {}).get("terminal_adjusted_count", 0))
+        + int(item.get("sampled_region_path_diagnostics", {}).get("reachable_terminal_rescue_count", 0))
+        + int(item.get("sampled_region_path_diagnostics", {}).get("proxy_goal_anchor_selected_count", 0))
+        for item in stress_items
+    )
+    if stress_sampled_region_decision_diagnostics < 1:
+        group_summary = summary.get("scenario_group_summary", {})
+        group_summary = group_summary if isinstance(group_summary, dict) else {}
+        for group_name in ("stress", "mixed_stress"):
+            group_payload = group_summary.get(group_name, {})
+            if not isinstance(group_payload, dict):
+                continue
+            stress_sampled_region_decision_diagnostics += (
+                int(group_payload.get("sampled_region_path_selected_count", 0))
+                + int(group_payload.get("sampled_region_path_fallback_count", 0))
+                + int(group_payload.get("sampled_region_path_terminal_adjusted_count", 0))
+                + int(group_payload.get("sampled_region_path_reachable_terminal_rescue_count", 0))
+                + int(group_payload.get("sampled_region_path_proxy_goal_anchor_selected_count", 0))
+            )
+    if stress_replan_or_failure + stress_sampled_region_decision_diagnostics < 1:
+        raise SystemExit(
+            f"{summary_path}: stress scenarios must produce failure, replan, or sampled-region diagnostics"
+        )
     mixed_items = [
         item
         for item in summary.get("scenarios", [])

@@ -40,6 +40,10 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--simulate-tracking", completed.stdout)
         self.assertIn("--optimize-trajectory", completed.stdout)
         self.assertIn("--drake-iris-regions", completed.stdout)
+        self.assertIn("--gcs-trajectory-smoke", completed.stdout)
+        self.assertIn("--gcs-geometric-candidate", completed.stdout)
+        self.assertIn("--gcs-motion-feasibility", completed.stdout)
+        self.assertIn("--gcs-curvature-constrained-candidate", completed.stdout)
         self.assertFalse(output_root.exists())
 
     def test_diagnostic_profiles_are_reflected_in_dry_run_commands(self) -> None:
@@ -68,6 +72,10 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertEqual(iris.returncode, 0, iris.stdout + iris.stderr)
         self.assertIn("Diagnostic profile: iris", iris.stdout)
         self.assertIn("--drake-iris-regions", iris.stdout)
+        self.assertIn("--gcs-trajectory-smoke", iris.stdout)
+        self.assertIn("--gcs-geometric-candidate", iris.stdout)
+        self.assertIn("--gcs-motion-feasibility", iris.stdout)
+        self.assertIn("--gcs-curvature-constrained-candidate", iris.stdout)
         self.assertFalse(output_root.exists())
 
         execution = subprocess.run(
@@ -123,6 +131,15 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("mixed_sampled_region_decision_diagnostics", content)
         self.assertIn("sampled_region_path_selected_count", content)
         self.assertIn("sampled-region decision diagnostics", content)
+
+    def test_stress_gate_accepts_sampled_region_decision_diagnostics(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        content = script.read_text(encoding="utf-8")
+
+        self.assertIn("stress_sampled_region_decision_diagnostics", content)
+        self.assertIn("sampled_region_path_reachable_terminal_rescue_count", content)
+        self.assertIn("stress scenarios must produce failure, replan, or sampled-region diagnostics", content)
 
     def test_dry_run_uses_auditable_python_executable_for_all_python_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
