@@ -125,6 +125,42 @@ terrain-cost stats, high-cost-exposure delta stats, and per-candidate audit
 rows. `pydrake` unavailable remains a `not_evaluated` diagnostic source rather
 than a fake success. These fields are additive and do not replace the default
 `path-planner-route/v1` reachable/path-cost semantics.
+The summary also writes `gcs_control_point_candidate_triage` with schema
+`gcs-control-point-candidate-triage-summary/v1` and
+`gcs_control_point_candidate_artifacts` with schema
+`gcs-control-point-candidate-artifact-index/v1`. The artifact index preserves
+stable per-candidate route/request JSON paths so a failed or blocked
+control-point route can be replayed by scenario/action. Current semi-real
+evidence should be read as candidate-quality triage: smoke scenarios can solve
+the control-point program but still be blocked by `cost_dominated` or
+`direction_cone_constraint_violation`; stress scenarios with disconnected region
+sequences are expected `not_evaluated` evidence, not hidden GCS success. These
+triage fields include `calibration_sweep` with schema
+`gcs-control-point-candidate-calibration-sweep/v1`; it is a recorded-candidate
+diagnostic sweep over terrain objective weight, second-difference weight,
+`direction_cone` rho/eta/tolerance, and quality gate thresholds. It requires a
+solver rerun before any default update, does not relax the safety gate, and does
+not make the control-point candidate the default route replacement.
+Use `scripts/export_gcs_control_point_candidate_triage.py` to extract this
+triage block from a `path-feedback-summary.json` into standalone JSON and
+Markdown review artifacts.
+Current triage evidence is rooted at
+`outputs/path_feedback_gcs_control_point_triage_current/`: the standalone
+triage artifacts are `gcs-control-point-candidate-triage-summary.json` and
+`gcs-control-point-candidate-triage-summary.md`. The current run reports 23
+candidates, 10 attempted, 10 successful solves, 0 selected, 23 route artifacts,
+and fallback counts of `cost_dominated=5`,
+`direction_cone_constraint_violation=5`, and `unsupported_route_replacement=13`;
+its recorded-candidate calibration sweep keeps `default_change_recommended=false`.
+`scripts/run_gcs_control_point_calibration_matrix.py` reruns those per-candidate
+request artifacts through an explicit solver parameter matrix and writes
+`gcs-control-point-calibration-matrix-summary/v1`. Current matrix evidence is
+rooted at `outputs/path_feedback_gcs_control_point_calibration_matrix_current/`:
+4 matrix settings, 23 candidates, 92 route artifacts, and
+`safety_regression_count=5`. No tested setting increased selected count; the
+`direction_cone_relaxed` setting reduced `direction_cone_constraint_violation`
+from 5 to 1 but increased `cost_dominated` from 5 to 9 and introduced terrain
+cost regression, so `recommendation=no_default_change_recommended`.
 The Markdown report now includes Diagnostic Interpretation and Candidate
 Diagnostics tables so stress and mixed-stress runs can explain target
 replacement, path-planning failure, replan triggers, IRIS fallback, region-graph

@@ -48,6 +48,16 @@ Options:
                         Forward optional curvature-constrained GCS sampled candidate repair diagnostics.
   --gcs-control-point-candidate
                         Forward optional control-point direction-cone GCS terrain-cost candidate diagnostics.
+  --gcs-control-point-terrain-weight VALUE
+                        Forward explicit control-point terrain objective weight.
+  --gcs-control-point-second-difference-weight VALUE
+                        Forward explicit control-point second-difference objective weight.
+  --gcs-control-point-direction-cone-max-error-deg VALUE
+                        Forward explicit control-point direction_cone tolerance in degrees.
+  --gcs-control-point-direction-cone-rho-floor-m VALUE
+                        Forward explicit control-point direction_cone rho floor in meters.
+  --gcs-control-point-direction-cone-seed-rho-ratio VALUE
+                        Forward explicit control-point direction_cone seed-distance rho ratio.
   --planning-backend NAME
                         Forward path-planner planning backend: astar or region_graph_guided.
   --dry-run            Print planned commands without writing validation outputs.
@@ -89,6 +99,11 @@ while [[ $# -gt 0 ]]; do
     --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate|--gcs-control-point-candidate)
       PLANNER_EXTRA_ARGS+=("$1")
       shift
+      ;;
+    --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio)
+      require_value "$1" "${2:-}"
+      PLANNER_EXTRA_ARGS+=("$1" "$2")
+      shift 2
       ;;
     --planning-backend)
       require_value "$1" "${2:-}"
@@ -153,6 +168,17 @@ append_planner_arg() {
   PLANNER_EXTRA_ARGS+=("$candidate")
 }
 
+has_planner_arg() {
+  local candidate="$1"
+  local arg
+  for arg in "${PLANNER_EXTRA_ARGS[@]}"; do
+    if [[ "$arg" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 case "$DIAGNOSTIC_PROFILE" in
   execution)
     append_planner_arg "--simulate-tracking"
@@ -175,6 +201,18 @@ case "$DIAGNOSTIC_PROFILE" in
     append_planner_arg "--gcs-curvature-constrained-candidate"
     ;;
 esac
+
+for calibration_arg in \
+  --gcs-control-point-terrain-weight \
+  --gcs-control-point-second-difference-weight \
+  --gcs-control-point-direction-cone-max-error-deg \
+  --gcs-control-point-direction-cone-rho-floor-m \
+  --gcs-control-point-direction-cone-seed-rho-ratio; do
+  if has_planner_arg "$calibration_arg" && ! has_planner_arg "--gcs-control-point-candidate"; then
+    echo "$calibration_arg requires --gcs-control-point-candidate" >&2
+    exit 2
+  fi
+done
 
 ACCEPTANCE_GATE="custom"
 if [[ "$SCENARIO_SET" == "all" && "$DIAGNOSTIC_PROFILE" == "all" && "$TOP_K" == "3" ]]; then

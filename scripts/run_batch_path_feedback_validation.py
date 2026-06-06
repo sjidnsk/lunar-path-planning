@@ -16,6 +16,13 @@ MATRIX_SCHEMA_VERSION = "path-feedback-batch-matrix/v1"
 RUN_INDEX_SCHEMA_VERSION = "path-feedback-batch-run-index/v1"
 EVALUATION_SUMMARY_SCHEMA_VERSION = "path-feedback-batch-evaluation-summary/v1"
 SUMMARY_SCHEMA_VERSION = "path-feedback-summary/v1"
+GCS_CONTROL_POINT_CANDIDATE_TRIAGE_SCHEMA_VERSION = "gcs-control-point-candidate-triage-summary/v1"
+GCS_CONTROL_POINT_CANDIDATE_ARTIFACT_INDEX_SCHEMA_VERSION = (
+    "gcs-control-point-candidate-artifact-index/v1"
+)
+GCS_CONTROL_POINT_CANDIDATE_CALIBRATION_SWEEP_SCHEMA_VERSION = (
+    "gcs-control-point-candidate-calibration-sweep/v1"
+)
 SCENARIO_SETS = {"smoke", "stress", "all"}
 DIAGNOSTIC_PROFILES = {"baseline", "execution", "iris", "all"}
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
@@ -445,6 +452,11 @@ def _build_evaluation_summary(
         for code in record["reason_codes"]
     )
     open_grid_count = sum(1 for summary in parsed_summaries if summary.get("open_grid_fallback_used") is True)
+    control_point_artifacts = _aggregate_control_point_artifacts(parsed_summaries)
+    control_point_triage = _aggregate_control_point_triage(
+        parsed_summaries,
+        route_artifact_count=int(control_point_artifacts["route_artifact_count"]),
+    )
 
     return {
         "schema_version": EVALUATION_SUMMARY_SCHEMA_VERSION,
@@ -755,6 +767,8 @@ def _build_evaluation_summary(
             parsed_summaries,
             "gcs_control_point_candidate_audit",
         ),
+        "gcs_control_point_candidate_artifacts": control_point_artifacts,
+        "gcs_control_point_candidate_triage": control_point_triage,
         "sampled_region_path_selected_count": _sum_summary_int(
             parsed_summaries,
             "sampled_region_path_selected_count",
@@ -1060,6 +1074,221 @@ def _aggregate_scenario_groups(summaries: list[dict[str, Any]]) -> dict[str, dic
     return dict(sorted(aggregate.items()))
 
 
+def _aggregate_control_point_artifacts(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
+    artifact_roots: list[str] = []
+    for summary in summaries:
+        artifact_index = summary.get("gcs_control_point_candidate_artifacts")
+        if not isinstance(artifact_index, dict):
+            continue
+        artifact_root = artifact_index.get("artifact_root")
+        if artifact_root:
+            artifact_roots.append(str(artifact_root))
+        raw_entries = artifact_index.get("entries")
+        if isinstance(raw_entries, list):
+            entries.extend(entry for entry in raw_entries if isinstance(entry, dict))
+    return {
+        "schema_version": GCS_CONTROL_POINT_CANDIDATE_ARTIFACT_INDEX_SCHEMA_VERSION,
+        "artifact_roots": sorted(artifact_roots),
+        "candidate_count": len(entries),
+        "route_artifact_count": sum(1 for entry in entries if entry.get("route_artifact")),
+        "entries": entries,
+    }
+
+
+def _aggregate_control_point_triage(
+    summaries: list[dict[str, Any]],
+    *,
+    route_artifact_count: int,
+) -> dict[str, Any]:
+    fallback_reason_counts: Counter[str] = Counter()
+    terrain_source_counts: Counter[str] = Counter()
+    blocker_class_counts: Counter[str] = Counter()
+    candidates: list[dict[str, Any]] = []
+    attempted_count = 0
+    success_count = 0
+    selected_count = 0
+    for summary in summaries:
+        triage = summary.get("gcs_control_point_candidate_triage")
+        if not isinstance(triage, dict):
+            continue
+        attempted_count += _int_or_zero(triage.get("attempted_count"))
+        success_count += _int_or_zero(triage.get("success_count"))
+        selected_count += _int_or_zero(triage.get("selected_count"))
+        fallback_reason_counts.update(_counter_payload(triage.get("fallback_reason_counts")))
+        terrain_source_counts.update(_counter_payload(triage.get("terrain_objective_source_counts")))
+        blocker_class_counts.update(_counter_payload(triage.get("blocker_class_counts")))
+        raw_candidates = triage.get("candidates")
+        if isinstance(raw_candidates, list):
+            candidates.extend(item for item in raw_candidates if isinstance(item, dict))
+    return {
+        "schema_version": GCS_CONTROL_POINT_CANDIDATE_TRIAGE_SCHEMA_VERSION,
+        "candidate_count": len(candidates),
+        "attempted_count": attempted_count,
+        "success_count": success_count,
+        "selected_count": selected_count,
+        "route_artifact_count": route_artifact_count,
+        "fallback_reason_counts": dict(sorted(fallback_reason_counts.items())),
+        "terrain_objective_source_counts": dict(sorted(terrain_source_counts.items())),
+        "blocker_class_counts": dict(sorted(blocker_class_counts.items())),
+        "sampled_terrain_cost": _aggregate_nested_metric_stats(
+            summaries,
+            "gcs_control_point_candidate_triage",
+            "sampled_terrain_cost",
+        ),
+        "high_cost_exposure_delta_vs_baseline": _aggregate_nested_metric_stats(
+            summaries,
+            "gcs_control_point_candidate_triage",
+            "high_cost_exposure_delta_vs_baseline",
+        ),
+        "calibration_sweep": _control_point_calibration_sweep(
+            candidates,
+            fallback_reason_counts=fallback_reason_counts,
+        ),
+        "candidates": candidates,
+    }
+
+
+def _control_point_calibration_sweep(
+    candidates: list[dict[str, Any]],
+    *,
+    fallback_reason_counts: Counter[str],
+) -> dict[str, Any]:
+    quality_blocked = [
+        candidate
+        for candidate in candidates
+        if candidate.get("candidate_fallback_reason") == "cost_dominated"
+    ]
+    direction_blocked = [
+        candidate
+        for candidate in candidates
+        if candidate.get("candidate_fallback_reason") == "direction_cone_constraint_violation"
+        or _int_or_zero(candidate.get("direction_cone_violation_count")) > 0
+        or bool(candidate.get("direction_cone_risk_flags"))
+    ]
+    unsupported = [
+        candidate
+        for candidate in candidates
+        if candidate.get("candidate_fallback_reason") == "unsupported_route_replacement"
+    ]
+    conservative_gate_candidates = [
+        candidate
+        for candidate in quality_blocked
+        if _non_positive_summary_number(candidate.get("cost_delta_vs_baseline"))
+        and _non_positive_summary_number(candidate.get("high_cost_exposure_delta_vs_baseline"))
+        and candidate.get("motion_feasibility_status") in {None, "feasible"}
+        and _int_or_zero(candidate.get("direction_cone_violation_count")) == 0
+        and not candidate.get("direction_cone_risk_flags")
+    ]
+    default_change_reason = "no_control_point_candidates_reported"
+    if candidates:
+        default_change_reason = "requires_solver_rerun_and_no_safety_diagnostic_degradation"
+        if quality_blocked or direction_blocked:
+            default_change_reason = "recorded_candidates_remain_blocked_by_quality_or_direction_cone_gate"
+    return {
+        "schema_version": GCS_CONTROL_POINT_CANDIDATE_CALIBRATION_SWEEP_SCHEMA_VERSION,
+        "mode": "recorded_candidate_gate_diagnostics",
+        "solver_rerun_required": True,
+        "default_change_recommended": False,
+        "default_change_reason": default_change_reason,
+        "sweep_dimensions": [
+            "terrain_objective_weight",
+            "control_point_second_difference_quadratic_weight",
+            "direction_cone_rho_eta_tolerance",
+            "quality_gate_thresholds",
+        ],
+        "observed_current_values": {
+            "terrain_objective_weight": _unique_summary_numbers(candidates, "terrain_objective_weight"),
+            "second_difference_weight": _unique_summary_numbers(candidates, "second_difference_weight"),
+            "direction_cone_eta": _unique_summary_numbers(candidates, "direction_cone_eta"),
+            "direction_cone_rho_min": _unique_summary_numbers(candidates, "direction_cone_rho_min"),
+            "direction_cone_tolerance_deg": _unique_summary_numbers(
+                candidates,
+                "direction_cone_tolerance_deg",
+            ),
+            "direction_cone_rho_source_counts": _aggregate_candidate_counter(
+                candidates,
+                "direction_cone_rho_source_counts",
+            ),
+        },
+        "candidate_gate_outcomes": {
+            "quality_gate_blocked_count": len(quality_blocked),
+            "direction_cone_blocked_count": len(direction_blocked),
+            "expected_not_evaluated_count": len(unsupported),
+            "fallback_reason_counts": dict(sorted(fallback_reason_counts.items())),
+            "conservative_gate_relaxation_candidate_count": len(conservative_gate_candidates),
+            "unsafe_or_unproven_quality_relaxation_count": max(
+                0,
+                len(quality_blocked) - len(conservative_gate_candidates),
+            ),
+        },
+        "safety_regression_guard": {
+            "terrain_cost_degradation_allowed": False,
+            "high_cost_exposure_degradation_allowed": False,
+            "collision_degradation_allowed": False,
+            "direction_cone_degradation_allowed": False,
+            "motion_diagnostic_degradation_allowed": False,
+            "default_gate_relaxation_allowed_without_evidence": False,
+        },
+        "next_solver_rerun_matrix": [
+            {
+                "dimension": "terrain_objective_weight",
+                "target_blocker": "cost_dominated",
+                "acceptance": "lower_sampled_terrain_cost_and_high_cost_exposure_without_collision_or_direction_cone_regression",
+            },
+            {
+                "dimension": "control_point_second_difference_quadratic_weight",
+                "target_blocker": "cost_dominated_or_motion_diagnostic_regression",
+                "acceptance": "smoother_control_points_without_region_or_motion_feasibility_regression",
+            },
+            {
+                "dimension": "direction_cone_rho_eta_tolerance",
+                "target_blocker": "direction_cone_constraint_violation",
+                "acceptance": "fewer_direction_cone_violations_without_motion_or_collision_regression",
+            },
+            {
+                "dimension": "quality_gate_thresholds",
+                "target_blocker": "candidate_selected_count_zero",
+                "acceptance": "selected_count_can_increase_only_when_cost_and_safety_metrics_do_not_degrade",
+            },
+        ],
+    }
+
+
+def _non_positive_summary_number(value: Any) -> bool:
+    number = _summary_float(value)
+    return number is not None and number <= 0.0
+
+
+def _unique_summary_numbers(candidates: list[dict[str, Any]], key: str) -> list[float]:
+    values = {_summary_float(candidate.get(key)) for candidate in candidates}
+    return sorted(value for value in values if value is not None)
+
+
+def _aggregate_candidate_counter(candidates: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for candidate in candidates:
+        payload = candidate.get(key)
+        if not isinstance(payload, dict):
+            continue
+        counts.update(_counter_payload(payload))
+    return dict(sorted(counts.items()))
+
+
+def _int_or_zero(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _counter_payload(value: Any) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    if not isinstance(value, dict):
+        return counts
+    for key, count in value.items():
+        if isinstance(count, int) and not isinstance(count, bool):
+            counts[str(key)] += count
+    return counts
+
+
 def _sum_summary_int(summaries: list[dict[str, Any]], key: str) -> int:
     total = 0
     for summary in summaries:
@@ -1092,6 +1321,46 @@ def _aggregate_summary_list(summaries: list[dict[str, Any]], key: str) -> list[A
         if isinstance(payload, list):
             items.extend(payload)
     return items
+
+
+def _aggregate_nested_metric_stats(
+    summaries: list[dict[str, Any]],
+    parent_key: str,
+    metric_key: str,
+) -> dict[str, Any]:
+    count = 0
+    weighted_total = 0.0
+    minimum: float | None = None
+    maximum: float | None = None
+    for summary in summaries:
+        parent = summary.get(parent_key)
+        if not isinstance(parent, dict):
+            continue
+        metric = parent.get(metric_key)
+        if not isinstance(metric, dict):
+            continue
+        item_count = metric.get("count", 0)
+        if isinstance(item_count, bool) or not isinstance(item_count, int) or item_count <= 0:
+            continue
+        item_mean = _summary_float(metric.get("mean"))
+        if item_mean is None:
+            continue
+        count += item_count
+        weighted_total += item_mean * item_count
+        item_min = _summary_float(metric.get("min"))
+        item_max = _summary_float(metric.get("max"))
+        if item_min is not None:
+            minimum = item_min if minimum is None else min(minimum, item_min)
+        if item_max is not None:
+            maximum = item_max if maximum is None else max(maximum, item_max)
+    if count == 0:
+        return {"count": 0, "min": None, "max": None, "mean": None}
+    return {
+        "count": count,
+        "min": minimum,
+        "max": maximum,
+        "mean": weighted_total / count,
+    }
 
 
 def _aggregate_summary_metric_stats(summaries: list[dict[str, Any]], prefix: str) -> dict[str, Any]:

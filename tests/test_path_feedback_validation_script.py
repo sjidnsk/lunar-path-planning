@@ -77,6 +77,51 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--gcs-control-point-candidate", completed.stdout)
         self.assertFalse(output_root.exists())
 
+    def test_control_point_calibration_args_are_explicitly_forwarded(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        output_root = Path(tempfile.mkdtemp(prefix="path-feedback-control-point-calibration-")) / "out"
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--scenario-set",
+                "all",
+                "--diagnostic-profile",
+                "all",
+                "--top-k",
+                "3",
+                "--gcs-control-point-candidate",
+                "--gcs-control-point-terrain-weight",
+                "0.08",
+                "--gcs-control-point-second-difference-weight",
+                "0.35",
+                "--gcs-control-point-direction-cone-max-error-deg",
+                "35",
+                "--gcs-control-point-direction-cone-rho-floor-m",
+                "0.04",
+                "--gcs-control-point-direction-cone-seed-rho-ratio",
+                "0.08",
+                "--output-root",
+                str(output_root),
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("--gcs-control-point-candidate", completed.stdout)
+        self.assertIn("--gcs-control-point-terrain-weight 0.08", completed.stdout)
+        self.assertIn("--gcs-control-point-second-difference-weight 0.35", completed.stdout)
+        self.assertIn("--gcs-control-point-direction-cone-max-error-deg 35", completed.stdout)
+        self.assertIn("--gcs-control-point-direction-cone-rho-floor-m 0.04", completed.stdout)
+        self.assertIn("--gcs-control-point-direction-cone-seed-rho-ratio 0.08", completed.stdout)
+        self.assertFalse(output_root.exists())
+
     def test_diagnostic_profiles_are_reflected_in_dry_run_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "run_path_feedback_validation.sh"

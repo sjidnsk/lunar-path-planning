@@ -540,6 +540,120 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                         }
                         for index in range(gcs_control_point_report_count)
                     ],
+                    "gcs_control_point_candidate_artifacts": {
+                        "schema_version": "gcs-control-point-candidate-artifact-index/v1",
+                        "artifact_root": str(output_root / "gcs_control_point_candidate_artifacts"),
+                        "candidate_count": gcs_control_point_report_count,
+                        "route_artifact_count": gcs_control_point_report_count,
+                        "entries": [
+                            {
+                                "scenario_id": "fake",
+                                "scenario_group": scenario_set,
+                                "action_index": index,
+                                "cell": [index, index + 1],
+                                "route_artifact": str(
+                                    output_root
+                                    / "gcs_control_point_candidate_artifacts"
+                                    / f"action-{index:03d}"
+                                    / "path-planner-route.json"
+                                ),
+                                "backend": "pydrake_control_point_direction_cone_program",
+                                "candidate_selected": index < gcs_control_point_selected_count,
+                                "candidate_fallback_reason": (
+                                    None
+                                    if index < gcs_control_point_success_count
+                                    else "sampled_trajectory_collision"
+                                ),
+                            }
+                            for index in range(gcs_control_point_report_count)
+                        ],
+                    },
+                    "gcs_control_point_candidate_triage": {
+                        "schema_version": "gcs-control-point-candidate-triage-summary/v1",
+                        "candidate_count": gcs_control_point_report_count,
+                        "attempted_count": gcs_control_point_attempted_count,
+                        "success_count": gcs_control_point_success_count,
+                        "selected_count": gcs_control_point_selected_count,
+                        "route_artifact_count": gcs_control_point_report_count,
+                        "fallback_reason_counts": (
+                            {"sampled_trajectory_collision": gcs_control_point_fallback_count}
+                            if gcs_control_point_fallback_count
+                            else {}
+                        ),
+                        "terrain_objective_source_counts": (
+                            {
+                                "region_inverse_cost_weighted_passable_cell_centroid": (
+                                    gcs_control_point_terrain_count
+                                ),
+                                "not_evaluated": (
+                                    gcs_control_point_report_count - gcs_control_point_terrain_count
+                                ),
+                            }
+                            if gcs_control_point_report_count
+                            else {}
+                        ),
+                        "blocker_class_counts": (
+                            {
+                                "selected": gcs_control_point_selected_count,
+                                "solver_or_region_sequence_not_successful": gcs_control_point_fallback_count,
+                            }
+                            if gcs_control_point_report_count
+                            else {}
+                        ),
+                        "sampled_terrain_cost": {
+                            "count": gcs_control_point_terrain_count,
+                            "min": 4.0 if gcs_control_point_terrain_count else None,
+                            "max": 6.0 if gcs_control_point_terrain_count else None,
+                            "mean": 5.0 if gcs_control_point_terrain_count else None,
+                        },
+                        "high_cost_exposure_delta_vs_baseline": {
+                            "count": gcs_control_point_terrain_count,
+                            "min": -2.0 if gcs_control_point_terrain_count else None,
+                            "max": 0.0 if gcs_control_point_terrain_count else None,
+                            "mean": -1.0 if gcs_control_point_terrain_count else None,
+                        },
+                        "candidates": [
+                            {
+                                "scenario_id": "fake",
+                                "action_index": index,
+                                "candidate_selected": index < gcs_control_point_selected_count,
+                                "candidate_fallback_reason": (
+                                    None
+                                    if index < gcs_control_point_success_count
+                                    else "sampled_trajectory_collision"
+                                ),
+                                "terrain_objective_weight": (
+                                    0.05 if index < gcs_control_point_terrain_count else None
+                                ),
+                                "sampled_terrain_cost": (
+                                    5.0 if index < gcs_control_point_terrain_count else None
+                                ),
+                                "high_cost_exposure_delta_vs_baseline": (
+                                    -1.0 if index < gcs_control_point_terrain_count else None
+                                ),
+                                "direction_cone_violation_count": 0,
+                                "direction_cone_eta": 1.0,
+                                "direction_cone_rho_min": 0.025,
+                                "direction_cone_tolerance_deg": 45.0,
+                                "direction_cone_rho_source_counts": {
+                                    "seed_distance_portal_support_min": 1
+                                },
+                                "second_difference_weight": 0.2,
+                                "motion_feasibility_status": (
+                                    "feasible"
+                                    if index < gcs_control_point_success_count
+                                    else "diagnostic_only"
+                                ),
+                                "route_artifact": str(
+                                    output_root
+                                    / "gcs_control_point_candidate_artifacts"
+                                    / f"action-{index:03d}"
+                                    / "path-planner-route.json"
+                                ),
+                            }
+                            for index in range(gcs_control_point_report_count)
+                        ],
+                    },
                     "sampled_region_path_selected_count": sampled_selected,
                     "sampled_region_path_fallback_count": sampled_fallback,
                     "sampled_region_path_status_counts": {
@@ -1185,6 +1299,46 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(summary["gcs_control_point_high_cost_exposure_delta_max"], 0.0)
         self.assertEqual(summary["gcs_control_point_high_cost_exposure_delta_mean"], -1.0)
         self.assertEqual(len(summary["gcs_control_point_candidate_audit"]), 6)
+        triage = summary["gcs_control_point_candidate_triage"]
+        self.assertEqual(triage["schema_version"], "gcs-control-point-candidate-triage-summary/v1")
+        self.assertEqual(triage["candidate_count"], 6)
+        self.assertEqual(triage["attempted_count"], 6)
+        self.assertEqual(triage["success_count"], 3)
+        self.assertEqual(triage["selected_count"], 3)
+        self.assertEqual(triage["route_artifact_count"], 6)
+        self.assertEqual(triage["fallback_reason_counts"]["sampled_trajectory_collision"], 3)
+        self.assertEqual(
+            triage["terrain_objective_source_counts"]["region_inverse_cost_weighted_passable_cell_centroid"],
+            3,
+        )
+        self.assertEqual(triage["terrain_objective_source_counts"]["not_evaluated"], 3)
+        self.assertEqual(triage["sampled_terrain_cost"]["count"], 3)
+        self.assertEqual(triage["sampled_terrain_cost"]["mean"], 5.0)
+        self.assertEqual(triage["high_cost_exposure_delta_vs_baseline"]["count"], 3)
+        self.assertEqual(triage["high_cost_exposure_delta_vs_baseline"]["mean"], -1.0)
+        sweep = triage["calibration_sweep"]
+        self.assertEqual(
+            sweep["schema_version"],
+            "gcs-control-point-candidate-calibration-sweep/v1",
+        )
+        self.assertFalse(sweep["default_change_recommended"])
+        self.assertTrue(sweep["solver_rerun_required"])
+        self.assertIn("direction_cone_rho_eta_tolerance", sweep["sweep_dimensions"])
+        self.assertEqual(sweep["observed_current_values"]["terrain_objective_weight"], [0.05])
+        self.assertEqual(sweep["observed_current_values"]["second_difference_weight"], [0.2])
+        self.assertEqual(
+            sweep["observed_current_values"]["direction_cone_rho_source_counts"][
+                "seed_distance_portal_support_min"
+            ],
+            6,
+        )
+        self.assertFalse(sweep["safety_regression_guard"]["terrain_cost_degradation_allowed"])
+        self.assertEqual(len(triage["candidates"]), 6)
+        artifacts = summary["gcs_control_point_candidate_artifacts"]
+        self.assertEqual(artifacts["schema_version"], "gcs-control-point-candidate-artifact-index/v1")
+        self.assertEqual(artifacts["candidate_count"], 6)
+        self.assertEqual(artifacts["route_artifact_count"], 6)
+        self.assertEqual(len(artifacts["entries"]), 6)
 
     def test_failed_single_run_still_writes_failure_records_and_nonzero_exit(self) -> None:
         output_root = self.temp_dir / "batch"
