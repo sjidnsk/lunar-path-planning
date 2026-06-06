@@ -46,6 +46,8 @@ Options:
                         Forward optional Drake GCS sampled trajectory curvature/heading diagnostics.
   --gcs-curvature-constrained-candidate
                         Forward optional curvature-constrained GCS sampled candidate repair diagnostics.
+  --gcs-control-point-candidate
+                        Forward optional control-point direction-cone GCS terrain-cost candidate diagnostics.
   --planning-backend NAME
                         Forward path-planner planning backend: astar or region_graph_guided.
   --dry-run            Print planned commands without writing validation outputs.
@@ -84,7 +86,7 @@ while [[ $# -gt 0 ]]; do
       DIAGNOSTIC_PROFILE="$2"
       shift 2
       ;;
-    --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate)
+    --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate|--gcs-control-point-candidate)
       PLANNER_EXTRA_ARGS+=("$1")
       shift
       ;;

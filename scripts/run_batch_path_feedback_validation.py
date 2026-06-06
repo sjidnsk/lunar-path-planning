@@ -715,6 +715,46 @@ def _build_evaluation_summary(
             parsed_summaries,
             "gcs_curvature_constrained_audit",
         ),
+        "gcs_control_point_report_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_control_point_report_count",
+        ),
+        "gcs_control_point_attempted_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_control_point_attempted_count",
+        ),
+        "gcs_control_point_success_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_control_point_success_count",
+        ),
+        "gcs_control_point_backend_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_control_point_backend_counts",
+        ),
+        "gcs_control_point_candidate_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "gcs_control_point_candidate_selected_count",
+        ),
+        "gcs_control_point_candidate_fallback_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_control_point_candidate_fallback_reason_counts",
+        ),
+        "gcs_control_point_terrain_objective_source_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "gcs_control_point_terrain_objective_source_counts",
+        ),
+        **_aggregate_summary_metric_stats(
+            parsed_summaries,
+            "gcs_control_point_sampled_terrain_cost",
+        ),
+        **_aggregate_summary_metric_stats(
+            parsed_summaries,
+            "gcs_control_point_high_cost_exposure_delta",
+        ),
+        "gcs_control_point_candidate_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "gcs_control_point_candidate_audit",
+        ),
         "sampled_region_path_selected_count": _sum_summary_int(
             parsed_summaries,
             "sampled_region_path_selected_count",
@@ -1052,6 +1092,57 @@ def _aggregate_summary_list(summaries: list[dict[str, Any]], key: str) -> list[A
         if isinstance(payload, list):
             items.extend(payload)
     return items
+
+
+def _aggregate_summary_metric_stats(summaries: list[dict[str, Any]], prefix: str) -> dict[str, Any]:
+    count_key = f"{prefix}_count"
+    min_key = f"{prefix}_min"
+    max_key = f"{prefix}_max"
+    mean_key = f"{prefix}_mean"
+    count = 0
+    weighted_total = 0.0
+    minimum: float | None = None
+    maximum: float | None = None
+    for summary in summaries:
+        item_count = summary.get(count_key, 0)
+        if isinstance(item_count, bool) or not isinstance(item_count, int) or item_count <= 0:
+            continue
+        item_mean = _summary_float(summary.get(mean_key))
+        if item_mean is None:
+            continue
+        count += item_count
+        weighted_total += item_mean * item_count
+        item_min = _summary_float(summary.get(min_key))
+        item_max = _summary_float(summary.get(max_key))
+        if item_min is not None:
+            minimum = item_min if minimum is None else min(minimum, item_min)
+        if item_max is not None:
+            maximum = item_max if maximum is None else max(maximum, item_max)
+    if count == 0:
+        return {
+            count_key: 0,
+            min_key: None,
+            max_key: None,
+            mean_key: None,
+        }
+    return {
+        count_key: count,
+        min_key: minimum,
+        max_key: maximum,
+        mean_key: float(weighted_total / count),
+    }
+
+
+def _summary_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return number
 
 
 def _sum_region_graph_disconnected(summaries: list[dict[str, Any]]) -> int:

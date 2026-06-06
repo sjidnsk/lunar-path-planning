@@ -45,6 +45,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 scenario_set=""
                 diagnostic_profile=""
                 top_k=""
+                control_point_requested=0
                 while [[ $# -gt 0 ]]; do
                   case "$1" in
                     --output-root)
@@ -64,6 +65,10 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                       shift 2
                       ;;
                     --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate)
+                      shift
+                      ;;
+                    --gcs-control-point-candidate)
+                      control_point_requested=1
                       shift
                       ;;
                     *)
@@ -88,7 +93,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                   exit 7
                 fi
 
-                "$python_bin" - "$output_root" "$scenario_set" "$diagnostic_profile" "$top_k" <<'PY'
+                "$python_bin" - "$output_root" "$scenario_set" "$diagnostic_profile" "$top_k" "$control_point_requested" <<'PY'
                 import json
                 import sys
                 from pathlib import Path
@@ -97,6 +102,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 scenario_set = sys.argv[2]
                 diagnostic_profile = sys.argv[3]
                 top_k = int(sys.argv[4])
+                control_point_requested = sys.argv[5] == "1"
                 run_id = output_root.name
                 open_grid = run_id == "open-grid-fail"
 
@@ -188,6 +194,12 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 gcs_curvature_repair_success_count = 0
                 gcs_curvature_infeasible_count = 0
                 gcs_curvature_diagnostic_only_count = gcs_collision_count
+                gcs_control_point_report_count = gcs_report_count if control_point_requested else 0
+                gcs_control_point_attempted_count = gcs_control_point_report_count
+                gcs_control_point_success_count = gcs_success_count if control_point_requested else 0
+                gcs_control_point_selected_count = gcs_success_count if control_point_requested else 0
+                gcs_control_point_fallback_count = gcs_collision_count if control_point_requested else 0
+                gcs_control_point_terrain_count = gcs_success_count if control_point_requested else 0
                 gate = {
                     "status": "failed" if open_grid else "passed",
                     "expected": False,
@@ -450,6 +462,83 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                             "region_containment_violation_count": 0,
                         }
                         for index in range(gcs_curvature_report_count)
+                    ],
+                    "gcs_control_point_report_count": gcs_control_point_report_count,
+                    "gcs_control_point_attempted_count": gcs_control_point_attempted_count,
+                    "gcs_control_point_success_count": gcs_control_point_success_count,
+                    "gcs_control_point_backend_counts": (
+                        {
+                            "pydrake_control_point_direction_cone_program": (
+                                gcs_control_point_report_count
+                            )
+                        }
+                        if gcs_control_point_report_count
+                        else {}
+                    ),
+                    "gcs_control_point_candidate_selected_count": gcs_control_point_selected_count,
+                    "gcs_control_point_candidate_fallback_reason_counts": (
+                        {"sampled_trajectory_collision": gcs_control_point_fallback_count}
+                        if gcs_control_point_fallback_count
+                        else {}
+                    ),
+                    "gcs_control_point_terrain_objective_source_counts": (
+                        {
+                            "region_inverse_cost_weighted_passable_cell_centroid": (
+                                gcs_control_point_terrain_count
+                            ),
+                            "not_evaluated": (
+                                gcs_control_point_report_count - gcs_control_point_terrain_count
+                            ),
+                        }
+                        if gcs_control_point_report_count
+                        else {}
+                    ),
+                    "gcs_control_point_sampled_terrain_cost_count": gcs_control_point_terrain_count,
+                    "gcs_control_point_sampled_terrain_cost_min": (
+                        4.0 if gcs_control_point_terrain_count else None
+                    ),
+                    "gcs_control_point_sampled_terrain_cost_max": (
+                        6.0 if gcs_control_point_terrain_count else None
+                    ),
+                    "gcs_control_point_sampled_terrain_cost_mean": (
+                        5.0 if gcs_control_point_terrain_count else None
+                    ),
+                    "gcs_control_point_high_cost_exposure_delta_count": gcs_control_point_terrain_count,
+                    "gcs_control_point_high_cost_exposure_delta_min": (
+                        -2.0 if gcs_control_point_terrain_count else None
+                    ),
+                    "gcs_control_point_high_cost_exposure_delta_max": (
+                        0.0 if gcs_control_point_terrain_count else None
+                    ),
+                    "gcs_control_point_high_cost_exposure_delta_mean": (
+                        -1.0 if gcs_control_point_terrain_count else None
+                    ),
+                    "gcs_control_point_candidate_audit": [
+                        {
+                            "scenario_id": "fake",
+                            "action_index": index,
+                            "backend": "pydrake_control_point_direction_cone_program",
+                            "attempted": True,
+                            "success": index < gcs_control_point_success_count,
+                            "candidate_selected": index < gcs_control_point_selected_count,
+                            "candidate_fallback_reason": (
+                                None
+                                if index < gcs_control_point_success_count
+                                else "sampled_trajectory_collision"
+                            ),
+                            "terrain_objective_source": (
+                                "region_inverse_cost_weighted_passable_cell_centroid"
+                                if index < gcs_control_point_terrain_count
+                                else "not_evaluated"
+                            ),
+                            "sampled_terrain_cost": (
+                                5.0 if index < gcs_control_point_terrain_count else None
+                            ),
+                            "high_cost_exposure_delta_vs_baseline": (
+                                -1.0 if index < gcs_control_point_terrain_count else None
+                            ),
+                        }
+                        for index in range(gcs_control_point_report_count)
                     ],
                     "sampled_region_path_selected_count": sampled_selected,
                     "sampled_region_path_fallback_count": sampled_fallback,
@@ -905,6 +994,22 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(summary["gcs_curvature_constrained_repair_strategy_counts"]["not_attempted"], 3)
         self.assertEqual(summary["gcs_curvature_constrained_fallback_reason_counts"]["gcs_trajectory_failed"], 3)
         self.assertEqual(len(summary["gcs_curvature_constrained_audit"]), 6)
+        self.assertEqual(summary["gcs_control_point_report_count"], 0)
+        self.assertEqual(summary["gcs_control_point_attempted_count"], 0)
+        self.assertEqual(summary["gcs_control_point_success_count"], 0)
+        self.assertEqual(summary["gcs_control_point_backend_counts"], {})
+        self.assertEqual(summary["gcs_control_point_candidate_selected_count"], 0)
+        self.assertEqual(summary["gcs_control_point_candidate_fallback_reason_counts"], {})
+        self.assertEqual(summary["gcs_control_point_terrain_objective_source_counts"], {})
+        self.assertEqual(summary["gcs_control_point_sampled_terrain_cost_count"], 0)
+        self.assertIsNone(summary["gcs_control_point_sampled_terrain_cost_min"])
+        self.assertIsNone(summary["gcs_control_point_sampled_terrain_cost_max"])
+        self.assertIsNone(summary["gcs_control_point_sampled_terrain_cost_mean"])
+        self.assertEqual(summary["gcs_control_point_high_cost_exposure_delta_count"], 0)
+        self.assertIsNone(summary["gcs_control_point_high_cost_exposure_delta_min"])
+        self.assertIsNone(summary["gcs_control_point_high_cost_exposure_delta_max"])
+        self.assertIsNone(summary["gcs_control_point_high_cost_exposure_delta_mean"])
+        self.assertEqual(summary["gcs_control_point_candidate_audit"], [])
         self.assertEqual(summary["sampled_region_path_selected_count"], 4)
         self.assertEqual(summary["sampled_region_path_fallback_count"], 3)
         self.assertEqual(summary["sampled_region_path_status_counts"]["selected"], 4)
@@ -1019,6 +1124,67 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
             2,
         )
         self.assertTrue(summary["source_summary_paths"][0].endswith("smoke-baseline-k1/path-feedback-summary.json"))
+
+    def test_batch_preserves_and_aggregates_control_point_gcs_opt_in(self) -> None:
+        output_root = self.temp_dir / "batch"
+        matrix = self._write_matrix(
+            {
+                "schema_version": "path-feedback-batch-matrix/v1",
+                "output_root": str(output_root),
+                "runs": [
+                    {
+                        "run_id": "all-all-control-point",
+                        "scenario_set": "all",
+                        "diagnostic_profile": "all",
+                        "top_k": 3,
+                        "planner_extra_args": ["--gcs-control-point-candidate"],
+                    },
+                ],
+            }
+        )
+
+        completed = self._run_batch(
+            "--matrix",
+            str(matrix),
+            "--single-run-script",
+            str(self.fake_single_run),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        run_index = json.loads((output_root / "batch-run-index.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            run_index["runs"][0]["command_args"]["planner_extra_args"],
+            ["--gcs-control-point-candidate"],
+        )
+        summary = json.loads((output_root / "batch-evaluation-summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["gcs_control_point_report_count"], 6)
+        self.assertEqual(summary["gcs_control_point_attempted_count"], 6)
+        self.assertEqual(summary["gcs_control_point_success_count"], 3)
+        self.assertEqual(
+            summary["gcs_control_point_backend_counts"]["pydrake_control_point_direction_cone_program"],
+            6,
+        )
+        self.assertEqual(summary["gcs_control_point_candidate_selected_count"], 3)
+        self.assertEqual(
+            summary["gcs_control_point_candidate_fallback_reason_counts"]["sampled_trajectory_collision"],
+            3,
+        )
+        self.assertEqual(
+            summary["gcs_control_point_terrain_objective_source_counts"][
+                "region_inverse_cost_weighted_passable_cell_centroid"
+            ],
+            3,
+        )
+        self.assertEqual(summary["gcs_control_point_terrain_objective_source_counts"]["not_evaluated"], 3)
+        self.assertEqual(summary["gcs_control_point_sampled_terrain_cost_count"], 3)
+        self.assertEqual(summary["gcs_control_point_sampled_terrain_cost_min"], 4.0)
+        self.assertEqual(summary["gcs_control_point_sampled_terrain_cost_max"], 6.0)
+        self.assertEqual(summary["gcs_control_point_sampled_terrain_cost_mean"], 5.0)
+        self.assertEqual(summary["gcs_control_point_high_cost_exposure_delta_count"], 3)
+        self.assertEqual(summary["gcs_control_point_high_cost_exposure_delta_min"], -2.0)
+        self.assertEqual(summary["gcs_control_point_high_cost_exposure_delta_max"], 0.0)
+        self.assertEqual(summary["gcs_control_point_high_cost_exposure_delta_mean"], -1.0)
+        self.assertEqual(len(summary["gcs_control_point_candidate_audit"]), 6)
 
     def test_failed_single_run_still_writes_failure_records_and_nonzero_exit(self) -> None:
         output_root = self.temp_dir / "batch"

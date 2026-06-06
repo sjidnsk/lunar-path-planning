@@ -77,13 +77,17 @@ bash scripts/run_path_feedback_validation.sh --scenario-set all --simulate-track
 bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile iris
 bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3
 bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3 --output-root outputs/path_feedback_validation_next_stage
+bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3 --gcs-control-point-candidate --output-root outputs/path_feedback_gcs_control_point_current
 ```
 
-The next-stage acceptance gate is the final command above:
+The standard acceptance gate is
 `--scenario-set all --diagnostic-profile all --top-k 3`. It exercises smoke and
-stress scenarios, forwards execution and optional workspace IRIS diagnostics,
-and still treats IRIS/region-graph output as diagnostic evidence only. It does
-not introduce a GCS trajectory backend or a rover motion-feasibility solver.
+stress scenarios, forwards execution plus the existing workspace IRIS and
+fixed-sequence GCS geometric/motion/curvature diagnostics, and still treats
+IRIS/region-graph/GCS output as additive diagnostic evidence. It does not enable
+the control-point terrain-cost GCS candidate unless
+`--gcs-control-point-candidate` is supplied, and it does not claim a rover
+motion-feasibility solver or Ackermann-feasible trajectory.
 
 The script initializes/checks the three submodules, generates the fixed `.npz`
 validation maps, exports paired `model-explorer-contract/v1` and
@@ -107,7 +111,20 @@ The root script can forward optional execution diagnostics with
 `--simulate-tracking`, `--optimize-trajectory`, and `--drake-iris-regions`; the
 default remains lightweight and Drake-free. `--diagnostic-profile execution`
 forwards tracking simulation plus fixed-corridor optimization, `iris` forwards
-optional workspace IRIS diagnostics, and `all` forwards both groups.
+optional workspace IRIS plus the existing fixed-sequence GCS direction-cone,
+geometric-candidate, motion-feasibility, and curvature-constrained diagnostics,
+and `all` forwards both execution and `iris` groups. The control-point
+terrain-cost path is intentionally outside these profiles: pass
+`--gcs-control-point-candidate` explicitly to forward
+`pydrake_control_point_direction_cone_program`.
+
+When the control-point flag is present, `path-feedback-summary/v1` adds
+`gcs_control_point_*` fields for report/attempt/success counts, backend counts,
+candidate selection/fallback reasons, terrain objective sources, sampled
+terrain-cost stats, high-cost-exposure delta stats, and per-candidate audit
+rows. `pydrake` unavailable remains a `not_evaluated` diagnostic source rather
+than a fake success. These fields are additive and do not replace the default
+`path-planner-route/v1` reachable/path-cost semantics.
 The Markdown report now includes Diagnostic Interpretation and Candidate
 Diagnostics tables so stress and mixed-stress runs can explain target
 replacement, path-planning failure, replan triggers, IRIS fallback, region-graph
@@ -178,8 +195,9 @@ The batch root writes:
   failure reason codes.
 - `batch-evaluation-summary.json`: pass/fail counts, open-grid fallback gate
   results, scenario-group aggregates, path failure/replan totals, IRIS fallback
-  totals, region-graph fallback/disconnect totals, and source summary paths for
-  later sample-quality or stability consumers.
+  totals, region-graph fallback/disconnect totals, opt-in control-point GCS
+  terrain-cost aggregate fields when present, and source summary paths for later
+  sample-quality or stability consumers.
 
 The default batch continues after an individual run fails so the index and
 summary remain auditable. Its final exit code is nonzero when any run fails.

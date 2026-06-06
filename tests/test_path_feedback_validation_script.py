@@ -44,6 +44,37 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--gcs-geometric-candidate", completed.stdout)
         self.assertIn("--gcs-motion-feasibility", completed.stdout)
         self.assertIn("--gcs-curvature-constrained-candidate", completed.stdout)
+        self.assertNotIn("--gcs-control-point-candidate", completed.stdout)
+        self.assertFalse(output_root.exists())
+
+    def test_control_point_gcs_candidate_is_explicit_opt_in(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        output_root = Path(tempfile.mkdtemp(prefix="path-feedback-control-point-")) / "out"
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--scenario-set",
+                "all",
+                "--diagnostic-profile",
+                "all",
+                "--top-k",
+                "3",
+                "--gcs-control-point-candidate",
+                "--output-root",
+                str(output_root),
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("--gcs-control-point-candidate", completed.stdout)
         self.assertFalse(output_root.exists())
 
     def test_diagnostic_profiles_are_reflected_in_dry_run_commands(self) -> None:
@@ -76,6 +107,7 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--gcs-geometric-candidate", iris.stdout)
         self.assertIn("--gcs-motion-feasibility", iris.stdout)
         self.assertIn("--gcs-curvature-constrained-candidate", iris.stdout)
+        self.assertNotIn("--gcs-control-point-candidate", iris.stdout)
         self.assertFalse(output_root.exists())
 
         execution = subprocess.run(
