@@ -153,14 +153,45 @@ and fallback counts of `cost_dominated=5`,
 `direction_cone_constraint_violation=5`, and `unsupported_route_replacement=13`;
 its recorded-candidate calibration sweep keeps `default_change_recommended=false`.
 `scripts/run_gcs_control_point_calibration_matrix.py` reruns those per-candidate
-request artifacts through an explicit solver parameter matrix and writes
-`gcs-control-point-calibration-matrix-summary/v1`. Current matrix evidence is
-rooted at `outputs/path_feedback_gcs_control_point_calibration_matrix_current/`:
-4 matrix settings, 23 candidates, 92 route artifacts, and
-`safety_regression_count=5`. No tested setting increased selected count; the
-`direction_cone_relaxed` setting reduced `direction_cone_constraint_violation`
-from 5 to 1 but increased `cost_dominated` from 5 to 9 and introduced terrain
-cost regression, so `recommendation=no_default_change_recommended`.
+request artifacts through an explicit solver parameter matrix and writes both
+`gcs-control-point-calibration-matrix-summary/v1` and
+`gcs-control-point-targeted-sweep-summary/v1`. The default matrix now covers
+single-factor terrain objective weight, second-difference weight, and
+`direction_cone` tolerance/rho changes, small joint settings, and opt-in
+high-cost exposure proxy entries. The pre-proxy targeted-sweep evidence is rooted at
+`outputs/path_feedback_gcs_control_point_targeted_sweep_current/`: 11 matrix
+settings, 23 candidates, 253 route artifacts, and
+`safety_regression_count=29`. No tested setting increased selected count; wide
+`direction_cone` settings convert 14 cases from
+`direction_cone_constraint_violation` to `cost_dominated`, while terrain and
+tight-cone settings add safety regressions. The result remains
+`recommendation=no_default_change_recommended`, so direct parameter comparison
+has localized the blocker migration but does not justify a default update.
+`scripts/analyze_gcs_control_point_cost_gate.py` decomposes the cost-gate cases
+from that targeted sweep into `gcs-control-point-cost-gate-decomposition-summary/v1`.
+Current decomposition evidence is rooted at
+`outputs/path_feedback_gcs_control_point_cost_gate_decomposition_current/`: 69
+cost-gate cases, with `high_cost_exposure_blocked=38`,
+`true_cost_dominated=20`, and `safety_regression_excluded=11`. No current case
+is primarily classified as `terrain_proxy_mismatch`,
+`baseline_overlap_or_duplicate`, or `insufficient_cost_diagnostics`; the
+post-sweep blocker is therefore mostly real high-cost exposure or true cost
+dominance, not missing diagnostics or a default-parameter opportunity.
+The current high-cost exposure proxy generation run is rooted at
+`outputs/path_feedback_gcs_control_point_high_cost_proxy_current/`: 13 matrix
+settings, 23 candidates, 299 cases, `selected_count=0`,
+`safety_regression_count=36`, `high_cost_exposure_proxy_case_count=46`, and
+`high_cost_exposure_proxy_evaluated_count=20`. The opt-in
+`--gcs-control-point-high-cost-exposure-weight` field is forwarded only with
+`--gcs-control-point-candidate`; route JSON records the proxy as
+`region_high_cost_exposure_proxy` with the explicit boundary
+`proxy_not_continuous_field_integral`. The refreshed cost-gate decomposition
+under `outputs/path_feedback_gcs_control_point_high_cost_proxy_current/cost_gate_decomposition/`
+still reports `recommendation=no_default_change_recommended`:
+`high_cost_exposure_blocked=46`, `true_cost_dominated=24`,
+`safety_regression_excluded=14`, and no `terrain_proxy_mismatch` or
+`insufficient_cost_diagnostics`. This confirms that the generation-side proxy is
+diagnostic and opt-in, not evidence for changing default solver parameters.
 The Markdown report now includes Diagnostic Interpretation and Candidate
 Diagnostics tables so stress and mixed-stress runs can explain target
 replacement, path-planning failure, replan triggers, IRIS fallback, region-graph

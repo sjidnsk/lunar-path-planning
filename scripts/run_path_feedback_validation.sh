@@ -52,6 +52,8 @@ Options:
                         Forward explicit control-point terrain objective weight.
   --gcs-control-point-second-difference-weight VALUE
                         Forward explicit control-point second-difference objective weight.
+  --gcs-control-point-high-cost-exposure-weight VALUE
+                        Forward explicit control-point high-cost exposure proxy objective weight.
   --gcs-control-point-direction-cone-max-error-deg VALUE
                         Forward explicit control-point direction_cone tolerance in degrees.
   --gcs-control-point-direction-cone-rho-floor-m VALUE
@@ -100,7 +102,7 @@ while [[ $# -gt 0 ]]; do
       PLANNER_EXTRA_ARGS+=("$1")
       shift
       ;;
-    --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio)
+    --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-high-cost-exposure-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio)
       require_value "$1" "${2:-}"
       PLANNER_EXTRA_ARGS+=("$1" "$2")
       shift 2
@@ -205,6 +207,7 @@ esac
 for calibration_arg in \
   --gcs-control-point-terrain-weight \
   --gcs-control-point-second-difference-weight \
+  --gcs-control-point-high-cost-exposure-weight \
   --gcs-control-point-direction-cone-max-error-deg \
   --gcs-control-point-direction-cone-rho-floor-m \
   --gcs-control-point-direction-cone-seed-rho-ratio; do

@@ -98,6 +98,8 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
                 "0.08",
                 "--gcs-control-point-second-difference-weight",
                 "0.35",
+                "--gcs-control-point-high-cost-exposure-weight",
+                "0.45",
                 "--gcs-control-point-direction-cone-max-error-deg",
                 "35",
                 "--gcs-control-point-direction-cone-rho-floor-m",
@@ -117,10 +119,42 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--gcs-control-point-candidate", completed.stdout)
         self.assertIn("--gcs-control-point-terrain-weight 0.08", completed.stdout)
         self.assertIn("--gcs-control-point-second-difference-weight 0.35", completed.stdout)
+        self.assertIn("--gcs-control-point-high-cost-exposure-weight 0.45", completed.stdout)
         self.assertIn("--gcs-control-point-direction-cone-max-error-deg 35", completed.stdout)
         self.assertIn("--gcs-control-point-direction-cone-rho-floor-m 0.04", completed.stdout)
         self.assertIn("--gcs-control-point-direction-cone-seed-rho-ratio 0.08", completed.stdout)
         self.assertFalse(output_root.exists())
+
+    def test_control_point_high_cost_proxy_arg_requires_control_point_candidate(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        output_root = Path(tempfile.mkdtemp(prefix="path-feedback-high-cost-proxy-")) / "out"
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--scenario-set",
+                "smoke",
+                "--diagnostic-profile",
+                "all",
+                "--gcs-control-point-high-cost-exposure-weight",
+                "0.45",
+                "--output-root",
+                str(output_root),
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn(
+            "--gcs-control-point-high-cost-exposure-weight requires --gcs-control-point-candidate",
+            completed.stderr,
+        )
 
     def test_diagnostic_profiles_are_reflected_in_dry_run_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

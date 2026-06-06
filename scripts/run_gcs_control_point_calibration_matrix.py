@@ -13,6 +13,7 @@ from typing import Any
 TRIAGE_SCHEMA_VERSION = "gcs-control-point-candidate-triage-summary/v1"
 MATRIX_SCHEMA_VERSION = "gcs-control-point-calibration-matrix/v1"
 SUMMARY_SCHEMA_VERSION = "gcs-control-point-calibration-matrix-summary/v1"
+TARGETED_SWEEP_SCHEMA_VERSION = "gcs-control-point-targeted-sweep-summary/v1"
 DEFAULT_PYTHON = Path("/home/kai/anaconda3/envs/lunar-explorer/bin/python")
 
 
@@ -21,6 +22,7 @@ DEFAULT_MATRIX = [
         "matrix_id": "baseline",
         "terrain_objective_weight": 0.05,
         "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
         "direction_cone_max_error_deg": 45.0,
         "direction_cone_rho_floor_m": 0.0001,
         "direction_cone_seed_rho_ratio": 0.05,
@@ -29,6 +31,25 @@ DEFAULT_MATRIX = [
         "matrix_id": "terrain_up",
         "terrain_objective_weight": 0.08,
         "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
+        "direction_cone_max_error_deg": 45.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.05,
+    },
+    {
+        "matrix_id": "terrain_down",
+        "terrain_objective_weight": 0.03,
+        "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
+        "direction_cone_max_error_deg": 45.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.05,
+    },
+    {
+        "matrix_id": "terrain_mid",
+        "terrain_objective_weight": 0.065,
+        "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
         "direction_cone_max_error_deg": 45.0,
         "direction_cone_rho_floor_m": 0.0001,
         "direction_cone_seed_rho_ratio": 0.05,
@@ -37,15 +58,80 @@ DEFAULT_MATRIX = [
         "matrix_id": "smoothness_up",
         "terrain_objective_weight": 0.05,
         "second_difference_weight": 0.35,
+        "high_cost_exposure_weight": 0.0,
         "direction_cone_max_error_deg": 45.0,
         "direction_cone_rho_floor_m": 0.0001,
         "direction_cone_seed_rho_ratio": 0.05,
     },
     {
+        "matrix_id": "smoothness_down",
+        "terrain_objective_weight": 0.05,
+        "second_difference_weight": 0.1,
+        "high_cost_exposure_weight": 0.0,
+        "direction_cone_max_error_deg": 45.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.05,
+    },
+    {
+        "matrix_id": "direction_cone_tight",
+        "terrain_objective_weight": 0.05,
+        "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
+        "direction_cone_max_error_deg": 35.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.08,
+    },
+    {
+        "matrix_id": "direction_cone_wide",
+        "terrain_objective_weight": 0.05,
+        "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
+        "direction_cone_max_error_deg": 60.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.03,
+    },
+    {
         "matrix_id": "direction_cone_relaxed",
         "terrain_objective_weight": 0.05,
         "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
         "direction_cone_max_error_deg": 55.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.03,
+    },
+    {
+        "matrix_id": "joint_direction_cone_wide_terrain_down",
+        "terrain_objective_weight": 0.03,
+        "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.0,
+        "direction_cone_max_error_deg": 60.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.03,
+    },
+    {
+        "matrix_id": "joint_direction_cone_wide_smoothness_up",
+        "terrain_objective_weight": 0.05,
+        "second_difference_weight": 0.35,
+        "high_cost_exposure_weight": 0.0,
+        "direction_cone_max_error_deg": 60.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.03,
+    },
+    {
+        "matrix_id": "high_cost_proxy_low",
+        "terrain_objective_weight": 0.05,
+        "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.25,
+        "direction_cone_max_error_deg": 45.0,
+        "direction_cone_rho_floor_m": 0.0001,
+        "direction_cone_seed_rho_ratio": 0.05,
+    },
+    {
+        "matrix_id": "joint_direction_cone_wide_high_cost_proxy",
+        "terrain_objective_weight": 0.05,
+        "second_difference_weight": 0.2,
+        "high_cost_exposure_weight": 0.45,
+        "direction_cone_max_error_deg": 60.0,
         "direction_cone_rho_floor_m": 0.0001,
         "direction_cone_seed_rho_ratio": 0.03,
     },
@@ -91,14 +177,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     summary_path = output_root / "gcs-control-point-calibration-matrix-summary.json"
     report_path = output_root / "gcs-control-point-calibration-matrix-summary.md"
+    targeted_summary = _build_targeted_sweep_summary(
+        summary,
+        source_triage=triage_path,
+        output_root=output_root,
+    )
+    targeted_summary_path = output_root / "gcs-control-point-targeted-sweep-summary.json"
+    targeted_report_path = output_root / "gcs-control-point-targeted-sweep-summary.md"
     _write_json(summary_path, summary)
     report_path.write_text(_render_markdown(summary), encoding="utf-8")
+    _write_json(targeted_summary_path, targeted_summary)
+    targeted_report_path.write_text(_render_targeted_sweep_markdown(targeted_summary), encoding="utf-8")
     print(
         json.dumps(
             {
                 "status": "calibration matrix complete",
                 "summary": str(summary_path),
                 "report": str(report_path),
+                "targeted_sweep_summary": str(targeted_summary_path),
+                "targeted_sweep_report": str(targeted_report_path),
                 "matrix_count": summary["matrix_count"],
                 "case_count": summary["case_count"],
                 "safety_regression_count": summary["safety_regression_count"],
@@ -155,6 +252,7 @@ def _matrix_entry(item: dict[str, Any]) -> dict[str, Any]:
         "matrix_id": matrix_id,
         "terrain_objective_weight": _float_required(item, "terrain_objective_weight"),
         "second_difference_weight": _float_required(item, "second_difference_weight"),
+        "high_cost_exposure_weight": _float_with_default(item.get("high_cost_exposure_weight"), default=0.0),
         "direction_cone_max_error_deg": _float_required(item, "direction_cone_max_error_deg"),
         "direction_cone_rho_floor_m": _float_required(item, "direction_cone_rho_floor_m"),
         "direction_cone_seed_rho_ratio": _float_required(item, "direction_cone_seed_rho_ratio"),
@@ -165,6 +263,12 @@ def _float_required(item: dict[str, Any], key: str) -> float:
     value = item.get(key)
     if isinstance(value, bool) or value is None:
         raise ValueError(f"matrix entry requires numeric {key}")
+    return float(value)
+
+
+def _float_with_default(value: Any, *, default: float) -> float:
+    if isinstance(value, bool) or value is None:
+        return float(default)
     return float(value)
 
 
@@ -267,6 +371,8 @@ def _planner_argv(
         str(matrix_entry["terrain_objective_weight"]),
         "--gcs-control-point-second-difference-weight",
         str(matrix_entry["second_difference_weight"]),
+        "--gcs-control-point-high-cost-exposure-weight",
+        str(matrix_entry["high_cost_exposure_weight"]),
         "--gcs-control-point-direction-cone-max-error-deg",
         str(matrix_entry["direction_cone_max_error_deg"]),
         "--gcs-control-point-direction-cone-rho-floor-m",
@@ -329,6 +435,16 @@ def _case_from_route(
             trajectory_cost.get("terrain_objective_weight"),
             candidate_cost.get("terrain_objective_weight"),
         ),
+        "high_cost_exposure_weight": _first_present(
+            trajectory_cost.get("high_cost_exposure_objective_weight"),
+            _dict(direction.get("objective_term_weights")).get(
+                "control_point_high_cost_exposure_proxy_quadratic"
+            ),
+            matrix_entry.get("high_cost_exposure_weight"),
+        ),
+        "high_cost_exposure_proxy_cost": trajectory_cost.get("high_cost_exposure_proxy_cost"),
+        "high_cost_exposure_proxy_source": trajectory_cost.get("high_cost_exposure_proxy_source"),
+        "high_cost_exposure_proxy_boundary": trajectory_cost.get("high_cost_exposure_proxy_boundary"),
         "second_difference_weight": _dict(direction.get("objective_term_weights")).get(
             "control_point_second_difference_quadratic"
         ),
@@ -352,6 +468,7 @@ def _case_from_route(
     reasons = _safety_regression_reasons(case)
     case["safety_regression_reasons"] = reasons
     case["safety_regression"] = bool(reasons)
+    case["transition_class"] = _transition_class(case)
     return case
 
 
@@ -364,7 +481,7 @@ def _case_without_rerun(
     command: list[str] | None = None,
     stderr: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    case = {
         "matrix_id": matrix_entry["matrix_id"],
         "parameters": dict(matrix_entry),
         "scenario_id": baseline.get("scenario_id"),
@@ -376,12 +493,44 @@ def _case_without_rerun(
         "new_selected": False,
         "attempted": False,
         "success": False,
+        "high_cost_exposure_weight": matrix_entry.get("high_cost_exposure_weight", 0.0),
+        "high_cost_exposure_proxy_cost": None,
+        "high_cost_exposure_proxy_source": "not_evaluated",
         "safety_regression": False,
         "safety_regression_reasons": [],
         "route_artifact": str(route_artifact),
         "command": command or [],
         "stderr": stderr,
     }
+    case["transition_class"] = _transition_class(case)
+    return case
+
+
+def _transition_class(case: dict[str, Any]) -> str:
+    baseline = case.get("baseline_fallback_reason")
+    new = case.get("new_fallback_reason")
+    if baseline == "unsupported_route_replacement" or new in {
+        "request_artifact_missing",
+        "planner_command_failed",
+    }:
+        return "unsupported_not_evaluated"
+    if case.get("safety_regression"):
+        return "safety_regression"
+    if baseline == "direction_cone_constraint_violation" and case.get("new_selected") is True:
+        return "direction_cone_fixed_and_selected"
+    if baseline == "direction_cone_constraint_violation" and new == "cost_dominated":
+        return "direction_cone_to_cost_dominated"
+    if baseline == "cost_dominated" and new == "cost_dominated":
+        return "cost_dominated_persistent"
+    if baseline == "cost_dominated" and case.get("new_selected") is True:
+        return "cost_dominated_fixed_and_selected"
+    if case.get("new_selected") is True:
+        return "selected"
+    if baseline and baseline == new:
+        return "blocker_persistent"
+    if baseline != new:
+        return "blocker_changed"
+    return "unclassified"
 
 
 def _safety_regression_reasons(case: dict[str, Any]) -> list[str]:
@@ -440,6 +589,7 @@ def _build_summary(
     ]
     default_change_recommended = bool(acceptable)
     safety_regression_count = sum(1 for case in cases if case.get("safety_regression"))
+    high_cost_proxy_cases = _high_cost_exposure_proxy_cases(cases)
     return {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "source_triage": str(source_triage),
@@ -447,10 +597,15 @@ def _build_summary(
         "matrix_count": len(matrix),
         "candidate_count": len([item for item in triage.get("candidates", []) if isinstance(item, dict)]),
         "case_count": len(cases),
+        "selected_count": sum(1 for case in cases if case.get("new_selected") is True),
         "route_artifact_count": sum(1 for case in cases if case.get("route_artifact")),
         "baseline_fallback_reason_counts": dict(sorted(baseline_counts.items())),
         "matrix_summaries": matrix_summaries,
         "safety_regression_count": safety_regression_count,
+        "high_cost_exposure_proxy_case_count": len(high_cost_proxy_cases),
+        "high_cost_exposure_proxy_evaluated_count": sum(
+            1 for case in high_cost_proxy_cases if case.get("high_cost_exposure_proxy_source") != "not_evaluated"
+        ),
         "default_change_recommended": default_change_recommended,
         "recommendation": "default_change_recommended" if default_change_recommended else "no_default_change_recommended",
         "recommended_matrix_id": acceptable[0]["matrix_id"] if acceptable else None,
@@ -459,6 +614,39 @@ def _build_summary(
             if default_change_recommended
             else "no_matrix_passed_safety_and_blocker_gates"
         ),
+        "cases": cases,
+    }
+
+
+def _build_targeted_sweep_summary(
+    calibration_summary: dict[str, Any],
+    *,
+    source_triage: Path,
+    output_root: Path,
+) -> dict[str, Any]:
+    cases = [case for case in calibration_summary["cases"] if isinstance(case, dict)]
+    transition_counts = Counter(str(case.get("transition_class") or "unclassified") for case in cases)
+    return {
+        "schema_version": TARGETED_SWEEP_SCHEMA_VERSION,
+        "source_triage": str(source_triage),
+        "output_root": str(output_root),
+        "matrix_count": calibration_summary["matrix_count"],
+        "candidate_count": calibration_summary["candidate_count"],
+        "case_count": calibration_summary["case_count"],
+        "selected_count": calibration_summary["selected_count"],
+        "route_artifact_count": calibration_summary["route_artifact_count"],
+        "baseline_fallback_reason_counts": calibration_summary["baseline_fallback_reason_counts"],
+        "transition_class_counts": dict(sorted(transition_counts.items())),
+        "matrix_summaries": calibration_summary["matrix_summaries"],
+        "safety_regression_count": calibration_summary["safety_regression_count"],
+        "high_cost_exposure_proxy_case_count": calibration_summary["high_cost_exposure_proxy_case_count"],
+        "high_cost_exposure_proxy_evaluated_count": calibration_summary[
+            "high_cost_exposure_proxy_evaluated_count"
+        ],
+        "default_change_recommended": calibration_summary["default_change_recommended"],
+        "recommendation": calibration_summary["recommendation"],
+        "recommended_matrix_id": calibration_summary["recommended_matrix_id"],
+        "default_change_reason": calibration_summary["default_change_reason"],
         "cases": cases,
     }
 
@@ -493,7 +681,38 @@ def _matrix_summary(
             + new_counts.get("direction_cone_constraint_violation", 0)
         ),
         "safety_regression_count": sum(1 for case in matrix_cases if case.get("safety_regression")),
+        "transition_class_counts": _transition_class_counts(matrix_cases),
+        "transition_examples": _transition_examples(matrix_cases),
     }
+
+
+def _transition_class_counts(cases: list[dict[str, Any]]) -> dict[str, int]:
+    counts = Counter(str(case.get("transition_class") or "unclassified") for case in cases)
+    return dict(sorted(counts.items()))
+
+
+def _transition_examples(cases: list[dict[str, Any]], *, limit_per_class: int = 5) -> dict[str, list[dict[str, Any]]]:
+    examples: dict[str, list[dict[str, Any]]] = {}
+    for case in cases:
+        transition_class = str(case.get("transition_class") or "unclassified")
+        rows = examples.setdefault(transition_class, [])
+        if len(rows) >= limit_per_class:
+            continue
+        rows.append(
+            {
+                "scenario_id": case.get("scenario_id"),
+                "action_index": case.get("action_index"),
+                "baseline_fallback_reason": case.get("baseline_fallback_reason"),
+                "new_fallback_reason": case.get("new_fallback_reason"),
+                "new_selected": case.get("new_selected"),
+                "safety_regression_reasons": case.get("safety_regression_reasons") or [],
+                "high_cost_exposure_weight": case.get("high_cost_exposure_weight"),
+                "high_cost_exposure_proxy_cost": case.get("high_cost_exposure_proxy_cost"),
+                "high_cost_exposure_proxy_source": case.get("high_cost_exposure_proxy_source"),
+                "route_artifact": case.get("route_artifact"),
+            }
+        )
+    return dict(sorted(examples.items()))
 
 
 def _render_markdown(summary: dict[str, Any]) -> str:
@@ -504,7 +723,10 @@ def _render_markdown(summary: dict[str, Any]) -> str:
         f"- source_triage: `{summary['source_triage']}`",
         f"- matrix_count: {summary['matrix_count']}",
         f"- case_count: {summary['case_count']}",
+        f"- selected_count: {summary['selected_count']}",
         f"- safety_regression_count: {summary['safety_regression_count']}",
+        f"- high_cost_exposure_proxy_case_count: {summary['high_cost_exposure_proxy_case_count']}",
+        f"- high_cost_exposure_proxy_evaluated_count: {summary['high_cost_exposure_proxy_evaluated_count']}",
         f"- recommendation: `{summary['recommendation']}`",
         f"- default_change_reason: `{summary['default_change_reason']}`",
         "",
@@ -556,6 +778,66 @@ def _render_markdown(summary: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_targeted_sweep_markdown(summary: dict[str, Any]) -> str:
+    lines = [
+        "# GCS Control-Point Targeted Sweep",
+        "",
+        f"- schema_version: `{summary['schema_version']}`",
+        f"- source_triage: `{summary['source_triage']}`",
+        f"- matrix_count: {summary['matrix_count']}",
+        f"- case_count: {summary['case_count']}",
+        f"- selected_count: {summary['selected_count']}",
+        f"- safety_regression_count: {summary['safety_regression_count']}",
+        f"- high_cost_exposure_proxy_case_count: {summary['high_cost_exposure_proxy_case_count']}",
+        f"- high_cost_exposure_proxy_evaluated_count: {summary['high_cost_exposure_proxy_evaluated_count']}",
+        f"- recommendation: `{summary['recommendation']}`",
+        f"- default_change_reason: `{summary['default_change_reason']}`",
+        "",
+        "## Matrix Summary",
+        "",
+        "| matrix | selected | safety regressions | target blockers | high_cost_exposure_weight | transition classes |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for item in summary["matrix_summaries"]:
+        transitions = ", ".join(
+            f"{name}={count}" for name, count in item["transition_class_counts"].items()
+        )
+        high_cost_weight = item["parameters"].get("high_cost_exposure_weight", 0.0)
+        lines.append(
+            f"| {item['matrix_id']} | {item['selected_count']} | "
+            f"{item['safety_regression_count']} | {item['target_blocker_count']} | "
+            f"{high_cost_weight} | "
+            f"{transitions or 'none'} |"
+        )
+    lines.extend(["", "## Transition Class Counts", ""])
+    for name, count in summary["transition_class_counts"].items():
+        lines.append(f"- `{name}`: {count}")
+    lines.extend(["", "## Transition Examples", ""])
+    for item in summary["matrix_summaries"]:
+        lines.append(f"### {item['matrix_id']}")
+        examples = item.get("transition_examples") if isinstance(item.get("transition_examples"), dict) else {}
+        if not examples:
+            lines.append("- none")
+            continue
+        for transition_class, rows in examples.items():
+            lines.append(f"- `{transition_class}`")
+            for row in rows:
+                lines.append(
+                    "  - {scenario} action={action} {baseline}->{new} selected={selected} "
+                    "high_cost_exposure_weight={weight} proxy_cost={proxy_cost} safety={safety}".format(
+                        scenario=row.get("scenario_id"),
+                        action=row.get("action_index"),
+                        baseline=row.get("baseline_fallback_reason"),
+                        new=row.get("new_fallback_reason"),
+                        selected=str(bool(row.get("new_selected"))).lower(),
+                        weight=row.get("high_cost_exposure_weight"),
+                        proxy_cost=row.get("high_cost_exposure_proxy_cost"),
+                        safety=",".join(row.get("safety_regression_reasons") or []) or "none",
+                    )
+                )
+    return "\n".join(lines) + "\n"
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -563,6 +845,10 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _high_cost_exposure_proxy_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [case for case in cases if _float_value(case.get("high_cost_exposure_weight")) not in {None, 0.0}]
 
 
 def _counter_payload(value: Any) -> Counter[str]:
