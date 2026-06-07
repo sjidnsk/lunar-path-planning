@@ -291,6 +291,20 @@ def _review_metrics(
         _int_value_or_default(smoke.get("platform_goal_contract_mismatch_count"), 0),
         _int_value_or_default(calibration.get("platform_goal_contract_mismatch_count"), 0),
     )
+    platform_goal_trainable_anchor_projection_count = max(
+        _int_value_or_default(smoke.get("platform_goal_trainable_anchor_projection_count"), 0),
+        _int_value_or_default(calibration.get("platform_goal_trainable_anchor_projection_count"), 0),
+    )
+    platform_goal_nontrainable_blocked_target_count = max(
+        _int_value_or_default(
+            smoke.get("platform_goal_nontrainable_blocked_target_count"),
+            platform_goal_contract_mismatch_count - platform_goal_trainable_anchor_projection_count,
+        ),
+        _int_value_or_default(
+            calibration.get("platform_goal_nontrainable_blocked_target_count"),
+            platform_goal_contract_mismatch_count - platform_goal_trainable_anchor_projection_count,
+        ),
+    )
     platform_goal_anchor_available_count = max(
         _int_value_or_default(smoke.get("platform_goal_anchor_available_count"), 0),
         _int_value_or_default(calibration.get("platform_goal_anchor_available_count"), 0),
@@ -369,6 +383,8 @@ def _review_metrics(
         "changed_scenario_ids": changed_scenario_ids,
         "rejected_goal_blocked_count": rejected_goal_blocked_count,
         "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_trainable_anchor_projection_count": platform_goal_trainable_anchor_projection_count,
+        "platform_goal_nontrainable_blocked_target_count": platform_goal_nontrainable_blocked_target_count,
         "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
         "platform_goal_unresolved_count": platform_goal_unresolved_count,
         "platform_goal_feasibility_class_counts": platform_goal_class_counts,

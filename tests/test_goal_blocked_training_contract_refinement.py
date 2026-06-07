@@ -228,6 +228,8 @@ class GoalBlockedTrainingContractRefinementTests(unittest.TestCase):
         self.assertEqual(summary["negative_evidence_candidate_count"], 0)
         self.assertEqual(summary["needs_regeneration_count"], 1)
         self.assertEqual(summary["platform_goal_contract_mismatch_count"], 1)
+        self.assertEqual(summary["platform_goal_trainable_anchor_projection_count"], 0)
+        self.assertEqual(summary["platform_goal_nontrainable_blocked_target_count"], 1)
         self.assertEqual(summary["platform_goal_anchor_available_count"], 1)
         decision = summary["contract_decisions"][0]
         self.assertEqual(decision["contract_decision"], "needs_regeneration")

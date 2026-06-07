@@ -391,6 +391,12 @@ def _calibrate_selection(
         platform_class_counts[classification]
         for classification in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES
     )
+    platform_goal_trainable_anchor_projection_count = sum(
+        1 for record in records if _platform_goal_trainable_anchor_projection(record)
+    )
+    platform_goal_nontrainable_blocked_target_count = (
+        platform_goal_contract_mismatch_count - platform_goal_trainable_anchor_projection_count
+    )
     platform_goal_anchor_available_count = sum(
         1 for record in records if _platform_goal_anchor_available(record)
     )
@@ -425,6 +431,8 @@ def _calibrate_selection(
         "keep_selected_candidate_rate": _rate(keep_selected_count, changed_context_count),
         "goal_blocked_count": goal_blocked_count,
         "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_trainable_anchor_projection_count": platform_goal_trainable_anchor_projection_count,
+        "platform_goal_nontrainable_blocked_target_count": platform_goal_nontrainable_blocked_target_count,
         "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
         "platform_goal_unresolved_count": platform_goal_unresolved_count,
         "platform_goal_feasibility_class_counts": dict(sorted(platform_class_counts.items())),
@@ -541,6 +549,16 @@ def _platform_goal_anchor_available(record: dict[str, Any]) -> bool:
     feasibility = feasibility if isinstance(feasibility, dict) else {}
     anchor = feasibility.get("nearest_inflated_passable_anchor")
     return isinstance(anchor, list) and len(anchor) == 2
+
+
+def _platform_goal_trainable_anchor_projection(record: dict[str, Any]) -> bool:
+    if _platform_goal_failure_class(record) != "platform_inflated_goal_blocked":
+        return False
+    feasibility = record.get("platform_goal_feasibility")
+    feasibility = feasibility if isinstance(feasibility, dict) else {}
+    projection = feasibility.get("anchor_projection")
+    projection = projection if isinstance(projection, dict) else {}
+    return projection.get("training_use") not in (None, "", "not_positive_evidence")
 
 
 def _has_safety_regression(record: dict[str, Any]) -> bool:

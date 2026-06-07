@@ -312,6 +312,12 @@ def _contract_metrics(
     platform_goal_contract_mismatch_count = sum(
         1 for decision in contract_decisions if decision.get("platform_goal_contract_mismatch")
     )
+    platform_goal_trainable_anchor_projection_count = sum(
+        1 for decision in contract_decisions if _platform_goal_trainable_anchor_projection(decision)
+    )
+    platform_goal_nontrainable_blocked_target_count = (
+        platform_goal_contract_mismatch_count - platform_goal_trainable_anchor_projection_count
+    )
     platform_goal_anchor_available_count = sum(
         1
         for decision in contract_decisions
@@ -354,6 +360,8 @@ def _contract_metrics(
         "needs_regeneration_count": decision_counts["needs_regeneration"],
         "contract_decision_counts": dict(sorted(decision_counts.items())),
         "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_trainable_anchor_projection_count": platform_goal_trainable_anchor_projection_count,
+        "platform_goal_nontrainable_blocked_target_count": platform_goal_nontrainable_blocked_target_count,
         "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
         "platform_goal_unresolved_count": platform_goal_unresolved_count,
         "contract_blockers": contract_blockers,
@@ -486,6 +494,16 @@ def _platform_goal_failure_class(record: dict[str, Any]) -> str | None:
 def _platform_goal_anchor_available(feasibility: dict[str, Any]) -> bool:
     anchor = feasibility.get("nearest_inflated_passable_anchor")
     return isinstance(anchor, list) and len(anchor) == 2
+
+
+def _platform_goal_trainable_anchor_projection(decision: dict[str, Any]) -> bool:
+    if decision.get("platform_goal_classification") != "platform_inflated_goal_blocked":
+        return False
+    feasibility = decision.get("platform_goal_feasibility")
+    feasibility = feasibility if isinstance(feasibility, dict) else {}
+    projection = feasibility.get("anchor_projection")
+    projection = projection if isinstance(projection, dict) else {}
+    return projection.get("training_use") not in (None, "", "not_positive_evidence")
 
 
 def _contract_blockers(

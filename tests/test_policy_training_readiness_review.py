@@ -273,6 +273,8 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
         self.assertEqual(summary["rejected_goal_blocked_count"], 3)
         self.assertEqual(summary["platform_goal_contract_mismatch_count"], 3)
+        self.assertEqual(summary["platform_goal_trainable_anchor_projection_count"], 0)
+        self.assertEqual(summary["platform_goal_nontrainable_blocked_target_count"], 3)
         self.assertEqual(summary["platform_goal_anchor_available_count"], 3)
         self.assertEqual(summary["platform_goal_unresolved_count"], 0)
         self.assertEqual(

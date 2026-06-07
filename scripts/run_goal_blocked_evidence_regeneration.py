@@ -344,6 +344,12 @@ def _regeneration_metrics(
         for record in regenerated_records
         if record["diagnostic_decision"] == "platform_goal_contract_mismatch"
     )
+    platform_goal_trainable_anchor_projection_count = sum(
+        1 for record in regenerated_records if _platform_goal_trainable_anchor_projection(record)
+    )
+    platform_goal_nontrainable_blocked_target_count = (
+        platform_goal_contract_mismatch_count - platform_goal_trainable_anchor_projection_count
+    )
     platform_goal_anchor_available_count = sum(
         1 for record in regenerated_records if record.get("platform_goal_anchor_available")
     )
@@ -383,6 +389,8 @@ def _regeneration_metrics(
         ),
         "eligible_negative_evidence_candidate_count": eligible_count,
         "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_trainable_anchor_projection_count": platform_goal_trainable_anchor_projection_count,
+        "platform_goal_nontrainable_blocked_target_count": platform_goal_nontrainable_blocked_target_count,
         "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
         "platform_goal_unresolved_count": platform_goal_unresolved_count,
         "still_unresolved_count": still_unresolved_count,
@@ -566,6 +574,16 @@ def _platform_goal_feasibility(decision: dict[str, Any], source: dict[str, Any])
 def _platform_goal_anchor_available(feasibility: dict[str, Any]) -> bool:
     anchor = feasibility.get("nearest_inflated_passable_anchor")
     return isinstance(anchor, list) and len(anchor) == 2
+
+
+def _platform_goal_trainable_anchor_projection(record: dict[str, Any]) -> bool:
+    if record.get("platform_goal_classification") != "platform_inflated_goal_blocked":
+        return False
+    feasibility = record.get("platform_goal_feasibility")
+    feasibility = feasibility if isinstance(feasibility, dict) else {}
+    projection = feasibility.get("anchor_projection")
+    projection = projection if isinstance(projection, dict) else {}
+    return projection.get("training_use") not in (None, "", "not_positive_evidence")
 
 
 def _all_reason_codes(decision: dict[str, Any], source: dict[str, Any]) -> list[str]:

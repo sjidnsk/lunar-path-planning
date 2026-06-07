@@ -296,6 +296,14 @@ def _application_metrics(
             calibration.get("platform_goal_contract_mismatch_count"),
             0,
         ),
+        "platform_goal_trainable_anchor_projection_count": _int_value_or_default(
+            calibration.get("platform_goal_trainable_anchor_projection_count"),
+            0,
+        ),
+        "platform_goal_nontrainable_blocked_target_count": _int_value_or_default(
+            calibration.get("platform_goal_nontrainable_blocked_target_count"),
+            _int_value_or_default(calibration.get("platform_goal_contract_mismatch_count"), 0),
+        ),
         "platform_goal_anchor_available_count": _int_value_or_default(
             calibration.get("platform_goal_anchor_available_count"),
             0,

@@ -273,6 +273,8 @@ class ChannelAwareSelectionContrastCalibrationTests(unittest.TestCase):
         )
         self.assertEqual(summary["goal_blocked_count"], 1)
         self.assertEqual(summary["platform_goal_contract_mismatch_count"], 1)
+        self.assertEqual(summary["platform_goal_trainable_anchor_projection_count"], 0)
+        self.assertEqual(summary["platform_goal_nontrainable_blocked_target_count"], 1)
         self.assertEqual(summary["platform_goal_anchor_available_count"], 1)
         self.assertEqual(summary["platform_goal_unresolved_count"], 0)
         self.assertEqual(
