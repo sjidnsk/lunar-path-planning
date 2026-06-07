@@ -6,6 +6,7 @@ OUTPUT_ROOT="outputs/path_feedback_validation"
 TOP_K=3
 SCENARIO_SET="smoke"
 DIAGNOSTIC_PROFILE="baseline"
+ANCHOR_PROJECTION_CANDIDATE_GENERATION=0
 PLANNER_EXTRA_ARGS=()
 MODULES=(path-planner model-explorer dev-platform-constraints)
 DEFAULT_PYTHON="/home/kai/anaconda3/envs/lunar-explorer/bin/python"
@@ -48,6 +49,9 @@ Options:
                         Forward optional curvature-constrained GCS sampled candidate repair diagnostics.
   --gcs-control-point-candidate
                         Forward optional control-point direction-cone GCS terrain-cost candidate diagnostics.
+  --anchor-projection-candidate-generation
+                        Enable model-explorer projected target candidate generation for
+                        platform-inflated-goal-blocked policy targets.
   --gcs-control-point-terrain-weight VALUE
                         Forward explicit control-point terrain objective weight.
   --gcs-control-point-second-difference-weight VALUE
@@ -119,6 +123,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate|--gcs-control-point-candidate)
       PLANNER_EXTRA_ARGS+=("$1")
+      shift
+      ;;
+    --anchor-projection-candidate-generation)
+      ANCHOR_PROJECTION_CANDIDATE_GENERATION=1
       shift
       ;;
     --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-high-cost-exposure-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio|--channel-aware-neighborhood-radius-cells|--channel-aware-center-weight|--channel-aware-neighborhood-mean-weight|--channel-aware-neighborhood-max-weight|--channel-aware-high-cost-exposure-weight|--channel-aware-blocked-nearby-weight|--channel-aware-clearance-weight|--channel-aware-smoothness-weight|--channel-aware-high-cost-threshold)
@@ -323,7 +331,7 @@ write_manifest() {
     return
   fi
 
-  "$PYTHON_BIN" - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "$PYTHON_BIN" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
+  "$PYTHON_BIN" - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "$PYTHON_BIN" "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -339,7 +347,8 @@ diagnostic_profile = sys.argv[8]
 acceptance_gate = sys.argv[9]
 path_planner_root = Path(sys.argv[10])
 python_executable = sys.argv[11]
-extra_args = sys.argv[12:]
+anchor_projection_candidate_generation = sys.argv[12] == "1"
+extra_args = sys.argv[13:]
 
 payload = json.loads(scenario_config.read_text(encoding="utf-8"))
 scenarios = []
@@ -370,6 +379,7 @@ manifest = {
         "top_k": top_k,
         "python_executable": python_executable,
         "planner_extra_args": extra_args,
+        "anchor_projection_candidate_generation_enabled": anchor_projection_candidate_generation,
         "open_grid_fallback_used": None,
         "open_grid_fallback_used_gate": {
             "status": "pending",
@@ -397,6 +407,11 @@ manifest = {
 }
 if extra_args:
     manifest["planner"]["extra_args"] = extra_args
+if anchor_projection_candidate_generation:
+    manifest["planner"]["anchor_projection_candidate_generation"] = {
+        "enabled": True,
+        "require_anchor_reachable": True,
+    }
 manifest_path.parent.mkdir(parents=True, exist_ok=True)
 manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 print(json.dumps({"manifest": str(manifest_path), "scenario_count": len(scenarios)}, ensure_ascii=False))
@@ -665,6 +680,7 @@ Top-K: $TOP_K
 Scenario set: $SCENARIO_SET
 Diagnostic profile: $DIAGNOSTIC_PROFILE
 Planner extra args: ${PLANNER_EXTRA_ARGS[*]:-(none)}
+Anchor projection candidate generation: $([[ "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" -eq 1 ]] && echo enabled || echo disabled)
 INFO
 
 ensure_submodules

@@ -1,0 +1,180 @@
+{
+  "schema_version": "path-feedback-batch-matrix/v1",
+  "description": "Current-HEAD Anchor-Projection Candidate Generation v1 matrix. Uses the existing semi-real scenario/profile coverage with opt-in model-explorer projected target candidate generation enabled for every run.",
+  "output_root": "outputs/path_feedback_batch_anchor_projection_candidate_generation_v1",
+  "defaults": {
+    "planner_extra_args": [
+      "--anchor-projection-candidate-generation"
+    ]
+  },
+  "runs": [
+    {
+      "run_id": "smoke-baseline-k1-astar",
+      "scenario_set": "smoke",
+      "diagnostic_profile": "baseline",
+      "top_k": 1,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "astar"
+      ]
+    },
+    {
+      "run_id": "smoke-baseline-k1-channel-aware",
+      "scenario_set": "smoke",
+      "diagnostic_profile": "baseline",
+      "top_k": 1,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
+    },
+    {
+      "run_id": "stress-execution-k3-astar",
+      "scenario_set": "stress",
+      "diagnostic_profile": "execution",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "astar"
+      ]
+    },
+    {
+      "run_id": "stress-execution-k3-channel-aware",
+      "scenario_set": "stress",
+      "diagnostic_profile": "execution",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
+    },
+    {
+      "run_id": "all-iris-k3-astar",
+      "scenario_set": "all",
+      "diagnostic_profile": "iris",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "astar"
+      ]
+    },
+    {
+      "run_id": "all-iris-k3-channel-aware",
+      "scenario_set": "all",
+      "diagnostic_profile": "iris",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
+    },
+    {
+      "run_id": "all-all-k3-astar",
+      "scenario_set": "all",
+      "diagnostic_profile": "all",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "astar"
+      ]
+    },
+    {
+      "run_id": "all-all-k3-channel-aware",
+      "scenario_set": "all",
+      "diagnostic_profile": "all",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--anchor-projection-candidate-generation",
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
+    }
+  ]
+}

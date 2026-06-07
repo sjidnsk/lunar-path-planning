@@ -1,0 +1,24 @@
+{
+  "schema_version": "anchor-projection-candidate-generation-config/v1",
+  "description": "Anchor-Projection Candidate Generation v1 validates opt-in projected execution-target candidates generated before source selection.",
+  "output_files": {
+    "anchor_projection_candidate_generation_summary": "anchor-projection-candidate-generation-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_fallback_or_open_grid": true,
+    "fail_on_safety_regression": true
+  },
+  "thresholds": {
+    "min_source_selected_candidate_changed_rate": 1e-9,
+    "min_trainable_anchor_projection_count": 1
+  },
+  "non_goals": [
+    "does_not_train_ppo",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_use_cspace_iris_or_irisnp"
+  ]
+}
