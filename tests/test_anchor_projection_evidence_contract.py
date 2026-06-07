@@ -241,6 +241,84 @@ class AnchorProjectionEvidenceContractTests(unittest.TestCase):
             "reason_codes": ["goal_blocked"],
         }
 
+    def _write_candidate_generation_summary_only(self) -> Path:
+        path = self.batch_root / "anchor-projection-candidate-generation-summary.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "anchor-projection-candidate-generation-summary/v1",
+                    "generated_at": "2026-06-07T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "platform_goal_contract_mismatch_count": 2,
+                    "trainable_anchor_projection_count": 1,
+                    "nontrainable_blocked_target_count": 1,
+                    "positive_training_evidence_contains_audit_proxy_anchor_count": 0,
+                    "anchor_projection_coverage_diagnosis": {
+                        "nontrainable_primary_reason_counts": {
+                            "source_candidate_not_selected": 1
+                        }
+                    },
+                    "context_records": [
+                        {
+                            "run_id": "all-all-k3-astar",
+                            "scenario_id": "trainable",
+                            "source_action_index": 0,
+                            "generated_action_index": 2,
+                            "policy_target_cell": [2, 1],
+                            "execution_goal_cell": [1, 1],
+                            "projected_anchor_cell": [1, 1],
+                            "classification": "platform_inflated_goal_blocked",
+                            "anchor_available": True,
+                            "anchor_reachable": True,
+                            "projected_candidate_generated": True,
+                            "projected_candidate_source_selected": True,
+                            "trainable": True,
+                            "training_use": "trainable_anchor_projection_contrast",
+                            "comparison_scope": "projected_target_anchor_contrast",
+                            "projection_distance_m": 0.5,
+                            "projection_distance_cells": 1,
+                            "positive_audit_proxy": False,
+                            "source_selection_quality_regression": False,
+                            "reject_reasons": [],
+                        },
+                        {
+                            "run_id": "all-all-k3-astar",
+                            "scenario_id": "not-selected",
+                            "source_action_index": 1,
+                            "generated_action_index": 3,
+                            "policy_target_cell": [4, 1],
+                            "execution_goal_cell": [3, 1],
+                            "projected_anchor_cell": [3, 1],
+                            "classification": "platform_inflated_goal_blocked",
+                            "anchor_available": True,
+                            "anchor_reachable": True,
+                            "projected_candidate_generated": True,
+                            "projected_candidate_source_selected": False,
+                            "trainable": False,
+                            "training_use": "not_positive_evidence",
+                            "comparison_scope": "projected_target_anchor_contrast",
+                            "projection_distance_m": 0.5,
+                            "projection_distance_cells": 1,
+                            "positive_audit_proxy": False,
+                            "source_selection_quality_regression": False,
+                            "reject_reasons": ["source_candidate_not_selected"],
+                        },
+                    ],
+                    "git_provenance": {
+                        "current": self.git_snapshot,
+                        "current_matches_sources": True,
+                    },
+                    "audit_only": True,
+                    "runs_training": False,
+                    "no_ppo_training": True,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return path
+
     def test_contract_splits_trainable_projection_from_audit_only_proxy(self) -> None:
         self._write_sources(
             [
@@ -288,6 +366,26 @@ class AnchorProjectionEvidenceContractTests(unittest.TestCase):
         self.assertFalse(summary["runs_training"])
         self.assertTrue(summary["audit_only"])
         self.assertTrue(summary["no_ppo_training"])
+
+    def test_contract_can_classify_candidate_generation_summary_without_old_audit_sources(self) -> None:
+        self._write_candidate_generation_summary_only()
+
+        completed = self._run_contract("--batch-root", str(self.batch_root), "--config", str(self.config))
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "anchor-projection-evidence-contract-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["contract_source"], "anchor_projection_candidate_generation_summary")
+        self.assertEqual(summary["platform_goal_contract_mismatch_count"], 2)
+        self.assertEqual(summary["trainable_anchor_projection_count"], 1)
+        self.assertEqual(summary["nontrainable_blocked_target_count"], 1)
+        self.assertEqual(summary["candidate_contract_alignment_gap_count"], 0)
+        decisions = {item["scenario_id"]: item for item in summary["anchor_projection_decisions"]}
+        self.assertEqual(decisions["trainable"]["sample_weight"], 1.0)
+        self.assertEqual(decisions["not-selected"]["sample_weight"], 0.0)
 
     def test_contract_fails_when_platform_goal_classification_is_unresolved(self) -> None:
         self._write_sources([self._platform_record("unknown", classification="unknown_contract_mismatch")])

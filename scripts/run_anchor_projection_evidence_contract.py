@@ -19,6 +19,7 @@ CONFIG_SCHEMA_VERSION = "anchor-projection-evidence-contract-config/v1"
 SUMMARY_SCHEMA_VERSION = "anchor-projection-evidence-contract-summary/v1"
 REGENERATION_SCHEMA_VERSION = "goal-blocked-evidence-regeneration-summary/v1"
 REVIEW_SCHEMA_VERSION = "policy-training-readiness-review-summary/v1"
+CANDIDATE_SCHEMA_VERSION = "anchor-projection-candidate-generation-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 FALLBACK_COUNT_FIELDS = (
     "open_grid_fallback_used_count",
@@ -63,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
         "--policy-training-readiness-review-summary",
         help="policy-training-readiness-review-summary/v1 JSON. Defaults to <batch-root>/policy-training-readiness-review-summary.json.",
     )
+    parser.add_argument(
+        "--anchor-projection-candidate-generation-summary",
+        help="Optional anchor-projection-candidate-generation-summary/v1 JSON. Defaults to <batch-root>/anchor-projection-candidate-generation-summary.json when present.",
+    )
     parser.add_argument("--config", required=True, help="Anchor projection contract config JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Validate inputs and print planned output paths.")
     parser.add_argument("--validate-only", action="store_true", help="Validate inputs without writing outputs.")
@@ -80,6 +85,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.policy_training_readiness_review_summary
         else batch_root / "policy-training-readiness-review-summary.json"
     )
+    candidate_path = (
+        _resolve_path(args.anchor_projection_candidate_generation_summary, repo_root)
+        if args.anchor_projection_candidate_generation_summary
+        else batch_root / "anchor-projection-candidate-generation-summary.json"
+    )
     config_path = _resolve_path(args.config, repo_root)
     try:
         config = _load_config(config_path)
@@ -91,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         batch_root=batch_root,
         regeneration_path=regeneration_path,
         review_path=review_path,
+        candidate_path=candidate_path,
         config=config,
         repo_root=repo_root,
     )
@@ -100,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
         "batch_root": _display_path(batch_root, repo_root),
         "goal_blocked_evidence_regeneration_summary": _display_path(regeneration_path, repo_root),
         "policy_training_readiness_review_summary": _display_path(review_path, repo_root),
+        "anchor_projection_candidate_generation_summary": (
+            _display_path(candidate_path, repo_root) if candidate_path.is_file() else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "current_git_provenance_mismatch_count": summary["current_git_provenance_mismatch_count"],
@@ -153,58 +167,101 @@ def analyze_anchor_projection_contract(
     batch_root: Path,
     regeneration_path: Path,
     review_path: Path,
+    candidate_path: Path,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
     reason_codes: list[str] = []
     source_summaries: dict[str, Any] = {}
-    regeneration = _load_source(
-        regeneration_path,
-        label="goal_blocked_evidence_regeneration_summary",
-        expected_schema=REGENERATION_SCHEMA_VERSION,
+    candidate = _load_optional_source(
+        candidate_path,
+        label="anchor_projection_candidate_generation_summary",
+        expected_schema=CANDIDATE_SCHEMA_VERSION,
         repo_root=repo_root,
         reason_codes=reason_codes,
         source_summaries=source_summaries,
     )
-    review = _load_source(
-        review_path,
-        label="policy_training_readiness_review_summary",
-        expected_schema=REVIEW_SCHEMA_VERSION,
-        repo_root=repo_root,
-        reason_codes=reason_codes,
-        source_summaries=source_summaries,
-    )
+    candidate_mode = bool(candidate)
+    if candidate_mode:
+        regeneration: dict[str, Any] = {}
+        review: dict[str, Any] = {}
+        source_summaries["goal_blocked_evidence_regeneration_summary"] = {
+            "path": _display_path(regeneration_path, repo_root),
+            "exists": regeneration_path.is_file(),
+            "optional": True,
+            "superseded_by": "anchor_projection_candidate_generation_summary",
+        }
+        source_summaries["policy_training_readiness_review_summary"] = {
+            "path": _display_path(review_path, repo_root),
+            "exists": review_path.is_file(),
+            "optional": True,
+            "superseded_by": "anchor_projection_candidate_generation_summary",
+        }
+    else:
+        regeneration = _load_source(
+            regeneration_path,
+            label="goal_blocked_evidence_regeneration_summary",
+            expected_schema=REGENERATION_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+        review = _load_source(
+            review_path,
+            label="policy_training_readiness_review_summary",
+            expected_schema=REVIEW_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
     if _fail_on_input_failure(config):
-        for label, payload in (
+        input_payloads = [("anchor_projection_candidate_generation_summary", candidate)] if candidate_mode else [
             ("goal_blocked_evidence_regeneration_summary", regeneration),
             ("policy_training_readiness_review_summary", review),
-        ):
+        ]
+        for label, payload in input_payloads:
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
 
     current_git = _git_snapshot(repo_root)
-    source_git_matches = [
-        _inspect_git(
-            regeneration,
-            label="goal_blocked_evidence_regeneration_summary",
-            current_git=current_git,
+    if candidate_mode:
+        source_git_matches = [
+            _inspect_git(
+                candidate,
+                label="anchor_projection_candidate_generation_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        ]
+        contract = _candidate_generation_contract_metrics(
+            candidate=candidate,
+            validation_reason_codes=reason_codes,
             config=config,
-            reason_codes=reason_codes,
-        ),
-        _inspect_git(
-            review,
-            label="policy_training_readiness_review_summary",
-            current_git=current_git,
+        )
+    else:
+        source_git_matches = [
+            _inspect_git(
+                regeneration,
+                label="goal_blocked_evidence_regeneration_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            ),
+            _inspect_git(
+                review,
+                label="policy_training_readiness_review_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            ),
+        ]
+        contract = _contract_metrics(
+            regeneration=regeneration,
+            review=review,
+            validation_reason_codes=reason_codes,
             config=config,
-            reason_codes=reason_codes,
-        ),
-    ]
-    contract = _contract_metrics(
-        regeneration=regeneration,
-        review=review,
-        validation_reason_codes=reason_codes,
-        config=config,
-    )
+        )
     status = "failed" if reason_codes else "passed"
     failure_reason_counts = Counter(reason_codes)
     return {
@@ -218,7 +275,14 @@ def analyze_anchor_projection_contract(
         "batch_root": _display_path(batch_root, repo_root),
         "goal_blocked_evidence_regeneration_summary_path": _display_path(regeneration_path, repo_root),
         "policy_training_readiness_review_summary_path": _display_path(review_path, repo_root),
-        "application_scope": "anchor_projection_evidence_contract_audit_only",
+        "anchor_projection_candidate_generation_summary_path": (
+            _display_path(candidate_path, repo_root) if candidate_mode else None
+        ),
+        "application_scope": (
+            "anchor_projection_evidence_contract_candidate_generation"
+            if candidate_mode
+            else "anchor_projection_evidence_contract_audit_only"
+        ),
         "quality_signal_use": "anchor_projection_training_contract_classification_only",
         "source_summaries": source_summaries,
         "config": _public_config(config),
@@ -226,6 +290,7 @@ def analyze_anchor_projection_contract(
             "current": current_git,
             "goal_blocked_evidence_regeneration": _public_git(regeneration),
             "policy_training_readiness_review": _public_git(review),
+            "anchor_projection_candidate_generation": _public_git(candidate),
             "current_matches_sources": all(source_git_matches),
         },
         **contract,
@@ -342,6 +407,195 @@ def _contract_metrics(
         "anchor_projection_decisions": decisions,
         "recommended_next_action": recommended,
     }
+
+
+def _candidate_generation_contract_metrics(
+    *,
+    candidate: dict[str, Any],
+    validation_reason_codes: list[str],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    records = _candidate_context_records(candidate)
+    decisions = [_classify_candidate_generation_context(record, config=config) for record in records]
+    decision_counts = Counter(decision["contract_decision"] for decision in decisions)
+    for decision in (
+        "trainable_anchor_projection_contrast",
+        "nontrainable_blocked_target",
+        "unresolved",
+    ):
+        decision_counts.setdefault(decision, 0)
+    platform_goal_contract_mismatch_count = len(records)
+    expected_total = _int_value_or_default(
+        candidate.get("platform_goal_contract_mismatch_count"),
+        platform_goal_contract_mismatch_count,
+    )
+    if expected_total != platform_goal_contract_mismatch_count:
+        _append_reason(validation_reason_codes, "candidate_generation_context_count_inconsistent")
+    trainable_count = decision_counts["trainable_anchor_projection_contrast"]
+    nontrainable_count = decision_counts["nontrainable_blocked_target"]
+    unresolved_count = decision_counts["unresolved"]
+    candidate_trainable_count = _int_value_or_default(candidate.get("trainable_anchor_projection_count"), 0)
+    candidate_nontrainable_count = _int_value_or_default(candidate.get("nontrainable_blocked_target_count"), 0)
+    if candidate_trainable_count != trainable_count:
+        _append_reason(validation_reason_codes, "candidate_generation_trainable_count_inconsistent")
+    if candidate_nontrainable_count != nontrainable_count:
+        _append_reason(validation_reason_codes, "candidate_generation_nontrainable_count_inconsistent")
+    safety_regression_count = _int_value_or_default(candidate.get("safety_regression_count"), 0)
+    fallback_count = _fallback_count(candidate)
+    contract_mutations = _contract_mutations({"anchor_projection_candidate_generation": candidate})
+    audit_proxy_positive_count = max(
+        _int_value_or_default(candidate.get("positive_training_evidence_contains_audit_proxy_anchor_count"), 0),
+        _int_value_or_default(candidate.get("audit_proxy_positive_count"), 0),
+        sum(
+            1
+            for decision in decisions
+            if decision["contract_decision"] == "trainable_anchor_projection_contrast"
+            and decision.get("comparison_scope") in _forbidden_positive_scopes(config)
+        ),
+    )
+    negative_scope_violation_count = 0
+    contract_blockers = _contract_blockers(
+        validation_reason_codes=validation_reason_codes,
+        safety_regression_count=safety_regression_count,
+        fallback_count=fallback_count,
+        contract_mutations=contract_mutations,
+        unresolved_count=unresolved_count,
+        max_unresolved_count=_max_unresolved_count(config),
+        audit_proxy_positive_count=audit_proxy_positive_count,
+        negative_scope_violation_count=negative_scope_violation_count,
+    )
+    for blocker in contract_blockers:
+        if blocker not in {"anchor_projection_records_unresolved"}:
+            _append_reason(validation_reason_codes, blocker)
+    if unresolved_count > _max_unresolved_count(config):
+        _append_reason(validation_reason_codes, "platform_goal_unresolved_count_exceeds_threshold")
+    recommended = (
+        "fix_validation_failures_before_anchor_projection_contract"
+        if validation_reason_codes
+        else "rerun_policy_training_readiness_review_with_anchor_projection_contract"
+        if trainable_count > 0
+        else "keep_platform_blocked_targets_out_of_training"
+    )
+    reason_counts = _candidate_nontrainable_reason_counts(candidate)
+    return {
+        "contract_source": "anchor_projection_candidate_generation_summary",
+        "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "candidate_generation_trainable_count": candidate_trainable_count,
+        "candidate_generation_nontrainable_count": candidate_nontrainable_count,
+        "trainable_anchor_projection_count": trainable_count,
+        "platform_goal_trainable_anchor_projection_count": trainable_count,
+        "nontrainable_blocked_target_count": nontrainable_count,
+        "platform_goal_nontrainable_blocked_target_count": nontrainable_count,
+        "candidate_contract_alignment_gap_count": max(candidate_trainable_count - trainable_count, 0),
+        "nontrainable_anchor_unreachable_count": _int_value_or_default(
+            reason_counts.get("anchor_unreachable"), 0
+        ),
+        "nontrainable_source_candidate_not_selected_count": _int_value_or_default(
+            reason_counts.get("source_candidate_not_selected"), 0
+        ),
+        "platform_goal_anchor_available_count": sum(1 for decision in decisions if decision.get("anchor_available")),
+        "platform_goal_unresolved_count": unresolved_count,
+        "positive_training_evidence_contains_audit_proxy_anchor_count": audit_proxy_positive_count,
+        "audit_proxy_positive_count": audit_proxy_positive_count,
+        "negative_evidence_scope_violation_count": negative_scope_violation_count,
+        "eligible_negative_evidence_candidate_count": 0,
+        "contract_decision_counts": dict(sorted(decision_counts.items())),
+        "contract_blockers": contract_blockers,
+        "contract_mutations": contract_mutations,
+        "safety_regression_count": safety_regression_count,
+        "fallback_or_open_grid_count": fallback_count,
+        "source_selected_candidate_changed_rate": candidate.get("source_selected_candidate_changed_rate"),
+        "training_readiness_status": None,
+        "source_selection_improvement_supported": _finite_number(
+            candidate.get("source_selected_candidate_changed_rate")
+        )
+        and float(candidate["source_selected_candidate_changed_rate"]) > 0.0,
+        "anchor_projection_decisions": decisions,
+        "recommended_next_action": recommended,
+    }
+
+
+def _candidate_context_records(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    records = candidate.get("context_records")
+    if not isinstance(records, list):
+        return []
+    return [record for record in records if isinstance(record, dict)]
+
+
+def _classify_candidate_generation_context(record: dict[str, Any], *, config: dict[str, Any]) -> dict[str, Any]:
+    classification = record.get("classification")
+    anchor = _cell(record.get("projected_anchor_cell"))
+    comparison_scope = record.get("comparison_scope")
+    training_use = record.get("training_use")
+    distance_m = _number_or_none(record.get("projection_distance_m"))
+    distance_cells = _int_or_none(record.get("projection_distance_cells"))
+    anchor_reachable = bool(record.get("anchor_reachable"))
+    reject_reasons = _string_list(record.get("reject_reasons"))
+    if classification not in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+        reject_reasons.append("not_platform_goal_contract_mismatch")
+    if classification == "unknown_contract_mismatch":
+        decision = "unresolved"
+        reject_reasons.append("platform_goal_classification_unknown")
+    else:
+        if classification != "platform_inflated_goal_blocked":
+            reject_reasons.append("platform_goal_classification_not_trainable_projection")
+        if not _cell(anchor):
+            reject_reasons.append("nearest_inflated_passable_anchor_missing")
+        if not bool(record.get("projected_candidate_generated")):
+            reject_reasons.append("projected_candidate_not_generated")
+        if not bool(record.get("projected_candidate_source_selected")):
+            reject_reasons.append("source_candidate_not_selected")
+        if _require_anchor_reachable(config) and not anchor_reachable:
+            reject_reasons.append("anchor_not_reachable")
+        if distance_m is None or not _finite_number(distance_m):
+            reject_reasons.append("projection_distance_m_missing")
+        elif distance_m > _max_projection_distance_m(config):
+            reject_reasons.append("projection_distance_m_exceeds_contract")
+        if distance_cells is None:
+            reject_reasons.append("projection_distance_cells_missing")
+        elif distance_cells > _max_projection_distance_cells(config):
+            reject_reasons.append("projection_distance_cells_exceeds_contract")
+        if training_use not in _allowed_training_uses(config):
+            reject_reasons.append("source_training_use_not_trainable")
+        if comparison_scope not in _allowed_training_scopes(config):
+            reject_reasons.append("comparison_scope_not_trainable")
+        if comparison_scope in _forbidden_positive_scopes(config) or bool(record.get("positive_audit_proxy")):
+            reject_reasons.append("audit_proxy_scope_not_positive_evidence")
+        if record.get("trainable") is not True and not reject_reasons:
+            reject_reasons.append("candidate_generation_context_not_trainable")
+        decision = (
+            "trainable_anchor_projection_contrast"
+            if not reject_reasons
+            else "nontrainable_blocked_target"
+        )
+    return {
+        "scenario_id": record.get("scenario_id"),
+        "pair_key": record.get("run_id"),
+        "action_index": record.get("generated_action_index"),
+        "source_action_index": record.get("source_action_index"),
+        "policy_target_cell": _cell(record.get("policy_target_cell")),
+        "projected_anchor_cell": anchor,
+        "platform_goal_classification": classification,
+        "anchor_available": anchor is not None,
+        "anchor_reachable": anchor_reachable,
+        "projection_distance_m": distance_m,
+        "projection_distance_cells": distance_cells,
+        "comparison_scope": comparison_scope,
+        "same_cell_positive_evidence": False,
+        "source_training_use": training_use,
+        "evidence_boundary": record.get("evidence_boundary"),
+        "contract_decision": decision,
+        "sample_weight": 1.0 if decision == "trainable_anchor_projection_contrast" else 0.0,
+        "training_use": decision if decision == "trainable_anchor_projection_contrast" else "not_positive_evidence",
+        "reject_reasons": _unique(reject_reasons),
+    }
+
+
+def _candidate_nontrainable_reason_counts(candidate: dict[str, Any]) -> dict[str, Any]:
+    diagnosis = candidate.get("anchor_projection_coverage_diagnosis")
+    diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
+    reason_counts = diagnosis.get("nontrainable_primary_reason_counts")
+    return reason_counts if isinstance(reason_counts, dict) else {}
 
 
 def _platform_goal_records(regeneration: dict[str, Any], reason_codes: list[str]) -> list[dict[str, Any]]:
@@ -547,6 +801,32 @@ def _load_source(
         _append_reason(reason_codes, f"{label}_schema_mismatch")
     source_summaries[label] = record
     return payload
+
+
+def _load_optional_source(
+    path: Path,
+    *,
+    label: str,
+    expected_schema: str,
+    repo_root: Path,
+    reason_codes: list[str],
+    source_summaries: dict[str, Any],
+) -> dict[str, Any]:
+    if path.is_file():
+        return _load_source(
+            path,
+            label=label,
+            expected_schema=expected_schema,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+    source_summaries[label] = {
+        "path": _display_path(path, repo_root),
+        "exists": False,
+        "optional": True,
+    }
+    return {}
 
 
 def _inspect_git(

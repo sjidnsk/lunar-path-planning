@@ -39,6 +39,7 @@ FALLBACK_COUNT_FIELDS = (
     "open_grid_fallback_used_count",
     "open_grid_fallback_count",
     "fallback_used_count",
+    "fallback_or_open_grid_count",
 )
 
 
@@ -210,38 +211,79 @@ def analyze_policy_training_readiness_review(
 ) -> dict[str, Any]:
     reason_codes: list[str] = []
     source_summaries: dict[str, Any] = {}
-    smoke = _load_source(
-        smoke_path,
-        label="calibrated_policy_application_smoke_summary",
-        expected_schema=SMOKE_SCHEMA_VERSION,
-        repo_root=repo_root,
-        reason_codes=reason_codes,
-        source_summaries=source_summaries,
+    anchor_only_mode = (
+        anchor_candidate_required
+        and anchor_contract_required
+        and anchor_candidate_path.is_file()
+        and anchor_contract_path.is_file()
+        and not any(path.is_file() for path in (smoke_path, readiness_path, coverage_path, calibration_path))
     )
-    readiness = _load_source(
-        readiness_path,
-        label="channel_aware_training_readiness_summary",
-        expected_schema=READINESS_SCHEMA_VERSION,
-        repo_root=repo_root,
-        reason_codes=reason_codes,
-        source_summaries=source_summaries,
-    )
-    coverage = _load_source(
-        coverage_path,
-        label="channel_aware_contrast_coverage_summary",
-        expected_schema=COVERAGE_SCHEMA_VERSION,
-        repo_root=repo_root,
-        reason_codes=reason_codes,
-        source_summaries=source_summaries,
-    )
-    calibration = _load_source(
-        calibration_path,
-        label="channel_aware_selection_contrast_calibration_summary",
-        expected_schema=CALIBRATION_SCHEMA_VERSION,
-        repo_root=repo_root,
-        reason_codes=reason_codes,
-        source_summaries=source_summaries,
-    )
+    if anchor_only_mode:
+        smoke = _load_optional_source(
+            smoke_path,
+            label="calibrated_policy_application_smoke_summary",
+            expected_schema=SMOKE_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+        readiness = _load_optional_source(
+            readiness_path,
+            label="channel_aware_training_readiness_summary",
+            expected_schema=READINESS_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+        coverage = _load_optional_source(
+            coverage_path,
+            label="channel_aware_contrast_coverage_summary",
+            expected_schema=COVERAGE_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+        calibration = _load_optional_source(
+            calibration_path,
+            label="channel_aware_selection_contrast_calibration_summary",
+            expected_schema=CALIBRATION_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+    else:
+        smoke = _load_source(
+            smoke_path,
+            label="calibrated_policy_application_smoke_summary",
+            expected_schema=SMOKE_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+        readiness = _load_source(
+            readiness_path,
+            label="channel_aware_training_readiness_summary",
+            expected_schema=READINESS_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+        coverage = _load_source(
+            coverage_path,
+            label="channel_aware_contrast_coverage_summary",
+            expected_schema=COVERAGE_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+        calibration = _load_source(
+            calibration_path,
+            label="channel_aware_selection_contrast_calibration_summary",
+            expected_schema=CALIBRATION_SCHEMA_VERSION,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
     anchor_candidate = _load_optional_source(
         anchor_candidate_path,
         label="anchor_projection_candidate_generation_summary",
@@ -273,12 +315,16 @@ def analyze_policy_training_readiness_review(
                 _append_reason(reason_codes, f"{label}_failed")
 
     current_git = _git_snapshot(repo_root)
-    source_git_matches = [
-        _inspect_git(smoke, label="calibrated_policy_application_smoke_summary", current_git=current_git, config=config, reason_codes=reason_codes),
-        _inspect_git(readiness, label="channel_aware_training_readiness_summary", current_git=current_git, config=config, reason_codes=reason_codes),
-        _inspect_git(coverage, label="channel_aware_contrast_coverage_summary", current_git=current_git, config=config, reason_codes=reason_codes),
-        _inspect_git(calibration, label="channel_aware_selection_contrast_calibration_summary", current_git=current_git, config=config, reason_codes=reason_codes),
-    ]
+    source_git_matches = []
+    if not anchor_only_mode:
+        source_git_matches.extend(
+            [
+                _inspect_git(smoke, label="calibrated_policy_application_smoke_summary", current_git=current_git, config=config, reason_codes=reason_codes),
+                _inspect_git(readiness, label="channel_aware_training_readiness_summary", current_git=current_git, config=config, reason_codes=reason_codes),
+                _inspect_git(coverage, label="channel_aware_contrast_coverage_summary", current_git=current_git, config=config, reason_codes=reason_codes),
+                _inspect_git(calibration, label="channel_aware_selection_contrast_calibration_summary", current_git=current_git, config=config, reason_codes=reason_codes),
+            ]
+        )
     if anchor_candidate:
         source_git_matches.append(
             _inspect_git(
@@ -308,6 +354,7 @@ def analyze_policy_training_readiness_review(
         anchor_candidate=anchor_candidate,
         anchor_contract=anchor_contract,
         validation_reason_codes=reason_codes,
+        anchor_only_mode=anchor_only_mode,
         config=config,
     )
     status = "failed" if reason_codes else "passed"
@@ -329,7 +376,11 @@ def analyze_policy_training_readiness_review(
         "anchor_projection_evidence_contract_summary_path": (
             _display_path(anchor_contract_path, repo_root) if anchor_contract else None
         ),
-        "application_scope": "calibrated_policy_training_readiness_review_audit_only",
+        "application_scope": (
+            "anchor_projection_readiness_contract_review_only"
+            if anchor_only_mode
+            else "calibrated_policy_training_readiness_review_audit_only"
+        ),
         "quality_signal_use": "calibrated_policy_target_training_contract_review_only",
         "source_summaries": source_summaries,
         "config": _public_config(config),
@@ -371,6 +422,7 @@ def _review_metrics(
     anchor_candidate: dict[str, Any],
     anchor_contract: dict[str, Any],
     validation_reason_codes: list[str],
+    anchor_only_mode: bool,
     config: dict[str, Any],
 ) -> dict[str, Any]:
     thresholds = config["readiness_thresholds"]
@@ -416,12 +468,16 @@ def _review_metrics(
         _int_value_or_default(readiness.get("calibration_safety_regression_count"), 0),
         _int_value_or_default(coverage.get("safety_regression_count"), 0),
         _int_value_or_default(calibration.get("safety_regression_count"), 0),
+        _int_value_or_default(anchor_candidate.get("safety_regression_count"), 0),
+        _int_value_or_default(anchor_contract.get("safety_regression_count"), 0),
     )
     fallback_or_open_grid_count = max(
         _fallback_or_open_grid_count(smoke),
         _fallback_or_open_grid_count(readiness),
         _fallback_or_open_grid_count(coverage),
         _fallback_or_open_grid_count(calibration),
+        _fallback_or_open_grid_count(anchor_candidate),
+        _fallback_or_open_grid_count(anchor_contract),
     )
     changed_scenario_ids = _unique(
         _string_list(smoke.get("changed_scenario_ids"))
@@ -447,11 +503,15 @@ def _review_metrics(
     if validation_reason_codes:
         for reason in validation_reason_codes:
             _append_reason(training_blockers, reason)
-    if thresholds["require_smoke_ready_for_training_review"] and smoke.get("recommended_next_action") != READY_SMOKE_ACTION:
+    if (
+        not anchor_only_mode
+        and thresholds["require_smoke_ready_for_training_review"]
+        and smoke.get("recommended_next_action") != READY_SMOKE_ACTION
+    ):
         _append_reason(training_blockers, "calibrated_application_smoke_not_ready_for_training_review")
-    if applied_count < thresholds["min_applied_calibrated_candidate_count"]:
+    if not anchor_only_mode and applied_count < thresholds["min_applied_calibrated_candidate_count"]:
         _append_reason(training_blockers, "applied_calibrated_candidate_count_below_training_threshold")
-    if calibrated_rate - source_rate < thresholds["min_calibrated_selection_rate_delta"]:
+    if not anchor_only_mode and calibrated_rate - source_rate < thresholds["min_calibrated_selection_rate_delta"]:
         _append_reason(training_blockers, "calibrated_selection_rate_delta_below_training_threshold")
     if rejected_goal_blocked_count > thresholds["max_rejected_goal_blocked_count"]:
         _append_reason(training_blockers, "goal_blocked_candidates_excluded_from_training_positive_evidence")
@@ -461,6 +521,8 @@ def _review_metrics(
         _append_reason(training_blockers, "fallback_or_open_grid_evidence_blocks_training_readiness")
     if contract_mutations:
         _append_reason(training_blockers, "contract_mutation_blocks_training_readiness")
+    if anchor_only_mode and anchor_projection_readiness["candidate_generation_nontrainable_count"] > 0:
+        _append_reason(training_blockers, "anchor_projection_nontrainable_contexts_remain")
     for reason in anchor_projection_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
 
@@ -496,6 +558,21 @@ def _review_metrics(
         "training_positive_candidate_count": applied_count,
         "excluded_candidate_count": excluded_candidate_count,
         "anchor_projection_readiness": anchor_projection_readiness,
+        "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
+            "candidate_generation_trainable_count"
+        ],
+        "anchor_projection_contract_trainable_count": anchor_projection_readiness["contract_trainable_count"],
+        "anchor_projection_readiness_trainable_count": anchor_projection_readiness["readiness_trainable_count"],
+        "anchor_projection_candidate_contract_alignment_gap_count": anchor_projection_readiness[
+            "candidate_contract_alignment_gap_count"
+        ],
+        "anchor_projection_anchor_unreachable_count": anchor_projection_readiness["anchor_unreachable_count"],
+        "anchor_projection_source_candidate_not_selected_count": anchor_projection_readiness[
+            "source_candidate_not_selected_count"
+        ],
+        "anchor_projection_audit_proxy_positive_count": anchor_projection_readiness[
+            "audit_proxy_positive_count"
+        ],
         "training_blockers": training_blockers,
         "contract_impact": {
             "training_contract_status": contract_status,
@@ -743,6 +820,23 @@ def _anchor_projection_readiness(
         contract.get("nontrainable_blocked_target_count"),
         _int_value_or_default(contract.get("nontrainable_anchor_projection_count"), 0),
     )
+    if candidate_present and contract_present:
+        readiness_trainable = min(candidate_trainable, contract_trainable)
+        alignment_gap = max(candidate_trainable - contract_trainable, 0)
+    else:
+        readiness_trainable = 0
+        alignment_gap = candidate_trainable if candidate_present else 0
+    anchor_unreachable_count = _candidate_nontrainable_reason_count(candidate, "anchor_unreachable")
+    source_candidate_not_selected_count = _candidate_nontrainable_reason_count(
+        candidate,
+        "source_candidate_not_selected",
+    )
+    audit_proxy_positive_count = max(
+        _int_value_or_default(candidate.get("positive_training_evidence_contains_audit_proxy_anchor_count"), 0),
+        _int_value_or_default(candidate.get("audit_proxy_positive_count"), 0),
+        _int_value_or_default(contract.get("positive_training_evidence_contains_audit_proxy_anchor_count"), 0),
+        _int_value_or_default(contract.get("audit_proxy_positive_count"), 0),
+    )
     source_quality_regression_count = _int_value_or_default(
         candidate.get("source_selection_quality_regression_count"),
         _quality_regression_count_from_contexts(candidate),
@@ -795,6 +889,8 @@ def _anchor_projection_readiness(
         _append_reason(quality_blockers, "anchor_projection_source_selection_risk_regression")
     if contract_present and candidate_present and contract_trainable < candidate_trainable:
         _append_reason(training_blockers, "anchor_projection_contract_trainable_count_below_candidate_generation")
+    if audit_proxy_positive_count > 0:
+        _append_reason(training_blockers, "anchor_projection_positive_evidence_contains_audit_proxy_anchor")
     for reason in quality_blockers:
         _append_reason(training_blockers, reason)
     return {
@@ -804,6 +900,11 @@ def _anchor_projection_readiness(
         "candidate_generation_nontrainable_count": candidate_nontrainable,
         "contract_trainable_count": contract_trainable,
         "contract_nontrainable_count": contract_nontrainable,
+        "readiness_trainable_count": readiness_trainable,
+        "candidate_contract_alignment_gap_count": alignment_gap,
+        "anchor_unreachable_count": anchor_unreachable_count,
+        "source_candidate_not_selected_count": source_candidate_not_selected_count,
+        "audit_proxy_positive_count": audit_proxy_positive_count,
         "source_selection_quality_regression_count": source_quality_regression_count,
         "max_source_selection_path_cost_margin_vs_best_alternative": max_path_margin,
         "max_source_selection_risk_margin_vs_best_alternative": max_risk_margin,
@@ -812,6 +913,35 @@ def _anchor_projection_readiness(
         "quality_regression_blockers": quality_blockers,
         "training_blockers": training_blockers,
     }
+
+
+def _candidate_nontrainable_reason_count(payload: dict[str, Any], reason: str) -> int:
+    explicit_fields = {
+        "anchor_unreachable": (
+            "nontrainable_anchor_unreachable_count",
+            "anchor_unreachable_count",
+        ),
+        "source_candidate_not_selected": (
+            "nontrainable_source_candidate_not_selected_count",
+            "source_candidate_not_selected_count",
+        ),
+    }
+    for field in explicit_fields.get(reason, ()):
+        if payload.get(field) is not None:
+            return _int_value_or_default(payload.get(field), 0)
+    diagnosis = payload.get("anchor_projection_coverage_diagnosis")
+    diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
+    reason_counts = diagnosis.get("nontrainable_primary_reason_counts")
+    if isinstance(reason_counts, dict) and reason_counts.get(reason) is not None:
+        return _int_value_or_default(reason_counts.get(reason), 0)
+    fallback_fields = {
+        "anchor_unreachable": "anchor_unreachable_not_generated_count",
+        "source_candidate_not_selected": "projected_candidate_not_source_selected_count",
+    }
+    field = fallback_fields.get(reason)
+    if field:
+        return _int_value_or_default(diagnosis.get(field), 0)
+    return 0
 
 
 def _quality_regression_count_from_contexts(payload: dict[str, Any]) -> int:

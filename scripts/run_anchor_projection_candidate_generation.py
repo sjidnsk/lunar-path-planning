@@ -172,6 +172,7 @@ def analyze_anchor_projection_candidate_generation(
         if reason
     )
     coverage_diagnosis = _anchor_projection_coverage_diagnosis(contexts.values())
+    nontrainable_reason_counts = coverage_diagnosis["nontrainable_primary_reason_counts"]
     if trainable_count < config["thresholds"]["min_trainable_anchor_projection_count"]:
         _append_reason(reason_codes, "trainable_anchor_projection_count_below_threshold")
     if source_changed_rate < config["thresholds"]["min_source_selected_candidate_changed_rate"]:
@@ -206,12 +207,19 @@ def analyze_anchor_projection_candidate_generation(
         "platform_goal_unresolved_count": unresolved_count,
         "trainable_anchor_projection_count": trainable_count,
         "nontrainable_blocked_target_count": nontrainable_count,
+        "nontrainable_anchor_unreachable_count": int(
+            nontrainable_reason_counts.get("anchor_unreachable", 0) or 0
+        ),
+        "nontrainable_source_candidate_not_selected_count": int(
+            nontrainable_reason_counts.get("source_candidate_not_selected", 0) or 0
+        ),
         "source_selected_candidate_changed_count": source_changed_count,
         "source_selected_candidate_changed_rate": source_changed_rate,
         "source_selection_quality_regression_count": source_selection_quality_regression_count,
         "max_source_selection_path_cost_margin_vs_best_alternative": max_source_selection_path_margin,
         "max_source_selection_risk_margin_vs_best_alternative": max_source_selection_risk_margin,
         "positive_training_evidence_contains_audit_proxy_anchor_count": positive_audit_proxy_count,
+        "audit_proxy_positive_count": positive_audit_proxy_count,
         "anchor_projection_candidate_reject_reason_counts": dict(sorted(reject_reason_counts.items())),
         "anchor_projection_coverage_diagnosis": coverage_diagnosis,
         "context_count": len(contexts),

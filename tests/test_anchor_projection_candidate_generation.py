@@ -244,6 +244,9 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
         self.assertEqual(summary["platform_goal_contract_mismatch_count"], 2)
         self.assertEqual(summary["trainable_anchor_projection_count"], 1)
         self.assertEqual(summary["nontrainable_blocked_target_count"], 1)
+        self.assertEqual(summary["nontrainable_anchor_unreachable_count"], 0)
+        self.assertEqual(summary["nontrainable_source_candidate_not_selected_count"], 1)
+        self.assertEqual(summary["audit_proxy_positive_count"], 0)
         self.assertEqual(summary["source_selected_candidate_changed_rate"], 0.5)
         self.assertEqual(summary["positive_training_evidence_contains_audit_proxy_anchor_count"], 0)
         self.assertEqual(

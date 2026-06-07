@@ -198,6 +198,8 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         candidate_nontrainable_count: int,
         contract_trainable_count: int,
         contract_nontrainable_count: int,
+        anchor_unreachable_count: int = 0,
+        source_candidate_not_selected_count: int = 0,
         quality_regression_count: int = 0,
         max_path_cost_margin: float | None = None,
         max_risk_margin: float | None = None,
@@ -218,6 +220,12 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
                     ),
                     "source_selection_quality_regression_count": quality_regression_count,
                     "anchor_projection_coverage_diagnosis": {
+                        "nontrainable_primary_reason_counts": {
+                            "anchor_unreachable": anchor_unreachable_count,
+                            "source_candidate_not_selected": source_candidate_not_selected_count,
+                        },
+                        "anchor_unreachable_not_generated_count": anchor_unreachable_count,
+                        "projected_candidate_not_source_selected_count": source_candidate_not_selected_count,
                         "source_selection_margin": {
                             "max_path_cost_margin": max_path_cost_margin,
                             "max_risk_margin": max_risk_margin,
@@ -463,6 +471,11 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         self.assertEqual(readiness["candidate_generation_nontrainable_count"], 4)
         self.assertEqual(readiness["contract_trainable_count"], 1)
         self.assertEqual(readiness["contract_nontrainable_count"], 5)
+        self.assertEqual(readiness["readiness_trainable_count"], 1)
+        self.assertEqual(readiness["candidate_contract_alignment_gap_count"], 1)
+        self.assertEqual(readiness["anchor_unreachable_count"], 0)
+        self.assertEqual(readiness["source_candidate_not_selected_count"], 0)
+        self.assertEqual(readiness["audit_proxy_positive_count"], 0)
         self.assertIn(
             "anchor_projection_contract_trainable_count_below_candidate_generation",
             summary["training_blockers"],
@@ -472,6 +485,81 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
         self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+
+    def test_anchor_projection_readiness_reports_candidate_generation_gap_causes(self) -> None:
+        self._write_sources()
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=18,
+            candidate_nontrainable_count=60,
+            contract_trainable_count=3,
+            contract_nontrainable_count=39,
+            anchor_unreachable_count=36,
+            source_candidate_not_selected_count=24,
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        readiness = summary["anchor_projection_readiness"]
+        self.assertEqual(readiness["candidate_generation_trainable_count"], 18)
+        self.assertEqual(readiness["contract_trainable_count"], 3)
+        self.assertEqual(readiness["readiness_trainable_count"], 3)
+        self.assertEqual(readiness["candidate_contract_alignment_gap_count"], 15)
+        self.assertEqual(readiness["anchor_unreachable_count"], 36)
+        self.assertEqual(readiness["source_candidate_not_selected_count"], 24)
+        self.assertIn(
+            "anchor_projection_contract_trainable_count_below_candidate_generation",
+            readiness["training_blockers"],
+        )
+        self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+
+    def test_review_can_run_anchor_only_with_candidate_and_contract_summaries(self) -> None:
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=1,
+            candidate_nontrainable_count=1,
+            contract_trainable_count=1,
+            contract_nontrainable_count=1,
+            source_candidate_not_selected_count=1,
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["application_scope"], "anchor_projection_readiness_contract_review_only")
+        self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+        self.assertIn("anchor_projection_nontrainable_contexts_remain", summary["training_blockers"])
+        self.assertEqual(summary["anchor_projection_readiness"]["readiness_trainable_count"], 1)
+        self.assertEqual(summary["anchor_projection_readiness"]["source_candidate_not_selected_count"], 1)
+        self.assertFalse(summary["runs_training"])
+        self.assertTrue(summary["no_ppo_training"])
 
     def test_anchor_projection_margin_blocker_ignores_unselected_diagnostic_margin(self) -> None:
         self._write_sources()
