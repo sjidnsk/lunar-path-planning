@@ -319,8 +319,33 @@ class AnchorProjectionEvidenceContractTests(unittest.TestCase):
         validation = json.loads(completed.stdout.splitlines()[0])
         self.assertEqual(validation["status"], "validation failed")
         self.assertGreater(validation["current_git_provenance_mismatch_count"], 0)
-        self.assertEqual(validation["git_provenance_mismatch_count"], 0)
+        self.assertGreater(validation["git_provenance_mismatch_count"], 0)
         self.assertIn("current_git_provenance_mismatch", validation["reason_codes"])
+        self.assertFalse((self.batch_root / "anchor-projection-evidence-contract-summary.json").exists())
+
+    def test_validate_only_reports_missing_current_git_without_writing(self) -> None:
+        self._write_sources([self._platform_record("missing-current")])
+        regeneration_path = self.batch_root / "goal-blocked-evidence-regeneration-summary.json"
+        regeneration = json.loads(regeneration_path.read_text(encoding="utf-8"))
+        regeneration["git_provenance"].pop("current")
+        regeneration_path.write_text(json.dumps(regeneration, indent=2), encoding="utf-8")
+
+        completed = self._run_contract(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--validate-only",
+        )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        validation = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(validation["status"], "validation failed")
+        self.assertIn("current_git_provenance_missing", validation["reason_codes"])
+        self.assertIn(
+            "goal_blocked_evidence_regeneration_summary_current_git_provenance_missing",
+            validation["reason_codes"],
+        )
         self.assertFalse((self.batch_root / "anchor-projection-evidence-contract-summary.json").exists())
 
     def test_contract_blocks_fallback_and_safety_regression(self) -> None:

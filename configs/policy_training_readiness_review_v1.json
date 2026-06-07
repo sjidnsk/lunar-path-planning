@@ -14,6 +14,7 @@
     "max_rejected_goal_blocked_count": 0,
     "max_safety_regression_count": 0,
     "max_fallback_or_open_grid_count": 0,
+    "max_anchor_projection_source_selection_quality_regression_count": 0,
     "require_smoke_ready_for_training_review": true
   },
   "non_goals": [

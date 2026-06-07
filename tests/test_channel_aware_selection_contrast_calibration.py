@@ -120,6 +120,7 @@ class ChannelAwareSelectionContrastCalibrationTests(unittest.TestCase):
             "status": "passed",
             "reason_codes": [],
             "batch_root": str(self.batch_root),
+            "git_provenance": {"current": source_git, "current_matches_batch": not git_mismatch},
             "channel_aware_decision_audit": {
                 "schema_version": "channel-aware-decision-audit/v1",
                 "paired_scenario_count": 3,

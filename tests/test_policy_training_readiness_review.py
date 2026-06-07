@@ -191,6 +191,72 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _write_anchor_projection_summaries(
+        self,
+        *,
+        candidate_trainable_count: int,
+        candidate_nontrainable_count: int,
+        contract_trainable_count: int,
+        contract_nontrainable_count: int,
+        quality_regression_count: int = 0,
+        max_path_cost_margin: float | None = None,
+        max_risk_margin: float | None = None,
+    ) -> tuple[Path, Path]:
+        candidate_path = self.batch_root / "anchor-projection-candidate-generation-summary.json"
+        contract_path = self.batch_root / "anchor-projection-evidence-contract-summary.json"
+        candidate_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "anchor-projection-candidate-generation-summary/v1",
+                    "generated_at": "2026-06-07T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "trainable_anchor_projection_count": candidate_trainable_count,
+                    "nontrainable_blocked_target_count": candidate_nontrainable_count,
+                    "platform_goal_contract_mismatch_count": (
+                        candidate_trainable_count + candidate_nontrainable_count
+                    ),
+                    "source_selection_quality_regression_count": quality_regression_count,
+                    "anchor_projection_coverage_diagnosis": {
+                        "source_selection_margin": {
+                            "max_path_cost_margin": max_path_cost_margin,
+                            "max_risk_margin": max_risk_margin,
+                        }
+                    },
+                    "git_provenance": {"current": self.git_snapshot},
+                    "runs_training": False,
+                    "audit_only": True,
+                    "no_ppo_training": True,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        contract_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "anchor-projection-evidence-contract-summary/v1",
+                    "generated_at": "2026-06-07T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "trainable_anchor_projection_count": contract_trainable_count,
+                    "nontrainable_blocked_target_count": contract_nontrainable_count,
+                    "platform_goal_contract_mismatch_count": (
+                        contract_trainable_count + contract_nontrainable_count
+                    ),
+                    "positive_training_evidence_contains_audit_proxy_anchor_count": 0,
+                    "recommended_next_action": "rerun_policy_training_readiness_review_with_anchor_projection_contract",
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                    "runs_training": False,
+                    "audit_only": True,
+                    "no_ppo_training": True,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return candidate_path, contract_path
+
     def test_review_allows_limited_training_dry_run_when_contract_is_clear(self) -> None:
         self._write_sources()
 
@@ -337,6 +403,132 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         self.assertEqual(validation["status"], "validation failed")
         self.assertIn("current_git_provenance_mismatch", validation["reason_codes"])
         self.assertFalse((self.batch_root / "policy-training-readiness-review-summary.json").exists())
+
+    def test_validate_only_blocks_missing_source_current_git_without_writing_summary(self) -> None:
+        self._write_sources()
+        coverage_path = self.batch_root / "channel-aware-contrast-coverage-summary.json"
+        coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+        coverage["git_provenance"].pop("current")
+        coverage_path.write_text(json.dumps(coverage, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--validate-only",
+        )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        validation = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(validation["status"], "validation failed")
+        self.assertIn("current_git_provenance_missing", validation["reason_codes"])
+        self.assertIn(
+            "channel_aware_contrast_coverage_summary_current_git_provenance_missing",
+            validation["reason_codes"],
+        )
+        self.assertFalse((self.batch_root / "policy-training-readiness-review-summary.json").exists())
+
+    def test_review_consumes_anchor_projection_summaries_and_blocks_regressed_contract(self) -> None:
+        self._write_sources()
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=2,
+            candidate_nontrainable_count=4,
+            contract_trainable_count=1,
+            contract_nontrainable_count=5,
+            quality_regression_count=1,
+            max_path_cost_margin=7.5,
+            max_risk_margin=0.4,
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        readiness = summary["anchor_projection_readiness"]
+        self.assertEqual(readiness["candidate_generation_trainable_count"], 2)
+        self.assertEqual(readiness["candidate_generation_nontrainable_count"], 4)
+        self.assertEqual(readiness["contract_trainable_count"], 1)
+        self.assertEqual(readiness["contract_nontrainable_count"], 5)
+        self.assertIn(
+            "anchor_projection_contract_trainable_count_below_candidate_generation",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "anchor_projection_source_selection_quality_regression",
+            summary["training_blockers"],
+        )
+        self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+
+    def test_anchor_projection_margin_blocker_ignores_unselected_diagnostic_margin(self) -> None:
+        self._write_sources()
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=1,
+            candidate_nontrainable_count=0,
+            contract_trainable_count=1,
+            contract_nontrainable_count=0,
+            quality_regression_count=0,
+        )
+        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        candidate.pop("max_source_selection_path_cost_margin_vs_best_alternative", None)
+        candidate.pop("max_source_selection_risk_margin_vs_best_alternative", None)
+        candidate["context_records"] = [
+            {
+                "scenario_id": "unselected-diagnostic",
+                "source_selection_status": "not_source_selected",
+                "source_selection_quality_regression": False,
+                "training_use": "not_positive_evidence",
+                "source_selection_path_cost_margin_vs_best_alternative": 999.0,
+                "source_selection_risk_margin_vs_best_alternative": 99.0,
+            }
+        ]
+        candidate_path.write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+        threshold_config = self.temp_dir / "policy-training-readiness-tight-margin.json"
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["readiness_thresholds"]["max_anchor_projection_path_cost_regression"] = 1.0
+        config["readiness_thresholds"]["max_anchor_projection_risk_regression"] = 1.0
+        threshold_config.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(threshold_config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        readiness = summary["anchor_projection_readiness"]
+        self.assertIsNone(readiness["max_source_selection_path_cost_margin_vs_best_alternative"])
+        self.assertIsNone(readiness["max_source_selection_risk_margin_vs_best_alternative"])
+        self.assertEqual(readiness["diagnostic_max_source_selection_path_cost_margin_vs_best_alternative"], 999.0)
+        self.assertEqual(readiness["diagnostic_max_source_selection_risk_margin_vs_best_alternative"], 99.0)
+        self.assertNotIn(
+            "anchor_projection_source_selection_path_cost_regression",
+            summary["training_blockers"],
+        )
+        self.assertEqual(summary["training_readiness_status"], "ready_for_limited_policy_training_dry_run")
 
 
 if __name__ == "__main__":

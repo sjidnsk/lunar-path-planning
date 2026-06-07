@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from git_provenance import git_snapshot as _git_snapshot
+from git_provenance import git_snapshots_match as _git_snapshots_match
+from git_provenance import inspect_source_git_provenance as _inspect_source_git_provenance
+from git_provenance import public_git as _public_git
 
 
 CONFIG_SCHEMA_VERSION = "policy-training-readiness-review-config/v1"
@@ -16,6 +20,8 @@ SMOKE_SCHEMA_VERSION = "calibrated-policy-application-smoke-summary/v1"
 READINESS_SCHEMA_VERSION = "channel-aware-training-readiness-summary/v1"
 COVERAGE_SCHEMA_VERSION = "channel-aware-contrast-coverage-summary/v1"
 CALIBRATION_SCHEMA_VERSION = "channel-aware-selection-contrast-calibration-summary/v1"
+ANCHOR_CANDIDATE_SCHEMA_VERSION = "anchor-projection-candidate-generation-summary/v1"
+ANCHOR_CONTRACT_SCHEMA_VERSION = "anchor-projection-evidence-contract-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 READY_SMOKE_ACTION = "ready_for_policy_training_readiness_review"
 READY_DRY_RUN_ACTION = "ready_for_limited_policy_training_dry_run"
@@ -61,6 +67,14 @@ def main(argv: list[str] | None = None) -> int:
         "--selection-contrast-calibration-summary",
         help="channel-aware-selection-contrast-calibration-summary/v1 JSON. Defaults to <batch-root>/channel-aware-selection-contrast-calibration-summary.json.",
     )
+    parser.add_argument(
+        "--anchor-projection-candidate-generation-summary",
+        help="Optional anchor-projection-candidate-generation-summary/v1 JSON. Defaults to <batch-root>/anchor-projection-candidate-generation-summary.json when present.",
+    )
+    parser.add_argument(
+        "--anchor-projection-evidence-contract-summary",
+        help="Optional anchor-projection-evidence-contract-summary/v1 JSON. Defaults to <batch-root>/anchor-projection-evidence-contract-summary.json when present.",
+    )
     parser.add_argument("--config", required=True, help="Policy training readiness review config JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Validate inputs and print planned output paths.")
     parser.add_argument("--validate-only", action="store_true", help="Validate inputs without writing outputs.")
@@ -88,6 +102,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.selection_contrast_calibration_summary
         else batch_root / "channel-aware-selection-contrast-calibration-summary.json"
     )
+    anchor_candidate_path = (
+        _resolve_path(args.anchor_projection_candidate_generation_summary, repo_root)
+        if args.anchor_projection_candidate_generation_summary
+        else batch_root / "anchor-projection-candidate-generation-summary.json"
+    )
+    anchor_contract_path = (
+        _resolve_path(args.anchor_projection_evidence_contract_summary, repo_root)
+        if args.anchor_projection_evidence_contract_summary
+        else batch_root / "anchor-projection-evidence-contract-summary.json"
+    )
     config_path = _resolve_path(args.config, repo_root)
     try:
         config = _load_config(config_path)
@@ -101,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
         readiness_path=readiness_path,
         coverage_path=coverage_path,
         calibration_path=calibration_path,
+        anchor_candidate_path=anchor_candidate_path,
+        anchor_contract_path=anchor_contract_path,
+        anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary),
+        anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -112,6 +140,16 @@ def main(argv: list[str] | None = None) -> int:
         "readiness_summary": _display_path(readiness_path, repo_root),
         "contrast_coverage_summary": _display_path(coverage_path, repo_root),
         "selection_contrast_calibration_summary": _display_path(calibration_path, repo_root),
+        "anchor_projection_candidate_generation_summary": (
+            _display_path(anchor_candidate_path, repo_root)
+            if anchor_candidate_path.is_file() or args.anchor_projection_candidate_generation_summary
+            else None
+        ),
+        "anchor_projection_evidence_contract_summary": (
+            _display_path(anchor_contract_path, repo_root)
+            if anchor_contract_path.is_file() or args.anchor_projection_evidence_contract_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -163,6 +201,10 @@ def analyze_policy_training_readiness_review(
     readiness_path: Path,
     coverage_path: Path,
     calibration_path: Path,
+    anchor_candidate_path: Path,
+    anchor_contract_path: Path,
+    anchor_candidate_required: bool = False,
+    anchor_contract_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -200,12 +242,32 @@ def analyze_policy_training_readiness_review(
         reason_codes=reason_codes,
         source_summaries=source_summaries,
     )
+    anchor_candidate = _load_optional_source(
+        anchor_candidate_path,
+        label="anchor_projection_candidate_generation_summary",
+        expected_schema=ANCHOR_CANDIDATE_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=anchor_candidate_required,
+    )
+    anchor_contract = _load_optional_source(
+        anchor_contract_path,
+        label="anchor_projection_evidence_contract_summary",
+        expected_schema=ANCHOR_CONTRACT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=anchor_contract_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
             ("channel_aware_training_readiness_summary", readiness),
             ("channel_aware_contrast_coverage_summary", coverage),
             ("channel_aware_selection_contrast_calibration_summary", calibration),
+            ("anchor_projection_candidate_generation_summary", anchor_candidate),
+            ("anchor_projection_evidence_contract_summary", anchor_contract),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -217,12 +279,34 @@ def analyze_policy_training_readiness_review(
         _inspect_git(coverage, label="channel_aware_contrast_coverage_summary", current_git=current_git, config=config, reason_codes=reason_codes),
         _inspect_git(calibration, label="channel_aware_selection_contrast_calibration_summary", current_git=current_git, config=config, reason_codes=reason_codes),
     ]
+    if anchor_candidate:
+        source_git_matches.append(
+            _inspect_git(
+                anchor_candidate,
+                label="anchor_projection_candidate_generation_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if anchor_contract:
+        source_git_matches.append(
+            _inspect_git(
+                anchor_contract,
+                label="anchor_projection_evidence_contract_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
         readiness=readiness,
         coverage=coverage,
         calibration=calibration,
+        anchor_candidate=anchor_candidate,
+        anchor_contract=anchor_contract,
         validation_reason_codes=reason_codes,
         config=config,
     )
@@ -239,6 +323,12 @@ def analyze_policy_training_readiness_review(
         "readiness_summary_path": _display_path(readiness_path, repo_root),
         "contrast_coverage_summary_path": _display_path(coverage_path, repo_root),
         "selection_contrast_calibration_summary_path": _display_path(calibration_path, repo_root),
+        "anchor_projection_candidate_generation_summary_path": (
+            _display_path(anchor_candidate_path, repo_root) if anchor_candidate else None
+        ),
+        "anchor_projection_evidence_contract_summary_path": (
+            _display_path(anchor_contract_path, repo_root) if anchor_contract else None
+        ),
         "application_scope": "calibrated_policy_training_readiness_review_audit_only",
         "quality_signal_use": "calibrated_policy_target_training_contract_review_only",
         "source_summaries": source_summaries,
@@ -249,6 +339,8 @@ def analyze_policy_training_readiness_review(
             "training_readiness": _public_git(readiness),
             "contrast_coverage": _public_git(coverage),
             "selection_contrast_calibration": _public_git(calibration),
+            "anchor_projection_candidate_generation": _public_git(anchor_candidate),
+            "anchor_projection_evidence_contract": _public_git(anchor_contract),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -276,6 +368,8 @@ def _review_metrics(
     readiness: dict[str, Any],
     coverage: dict[str, Any],
     calibration: dict[str, Any],
+    anchor_candidate: dict[str, Any],
+    anchor_contract: dict[str, Any],
     validation_reason_codes: list[str],
     config: dict[str, Any],
 ) -> dict[str, Any]:
@@ -340,7 +434,14 @@ def _review_metrics(
             "training_readiness": readiness,
             "contrast_coverage": coverage,
             "selection_contrast_calibration": calibration,
+            "anchor_projection_candidate_generation": anchor_candidate,
+            "anchor_projection_evidence_contract": anchor_contract,
         }
+    )
+    anchor_projection_readiness = _anchor_projection_readiness(
+        candidate=anchor_candidate,
+        contract=anchor_contract,
+        thresholds=thresholds,
     )
     training_blockers: list[str] = []
     if validation_reason_codes:
@@ -360,6 +461,8 @@ def _review_metrics(
         _append_reason(training_blockers, "fallback_or_open_grid_evidence_blocks_training_readiness")
     if contract_mutations:
         _append_reason(training_blockers, "contract_mutation_blocks_training_readiness")
+    for reason in anchor_projection_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -392,6 +495,7 @@ def _review_metrics(
         "fallback_or_open_grid_count": fallback_or_open_grid_count,
         "training_positive_candidate_count": applied_count,
         "excluded_candidate_count": excluded_candidate_count,
+        "anchor_projection_readiness": anchor_projection_readiness,
         "training_blockers": training_blockers,
         "contract_impact": {
             "training_contract_status": contract_status,
@@ -459,6 +563,18 @@ def _load_config(path: Path) -> dict[str, Any]:
             thresholds.get("max_fallback_or_open_grid_count", 0),
             "readiness_thresholds.max_fallback_or_open_grid_count",
         ),
+        "max_anchor_projection_source_selection_quality_regression_count": _int_value(
+            thresholds.get("max_anchor_projection_source_selection_quality_regression_count", 0),
+            "readiness_thresholds.max_anchor_projection_source_selection_quality_regression_count",
+        ),
+        "max_anchor_projection_path_cost_regression": _optional_nonnegative_float(
+            thresholds.get("max_anchor_projection_path_cost_regression"),
+            "readiness_thresholds.max_anchor_projection_path_cost_regression",
+        ),
+        "max_anchor_projection_risk_regression": _optional_nonnegative_float(
+            thresholds.get("max_anchor_projection_risk_regression"),
+            "readiness_thresholds.max_anchor_projection_risk_regression",
+        ),
         "require_smoke_ready_for_training_review": bool(
             thresholds.get("require_smoke_ready_for_training_review", True)
         ),
@@ -471,6 +587,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         "max_rejected_goal_blocked_count",
         "max_safety_regression_count",
         "max_fallback_or_open_grid_count",
+        "max_anchor_projection_source_selection_quality_regression_count",
     ):
         if normalized_thresholds[key] < 0:
             raise ConfigError(f"readiness_thresholds.{key} must be >= 0")
@@ -516,6 +633,33 @@ def _load_source(
     return payload
 
 
+def _load_optional_source(
+    path: Path,
+    *,
+    label: str,
+    expected_schema: str,
+    repo_root: Path,
+    reason_codes: list[str],
+    source_summaries: dict[str, Any],
+    required: bool = False,
+) -> dict[str, Any]:
+    if path.is_file() or required:
+        return _load_source(
+            path,
+            label=label,
+            expected_schema=expected_schema,
+            repo_root=repo_root,
+            reason_codes=reason_codes,
+            source_summaries=source_summaries,
+        )
+    source_summaries[label] = {
+        "path": _display_path(path, repo_root),
+        "exists": False,
+        "optional": True,
+    }
+    return {}
+
+
 def _inspect_git(
     payload: dict[str, Any],
     *,
@@ -524,27 +668,14 @@ def _inspect_git(
     config: dict[str, Any],
     reason_codes: list[str],
 ) -> bool:
-    if not _require_current_git_match(config):
-        return True
-    git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
-    source_current = git.get("current") if isinstance(git.get("current"), dict) else {}
-    source_matches = True
-    if source_current and not _git_snapshots_match(source_current, current_git):
-        _append_reason(reason_codes, "current_git_provenance_mismatch")
-        _append_reason(reason_codes, f"{label}_current_git_provenance_mismatch")
-        source_matches = False
-    for key in (
-        "current_matches_sources",
-        "current_matches_application",
-        "current_matches_robustness",
-        "current_matches_batch",
-        "runs_match_batch",
-    ):
-        if git.get(key) is False:
-            _append_reason(reason_codes, "git_provenance_mismatch")
-            _append_reason(reason_codes, f"{label}_git_provenance_mismatch")
-            source_matches = False
-    return bool(source_current) and source_matches
+    return _inspect_source_git_provenance(
+        payload,
+        label=label,
+        current_git=current_git,
+        require_current_git_match=_require_current_git_match(config),
+        reason_codes=reason_codes,
+        submodules=SUBMODULES,
+    )
 
 
 def _source_rate(
@@ -594,6 +725,152 @@ def _contract_mutations(labeled_payloads: dict[str, dict[str, Any]]) -> list[str
     return sorted(set(mutations))
 
 
+def _anchor_projection_readiness(
+    *,
+    candidate: dict[str, Any],
+    contract: dict[str, Any],
+    thresholds: dict[str, Any],
+) -> dict[str, Any]:
+    candidate_present = bool(candidate)
+    contract_present = bool(contract)
+    candidate_trainable = _int_value_or_default(candidate.get("trainable_anchor_projection_count"), 0)
+    candidate_nontrainable = _int_value_or_default(
+        candidate.get("nontrainable_blocked_target_count"),
+        _int_value_or_default(candidate.get("nontrainable_anchor_projection_count"), 0),
+    )
+    contract_trainable = _int_value_or_default(contract.get("trainable_anchor_projection_count"), 0)
+    contract_nontrainable = _int_value_or_default(
+        contract.get("nontrainable_blocked_target_count"),
+        _int_value_or_default(contract.get("nontrainable_anchor_projection_count"), 0),
+    )
+    source_quality_regression_count = _int_value_or_default(
+        candidate.get("source_selection_quality_regression_count"),
+        _quality_regression_count_from_contexts(candidate),
+    )
+    diagnostic_max_path_margin = _max_numeric(
+        candidate.get("max_source_selection_path_cost_margin_vs_best_alternative"),
+        _max_context_field(candidate, "source_selection_path_cost_margin_vs_best_alternative"),
+    )
+    diagnostic_max_risk_margin = _max_numeric(
+        candidate.get("max_source_selection_risk_margin_vs_best_alternative"),
+        _max_context_field(candidate, "source_selection_risk_margin_vs_best_alternative"),
+    )
+    max_path_margin = _max_context_field(
+        candidate,
+        "source_selection_path_cost_margin_vs_best_alternative",
+        predicate=_context_margin_can_block_readiness,
+    )
+    max_risk_margin = _max_context_field(
+        candidate,
+        "source_selection_risk_margin_vs_best_alternative",
+        predicate=_context_margin_can_block_readiness,
+    )
+    if source_quality_regression_count > 0:
+        max_path_margin = _max_numeric(
+            max_path_margin,
+            candidate.get("max_source_selection_path_cost_margin_vs_best_alternative"),
+        )
+        max_risk_margin = _max_numeric(
+            max_risk_margin,
+            candidate.get("max_source_selection_risk_margin_vs_best_alternative"),
+        )
+    quality_blockers: list[str] = []
+    training_blockers: list[str] = []
+    max_quality_regressions = thresholds.get("max_anchor_projection_source_selection_quality_regression_count")
+    if source_quality_regression_count > _int_value_or_default(max_quality_regressions, 0):
+        _append_reason(quality_blockers, "anchor_projection_source_selection_quality_regression")
+    max_allowed_path_margin = thresholds.get("max_anchor_projection_path_cost_regression")
+    if (
+        max_allowed_path_margin is not None
+        and max_path_margin is not None
+        and max_path_margin > float(max_allowed_path_margin)
+    ):
+        _append_reason(quality_blockers, "anchor_projection_source_selection_path_cost_regression")
+    max_allowed_risk_margin = thresholds.get("max_anchor_projection_risk_regression")
+    if (
+        max_allowed_risk_margin is not None
+        and max_risk_margin is not None
+        and max_risk_margin > float(max_allowed_risk_margin)
+    ):
+        _append_reason(quality_blockers, "anchor_projection_source_selection_risk_regression")
+    if contract_present and candidate_present and contract_trainable < candidate_trainable:
+        _append_reason(training_blockers, "anchor_projection_contract_trainable_count_below_candidate_generation")
+    for reason in quality_blockers:
+        _append_reason(training_blockers, reason)
+    return {
+        "candidate_generation_present": candidate_present,
+        "contract_present": contract_present,
+        "candidate_generation_trainable_count": candidate_trainable,
+        "candidate_generation_nontrainable_count": candidate_nontrainable,
+        "contract_trainable_count": contract_trainable,
+        "contract_nontrainable_count": contract_nontrainable,
+        "source_selection_quality_regression_count": source_quality_regression_count,
+        "max_source_selection_path_cost_margin_vs_best_alternative": max_path_margin,
+        "max_source_selection_risk_margin_vs_best_alternative": max_risk_margin,
+        "diagnostic_max_source_selection_path_cost_margin_vs_best_alternative": diagnostic_max_path_margin,
+        "diagnostic_max_source_selection_risk_margin_vs_best_alternative": diagnostic_max_risk_margin,
+        "quality_regression_blockers": quality_blockers,
+        "training_blockers": training_blockers,
+    }
+
+
+def _quality_regression_count_from_contexts(payload: dict[str, Any]) -> int:
+    contexts = payload.get("context_records")
+    if not isinstance(contexts, list):
+        return 0
+    return sum(
+        1
+        for context in contexts
+        if isinstance(context, dict)
+        and (
+            context.get("source_selection_quality_regression") is True
+            or "source_selection_quality_regression" in _string_list(context.get("reject_reasons"))
+        )
+    )
+
+
+def _max_context_field(
+    payload: dict[str, Any],
+    field: str,
+    *,
+    predicate: Any | None = None,
+) -> float | None:
+    contexts = payload.get("context_records")
+    if not isinstance(contexts, list):
+        return None
+    return _max_numeric(
+        *(
+            context.get(field)
+            for context in contexts
+            if isinstance(context, dict) and (predicate is None or predicate(context))
+        )
+    )
+
+
+def _context_margin_can_block_readiness(context: dict[str, Any]) -> bool:
+    if (
+        context.get("source_selection_quality_regression") is True
+        or "source_selection_quality_regression" in _string_list(context.get("reject_reasons"))
+    ):
+        return True
+    return (
+        context.get("training_use") == "trainable_anchor_projection_contrast"
+        and context.get("source_selection_status") in {"source_selected", "source_selected_quality_regression", None}
+    )
+
+
+def _max_numeric(*values: Any) -> float | None:
+    numeric_values = []
+    for value in values:
+        try:
+            numeric_values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if not numeric_values:
+        return None
+    return max(numeric_values)
+
+
 def _output_file(batch_root: Path, config: dict[str, Any]) -> Path:
     return batch_root / config["output_files"]["policy_training_readiness_review_summary"]
 
@@ -605,11 +882,6 @@ def _public_config(config: dict[str, Any]) -> dict[str, Any]:
         "readiness_thresholds": dict(config.get("readiness_thresholds", {})),
         "output_files": dict(config.get("output_files", {})),
     }
-
-
-def _public_git(payload: dict[str, Any]) -> dict[str, Any]:
-    git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
-    return dict(git)
 
 
 def _require_current_git_match(config: dict[str, Any]) -> bool:
@@ -624,53 +896,6 @@ def _fail_on_input_failure(config: dict[str, Any]) -> bool:
     if not isinstance(validation, dict):
         return True
     return bool(validation.get("fail_on_input_failure", True))
-
-
-def _git_snapshot(repo_root: Path) -> dict[str, Any]:
-    def git(path: Path, *args: str) -> str | None:
-        completed = subprocess.run(
-            ["git", "-C", str(path), *args],
-            cwd=repo_root,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        if completed.returncode != 0:
-            return None
-        return completed.stdout.strip() or None
-
-    return {
-        "parent": {
-            "path": ".",
-            "sha": git(repo_root, "rev-parse", "HEAD") or "unknown",
-            "branch": git(repo_root, "branch", "--show-current"),
-        },
-        "submodules": {
-            name: {
-                "path": name,
-                "sha": git(repo_root / name, "rev-parse", "HEAD") or "unknown",
-                "branch": git(repo_root / name, "branch", "--show-current"),
-            }
-            for name in SUBMODULES
-        },
-    }
-
-
-def _git_snapshots_match(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    if not left or not right:
-        return False
-    left_parent = left.get("parent") if isinstance(left.get("parent"), dict) else {}
-    right_parent = right.get("parent") if isinstance(right.get("parent"), dict) else {}
-    if left_parent.get("sha") != right_parent.get("sha"):
-        return False
-    left_modules = left.get("submodules") if isinstance(left.get("submodules"), dict) else {}
-    right_modules = right.get("submodules") if isinstance(right.get("submodules"), dict) else {}
-    for name in SUBMODULES:
-        left_module = left_modules.get(name) if isinstance(left_modules.get(name), dict) else {}
-        right_module = right_modules.get(name) if isinstance(right_modules.get(name), dict) else {}
-        if left_module.get("sha") != right_module.get("sha"):
-            return False
-    return True
 
 
 def _resolve_path(value: str | Path, repo_root: Path) -> Path:
@@ -741,6 +966,15 @@ def _float_value(value: Any, label: str) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"{label} must be a number") from exc
+
+
+def _optional_nonnegative_float(value: Any, label: str) -> float | None:
+    if value is None:
+        return None
+    parsed = _float_value(value, label)
+    if parsed < 0.0:
+        raise ConfigError(f"{label} must be >= 0")
+    return parsed
 
 
 def _int_value_or_default(value: Any, default: int) -> int:

@@ -102,6 +102,43 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertNotIn("Planner extra args: --anchor-projection-candidate-generation", completed.stdout)
         self.assertFalse(output_root.exists())
 
+    def test_anchor_projection_selection_bonus_is_manifest_only_opt_in(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        output_root = Path(tempfile.mkdtemp(prefix="path-feedback-anchor-selection-")) / "out"
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--anchor-projection-candidate-generation",
+                "--anchor-projection-selection-path-cost-bonus",
+                "3.0",
+                "--anchor-projection-max-selection-path-cost-regression",
+                "2.5",
+                "--anchor-projection-max-selection-risk-regression",
+                "0.25",
+                "--output-root",
+                str(output_root),
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Anchor projection selection path-cost bonus: 3.0", completed.stdout)
+        self.assertIn("Anchor projection max selection path-cost regression: 2.5", completed.stdout)
+        self.assertIn("Anchor projection max selection risk regression: 0.25", completed.stdout)
+        self.assertNotIn("Planner extra args: --anchor-projection-selection-path-cost-bonus", completed.stdout)
+        self.assertNotIn(
+            "Planner extra args: --anchor-projection-max-selection-path-cost-regression",
+            completed.stdout,
+        )
+        self.assertFalse(output_root.exists())
+
     def test_control_point_calibration_args_are_explicitly_forwarded(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "run_path_feedback_validation.sh"

@@ -95,3 +95,103 @@ Record output root, key counts, commands, source/trainable vs audit-only boundar
 - [ ] **Step 3: Final verification**
 
 Run focused pytest and validate-only commands fresh before claiming completion.
+
+### Task 5: Coverage Diagnosis + Selection Improvement
+
+**Files:**
+- Modify: `model-explorer/src/model_explorer/policy/planning.py`
+- Modify: `model-explorer/src/model_explorer/policy/path_feedback.py`
+- Modify: `scripts/run_path_feedback_validation.sh`
+- Modify: `configs/path_feedback_batch_anchor_projection_candidate_generation_v1.json`
+- Modify: `scripts/run_anchor_projection_candidate_generation.py`
+- Modify: `tests/test_anchor_projection_candidate_generation.py`
+- Modify: `tests/test_path_feedback_validation_script.py`
+- Modify: `model-explorer/tests/test_model_explorer.py`
+- Modify: `docs/算法设计与系统架构报告.md`
+- Modify: `docs/superpowers/specs/2026-06-07-anchor-projection-candidate-generation.md`
+
+- [x] **Step 1: Write failing tests for diagnosis and opt-in selection bonus**
+
+Added tests proving the summary exposes `anchor_projection_coverage_diagnosis/v1`, and that
+`source_selection_path_cost_bonus` is manifest-only and opt-in.
+
+- [x] **Step 2: Implement bounded source-selection bonus**
+
+Added `AnchorProjectionCandidateConfig.source_selection_path_cost_bonus`. The bonus only affects
+path-feedback source selection for feasible, non-replan `projected_execution_target` candidates.
+It does not change default A*, PPO, network architecture, action space, or path-planner CLI args.
+
+- [x] **Step 3: Implement coverage diagnosis summary**
+
+Extended `anchor-projection-candidate-generation-summary/v1` with generated/source-selected counts,
+nontrainable primary reasons, projection distance distribution, scenario/run breakdowns, and
+path-cost/risk margin diagnostics.
+
+- [x] **Step 4: Refresh evidence**
+
+Regenerated `outputs/path_feedback_batch_anchor_projection_candidate_generation_v1/` with
+`--anchor-projection-selection-path-cost-bonus 6.0`. Result:
+`trainable_anchor_projection_count=18`, `nontrainable_blocked_target_count=60`,
+`source_selected_candidate_changed_rate=0.23076923076923078`.
+
+- [x] **Step 5: Validate readiness remains blocked**
+
+Full downstream generation and validate-only chain passed. Policy training readiness remains
+`needs_training_contract_refinement`; PPO is still not allowed.
+
+- [x] **Step 6: Risk Closure v1**
+
+Added unified dirty-aware git provenance snapshots for parent/submodule evidence gates, strict
+corner-cutting semantics for A*/channel-aware/region-guided planners, source-selected
+anchor-projection quality regression gates, channel-aware exposure-only regression rejection, and
+optional anchor-projection candidate/contract inputs in policy readiness review.
+
+Validation highlights:
+
+- Existing related tests pass for provenance, readiness inputs, anchor-projection candidate
+  generation, model-explorer path feedback, A*, channel-aware A*, and region-guided search.
+- Isolated dirty-worktree batch
+  `outputs/path_feedback_batch_anchor_projection_candidate_generation_v1_risk_closure_check/`
+  completed 8/8 runs, then candidate-generation validation failed as expected with
+  `current_git_provenance_mismatch_count=1` and `git_provenance_mismatch_count=1`.
+- The same isolated summary preserved the algorithmic count
+  `trainable_anchor_projection_count=18`, `nontrainable_blocked_target_count=60`, and
+  `source_selection_quality_regression_count=0`; the failure is provenance, not candidate
+  generation regression.
+
+Next step: after committing these changes, rerun the same batch and downstream validate-only chain
+from a clean worktree, then reconcile the 18/78 candidate-generation count with the 3/42
+anchor-projection contract count before any training dry-run.
+
+- [x] **Step 7: Risk Closure v2**
+
+Closed the remaining risk items found in the follow-up scan:
+
+- Shared provenance inspection now lives in `scripts/git_provenance.py`; downstream source
+  summaries missing `git_provenance.current` fail with explicit missing-current reason codes.
+- Legacy SHA-only snapshot compatibility remains only for present snapshots; a missing current
+  snapshot is no longer treated as a weak match.
+- Policy readiness now separates blocker margins from diagnostics: only source-selected quality
+  regressions or trainable anchor-projection contexts can trip path/risk regression blockers.
+- Anchor-projection best-alternative scope is explicit:
+  `reachable_non_replan_candidates_including_policy_and_projected_targets`.
+- The direction-cone CLI scenario batch was re-baselined from the stale
+  `sampled_trajectory_collision` case to `direction_cone_obstacle_detour`; the strict
+  corner-cutting path no longer collides with the center obstacle, and the real blocker is
+  `direction_cone_constraint_violation`.
+
+Validation completed:
+
+- parent `tests`: `110 passed, 10 subtests passed`
+- `model-explorer/tests`: `191 passed, 13 subtests passed`
+- `dev-platform-constraints/tests`: `86 passed, 1 skipped, 36 subtests passed`
+- `path-planner/tests` from submodule cwd with `PYTHONPATH=src`: pytest exited 0
+- anchor-projection batch dry-run: 8 planned runs
+- dirty-worktree formal batch:
+  `outputs/path_feedback_batch_anchor_projection_candidate_generation_v1_risk_closure_v2_check/`
+  completed 8/8 runs
+- dirty-worktree candidate-generation validate-only failed as intended with
+  `current_git_provenance_mismatch_count=1`, `git_provenance_mismatch_count=1`, and
+  `trainable_anchor_projection_count=18`
+
+Clean-worktree evidence refresh remains pending until this Risk Closure v2 work is committed.

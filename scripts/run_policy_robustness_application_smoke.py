@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from git_provenance import git_snapshot as _shared_git_snapshot
+from git_provenance import git_snapshots_match as _shared_git_snapshots_match
 
 
 CONFIG_SCHEMA_VERSION = "policy-robustness-application-smoke-config/v1"
@@ -827,51 +829,11 @@ def _require_current_git_match(config: dict[str, Any]) -> bool:
 
 
 def _git_snapshot(repo_root: Path) -> dict[str, Any]:
-    return {
-        "parent": _git_repo_state(repo_root, repo_root=repo_root),
-        "submodules": {name: _git_repo_state(repo_root / name, repo_root=repo_root) for name in SUBMODULES},
-    }
-
-
-def _git_repo_state(path: Path, *, repo_root: Path) -> dict[str, Any]:
-    sha = _run_git(path, "rev-parse", "HEAD")
-    branch = _run_git(path, "branch", "--show-current")
-    return {
-        "path": _display_path(path, repo_root),
-        "sha": sha or "unknown",
-        "branch": branch or None,
-    }
-
-
-def _run_git(path: Path, *args: str) -> str | None:
-    if not path.exists():
-        return None
-    completed = subprocess.run(
-        ["git", "-C", str(path), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.strip() or None
+    return _shared_git_snapshot(repo_root, submodules=SUBMODULES)
 
 
 def _git_snapshots_match(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return _git_sha_map(left) == _git_sha_map(right)
-
-
-def _git_sha_map(snapshot: dict[str, Any]) -> dict[str, str]:
-    result: dict[str, str] = {}
-    parent = snapshot.get("parent")
-    if isinstance(parent, dict):
-        result[str(parent.get("path", "."))] = str(parent.get("sha", "unknown"))
-    submodules = snapshot.get("submodules")
-    if isinstance(submodules, dict):
-        for name, payload in submodules.items():
-            if isinstance(payload, dict):
-                result[str(name)] = str(payload.get("sha", "unknown"))
-    return result
+    return _shared_git_snapshots_match(left, right, submodules=SUBMODULES)
 
 
 def _required_string(value: Any, label: str) -> str:

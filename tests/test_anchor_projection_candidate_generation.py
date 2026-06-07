@@ -109,6 +109,7 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
                         "candidates": [
                             self._blocked_candidate(action_index=0),
                             self._projected_candidate(action_index=2, source_selected=True),
+                            self._normal_candidate(action_index=1, path_cost=8.0, risk=0.4),
                         ]
                     },
                 },
@@ -121,6 +122,7 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
                         "candidates": [
                             self._blocked_candidate(action_index=0),
                             self._projected_candidate(action_index=2, source_selected=False),
+                            self._normal_candidate(action_index=1, path_cost=3.0, risk=0.2),
                         ]
                     },
                 },
@@ -175,6 +177,15 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             if source_selected
             else "source_candidate_not_selected_not_positive_evidence",
         }
+        if source_selected:
+            generation.update(
+                {
+                    "source_selection_best_alternative_scope": (
+                        "reachable_non_replan_candidates_including_policy_and_projected_targets"
+                    ),
+                    "source_selection_best_alternative_candidate_role": "policy_target",
+                }
+            )
         return {
             "action_index": action_index,
             "source_action_index": 0,
@@ -182,6 +193,11 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             "candidate_role": "projected_execution_target",
             "policy_target_cell": [2, 1],
             "execution_goal_cell": [1, 1],
+            "utility": 0.8,
+            "reachable": True,
+            "replan_required": False,
+            "path_cost": 5.0,
+            "risk": 0.3,
             "candidate_generation": dict(generation),
             "platform_goal_feasibility": {
                 "classification": "platform_inflated_goal_blocked",
@@ -189,6 +205,25 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
                 "execution_goal_cell": [1, 1],
                 "nearest_inflated_passable_anchor": [1, 1],
                 "anchor_projection": dict(generation),
+            },
+        }
+
+    def _normal_candidate(self, *, action_index: int, path_cost: float, risk: float) -> dict:
+        return {
+            "action_index": action_index,
+            "cell": [0, 2],
+            "candidate_role": "policy_target",
+            "policy_target_cell": [0, 2],
+            "execution_goal_cell": [0, 2],
+            "utility": 0.4,
+            "reachable": True,
+            "replan_required": False,
+            "path_cost": path_cost,
+            "risk": risk,
+            "platform_goal_feasibility": {
+                "classification": "platform_goal_reachable",
+                "policy_target_cell": [0, 2],
+                "execution_goal_cell": [0, 2],
             },
         }
 
@@ -214,6 +249,27 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
         self.assertEqual(
             summary["trainable_anchor_projection_count"] + summary["nontrainable_blocked_target_count"],
             summary["platform_goal_contract_mismatch_count"],
+        )
+        diagnosis = summary["anchor_projection_coverage_diagnosis"]
+        self.assertEqual(diagnosis["projected_candidate_generated_count"], 2)
+        self.assertEqual(diagnosis["projected_candidate_source_selected_count"], 1)
+        self.assertEqual(diagnosis["projected_candidate_not_source_selected_count"], 1)
+        self.assertEqual(diagnosis["anchor_unreachable_not_generated_count"], 0)
+        self.assertEqual(diagnosis["nontrainable_primary_reason_counts"], {"source_candidate_not_selected": 1})
+        self.assertEqual(diagnosis["scenario_diagnosis_counts"]["nontrainable"], 1)
+        self.assertEqual(diagnosis["projection_distance_cells"]["count"], 2)
+        self.assertEqual(diagnosis["projection_distance_cells"]["max"], 1.0)
+        self.assertEqual(diagnosis["source_selection_margin"]["count"], 1)
+        self.assertEqual(diagnosis["source_selection_margin"]["max_path_cost_margin"], 2.0)
+        self.assertAlmostEqual(diagnosis["source_selection_margin"]["max_risk_margin"], 0.1)
+        contexts = {item["scenario_id"]: item for item in summary["context_records"]}
+        self.assertEqual(
+            contexts["trainable"]["source_selection_best_alternative_scope"],
+            "reachable_non_replan_candidates_including_policy_and_projected_targets",
+        )
+        self.assertEqual(
+            contexts["trainable"]["source_selection_best_alternative_candidate_role"],
+            "policy_target",
         )
 
     def test_validate_only_fails_on_current_git_provenance_mismatch(self) -> None:

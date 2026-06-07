@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from git_provenance import git_snapshot as _git_snapshot
+
 
 MATRIX_SCHEMA_VERSION = "path-feedback-batch-matrix/v1"
 RUN_INDEX_SCHEMA_VERSION = "path-feedback-batch-run-index/v1"
@@ -1475,40 +1477,6 @@ def _sum_region_graph_disconnected(summaries: list[dict[str, Any]]) -> int:
     if total:
         return total
     return _sum_summary_int(summaries, "region_graph_start_goal_disconnected_count")
-
-
-def _git_snapshot(repo_root: Path) -> dict[str, Any]:
-    return {
-        "parent": _git_repo_state(repo_root, repo_root=repo_root),
-        "submodules": {
-            name: _git_repo_state(repo_root / name, repo_root=repo_root)
-            for name in SUBMODULES
-        },
-    }
-
-
-def _git_repo_state(path: Path, *, repo_root: Path) -> dict[str, Any]:
-    sha = _run_git(path, "rev-parse", "HEAD")
-    branch = _run_git(path, "branch", "--show-current")
-    return {
-        "path": _display_path(path, repo_root),
-        "sha": sha or "unknown",
-        "branch": branch or None,
-    }
-
-
-def _run_git(path: Path, *args: str) -> str | None:
-    if not path.exists():
-        return None
-    completed = subprocess.run(
-        ["git", "-C", str(path), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.strip() or None
 
 
 def _append_reason(reason_codes: list[str], code: str) -> None:

@@ -42,7 +42,7 @@ training evidence。旧 evidence root
 Evidence root：
 `outputs/path_feedback_batch_anchor_projection_candidate_generation_v1/`
 
-关键结果：
+### Candidate Generation v1 基线结果
 
 - batch：8 runs、8 passed、0 failed
 - `current_git_provenance_mismatch_count=0`
@@ -56,14 +56,119 @@ Evidence root：
 - `source_selected_candidate_changed_rate=0.15384615384615385`
 - `positive_training_evidence_contains_audit_proxy_anchor_count=0`
 
-旧 audit-only contract summary 仍保持：
+### Coverage Diagnosis + Selection Improvement v1 结果
 
-- `trainable_anchor_projection_count=0`
-- `nontrainable_blocked_target_count=42`
-- `recommended_next_action=keep_platform_blocked_targets_out_of_training`
+本轮新增 opt-in `--anchor-projection-selection-path-cost-bonus 6.0`，并在 Risk Closure v1
+加入 source-selection quality gate：
+`--anchor-projection-max-selection-path-cost-regression 6.0` 与
+`--anchor-projection-max-selection-risk-regression 0.5`。这些参数只进入
+`model-explorer` 的 path-feedback manifest，不转发给 `path-planner`，不修改 default A*，
+不启动 PPO，不放宽 fallback/open-grid/safety gate。若 source-selected projected candidate
+相对最佳可行替代项超过 path/risk regression 阈值，则保持
+`training_use=not_positive_evidence`。
 
-该结果是预期的：旧 summary 的责任是阻止 audit proxy 混入 positive evidence；新 summary 的
-责任是统计 source-selected projected candidates。
+刷新后的结果：
+
+- batch：8 runs、8 passed、0 failed
+- `current_git_provenance_mismatch_count=0`
+- `git_provenance_mismatch_count=0`
+- `open_grid_fallback_used_count=0`
+- `fallback_or_open_grid_count=0`
+- `safety_regression_count=0`
+- `platform_goal_contract_mismatch_count=78`
+- `trainable_anchor_projection_count=18`
+- `nontrainable_blocked_target_count=60`
+- `source_selected_candidate_changed_rate=0.23076923076923078`
+- `source_selection_quality_regression_count=0`（Risk Closure v1 隔离重跑口径）
+- `positive_training_evidence_contains_audit_proxy_anchor_count=0`
+
+新增 `anchor_projection_coverage_diagnosis/v1` 解释了剩余阻塞：
+
+- `projected_candidate_generated_count=42`
+- `projected_candidate_source_selected_count=18`
+- `projected_candidate_not_source_selected_count=24`
+- `anchor_unreachable_not_generated_count=36`
+- `nontrainable_primary_reason_counts={"anchor_unreachable":36,"source_candidate_not_selected":24}`
+- projection distance：72 个 1-cell，6 个 2-cell
+- generated-but-not-selected path-cost margin：约 2.17 到 10.88
+
+结论：机制已经从 12/78 基线推进到 18/78 的 source-selection bonus + quality-gate 口径，
+但剩余瓶颈不再是“测试样本不够复杂”，而是
+36 个 anchor 不可达和 24 个 generated candidate 未被 source selection 选中。继续单纯加大
+bonus 会扩大 path-cost tradeoff，不应直接作为 PPO readiness 的替代条件。
+
+## Risk Closure v1
+
+本轮新增统一 git provenance helper。新 evidence source snapshot 会记录 parent 与三个子模块
+的 `sha`、`branch`、`dirty`、`tracked_modified_count`、`untracked_count`、
+`ignored_untracked_count`；当 source snapshot 声明 dirty 时，`require_current_git_match=true`
+必须失败。旧格式只含 SHA 的 legacy summary 仍按 SHA 兼容。
+
+隔离重跑 root：
+`outputs/path_feedback_batch_anchor_projection_candidate_generation_v1_risk_closure_check/`
+
+- batch：8 runs、8 passed、0 failed
+- `batch-run-index.json.git.dirty=true`
+- candidate-generation summary：`status=failed`
+- `reason_codes=["current_git_provenance_mismatch","git_provenance_mismatch"]`
+- `current_git_provenance_mismatch_count=1`
+- `git_provenance_mismatch_count=1`
+- 算法计数仍为 `trainable_anchor_projection_count=18`、
+  `nontrainable_blocked_target_count=60`、`source_selection_quality_regression_count=0`
+
+该失败是预期验收：当前工作区未提交，不能把隔离输出作为正式 current-HEAD evidence。提交后
+必须在 clean worktree 下重跑 batch、candidate-generation、contract 与 readiness validate-only。
+
+Risk Closure v1 同时修复：
+
+- `AStarPlanner`、`ChannelAwareAStarPlanner`、`RegionGraphGuidedPlanner` 的严格
+  `prevent_corner_cutting`：对角移动两侧 side cell 任一 blocked 即禁止。
+- `channel_aware_astar` selection 组合 gate：不能只因 high-cost exposure 下降就接受
+  channel/path cost 明显退化的 candidate，reason 为 `channel_candidate_quality_regression`。
+- `policy-training-readiness-review` 可选消费
+  `anchor-projection-candidate-generation-summary/v1` 与
+  `anchor-projection-evidence-contract-summary/v1`，并输出
+  `anchor_projection_readiness` 及
+  `anchor_projection_contract_trainable_count_below_candidate_generation` blocker。
+
+当前 anchor-projection contract summary 仍保持 audit proxy 不得混入 positive evidence：
+
+- `trainable_anchor_projection_count=3`
+- `nontrainable_blocked_target_count=39`
+- `positive_training_evidence_contains_audit_proxy_anchor_count=0`
+- `recommended_next_action=rerun_policy_training_readiness_review_with_anchor_projection_contract`
+
+## Risk Closure v2
+
+Risk Closure v2 修复剩余工程风险：
+
+- provenance source inspection 统一到 `scripts/git_provenance.py`。缺少
+  `git_provenance.current` 的 source summary 在 `require_current_git_match=true` 时必须失败，
+  输出 `current_git_provenance_missing` 与 `<label>_current_git_provenance_missing`。
+- readiness 的 path/risk regression blocker 只看 source-selected quality regression 或
+  trainable anchor-projection context；未选中 projected candidate 的 margin 仅进入
+  `diagnostic_max_source_selection_*_margin_vs_best_alternative`。
+- best alternative scope 固定为
+  `reachable_non_replan_candidates_including_policy_and_projected_targets`，并在
+  candidate annotation 与 candidate-generation summary 中记录 alternative role。
+- `path-planner` direction-cone CLI batch 将旧
+  `sampled_trajectory_collision` case 重定标为 `direction_cone_obstacle_detour`，因为严格
+  corner-cutting 后该 3x3 中心障碍场景不再产生 sampled collision，真实 blocker 是
+  `direction_cone_constraint_violation`。
+
+本阶段仍不启动 PPO，也不把 GCS candidate 或 projected anchor 当作默认执行轨迹。
+
+验证状态：
+
+- parent/model-explorer/dev-platform/path-planner 测试均已通过对应全量命令。
+- anchor-projection batch dry-run 展开 8 个 run，正式 dirty-worktree 隔离 batch 8/8 passed。
+- dirty-worktree candidate-generation validate-only 按预期被 provenance gate 阻断：
+  `current_git_provenance_mismatch_count=1`、`git_provenance_mismatch_count=1`，
+  同时 `trainable_anchor_projection_count=18`，说明失败来自 dirty provenance 而不是候选生成回退。
+- clean-worktree evidence refresh 必须在提交后执行。
+
+该 summary 的责任仍是训练合约边界审计；不能与 candidate-generation 的 18/78 计数混作同一
+训练输入口径。
 
 ## 验证命令
 
@@ -75,6 +180,10 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/kai/anaconda3/envs/lunar-explorer/bin/pyt
 bash scripts/run_batch_path_feedback_validation.sh --matrix configs/path_feedback_batch_anchor_projection_candidate_generation_v1.json --output-root outputs/path_feedback_batch_anchor_projection_candidate_generation_v1
 
 bash scripts/run_anchor_projection_candidate_generation.sh --batch-root outputs/path_feedback_batch_anchor_projection_candidate_generation_v1 --config configs/anchor_projection_candidate_generation_v1.json
+
+bash scripts/run_anchor_projection_candidate_generation.sh --batch-root outputs/path_feedback_batch_anchor_projection_candidate_generation_v1 --config configs/anchor_projection_candidate_generation_v1.json --validate-only
+
+bash scripts/run_policy_training_readiness_review.sh --batch-root outputs/path_feedback_batch_anchor_projection_candidate_generation_v1 --config configs/policy_training_readiness_review_v1.json --anchor-projection-candidate-generation-summary outputs/path_feedback_batch_anchor_projection_candidate_generation_v1/anchor-projection-candidate-generation-summary.json --anchor-projection-evidence-contract-summary outputs/path_feedback_batch_anchor_projection_candidate_generation_v1/anchor-projection-evidence-contract-summary.json --validate-only
 ```
 
 全链路 validate-only 已覆盖 batch、sample-quality、policy robustness、channel-aware、
@@ -84,12 +193,13 @@ readiness、goal-blocked、audit-only anchor contract 和新 candidate-generatio
 
 本阶段已经证明“测试案例不够复杂所以没效果”不是主要问题。真实问题是 anchor projection 之前
 只存在于失败后的 audit proxy scope；前移到 candidate generation 后，source selection 已经
-产生非零变化并得到 12 条 trainable projected target context。
+产生非零变化并得到 18 条 trainable projected target context。
 
-但 PPO 仍不能启动，因为 66 个 blocked target context 仍不可训练，policy training readiness
-仍是 `needs_training_contract_refinement`。下一步应做 `Anchor-Projection Coverage Expansion v1`：
-分析 nontrainable context 的 reject reasons、anchor reachability、projection distance 和 ranking
-margin，扩大 source-selected projected target 覆盖率。
+但 PPO 仍不能启动，因为 60 个 blocked target context 仍不可训练，policy training readiness
+仍是 `needs_training_contract_refinement`。下一步应做
+`Anchor-Projection Readiness Contract Integration v1`：把 candidate-generation summary 与
+anchor-projection contract 的训练口径对齐，明确哪些 projected contexts 可以进入训练输入，
+哪些仍应保持 `sample_weight=0.0`。
 
 ## 非目标
 

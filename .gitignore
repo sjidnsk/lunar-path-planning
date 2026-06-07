@@ -1,5 +1,6 @@
 # Local reference workspace excluded from the parent repository.
 /a_gcs_ws-2.0.1/
+/a_gcs_ws-2.0.1-direction-cone-curvature/
 
 # Python test/runtime caches.
 __pycache__/

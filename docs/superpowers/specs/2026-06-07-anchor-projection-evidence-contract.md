@@ -74,3 +74,15 @@ summary 消费 `goal-blocked-evidence-regeneration-summary/v1` 与
 - 不实现完整 GCS graph search。
 - 不使用 C-space IRIS、IrisNp、IrisNp2 或 IrisZo。
 - 不宣称 Ackermann-feasible trajectory。
+
+## Risk Closure v2 更新
+
+`anchor-projection-evidence-contract-summary/v1` 的 upstream provenance gate 已改为共享
+`scripts/git_provenance.py` 的 `inspect_source_git_provenance(...)`。当
+`require_current_git_match=true` 时，`goal-blocked-evidence-regeneration-summary/v1` 或
+`policy-training-readiness-review-summary/v1` 缺少 `git_provenance.current` 会直接失败，并输出
+`current_git_provenance_missing` 与对应 `<label>_current_git_provenance_missing`。这避免了
+`current_matches_sources=false` 或缺失 current snapshot 但 contract summary 仍显示 passed 的假通过。
+
+该更新只收紧 evidence contract 的可信边界，不改变训练正样本定义：audit proxy anchor 仍不得进入
+positive training evidence，PPO 与 action space 仍不在本阶段范围内。

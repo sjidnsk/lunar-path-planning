@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from git_provenance import git_snapshot as _shared_git_snapshot
+from git_provenance import git_snapshots_match as _shared_git_snapshots_match
+from git_provenance import inspect_source_git_provenance as _inspect_source_git_provenance
+from git_provenance import public_git as _shared_public_git
 
 
 CONFIG_SCHEMA_VERSION = "calibrated-policy-application-smoke-config/v1"
@@ -479,15 +483,14 @@ def _inspect_git(
     config: dict[str, Any],
     reason_codes: list[str],
 ) -> bool:
-    if not _require_current_git_match(config):
-        return True
-    git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
-    source_current = git.get("current") if isinstance(git.get("current"), dict) else {}
-    if source_current and not _git_snapshots_match(source_current, current_git):
-        _append_reason(reason_codes, "current_git_provenance_mismatch")
-        _append_reason(reason_codes, f"{label}_current_git_provenance_mismatch")
-        return False
-    return bool(source_current)
+    return _inspect_source_git_provenance(
+        payload,
+        label=label,
+        current_git=current_git,
+        require_current_git_match=_require_current_git_match(config),
+        reason_codes=reason_codes,
+        submodules=SUBMODULES,
+    )
 
 
 def _output_file(batch_root: Path, config: dict[str, Any]) -> Path:
@@ -504,8 +507,7 @@ def _public_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _public_git(payload: dict[str, Any]) -> dict[str, Any]:
-    git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
-    return dict(git)
+    return _shared_public_git(payload)
 
 
 def _require_current_git_match(config: dict[str, Any]) -> bool:
@@ -523,50 +525,11 @@ def _fail_on_input_failure(config: dict[str, Any]) -> bool:
 
 
 def _git_snapshot(repo_root: Path) -> dict[str, Any]:
-    def git(path: Path, *args: str) -> str | None:
-        completed = subprocess.run(
-            ["git", "-C", str(path), *args],
-            cwd=repo_root,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        if completed.returncode != 0:
-            return None
-        return completed.stdout.strip() or None
-
-    return {
-        "parent": {
-            "path": ".",
-            "sha": git(repo_root, "rev-parse", "HEAD") or "unknown",
-            "branch": git(repo_root, "branch", "--show-current"),
-        },
-        "submodules": {
-            name: {
-                "path": name,
-                "sha": git(repo_root / name, "rev-parse", "HEAD") or "unknown",
-                "branch": git(repo_root / name, "branch", "--show-current"),
-            }
-            for name in SUBMODULES
-        },
-    }
+    return _shared_git_snapshot(repo_root, submodules=SUBMODULES)
 
 
 def _git_snapshots_match(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    if not left or not right:
-        return False
-    left_parent = left.get("parent") if isinstance(left.get("parent"), dict) else {}
-    right_parent = right.get("parent") if isinstance(right.get("parent"), dict) else {}
-    if left_parent.get("sha") != right_parent.get("sha"):
-        return False
-    left_modules = left.get("submodules") if isinstance(left.get("submodules"), dict) else {}
-    right_modules = right.get("submodules") if isinstance(right.get("submodules"), dict) else {}
-    for name in SUBMODULES:
-        left_module = left_modules.get(name) if isinstance(left_modules.get(name), dict) else {}
-        right_module = right_modules.get(name) if isinstance(right_modules.get(name), dict) else {}
-        if left_module.get("sha") != right_module.get("sha"):
-            return False
-    return True
+    return _shared_git_snapshots_match(left, right, submodules=SUBMODULES)
 
 
 def _resolve_path(value: str | Path, repo_root: Path) -> Path:

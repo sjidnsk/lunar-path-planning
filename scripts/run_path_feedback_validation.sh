@@ -7,6 +7,9 @@ TOP_K=3
 SCENARIO_SET="smoke"
 DIAGNOSTIC_PROFILE="baseline"
 ANCHOR_PROJECTION_CANDIDATE_GENERATION=0
+ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS="0.0"
+ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION="6.0"
+ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION="0.5"
 PLANNER_EXTRA_ARGS=()
 MODULES=(path-planner model-explorer dev-platform-constraints)
 DEFAULT_PYTHON="/home/kai/anaconda3/envs/lunar-explorer/bin/python"
@@ -52,6 +55,18 @@ Options:
   --anchor-projection-candidate-generation
                         Enable model-explorer projected target candidate generation for
                         platform-inflated-goal-blocked policy targets.
+  --anchor-projection-selection-path-cost-bonus VALUE
+                        Opt-in source-selection path-cost bonus for generated
+                        anchor-projection execution-target candidates. Only
+                        used by model-explorer manifest generation.
+  --anchor-projection-max-selection-path-cost-regression VALUE
+                        Maximum raw path-cost regression versus the best
+                        feasible alternative for a source-selected projected
+                        candidate to remain trainable. Manifest-only.
+  --anchor-projection-max-selection-risk-regression VALUE
+                        Maximum risk regression versus the best feasible
+                        alternative for a source-selected projected candidate
+                        to remain trainable. Manifest-only.
   --gcs-control-point-terrain-weight VALUE
                         Forward explicit control-point terrain objective weight.
   --gcs-control-point-second-difference-weight VALUE
@@ -129,6 +144,21 @@ while [[ $# -gt 0 ]]; do
       ANCHOR_PROJECTION_CANDIDATE_GENERATION=1
       shift
       ;;
+    --anchor-projection-selection-path-cost-bonus)
+      require_value "$1" "${2:-}"
+      ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS="$2"
+      shift 2
+      ;;
+    --anchor-projection-max-selection-path-cost-regression)
+      require_value "$1" "${2:-}"
+      ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION="$2"
+      shift 2
+      ;;
+    --anchor-projection-max-selection-risk-regression)
+      require_value "$1" "${2:-}"
+      ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION="$2"
+      shift 2
+      ;;
     --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-high-cost-exposure-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio|--channel-aware-neighborhood-radius-cells|--channel-aware-center-weight|--channel-aware-neighborhood-mean-weight|--channel-aware-neighborhood-max-weight|--channel-aware-high-cost-exposure-weight|--channel-aware-blocked-nearby-weight|--channel-aware-clearance-weight|--channel-aware-smoothness-weight|--channel-aware-high-cost-threshold)
       require_value "$1" "${2:-}"
       PLANNER_EXTRA_ARGS+=("$1" "$2")
@@ -166,6 +196,52 @@ done
 if ! [[ "$TOP_K" =~ ^[0-9]+$ ]] || [[ "$TOP_K" -lt 1 ]]; then
   echo "--top-k must be a positive integer" >&2
   exit 2
+fi
+
+if ! "$PYTHON_BIN" - "$ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS" <<'PY'
+import math
+import sys
+
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if math.isfinite(value) and value >= 0.0 else 1)
+PY
+then
+  echo "--anchor-projection-selection-path-cost-bonus must be a non-negative finite number" >&2
+  exit 2
+fi
+
+for numeric_gate in \
+  "$ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION" \
+  "$ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION"; do
+  if ! "$PYTHON_BIN" - "$numeric_gate" <<'PY'
+import math
+import sys
+
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if math.isfinite(value) and value >= 0.0 else 1)
+PY
+  then
+    echo "anchor-projection source-selection regression gates must be non-negative finite numbers" >&2
+    exit 2
+  fi
+done
+
+if [[ "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" -eq 0 ]]; then
+  if ! "$PYTHON_BIN" - "$ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS" <<'PY'
+import sys
+
+raise SystemExit(0 if float(sys.argv[1]) == 0.0 else 1)
+PY
+  then
+    echo "--anchor-projection-selection-path-cost-bonus requires --anchor-projection-candidate-generation" >&2
+    exit 2
+  fi
 fi
 
 case "$SCENARIO_SET" in
@@ -331,7 +407,7 @@ write_manifest() {
     return
   fi
 
-  "$PYTHON_BIN" - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "$PYTHON_BIN" "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
+  "$PYTHON_BIN" - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "$PYTHON_BIN" "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" "$ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS" "$ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION" "$ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -348,7 +424,10 @@ acceptance_gate = sys.argv[9]
 path_planner_root = Path(sys.argv[10])
 python_executable = sys.argv[11]
 anchor_projection_candidate_generation = sys.argv[12] == "1"
-extra_args = sys.argv[13:]
+anchor_projection_selection_path_cost_bonus = float(sys.argv[13])
+anchor_projection_max_selection_path_cost_regression = float(sys.argv[14])
+anchor_projection_max_selection_risk_regression = float(sys.argv[15])
+extra_args = sys.argv[16:]
 
 payload = json.loads(scenario_config.read_text(encoding="utf-8"))
 scenarios = []
@@ -380,6 +459,9 @@ manifest = {
         "python_executable": python_executable,
         "planner_extra_args": extra_args,
         "anchor_projection_candidate_generation_enabled": anchor_projection_candidate_generation,
+        "anchor_projection_selection_path_cost_bonus": anchor_projection_selection_path_cost_bonus,
+        "anchor_projection_max_selection_path_cost_regression": anchor_projection_max_selection_path_cost_regression,
+        "anchor_projection_max_selection_risk_regression": anchor_projection_max_selection_risk_regression,
         "open_grid_fallback_used": None,
         "open_grid_fallback_used_gate": {
             "status": "pending",
@@ -411,6 +493,9 @@ if anchor_projection_candidate_generation:
     manifest["planner"]["anchor_projection_candidate_generation"] = {
         "enabled": True,
         "require_anchor_reachable": True,
+        "source_selection_path_cost_bonus": anchor_projection_selection_path_cost_bonus,
+        "max_source_selection_path_cost_regression": anchor_projection_max_selection_path_cost_regression,
+        "max_source_selection_risk_regression": anchor_projection_max_selection_risk_regression,
     }
 manifest_path.parent.mkdir(parents=True, exist_ok=True)
 manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -681,6 +766,9 @@ Scenario set: $SCENARIO_SET
 Diagnostic profile: $DIAGNOSTIC_PROFILE
 Planner extra args: ${PLANNER_EXTRA_ARGS[*]:-(none)}
 Anchor projection candidate generation: $([[ "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" -eq 1 ]] && echo enabled || echo disabled)
+Anchor projection selection path-cost bonus: $ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS
+Anchor projection max selection path-cost regression: $ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION
+Anchor projection max selection risk regression: $ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION
 INFO
 
 ensure_submodules

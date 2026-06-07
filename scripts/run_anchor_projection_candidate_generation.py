@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 from typing import Any
+
+from git_provenance import git_snapshot as _git_snapshot
+from git_provenance import git_snapshots_match as _git_snapshots_match
 
 
 CONFIG_SCHEMA_VERSION = "anchor-projection-candidate-generation-config/v1"
@@ -149,6 +152,17 @@ def analyze_anchor_projection_candidate_generation(
     source_changed_count = sum(1 for context in trainable_contexts if context["source_selected_candidate_changed"])
     source_changed_rate = _rate(source_changed_count, platform_goal_contract_mismatch_count)
     positive_audit_proxy_count = sum(1 for context in trainable_contexts if context["positive_audit_proxy"])
+    source_selection_quality_regression_count = sum(
+        1 for context in contexts.values() if context["source_selection_quality_regression"]
+    )
+    max_source_selection_path_margin = _max_context_value(
+        contexts.values(),
+        "source_selection_path_cost_margin_vs_best_alternative",
+    )
+    max_source_selection_risk_margin = _max_context_value(
+        contexts.values(),
+        "source_selection_risk_margin_vs_best_alternative",
+    )
     anchor_available_count = sum(1 for context in contexts.values() if context["anchor_available"])
     unresolved_count = sum(1 for context in contexts.values() if context["classification"] == "unknown_contract_mismatch")
     reject_reason_counts = Counter(
@@ -157,12 +171,18 @@ def analyze_anchor_projection_candidate_generation(
         for reason in context["reject_reasons"]
         if reason
     )
+    coverage_diagnosis = _anchor_projection_coverage_diagnosis(contexts.values())
     if trainable_count < config["thresholds"]["min_trainable_anchor_projection_count"]:
         _append_reason(reason_codes, "trainable_anchor_projection_count_below_threshold")
     if source_changed_rate < config["thresholds"]["min_source_selected_candidate_changed_rate"]:
         _append_reason(reason_codes, "source_selected_candidate_changed_rate_below_threshold")
     if positive_audit_proxy_count > 0:
         _append_reason(reason_codes, "positive_training_evidence_contains_audit_proxy_anchor")
+    if (
+        source_selection_quality_regression_count
+        > config["thresholds"]["max_source_selection_quality_regression_count"]
+    ):
+        _append_reason(reason_codes, "source_selection_quality_regression_blocks_anchor_projection_candidate_generation")
     if trainable_count + nontrainable_count != platform_goal_contract_mismatch_count:
         _append_reason(reason_codes, "anchor_projection_context_accounting_mismatch")
 
@@ -188,8 +208,12 @@ def analyze_anchor_projection_candidate_generation(
         "nontrainable_blocked_target_count": nontrainable_count,
         "source_selected_candidate_changed_count": source_changed_count,
         "source_selected_candidate_changed_rate": source_changed_rate,
+        "source_selection_quality_regression_count": source_selection_quality_regression_count,
+        "max_source_selection_path_cost_margin_vs_best_alternative": max_source_selection_path_margin,
+        "max_source_selection_risk_margin_vs_best_alternative": max_source_selection_risk_margin,
         "positive_training_evidence_contains_audit_proxy_anchor_count": positive_audit_proxy_count,
         "anchor_projection_candidate_reject_reason_counts": dict(sorted(reject_reason_counts.items())),
+        "anchor_projection_coverage_diagnosis": coverage_diagnosis,
         "context_count": len(contexts),
         "context_records": list(contexts.values()),
         "audit_boundaries": {
@@ -217,12 +241,14 @@ def _collect_contexts(
         if not isinstance(scenario, dict):
             continue
         scenario_id = scenario.get("scenario_id")
+        scenario_group = scenario.get("scenario_group")
         before_cell = _cell_tuple(scenario.get("selected_cell_before_path_feedback"))
         after_cell = _cell_tuple(scenario.get("selected_cell_after_path_feedback"))
         feedback = scenario.get("path_feedback") if isinstance(scenario.get("path_feedback"), dict) else {}
         candidates = feedback.get("candidates")
         if not isinstance(candidates, list):
             continue
+        selected_candidate = _candidate_for_cell(candidates, after_cell)
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
@@ -244,7 +270,9 @@ def _collect_contexts(
                 key,
                 {
                     "source_path": str(source_path),
+                    "run_id": source_path.parent.name,
                     "scenario_id": scenario_id,
+                    "scenario_group": scenario_group,
                     "source_action_index": source_action_index,
                     "policy_target_cell": list(policy_target),
                     "execution_goal_cell": None,
@@ -259,6 +287,27 @@ def _collect_contexts(
                     "comparison_scope": None,
                     "reject_reasons": [],
                     "evidence_boundary": None,
+                    "projected_candidate_generated": False,
+                    "projected_candidate_source_selected": False,
+                    "generated_action_index": None,
+                    "selected_action_index": None,
+                    "selected_candidate_role": None,
+                    "selected_cell": None if after_cell is None else list(after_cell),
+                    "projected_candidate_path_cost": None,
+                    "projected_candidate_risk": None,
+                    "projected_candidate_utility": None,
+                    "selected_candidate_path_cost": None,
+                    "selected_candidate_risk": None,
+                    "selected_candidate_utility": None,
+                    "path_cost_margin_vs_selected": None,
+                    "risk_margin_vs_selected": None,
+                    "source_selection_quality_regression": False,
+                    "source_selection_best_alternative_action_index": None,
+                    "source_selection_best_alternative_cell": None,
+                    "source_selection_path_cost_margin_vs_best_alternative": None,
+                    "source_selection_risk_margin_vs_best_alternative": None,
+                    "projection_distance_cells": None,
+                    "projection_distance_m": None,
                 },
             )
             projection = feasibility.get("anchor_projection")
@@ -273,6 +322,12 @@ def _collect_contexts(
                 context["projected_anchor_cell"] = list(anchor)
             if projection.get("anchor_reachable") is True:
                 context["anchor_reachable"] = True
+            distance_cells = _float_optional(projection.get("projection_distance_cells"))
+            if distance_cells is not None:
+                context["projection_distance_cells"] = distance_cells
+            distance_m = _float_optional(projection.get("projection_distance_m"))
+            if distance_m is not None:
+                context["projection_distance_m"] = distance_m
             reject_reason = projection.get("reject_reason")
             if reject_reason:
                 context["reject_reasons"].append(str(reject_reason))
@@ -280,9 +335,78 @@ def _collect_contexts(
             generation = generation if isinstance(generation, dict) else {}
             if generation.get("candidate_role") != "projected_execution_target":
                 continue
+            context["projected_candidate_generated"] = True
+            context["generated_action_index"] = candidate.get("action_index")
+            context["projected_candidate_path_cost"] = _float_optional(candidate.get("path_cost"))
+            context["projected_candidate_risk"] = _float_optional(candidate.get("risk"))
+            context["projected_candidate_utility"] = _float_optional(candidate.get("utility"))
+            generation_distance_cells = _float_optional(generation.get("projection_distance_cells"))
+            if generation_distance_cells is not None:
+                context["projection_distance_cells"] = generation_distance_cells
+            generation_distance_m = _float_optional(generation.get("projection_distance_m"))
+            if generation_distance_m is not None:
+                context["projection_distance_m"] = generation_distance_m
+            if selected_candidate is not None:
+                context["selected_action_index"] = selected_candidate.get("action_index")
+                context["selected_candidate_role"] = selected_candidate.get("candidate_role")
+                context["selected_candidate_path_cost"] = _float_optional(selected_candidate.get("path_cost"))
+                context["selected_candidate_risk"] = _float_optional(selected_candidate.get("risk"))
+                context["selected_candidate_utility"] = _float_optional(selected_candidate.get("utility"))
+                context["path_cost_margin_vs_selected"] = _delta(
+                    context["projected_candidate_path_cost"],
+                    context["selected_candidate_path_cost"],
+                )
+                context["risk_margin_vs_selected"] = _delta(
+                    context["projected_candidate_risk"],
+                    context["selected_candidate_risk"],
+                )
+            source_selection_status = generation.get("source_selection_status") or projection.get(
+                "source_selection_status"
+            )
+            context["source_selection_quality_regression"] = bool(
+                source_selection_status == "source_selected_quality_regression"
+                or generation.get("reject_reason") == "source_selection_quality_regression"
+                or projection.get("reject_reason") == "source_selection_quality_regression"
+            )
+            context["source_selection_best_alternative_action_index"] = generation.get(
+                "source_selection_best_alternative_action_index",
+                projection.get("source_selection_best_alternative_action_index"),
+            )
+            for field in (
+                "source_selection_best_alternative_scope",
+                "source_selection_best_alternative_candidate_role",
+            ):
+                value = generation.get(field, projection.get(field))
+                if value:
+                    context[field] = str(value)
+            best_alternative_cell = _cell_tuple(
+                generation.get("source_selection_best_alternative_cell")
+                or projection.get("source_selection_best_alternative_cell")
+            )
+            context["source_selection_best_alternative_cell"] = (
+                None if best_alternative_cell is None else list(best_alternative_cell)
+            )
+            path_margin_vs_best = _float_optional(
+                generation.get("source_selection_path_cost_margin_vs_best_alternative")
+                if generation.get("source_selection_path_cost_margin_vs_best_alternative") is not None
+                else projection.get("source_selection_path_cost_margin_vs_best_alternative")
+            )
+            if path_margin_vs_best is not None:
+                context["source_selection_path_cost_margin_vs_best_alternative"] = path_margin_vs_best
+            risk_margin_vs_best = _float_optional(
+                generation.get("source_selection_risk_margin_vs_best_alternative")
+                if generation.get("source_selection_risk_margin_vs_best_alternative") is not None
+                else projection.get("source_selection_risk_margin_vs_best_alternative")
+            )
+            if risk_margin_vs_best is not None:
+                context["source_selection_risk_margin_vs_best_alternative"] = risk_margin_vs_best
+            generation_reject_reason = generation.get("reject_reason")
+            if generation_reject_reason:
+                context["reject_reasons"].append(str(generation_reject_reason))
             training_use = generation.get("training_use") or projection.get("training_use")
             comparison_scope = generation.get("comparison_scope") or projection.get("comparison_scope")
             source_selected = generation.get("source_selection_status") == "source_selected"
+            context["projected_candidate_source_selected"] = source_selected
             execution_goal = _cell_tuple(generation.get("execution_goal_cell"))
             trainable = (
                 training_use == "trainable_anchor_projection_contrast"
@@ -302,6 +426,204 @@ def _collect_contexts(
                     and execution_goal == after_cell
                 )
                 context["positive_audit_proxy"] = comparison_scope == "audit_proxy_anchor_not_same_cell"
+
+
+def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]:
+    contexts = list(context_values)
+    trainable = [context for context in contexts if context["trainable"]]
+    nontrainable = [context for context in contexts if not context["trainable"]]
+    generated = [context for context in contexts if context["projected_candidate_generated"]]
+    generated_source_selected = [
+        context for context in generated if context["projected_candidate_source_selected"]
+    ]
+    generated_not_source_selected = [
+        context for context in generated if not context["projected_candidate_source_selected"]
+    ]
+    anchor_unreachable_not_generated = [
+        context
+        for context in contexts
+        if not context["projected_candidate_generated"] and not context["anchor_reachable"]
+    ]
+    generated_nontrainable = [
+        context for context in generated if not context["trainable"]
+    ]
+    quality_regressions = [
+        context for context in generated if context["source_selection_quality_regression"]
+    ]
+    primary_reason_counts = Counter(
+        _primary_nontrainable_reason(context) for context in nontrainable
+    )
+    primary_reason_counts.pop(None, None)
+    distance_cells = [
+        context["projection_distance_cells"]
+        for context in contexts
+        if isinstance(context.get("projection_distance_cells"), int | float)
+    ]
+    distance_m = [
+        context["projection_distance_m"]
+        for context in contexts
+        if isinstance(context.get("projection_distance_m"), int | float)
+    ]
+    margins = [
+        context
+        for context in generated_not_source_selected
+        if context.get("path_cost_margin_vs_selected") is not None
+    ]
+    return {
+        "schema_version": "anchor-projection-coverage-diagnosis/v1",
+        "context_count": len(contexts),
+        "trainable": len(trainable),
+        "nontrainable": len(nontrainable),
+        "projected_candidate_generated_count": len(generated),
+        "projected_candidate_generated_rate": _rate(len(generated), len(contexts)),
+        "projected_candidate_source_selected_count": len(generated_source_selected),
+        "projected_candidate_not_source_selected_count": len(generated_not_source_selected),
+        "generated_nontrainable_count": len(generated_nontrainable),
+        "source_selection_quality_regression_count": len(quality_regressions),
+        "anchor_unreachable_not_generated_count": len(anchor_unreachable_not_generated),
+        "nontrainable_primary_reason_counts": dict(sorted(primary_reason_counts.items())),
+        "scenario_diagnosis_counts": dict(
+            sorted(Counter("trainable" if context["trainable"] else "nontrainable" for context in contexts).items())
+        ),
+        "nontrainable_by_run_id": _nested_count(nontrainable, "run_id"),
+        "nontrainable_by_scenario_id": _nested_count(nontrainable, "scenario_id"),
+        "nontrainable_by_scenario_group": _nested_count(nontrainable, "scenario_group"),
+        "generated_not_source_selected_by_scenario_id": _nested_count(
+            generated_not_source_selected,
+            "scenario_id",
+        ),
+        "projection_distance_cells": _numeric_summary(distance_cells),
+        "projection_distance_m": _numeric_summary(distance_m),
+        "source_selection_margin": _selection_margin_summary(margins),
+        "source_selection_quality_regression_margin": _selection_quality_regression_margin_summary(
+            quality_regressions
+        ),
+        "audit_proxy_positive_evidence_count": sum(
+            1 for context in trainable if context["positive_audit_proxy"]
+        ),
+    }
+
+
+def _primary_nontrainable_reason(context: dict[str, Any]) -> str | None:
+    if context["trainable"]:
+        return None
+    if not context["projected_candidate_generated"]:
+        if not context["anchor_reachable"]:
+            return "anchor_unreachable"
+        return "projected_candidate_not_generated"
+    if not context["projected_candidate_source_selected"]:
+        return "source_candidate_not_selected"
+    if context["source_selection_quality_regression"]:
+        return "source_selection_quality_regression"
+    reasons = [reason for reason in context.get("reject_reasons", []) if reason]
+    return str(reasons[0]) if reasons else "unknown_nontrainable_anchor_projection"
+
+
+def _nested_count(contexts: list[dict[str, Any]], field: str) -> dict[str, int]:
+    return dict(
+        sorted(
+            Counter(str(context.get(field) or "unknown") for context in contexts).items()
+        )
+    )
+
+
+def _numeric_summary(values: list[float]) -> dict[str, Any]:
+    clean = sorted(float(value) for value in values if isfinite(float(value)))
+    if not clean:
+        return {"count": 0, "min": None, "max": None, "mean": None, "bins": {}}
+    return {
+        "count": len(clean),
+        "min": clean[0],
+        "max": clean[-1],
+        "mean": sum(clean) / len(clean),
+        "bins": dict(sorted(Counter(str(int(value)) if value.is_integer() else str(value) for value in clean).items())),
+    }
+
+
+def _selection_margin_summary(contexts: list[dict[str, Any]]) -> dict[str, Any]:
+    path_cost_margins = [
+        context["path_cost_margin_vs_selected"]
+        for context in contexts
+        if isinstance(context.get("path_cost_margin_vs_selected"), int | float)
+    ]
+    risk_margins = [
+        context["risk_margin_vs_selected"]
+        for context in contexts
+        if isinstance(context.get("risk_margin_vs_selected"), int | float)
+    ]
+    path_summary = _numeric_summary(path_cost_margins)
+    risk_summary = _numeric_summary(risk_margins)
+    return {
+        "count": len(path_cost_margins),
+        "min_path_cost_margin": path_summary["min"],
+        "max_path_cost_margin": path_summary["max"],
+        "mean_path_cost_margin": path_summary["mean"],
+        "min_risk_margin": risk_summary["min"],
+        "max_risk_margin": risk_summary["max"],
+        "mean_risk_margin": risk_summary["mean"],
+    }
+
+
+def _selection_quality_regression_margin_summary(contexts: list[dict[str, Any]]) -> dict[str, Any]:
+    path_cost_margins = [
+        context["source_selection_path_cost_margin_vs_best_alternative"]
+        for context in contexts
+        if isinstance(context.get("source_selection_path_cost_margin_vs_best_alternative"), int | float)
+    ]
+    risk_margins = [
+        context["source_selection_risk_margin_vs_best_alternative"]
+        for context in contexts
+        if isinstance(context.get("source_selection_risk_margin_vs_best_alternative"), int | float)
+    ]
+    path_summary = _numeric_summary(path_cost_margins)
+    risk_summary = _numeric_summary(risk_margins)
+    return {
+        "count": len(contexts),
+        "min_path_cost_margin_vs_best_alternative": path_summary["min"],
+        "max_path_cost_margin_vs_best_alternative": path_summary["max"],
+        "mean_path_cost_margin_vs_best_alternative": path_summary["mean"],
+        "min_risk_margin_vs_best_alternative": risk_summary["min"],
+        "max_risk_margin_vs_best_alternative": risk_summary["max"],
+        "mean_risk_margin_vs_best_alternative": risk_summary["mean"],
+    }
+
+
+def _max_context_value(contexts: Any, field: str) -> float | None:
+    values = [
+        context.get(field)
+        for context in contexts
+        if isinstance(context, dict) and isinstance(context.get(field), int | float)
+    ]
+    if not values:
+        return None
+    return max(float(value) for value in values)
+
+
+def _candidate_for_cell(candidates: list[Any], cell: tuple[int, int] | None) -> dict[str, Any] | None:
+    if cell is None:
+        return None
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if _cell_tuple(candidate.get("cell")) == cell:
+            return candidate
+    return None
+
+
+def _float_optional(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
+def _delta(first: float | None, second: float | None) -> float | None:
+    if first is None or second is None:
+        return None
+    return first - second
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -334,7 +656,12 @@ def _load_config(path: Path) -> dict[str, Any]:
         "min_trainable_anchor_projection_count": int(
             thresholds.get("min_trainable_anchor_projection_count", 1) or 1
         ),
+        "max_source_selection_quality_regression_count": int(
+            thresholds.get("max_source_selection_quality_regression_count", 0) or 0
+        ),
     }
+    if config["thresholds"]["max_source_selection_quality_regression_count"] < 0:
+        raise ConfigError("thresholds.max_source_selection_quality_regression_count must be >= 0")
     return config
 
 
@@ -381,48 +708,6 @@ def _path_feedback_summary_paths(run_index: dict[str, Any], *, batch_root: Path,
     if not paths:
         paths.extend(sorted(batch_root.glob("*/path-feedback-summary.json")))
     return paths
-
-
-def _git_snapshot(repo_root: Path) -> dict[str, Any]:
-    parent = _git_sha(repo_root)
-    return {
-        "parent": {"path": ".", "sha": parent},
-        "submodules": {
-            name: {"path": name, "sha": _git_sha(repo_root / name)}
-            for name in SUBMODULES
-        },
-    }
-
-
-def _git_sha(path: Path) -> str | None:
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=path,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        return None
-
-
-def _git_snapshots_match(first: dict[str, Any], second: dict[str, Any]) -> bool:
-    if _git_sha_from_snapshot(first, "parent") != _git_sha_from_snapshot(second, "parent"):
-        return False
-    first_submodules = first.get("submodules") if isinstance(first.get("submodules"), dict) else {}
-    second_submodules = second.get("submodules") if isinstance(second.get("submodules"), dict) else {}
-    for name in SUBMODULES:
-        if _git_sha_from_mapping(first_submodules.get(name)) != _git_sha_from_mapping(second_submodules.get(name)):
-            return False
-    return True
-
-
-def _git_sha_from_snapshot(snapshot: dict[str, Any], key: str) -> str | None:
-    return _git_sha_from_mapping(snapshot.get(key) if isinstance(snapshot, dict) else None)
-
-
-def _git_sha_from_mapping(value: Any) -> str | None:
-    return value.get("sha") if isinstance(value, dict) and isinstance(value.get("sha"), str) else None
 
 
 def _resolve_path(value: str | Path, repo_root: Path) -> Path:

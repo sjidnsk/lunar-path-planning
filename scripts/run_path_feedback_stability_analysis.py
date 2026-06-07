@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from git_provenance import git_snapshot as _shared_git_snapshot
+from git_provenance import git_snapshots_match as _shared_git_snapshots_match
 
 
 RUN_INDEX_SCHEMA_VERSION = "path-feedback-batch-run-index/v1"
@@ -855,12 +857,7 @@ def _validate_git_snapshot(snapshot: Any, *, prefix: str) -> list[str]:
 def _git_snapshots_match(left: Any, right: Any) -> bool:
     if not isinstance(left, dict) or not isinstance(right, dict):
         return False
-    if _nested_value(left, ("parent", "sha")) != _nested_value(right, ("parent", "sha")):
-        return False
-    for name in SUBMODULES:
-        if _nested_value(left, ("submodules", name, "sha")) != _nested_value(right, ("submodules", name, "sha")):
-            return False
-    return True
+    return _shared_git_snapshots_match(left, right, submodules=SUBMODULES)
 
 
 def _public_git_snapshot(snapshot: Any) -> dict[str, Any]:
@@ -868,37 +865,7 @@ def _public_git_snapshot(snapshot: Any) -> dict[str, Any]:
 
 
 def _git_snapshot(repo_root: Path) -> dict[str, Any]:
-    return {
-        "parent": _git_repo_state(repo_root, repo_root=repo_root),
-        "submodules": {
-            name: _git_repo_state(repo_root / name, repo_root=repo_root)
-            for name in SUBMODULES
-        },
-    }
-
-
-def _git_repo_state(path: Path, *, repo_root: Path) -> dict[str, Any]:
-    sha = _run_git(path, "rev-parse", "HEAD")
-    branch = _run_git(path, "branch", "--show-current")
-    return {
-        "path": _display_path(path, repo_root),
-        "sha": sha or "unknown",
-        "branch": branch or None,
-    }
-
-
-def _run_git(path: Path, *args: str) -> str | None:
-    if not path.exists():
-        return None
-    completed = subprocess.run(
-        ["git", "-C", str(path), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.strip() or None
+    return _shared_git_snapshot(repo_root, submodules=SUBMODULES)
 
 
 def _region_graph_disconnected_count(summary: dict[str, Any]) -> int:
