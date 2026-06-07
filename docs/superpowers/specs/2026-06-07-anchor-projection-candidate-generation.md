@@ -165,7 +165,9 @@ Risk Closure v2 修复剩余工程风险：
 - dirty-worktree candidate-generation validate-only 按预期被 provenance gate 阻断：
   `current_git_provenance_mismatch_count=1`、`git_provenance_mismatch_count=1`，
   同时 `trainable_anchor_projection_count=18`，说明失败来自 dirty provenance 而不是候选生成回退。
-- clean-worktree evidence refresh 必须在提交后执行。
+- clean-worktree formal batch 8/8 passed；candidate-generation validate-only 与 summary generation
+  均通过，`current_git_provenance_mismatch_count=0`、`git_provenance_mismatch_count=0`、
+  `source_selection_quality_regression_count=0`。
 
 该 summary 的责任仍是训练合约边界审计；不能与 candidate-generation 的 18/78 计数混作同一
 训练输入口径。

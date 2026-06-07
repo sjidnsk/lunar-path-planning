@@ -193,5 +193,12 @@ Validation completed:
 - dirty-worktree candidate-generation validate-only failed as intended with
   `current_git_provenance_mismatch_count=1`, `git_provenance_mismatch_count=1`, and
   `trainable_anchor_projection_count=18`
+- clean-worktree formal batch:
+  `outputs/path_feedback_batch_anchor_projection_candidate_generation_v1_risk_closure_v2_clean_check/`
+  completed 8/8 runs
+- clean-worktree candidate-generation validate-only and summary generation passed with
+  `current_git_provenance_mismatch_count=0`, `git_provenance_mismatch_count=0`,
+  `trainable_anchor_projection_count=18`, and `source_selection_quality_regression_count=0`
 
-Clean-worktree evidence refresh remains pending until this Risk Closure v2 work is committed.
+The remaining blocker is no longer provenance; it is reconciling candidate-generation evidence with
+the anchor-projection evidence contract before any training dry-run.
