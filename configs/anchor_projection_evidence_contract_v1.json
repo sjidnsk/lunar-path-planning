@@ -1,0 +1,41 @@
+{
+  "schema_version": "anchor-projection-evidence-contract-config/v1",
+  "description": "Anchor-Projection Evidence Contract v1. This audit-only stage decides whether platform-inflated-goal-blocked anchor projections can be used as trainable projected-target evidence.",
+  "output_files": {
+    "anchor_projection_evidence_contract_summary": "anchor-projection-evidence-contract-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "anchor_projection_contract": {
+    "max_projection_distance_m": 1.0,
+    "max_projection_distance_cells": 2,
+    "max_unresolved_count": 0,
+    "require_anchor_reachable": true,
+    "allowed_training_use_values": [
+      "trainable_anchor_projection_contrast"
+    ],
+    "allowed_comparison_scopes_for_training": [
+      "projected_target_anchor_contrast"
+    ],
+    "forbidden_positive_evidence_scopes": [
+      "audit_proxy_anchor_not_same_cell"
+    ]
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_large_scale_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_model_explorer_contract_stable_field_semantics_change",
+    "no_path_planner_route_stable_field_semantics_change",
+    "no_path_planner_sidecar_stable_field_semantics_change",
+    "no_channel_aware_default_route_replacement_claim",
+    "no_c_space_iris_or_iris_np",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_real_world_performance_claim"
+  ]
+}
