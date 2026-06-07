@@ -143,7 +143,7 @@ def analyze_anchor_projection_candidate_generation(
                 "open_grid_fallback_used": payload.get("open_grid_fallback_used"),
             }
         )
-        _collect_contexts(payload, contexts=contexts, source_path=path)
+        _collect_contexts(payload, contexts=contexts, source_path=path, config=config)
 
     platform_goal_contract_mismatch_count = len(contexts)
     trainable_contexts = [context for context in contexts.values() if context["trainable"]]
@@ -251,6 +251,7 @@ def _collect_contexts(
     *,
     contexts: dict[tuple[Any, ...], dict[str, Any]],
     source_path: Path,
+    config: dict[str, Any],
 ) -> None:
     scenarios = summary.get("scenarios")
     if not isinstance(scenarios, list):
@@ -443,10 +444,15 @@ def _collect_contexts(
             source_selected = generation.get("source_selection_status") == "source_selected"
             context["projected_candidate_source_selected"] = source_selected
             execution_goal = _cell_tuple(generation.get("execution_goal_cell"))
+            distance_reject_reasons = _projection_distance_reject_reasons(context, config=config)
+            for reason in distance_reject_reasons:
+                if reason not in context["reject_reasons"]:
+                    context["reject_reasons"].append(reason)
             trainable = (
                 training_use == "trainable_anchor_projection_contrast"
                 and source_selected
                 and comparison_scope == "projected_target_anchor_contrast"
+                and not distance_reject_reasons
             )
             context["execution_goal_cell"] = None if execution_goal is None else list(execution_goal)
             context["training_use"] = str(training_use)
@@ -494,6 +500,20 @@ def _copy_anchor_reachability_fields(context: dict[str, Any], source: dict[str, 
         context["reachable_substitute_anchor_available"] = bool(
             source.get("reachable_substitute_anchor_available")
         )
+
+
+def _projection_distance_reject_reasons(context: dict[str, Any], *, config: dict[str, Any]) -> list[str]:
+    thresholds = config.get("thresholds") if isinstance(config.get("thresholds"), dict) else {}
+    reasons: list[str] = []
+    max_cells = thresholds.get("max_trainable_projection_distance_cells")
+    distance_cells = _float_optional(context.get("projection_distance_cells"))
+    if max_cells is not None and distance_cells is not None and distance_cells > float(max_cells):
+        reasons.append("projection_distance_cells_exceeds_contract")
+    max_m = thresholds.get("max_trainable_projection_distance_m")
+    distance_m = _float_optional(context.get("projection_distance_m"))
+    if max_m is not None and distance_m is not None and distance_m > float(max_m):
+        reasons.append("projection_distance_m_exceeds_contract")
+    return reasons
 
 
 def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]:
@@ -544,6 +564,12 @@ def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]
         and context.get("anchor_reachable") is True
         and context.get("projected_candidate_generated") is True
     ]
+    projection_distance_contract_rejected = [
+        context
+        for context in contexts
+        if "projection_distance_cells_exceeds_contract" in context.get("reject_reasons", [])
+        or "projection_distance_m_exceeds_contract" in context.get("reject_reasons", [])
+    ]
     distance_cells = [
         context["projection_distance_cells"]
         for context in contexts
@@ -577,6 +603,7 @@ def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]
         "anchor_unreachable_repaired_by_reachable_substitute_count": len(
             repaired_by_reachable_substitute
         ),
+        "projection_distance_contract_rejected_count": len(projection_distance_contract_rejected),
         "nontrainable_primary_reason_counts": dict(sorted(primary_reason_counts.items())),
         "scenario_diagnosis_counts": dict(
             sorted(Counter("trainable" if context["trainable"] else "nontrainable" for context in contexts).items())
@@ -764,9 +791,20 @@ def _load_config(path: Path) -> dict[str, Any]:
         "max_source_selection_quality_regression_count": int(
             thresholds.get("max_source_selection_quality_regression_count", 0) or 0
         ),
+        "max_trainable_projection_distance_m": _float_value(
+            thresholds.get("max_trainable_projection_distance_m", 1.0),
+            default=1.0,
+        ),
+        "max_trainable_projection_distance_cells": int(
+            thresholds.get("max_trainable_projection_distance_cells", 2) or 2
+        ),
     }
     if config["thresholds"]["max_source_selection_quality_regression_count"] < 0:
         raise ConfigError("thresholds.max_source_selection_quality_regression_count must be >= 0")
+    if config["thresholds"]["max_trainable_projection_distance_m"] < 0.0:
+        raise ConfigError("thresholds.max_trainable_projection_distance_m must be >= 0")
+    if config["thresholds"]["max_trainable_projection_distance_cells"] < 0:
+        raise ConfigError("thresholds.max_trainable_projection_distance_cells must be >= 0")
     return config
 
 

@@ -234,11 +234,11 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             "candidate_role": "projected_execution_target",
             "source_action_index": 0,
             "policy_target_cell": [3, 2],
-            "execution_goal_cell": [0, 2],
-            "projected_anchor_cell": [0, 2],
+            "execution_goal_cell": [1, 2],
+            "projected_anchor_cell": [1, 2],
             "nearest_inflated_passable_anchor": [4, 2],
-            "projection_distance_cells": 3,
-            "projection_distance_m": 3.0,
+            "projection_distance_cells": 2,
+            "projection_distance_m": 1.0,
             "nearest_anchor_distance_cells": 1,
             "nearest_anchor_distance_m": 1.0,
             "anchor_reachable": True,
@@ -295,7 +295,7 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
                 {
                     "scenario_id": "substitute",
                     "selected_cell_before_path_feedback": [3, 2],
-                    "selected_cell_after_path_feedback": [0, 2],
+                    "selected_cell_after_path_feedback": [1, 2],
                     "selection_changed_by_path_feedback": True,
                     "path_feedback": {
                         "candidates": [
@@ -316,10 +316,10 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
                             {
                                 "action_index": 2,
                                 "source_action_index": 0,
-                                "cell": [0, 2],
+                                "cell": [1, 2],
                                 "candidate_role": "projected_execution_target",
                                 "policy_target_cell": [3, 2],
-                                "execution_goal_cell": [0, 2],
+                                "execution_goal_cell": [1, 2],
                                 "reachable": True,
                                 "replan_required": False,
                                 "path_cost": 2.0,
