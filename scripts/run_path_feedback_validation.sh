@@ -61,7 +61,26 @@ Options:
   --gcs-control-point-direction-cone-seed-rho-ratio VALUE
                         Forward explicit control-point direction_cone seed-distance rho ratio.
   --planning-backend NAME
-                        Forward path-planner planning backend: astar or region_graph_guided.
+                        Forward path-planner planning backend: astar, region_graph_guided,
+                        or channel_aware_astar.
+  --channel-aware-neighborhood-radius-cells N
+                        Forward channel-aware A* local channel radius.
+  --channel-aware-center-weight VALUE
+                        Forward channel-aware A* center-cell cost weight.
+  --channel-aware-neighborhood-mean-weight VALUE
+                        Forward channel-aware A* neighborhood mean-cost weight.
+  --channel-aware-neighborhood-max-weight VALUE
+                        Forward channel-aware A* neighborhood max-cost weight.
+  --channel-aware-high-cost-exposure-weight VALUE
+                        Forward channel-aware A* high-cost exposure proxy weight.
+  --channel-aware-blocked-nearby-weight VALUE
+                        Forward channel-aware A* blocked-nearby penalty weight.
+  --channel-aware-clearance-weight VALUE
+                        Forward channel-aware A* clearance penalty weight.
+  --channel-aware-smoothness-weight VALUE
+                        Forward channel-aware A* smoothness/direction proxy weight.
+  --channel-aware-high-cost-threshold VALUE
+                        Forward channel-aware A* high-cost threshold.
   --dry-run            Print planned commands without writing validation outputs.
   -h, --help           Show this help.
 USAGE
@@ -102,7 +121,7 @@ while [[ $# -gt 0 ]]; do
       PLANNER_EXTRA_ARGS+=("$1")
       shift
       ;;
-    --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-high-cost-exposure-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio)
+    --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-high-cost-exposure-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio|--channel-aware-neighborhood-radius-cells|--channel-aware-center-weight|--channel-aware-neighborhood-mean-weight|--channel-aware-neighborhood-max-weight|--channel-aware-high-cost-exposure-weight|--channel-aware-blocked-nearby-weight|--channel-aware-clearance-weight|--channel-aware-smoothness-weight|--channel-aware-high-cost-threshold)
       require_value "$1" "${2:-}"
       PLANNER_EXTRA_ARGS+=("$1" "$2")
       shift 2
@@ -110,10 +129,10 @@ while [[ $# -gt 0 ]]; do
     --planning-backend)
       require_value "$1" "${2:-}"
       case "$2" in
-        astar|region_graph_guided)
+        astar|region_graph_guided|channel_aware_astar)
           ;;
         *)
-          echo "--planning-backend must be one of: astar, region_graph_guided" >&2
+          echo "--planning-backend must be one of: astar, region_graph_guided, channel_aware_astar" >&2
           exit 2
           ;;
       esac

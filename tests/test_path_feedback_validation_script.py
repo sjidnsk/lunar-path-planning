@@ -234,6 +234,37 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
         self.assertIn("--planning-backend region_graph_guided", completed.stdout)
         self.assertFalse(output_root.exists())
 
+    def test_channel_aware_astar_backend_is_reflected_in_dry_run_commands(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        output_root = Path(tempfile.mkdtemp(prefix="path-feedback-channel-aware-")) / "out"
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(script),
+                "--dry-run",
+                "--planning-backend",
+                "channel_aware_astar",
+                "--channel-aware-neighborhood-mean-weight",
+                "3.0",
+                "--channel-aware-high-cost-exposure-weight",
+                "2.0",
+                "--output-root",
+                str(output_root),
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("--planning-backend channel_aware_astar", completed.stdout)
+        self.assertIn("--channel-aware-neighborhood-mean-weight 3.0", completed.stdout)
+        self.assertIn("--channel-aware-high-cost-exposure-weight 2.0", completed.stdout)
+        self.assertFalse(output_root.exists())
+
     def test_mixed_stress_gate_accepts_sampled_region_decision_diagnostics(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "run_path_feedback_validation.sh"

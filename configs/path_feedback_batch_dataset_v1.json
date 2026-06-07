@@ -1,9 +1,30 @@
 {
   "schema_version": "path-feedback-batch-matrix/v1",
-  "description": "Semi-Real Batch Closed-Loop Evaluation v1 matrix. sample_quality_profile is recorded for downstream audit only and is not executed by this batch runner. Core Algorithm Stage 1 opts into path-planner region_graph_guided planning through planner_extra_args while leaving path-planner's default CLI backend as astar.",
+  "description": "Semi-Real Batch Closed-Loop Evaluation v1 matrix. sample_quality_profile is recorded for downstream audit only and is not executed by this batch runner. Core Algorithm Stage 1 opts into path-planner channel_aware_astar planning through planner_extra_args while leaving path-planner's default CLI backend as astar.",
   "output_root": "outputs/path_feedback_batch",
   "defaults": {
-    "planner_extra_args": ["--planning-backend", "region_graph_guided"]
+    "planner_extra_args": [
+      "--planning-backend",
+      "channel_aware_astar",
+      "--channel-aware-neighborhood-radius-cells",
+      "1",
+      "--channel-aware-center-weight",
+      "1.0",
+      "--channel-aware-neighborhood-mean-weight",
+      "0.25",
+      "--channel-aware-neighborhood-max-weight",
+      "0.1",
+      "--channel-aware-high-cost-exposure-weight",
+      "0.5",
+      "--channel-aware-blocked-nearby-weight",
+      "0.5",
+      "--channel-aware-clearance-weight",
+      "0.25",
+      "--channel-aware-smoothness-weight",
+      "0.05",
+      "--channel-aware-high-cost-threshold",
+      "4.0"
+    ]
   },
   "runs": [
     {

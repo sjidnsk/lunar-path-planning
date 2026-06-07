@@ -192,6 +192,16 @@ still reports `recommendation=no_default_change_recommended`:
 `safety_regression_excluded=14`, and no `terrain_proxy_mismatch` or
 `insufficient_cost_diagnostics`. This confirms that the generation-side proxy is
 diagnostic and opt-in, not evidence for changing default solver parameters.
+The next algorithmic step is therefore not to bypass A* or generate corridors
+without a seed path. It is an opt-in channel-aware A* backend: keep the default
+A* baseline as the stable route reference, but add a candidate search mode whose
+step cost estimates the local corridor/channel quality around each seed cell
+using neighborhood mean/max cost, high-cost exposure proxy, clearance or
+passable-margin penalty, blocked-nearby penalty, and smoothness/direction proxy.
+That backend still emits a seed path; `postprocess` still builds the corridor
+around that path; fallback box or workspace IRIS still builds the region
+sequence; and control-point GCS remains an additive candidate, not the default
+route replacement.
 The Markdown report now includes Diagnostic Interpretation and Candidate
 Diagnostics tables so stress and mixed-stress runs can explain target
 replacement, path-planning failure, replan triggers, IRIS fallback, region-graph
@@ -444,6 +454,7 @@ The next implementation stages should follow:
 
 ```text
 A* geometric path baseline
+  -> opt-in channel-aware A* seed path
   -> region-graph-guided geometric search
   -> workspace IRIS region quality
   -> sampled region path backend
@@ -457,12 +468,12 @@ The project-level reference is
 Future `/goal` prompts should choose the first incomplete stage in that chain
 unless current repo evidence proves a different algorithm stage is blocking.
 
-The immediate algorithm target is **Region-Graph-Guided Geometric Search v1**,
-after the current robustness/application smoke changes are integrated and the
-evidence root is regenerated from the committed HEAD. This target moves
-region-graph signals into `path-planner` path generation behavior while keeping
-`path-planner-route/v1`, `trajectory_kind=geometric_path`, PPO, network
-architecture, and candidate-list action space stable.
+The immediate algorithm target is **Channel-Aware A* Seed Path v1**. This target
+moves the current high-cost exposure evidence upstream into path generation:
+instead of finding only the lowest-cost centerline, the opt-in backend searches
+for a seed path whose surrounding corridor/channel is lower risk. It must keep
+`path-planner-route/v1`, the default A* baseline, `trajectory_kind=geometric_path`,
+PPO, network architecture, and candidate-list action space stable.
 
 ## Ubuntu One-Click Conda Setup
 

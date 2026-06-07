@@ -105,15 +105,56 @@ Exit condition:
 - `open_grid_fallback_used_count == 0`;
 - source summaries, acceptance metadata, and git provenance are clean.
 
-## Stage 1: Region-Graph-Guided Geometric Search v1
+## Stage 1: Channel-Aware A* Seed Path v1
+
+Purpose: move current high-cost exposure evidence upstream into path generation.
+The default A* backend finds a low-cost centerline, then `postprocess` builds a
+corridor around that path. The next stage adds an opt-in backend that searches
+for a seed path whose surrounding corridor/channel is low risk, not only a
+centerline with low accumulated cell cost.
+
+Implementation target:
+
+- keep the existing `astar` backend as the default route baseline;
+- add an optional backend such as `channel_aware_astar`;
+- compute channel-aware step cost from center-cell cost plus local corridor
+  neighborhood mean/max cost, high-cost exposure proxy, passable margin or
+  clearance penalty, blocked-nearby penalty, and smoothness/direction proxy;
+- output a normal seed path so existing `postprocess` corridor generation,
+  fallback-box/workspace-IRIS region sequence generation, and control-point GCS
+  candidate evaluation can reuse the current chain;
+- emit additive diagnostics for channel cost terms, selected backend, fallback
+  reason, and comparison against the default A* baseline.
+
+Acceptance criteria:
+
+- existing A* route behavior remains the default;
+- route JSON still uses `trajectory_kind=geometric_path`;
+- channel-aware search changes selected seed paths only when explicitly
+  requested;
+- validation on current GCS control-point evidence roots shows whether high-cost
+  exposure and cost-dominated blockers decrease without collision,
+  `direction_cone`, terrain-cost, or motion-diagnostic regressions;
+- model-explorer path-feedback can consume the new diagnostics without stable
+  contract changes.
+
+Non-goals:
+
+- no direct corridor generation without a seed path;
+- no default backend change;
+- no GCS graph search;
+- no vehicle motion-feasibility solver;
+- no Ackermann-feasible trajectory claim.
+
+## Stage 2: Region-Graph-Guided Geometric Search v1
 
 Purpose: make `region_graph_report` influence geometric path generation, rather
 than only explaining failures after A*.
 
-Current implementation note: Stage 1 is implemented as an opt-in
+Current implementation note: this stage is implemented as an opt-in
 `path-planner` backend selected by `--planning-backend region_graph_guided`.
 The default backend remains `astar`. The parent batch matrix opts into this
-backend through `planner_extra_args` so validation exercises the Stage 1 path
+backend through `planner_extra_args` so validation exercises the region-guided path
 without changing `path-planner` default CLI behavior.
 
 Implementation target:
@@ -153,12 +194,12 @@ Non-goals:
 - no vehicle motion-feasibility solver;
 - no Ackermann-feasible trajectory claim.
 
-## Stage 2: Workspace IRIS Region Quality v1
+## Stage 3: Workspace IRIS Region Quality v1
 
 Purpose: improve the quality and usability of workspace IRIS regions before
 using them as a stronger region graph source.
 
-Current implementation note: Stage 2 keeps IRIS behind the optional
+Current implementation note: this stage keeps IRIS behind the optional
 `--drake-iris-regions` diagnostic switch. The batch/single-run validation chain
 must use the configured Conda Python consistently so Drake availability is
 auditable. Workspace IRIS diagnostics may use merged blocked rectangles and
@@ -183,7 +224,7 @@ Acceptance criteria:
   `region_graph_fallback_count`, or reports precise machine-readable blockers;
 - no C-space IRIS or IRIS NP variants are introduced.
 
-## Stage 3: Sampled Region Path Backend v1
+## Stage 4: Sampled Region Path Backend v1
 
 Purpose: generate a geometric path from project-owned region models, not only
 from grid A* or postprocess corridors.
@@ -213,7 +254,7 @@ Non-goals:
 - no top-level route contract change;
 - no motion-feasible trajectory claim.
 
-## Stage 4: Drake GCS Geometric Backend v1
+## Stage 5: Drake GCS Geometric Backend v1
 
 Purpose: introduce a real GCS-style geometric backend after project-owned region
 models and sampled-region behavior are stable.
@@ -235,7 +276,7 @@ Acceptance criteria:
   current optimizer -> postprocess smoothed path -> raw A* path;
 - no GCS output is labeled as Ackermann-feasible or vehicle-executable.
 
-## Stage 5: Motion-Feasibility Layer v1
+## Stage 6: Motion-Feasibility Layer v1
 
 Purpose: separate geometric path generation from vehicle motion feasibility.
 
@@ -262,7 +303,7 @@ Non-goals:
   represented and tested;
 - no Ackermann-feasible claim for geometric or GCS-only paths.
 
-## Stage 6: Execution-Aware Explorer Loop v1
+## Stage 7: Execution-Aware Explorer Loop v1
 
 Purpose: connect improved execution backends back into model-explorer decisions,
 rollouts, and training data.
@@ -287,7 +328,7 @@ Acceptance criteria:
 - when execution algorithms do not improve stress failures, blockers are
   attributed back to `path-planner`, not hidden by policy weights.
 
-## Stage 7: Core Algorithm Closure
+## Stage 8: Core Algorithm Closure
 
 Purpose: close the full algorithmic loop:
 
@@ -308,5 +349,5 @@ This is the first point where larger contract questions become appropriate:
 - whether to introduce rover-specific motion models;
 - whether `trajectory_kind` needs a new value beyond `geometric_path`.
 
-Do not start Stage 7 directly. It depends on the earlier staged behavior and
+Do not start Stage 8 directly. It depends on the earlier staged behavior and
 fallback evidence.

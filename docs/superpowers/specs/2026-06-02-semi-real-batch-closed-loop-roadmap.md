@@ -198,10 +198,11 @@ After Batch Closed-Loop Evaluation v1, continue with:
    - The endpoint is core algorithm development, not another standalone
      interpretability or readiness-report phase.
    - After the integration/provenance gate, start with
-     **Region-Graph-Guided Geometric Search v1** so that region-graph signals
-     begin to change `path-planner` geometric path generation behavior.
-   - Later stages split workspace IRIS quality, sampled region paths, Drake GCS
-     geometric backend work, motion-feasibility reporting, and the
+     **Channel-Aware A* Seed Path v1** so current high-cost exposure evidence
+     changes `path-planner` seed-path generation before corridor and region
+     sequence construction.
+   - Later stages split region-graph-guided search, workspace IRIS quality,
+     sampled region paths, Drake GCS geometric backend work, motion-feasibility reporting, and the
      execution-aware explorer loop.
 
 ## Non-Goals
