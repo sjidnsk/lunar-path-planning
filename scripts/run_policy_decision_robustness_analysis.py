@@ -14,6 +14,7 @@ from typing import Any
 CONFIG_SCHEMA_VERSION = "policy-decision-robustness-config/v1"
 ROBUSTNESS_SCHEMA_VERSION = "policy-decision-robustness-summary/v1"
 COMPARISON_SCHEMA_VERSION = "policy-decision-selection-comparison-summary/v1"
+CHANNEL_AWARE_DECISION_AUDIT_SCHEMA_VERSION = "channel-aware-decision-audit/v1"
 RUN_INDEX_SCHEMA_VERSION = "path-feedback-batch-run-index/v1"
 EVALUATION_SUMMARY_SCHEMA_VERSION = "path-feedback-batch-evaluation-summary/v1"
 BATCH_STABILITY_SCHEMA_VERSION = "batch-stability-summary/v1"
@@ -168,6 +169,11 @@ def analyze_policy_decision_robustness(*, batch_root: Path, config: dict[str, An
         )
         for profile in config["profiles"]
     }
+    channel_aware_decision_audit = _build_channel_aware_decision_audit(
+        run_records=run_records,
+        batch_root=batch_root,
+        repo_root=repo_root,
+    )
 
     all_reason_codes = list(global_reason_codes)
     for record in run_records:
@@ -198,6 +204,7 @@ def analyze_policy_decision_robustness(*, batch_root: Path, config: dict[str, An
         "acceptance_metadata": {
             "by_run": {record["run_id"]: dict(record["acceptance_metadata"]) for record in run_records},
         },
+        "channel_aware_decision_audit": channel_aware_decision_audit,
         "git_provenance": {
             "batch": _public_git_snapshot(batch_git),
             "current": current_git,
@@ -218,6 +225,7 @@ def analyze_policy_decision_robustness(*, batch_root: Path, config: dict[str, An
         status=status,
         global_reason_codes=global_reason_codes,
         profile_results=profile_results,
+        channel_aware_decision_audit=channel_aware_decision_audit,
         config=config,
         batch_root=batch_root,
         repo_root=repo_root,
@@ -736,6 +744,7 @@ def _build_selection_comparison(
     status: str,
     global_reason_codes: list[str],
     profile_results: dict[str, dict[str, Any]],
+    channel_aware_decision_audit: dict[str, Any],
     config: dict[str, Any],
     batch_root: Path,
     repo_root: Path,
@@ -838,6 +847,7 @@ def _build_selection_comparison(
             }
             for profile_id, result in profile_results.items()
         },
+        "channel_aware_decision_audit": channel_aware_decision_audit,
         "by_observation": observation_records,
         "by_scenario_id": scenario_records,
         "comparison": {
@@ -852,6 +862,318 @@ def _build_selection_comparison(
             "single_metric_accidental_improvement": "not_evaluated_no_training_metric",
         },
     }
+
+
+def _build_channel_aware_decision_audit(
+    *,
+    run_records: list[dict[str, Any]],
+    batch_root: Path,
+    repo_root: Path,
+) -> dict[str, Any]:
+    astar_runs: dict[str, list[dict[str, Any]]] = {}
+    channel_runs: dict[str, list[dict[str, Any]]] = {}
+    for record in run_records:
+        key = _channel_aware_pair_key(record)
+        if _is_channel_aware_run(record):
+            channel_runs.setdefault(key, []).append(record)
+        else:
+            astar_runs.setdefault(key, []).append(record)
+
+    records: list[dict[str, Any]] = []
+    pair_records: list[dict[str, Any]] = []
+    paired_scenario_count = 0
+    selected_candidate_changed_count = 0
+    for key in sorted(set(astar_runs) & set(channel_runs)):
+        astar_record = sorted(astar_runs[key], key=lambda item: item["run_id"])[0]
+        channel_record = sorted(channel_runs[key], key=lambda item: item["run_id"])[0]
+        astar_scenarios = _scenarios_by_id(astar_record)
+        channel_scenarios = _scenarios_by_id(channel_record)
+        paired_ids = sorted(set(astar_scenarios) & set(channel_scenarios))
+        pair_records.append(
+            {
+                "pair_key": key,
+                "astar_run_id": astar_record["run_id"],
+                "channel_aware_run_id": channel_record["run_id"],
+                "paired_scenario_count": len(paired_ids),
+            }
+        )
+        for scenario_id in paired_ids:
+            astar_scenario = astar_scenarios[scenario_id]
+            channel_scenario = channel_scenarios[scenario_id]
+            paired_scenario_count += 1
+            astar_selected_cell = _list_value(astar_scenario.get("selected_cell_after_path_feedback"))
+            channel_selected_cell = _list_value(channel_scenario.get("selected_cell_after_path_feedback"))
+            selected_changed = astar_selected_cell != channel_selected_cell
+            if selected_changed:
+                selected_candidate_changed_count += 1
+            for candidate in _channel_aware_candidate_records(channel_record, channel_scenario):
+                audit = _classify_channel_aware_decision_evidence(candidate.get("planning_backend"))
+                record = {
+                    "pair_key": key,
+                    "astar_run_id": astar_record["run_id"],
+                    "channel_aware_run_id": channel_record["run_id"],
+                    "scenario_id": scenario_id,
+                    "scenario_group": channel_scenario.get("scenario_group", "unknown"),
+                    "action_index": _int_value(candidate.get("action_index")),
+                    "cell": _list_value(candidate.get("cell")),
+                    "astar_selected_cell": astar_selected_cell,
+                    "channel_aware_selected_cell": channel_selected_cell,
+                    "selected_candidate_changed": selected_changed,
+                    **audit,
+                }
+                records.append(record)
+
+    if not records:
+        records = _unpaired_channel_aware_records(channel_runs)
+
+    candidate_count = len(records)
+    risk_high_cost_improvement_count = sum(1 for record in records if record["risk_or_high_cost_improvement"])
+    path_cost_regression_count = sum(1 for record in records if record["path_cost_tradeoff"])
+    blocker_reason_counts = Counter(
+        reason
+        for record in records
+        for reason in record["reason_codes"]
+        if reason in {"goal_blocked", "same_as_baseline", "not_lower_risk"}
+    )
+    recommendation_counts = Counter(record["recommendation"] for record in records)
+    for recommendation in ("keep", "downweight", "reject", "needs_more_evidence"):
+        recommendation_counts.setdefault(recommendation, 0)
+    return {
+        "schema_version": CHANNEL_AWARE_DECISION_AUDIT_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "batch_root": _display_path(batch_root, repo_root),
+        "mode": "opt_in_decision_evidence_application",
+        "quality_signal_use": "decision_audit_only",
+        "route_replacement_default_changed": False,
+        "paired_run_count": len(pair_records),
+        "paired_scenario_count": paired_scenario_count,
+        "channel_aware_candidate_count": candidate_count,
+        "selected_candidate_changed_count": selected_candidate_changed_count,
+        "selected_candidate_changed_rate": _rate(selected_candidate_changed_count, paired_scenario_count),
+        "risk_high_cost_exposure_improvement_count": risk_high_cost_improvement_count,
+        "risk_high_cost_exposure_improvement_rate": _rate(risk_high_cost_improvement_count, candidate_count),
+        "path_cost_regression_count": path_cost_regression_count,
+        "path_cost_regression_rate": _rate(path_cost_regression_count, candidate_count),
+        "blocker_reason_counts": dict(sorted(blocker_reason_counts.items())),
+        "recommendation_counts": dict(sorted(recommendation_counts.items())),
+        "conservative_recommendation": _channel_aware_conservative_recommendation(
+            recommendation_counts,
+            candidate_count=candidate_count,
+            paired_run_count=len(pair_records),
+        ),
+        "pairs": pair_records,
+        "records": records,
+    }
+
+
+def _is_channel_aware_run(record: dict[str, Any]) -> bool:
+    run_id = str(record.get("run_id", ""))
+    command_args = record.get("command_args") if isinstance(record.get("command_args"), dict) else {}
+    acceptance_metadata = record.get("acceptance_metadata") if isinstance(record.get("acceptance_metadata"), dict) else {}
+    planner_args = _string_list(command_args.get("planner_extra_args"))
+    planner_args.extend(_string_list(acceptance_metadata.get("planner_extra_args")))
+    summary = record.get("summary") if isinstance(record.get("summary"), dict) else {}
+    if run_id.endswith("-channel-aware"):
+        return True
+    if "channel_aware_astar" in " ".join(planner_args):
+        return True
+    return _int_value(summary.get("channel_aware_astar_report_count")) > 0
+
+
+def _channel_aware_pair_key(record: dict[str, Any]) -> str:
+    run_id = str(record.get("run_id", ""))
+    for suffix in ("-channel-aware", "-astar"):
+        if run_id.endswith(suffix):
+            return run_id[: -len(suffix)]
+    command_args = record.get("command_args") if isinstance(record.get("command_args"), dict) else {}
+    return "|".join(
+        (
+            str(command_args.get("scenario_set", "unknown")),
+            str(command_args.get("diagnostic_profile", "unknown")),
+            str(command_args.get("top_k", "unknown")),
+        )
+    )
+
+
+def _scenarios_by_id(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    summary = record.get("summary") if isinstance(record.get("summary"), dict) else {}
+    scenarios = summary.get("scenarios") if isinstance(summary.get("scenarios"), list) else []
+    return {
+        str(scenario.get("scenario_id", "")): scenario
+        for scenario in scenarios
+        if isinstance(scenario, dict) and scenario.get("scenario_id") not in (None, "")
+    }
+
+
+def _channel_aware_candidate_records(
+    run_record: dict[str, Any],
+    scenario: dict[str, Any],
+) -> list[dict[str, Any]]:
+    feedback = scenario.get("path_feedback") if isinstance(scenario.get("path_feedback"), dict) else {}
+    candidates = feedback.get("candidates") if isinstance(feedback.get("candidates"), list) else []
+    records = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        planning_backend = candidate.get("planning_backend")
+        audit = _classify_channel_aware_decision_evidence(planning_backend)
+        if audit["present"]:
+            records.append(
+                {
+                    "scenario_id": scenario.get("scenario_id"),
+                    "action_index": candidate.get("action_index"),
+                    "cell": candidate.get("cell"),
+                    "planning_backend": planning_backend,
+                }
+            )
+    if records:
+        return records
+
+    summary = run_record.get("summary") if isinstance(run_record.get("summary"), dict) else {}
+    audit_records = summary.get("channel_aware_astar_candidate_audit")
+    if not isinstance(audit_records, list):
+        return []
+    scenario_id = str(scenario.get("scenario_id", ""))
+    return [
+        {
+            "scenario_id": item.get("scenario_id"),
+            "action_index": item.get("action_index"),
+            "cell": item.get("cell"),
+            "planning_backend": item,
+        }
+        for item in audit_records
+        if isinstance(item, dict) and str(item.get("scenario_id", "")) == scenario_id
+    ]
+
+
+def _unpaired_channel_aware_records(channel_runs: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for key, runs in sorted(channel_runs.items()):
+        for run_record in sorted(runs, key=lambda item: item["run_id"]):
+            for scenario_id, scenario in _scenarios_by_id(run_record).items():
+                for candidate in _channel_aware_candidate_records(run_record, scenario):
+                    audit = _classify_channel_aware_decision_evidence(candidate.get("planning_backend"))
+                    records.append(
+                        {
+                            "pair_key": key,
+                            "astar_run_id": None,
+                            "channel_aware_run_id": run_record["run_id"],
+                            "scenario_id": scenario_id,
+                            "scenario_group": scenario.get("scenario_group", "unknown"),
+                            "action_index": _int_value(candidate.get("action_index")),
+                            "cell": _list_value(candidate.get("cell")),
+                            "astar_selected_cell": [],
+                            "channel_aware_selected_cell": _list_value(
+                                scenario.get("selected_cell_after_path_feedback")
+                            ),
+                            "selected_candidate_changed": False,
+                            **audit,
+                        }
+                    )
+    return records
+
+
+def _classify_channel_aware_decision_evidence(report: Any) -> dict[str, Any]:
+    report = report if isinstance(report, dict) else {}
+    requested_backend = str(report.get("requested_backend", ""))
+    selected_backend = str(report.get("selected_backend", ""))
+    status = str(report.get("status", ""))
+    present = requested_backend == "channel_aware_astar" or selected_backend == "channel_aware_astar"
+    comparison = report.get("comparison") if isinstance(report.get("comparison"), dict) else {}
+    path_cost_delta = _finite_float_optional(comparison.get("path_cost_delta"))
+    channel_cost_delta = _finite_float_optional(comparison.get("channel_cost_delta"))
+    high_cost_exposure_delta = _finite_float_optional(comparison.get("high_cost_exposure_delta"))
+    risk_delta = _finite_float_optional(comparison.get("risk_delta"))
+    selected = status == "selected" or selected_backend == "channel_aware_astar"
+    quality_improvement = bool(
+        selected
+        and high_cost_exposure_delta is not None
+        and high_cost_exposure_delta < 0.0
+        and channel_cost_delta is not None
+        and channel_cost_delta < 0.0
+    )
+    path_cost_tradeoff = bool(selected and path_cost_delta is not None and path_cost_delta > 0.0)
+    risk_or_high_cost_improvement = bool(
+        (high_cost_exposure_delta is not None and high_cost_exposure_delta < 0.0)
+        or (risk_delta is not None and risk_delta < 0.0)
+    )
+    blocker = _channel_aware_blocker_reason(report)
+    reason_codes: list[str] = []
+    if quality_improvement:
+        reason_codes.append("channel_aware_quality_improved")
+    elif selected:
+        reason_codes.append("channel_aware_quality_not_improved")
+    if path_cost_tradeoff:
+        reason_codes.append("path_cost_tradeoff")
+    if blocker not in (None, "selected"):
+        reason_codes.append(blocker)
+
+    if quality_improvement:
+        recommendation = "keep"
+    elif blocker in {"goal_blocked", "not_lower_risk"}:
+        recommendation = "reject"
+    elif blocker == "same_as_baseline" or selected:
+        recommendation = "downweight"
+    elif present:
+        recommendation = "needs_more_evidence"
+    else:
+        recommendation = "needs_more_evidence"
+
+    return {
+        "present": present,
+        "requested_backend": requested_backend or None,
+        "selected_backend": selected_backend or None,
+        "status": status or None,
+        "selected": selected,
+        "quality_improvement": quality_improvement,
+        "risk_or_high_cost_improvement": risk_or_high_cost_improvement,
+        "path_cost_tradeoff": path_cost_tradeoff,
+        "blocker_reason": blocker,
+        "recommendation": recommendation,
+        "reason_codes": _dedupe(reason_codes),
+        "comparison": {
+            "path_changed": bool(comparison.get("path_changed", False)),
+            "path_cost_delta": path_cost_delta,
+            "channel_cost_delta": channel_cost_delta,
+            "high_cost_exposure_delta": high_cost_exposure_delta,
+            "risk_delta": risk_delta,
+        },
+    }
+
+
+def _channel_aware_blocker_reason(report: dict[str, Any]) -> str | None:
+    for value in (report.get("blocker_class"), report.get("fallback_reason")):
+        if value is None:
+            continue
+        text = str(value)
+        if "goal_blocked" in text:
+            return "goal_blocked"
+        if "same_as_baseline" in text:
+            return "same_as_baseline"
+        if "not_lower_risk" in text:
+            return "not_lower_risk"
+    if str(report.get("status", "")) == "selected" or str(report.get("selected_backend", "")) == "channel_aware_astar":
+        return "selected"
+    return None
+
+
+def _channel_aware_conservative_recommendation(
+    recommendation_counts: Counter[str],
+    *,
+    candidate_count: int,
+    paired_run_count: int,
+) -> str:
+    if candidate_count <= 0 or paired_run_count <= 0:
+        return "needs_more_evidence"
+    if recommendation_counts["reject"] and recommendation_counts["keep"]:
+        return "downweight"
+    if recommendation_counts["reject"]:
+        return "reject"
+    if recommendation_counts["keep"]:
+        return "keep"
+    if recommendation_counts["downweight"]:
+        return "downweight"
+    return "needs_more_evidence"
 
 
 def _source_summary_records(sources: dict[str, Any], run_records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1087,6 +1409,16 @@ def _finite_float(value: Any) -> float:
     return number if isfinite(number) else 0.0
 
 
+def _finite_float_optional(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
 def _int_value(value: Any) -> int:
     if isinstance(value, bool):
         return 0
@@ -1182,6 +1514,10 @@ def _average(values) -> float:
     if not numbers:
         return 0.0
     return sum(numbers) / len(numbers)
+
+
+def _rate(count: int, total: int) -> float:
+    return _finite_float(count / total) if total else 0.0
 
 
 def _append_reason(reason_codes: list[str], code: str) -> None:

@@ -46,6 +46,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 diagnostic_profile=""
                 top_k=""
                 control_point_requested=0
+                planning_backend="astar"
                 while [[ $# -gt 0 ]]; do
                   case "$1" in
                     --output-root)
@@ -62,6 +63,13 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                       ;;
                     --top-k)
                       top_k="$2"
+                      shift 2
+                      ;;
+                    --planning-backend)
+                      planning_backend="$2"
+                      shift 2
+                      ;;
+                    --channel-aware-neighborhood-radius-cells|--channel-aware-center-weight|--channel-aware-neighborhood-mean-weight|--channel-aware-neighborhood-max-weight|--channel-aware-high-cost-exposure-weight|--channel-aware-blocked-nearby-weight|--channel-aware-clearance-weight|--channel-aware-smoothness-weight|--channel-aware-high-cost-threshold)
                       shift 2
                       ;;
                     --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate)
@@ -93,7 +101,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                   exit 7
                 fi
 
-                "$python_bin" - "$output_root" "$scenario_set" "$diagnostic_profile" "$top_k" "$control_point_requested" <<'PY'
+                "$python_bin" - "$output_root" "$scenario_set" "$diagnostic_profile" "$top_k" "$control_point_requested" "$planning_backend" <<'PY'
                 import json
                 import sys
                 from pathlib import Path
@@ -103,6 +111,7 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 diagnostic_profile = sys.argv[3]
                 top_k = int(sys.argv[4])
                 control_point_requested = sys.argv[5] == "1"
+                planning_backend = sys.argv[6]
                 run_id = output_root.name
                 open_grid = run_id == "open-grid-fail"
 
@@ -167,6 +176,10 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 sampled_fixture_no_benefit = sampled_fallback
                 sampled_candidate_missing_metrics = sampled_fallback
                 sampled_constrained_connector_failed = sampled_fallback
+                channel_report_count = sampled_selected + sampled_fallback if planning_backend == "channel_aware_astar" else 0
+                channel_selected_count = sampled_selected if planning_backend == "channel_aware_astar" else 0
+                channel_fallback_count = sampled_fallback if planning_backend == "channel_aware_astar" else 0
+                channel_path_changed_count = channel_selected_count
                 convex_report_count = sampled_selected + sampled_fallback
                 convex_region_count_total = convex_report_count * 2
                 convex_fallback_used = sampled_fallback
@@ -849,6 +862,77 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                             },
                         }
                     ],
+                    "channel_aware_astar_report_count": channel_report_count,
+                    "channel_aware_astar_selected_count": channel_selected_count,
+                    "channel_aware_astar_fallback_count": channel_fallback_count,
+                    "channel_aware_astar_requested_backend_counts": (
+                        {"channel_aware_astar": channel_report_count}
+                        if channel_report_count
+                        else {}
+                    ),
+                    "channel_aware_astar_selected_backend_counts": (
+                        {
+                            "channel_aware_astar": channel_selected_count,
+                            "astar": channel_fallback_count,
+                        }
+                        if channel_report_count
+                        else {}
+                    ),
+                    "channel_aware_astar_status_counts": (
+                        {
+                            "selected": channel_selected_count,
+                            "fallback": channel_fallback_count,
+                        }
+                        if channel_report_count
+                        else {}
+                    ),
+                    "channel_aware_astar_fallback_reason_counts": (
+                        {"channel_search_failed:goal_blocked": channel_fallback_count}
+                        if channel_fallback_count
+                        else {}
+                    ),
+                    "channel_aware_astar_blocker_class_counts": (
+                        {
+                            "selected": channel_selected_count,
+                            "goal_blocked": channel_fallback_count,
+                        }
+                        if channel_report_count
+                        else {}
+                    ),
+                    "channel_aware_astar_path_changed_count": channel_path_changed_count,
+                    "channel_aware_astar_path_changed_rate": (
+                        channel_path_changed_count / channel_report_count if channel_report_count else 0.0
+                    ),
+                    "channel_aware_astar_path_cost_delta_count": channel_selected_count,
+                    "channel_aware_astar_path_cost_delta_min": 2.0 if channel_selected_count else None,
+                    "channel_aware_astar_path_cost_delta_max": 2.0 if channel_selected_count else None,
+                    "channel_aware_astar_path_cost_delta_mean": 2.0 if channel_selected_count else None,
+                    "channel_aware_astar_channel_cost_delta_count": channel_selected_count,
+                    "channel_aware_astar_channel_cost_delta_min": -4.0 if channel_selected_count else None,
+                    "channel_aware_astar_channel_cost_delta_max": -4.0 if channel_selected_count else None,
+                    "channel_aware_astar_channel_cost_delta_mean": -4.0 if channel_selected_count else None,
+                    "channel_aware_astar_high_cost_exposure_delta_count": channel_selected_count,
+                    "channel_aware_astar_high_cost_exposure_delta_min": -3.0 if channel_selected_count else None,
+                    "channel_aware_astar_high_cost_exposure_delta_max": -3.0 if channel_selected_count else None,
+                    "channel_aware_astar_high_cost_exposure_delta_mean": -3.0 if channel_selected_count else None,
+                    "channel_aware_astar_candidate_audit": [
+                        {
+                            "scenario_id": run_id,
+                            "action_index": index,
+                            "requested_backend": "channel_aware_astar",
+                            "selected_backend": "channel_aware_astar" if index < channel_selected_count else "astar",
+                            "status": "selected" if index < channel_selected_count else "fallback",
+                            "fallback_reason": None if index < channel_selected_count else "channel_search_failed:goal_blocked",
+                            "blocker_class": "selected" if index < channel_selected_count else "goal_blocked",
+                            "comparison": {
+                                "path_changed": index < channel_selected_count,
+                                "path_cost_delta": 2.0 if index < channel_selected_count else None,
+                                "channel_cost_delta": -4.0 if index < channel_selected_count else None,
+                                "high_cost_exposure_delta": -3.0 if index < channel_selected_count else None,
+                            },
+                        }
+                        for index in range(channel_report_count)
+                    ],
                     "open_grid_fallback_used": open_grid,
                     "open_grid_fallback_used_gate": gate,
                     "acceptance_metadata": acceptance_metadata,
@@ -1244,6 +1328,91 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
             2,
         )
         self.assertTrue(summary["source_summary_paths"][0].endswith("smoke-baseline-k1/path-feedback-summary.json"))
+
+    def test_batch_evaluation_summary_aggregates_channel_aware_backend_evidence(self) -> None:
+        output_root = self.temp_dir / "batch"
+        matrix = self._write_matrix(
+            {
+                "schema_version": "path-feedback-batch-matrix/v1",
+                "output_root": str(output_root),
+                "runs": [
+                    {
+                        "run_id": "all-all-k3-astar",
+                        "scenario_set": "all",
+                        "diagnostic_profile": "all",
+                        "top_k": 3,
+                        "planner_extra_args": ["--planning-backend", "astar"],
+                    },
+                    {
+                        "run_id": "all-all-k3-channel-aware",
+                        "scenario_set": "all",
+                        "diagnostic_profile": "all",
+                        "top_k": 3,
+                        "planner_extra_args": [
+                            "--planning-backend",
+                            "channel_aware_astar",
+                            "--channel-aware-high-cost-threshold",
+                            "4.0",
+                        ],
+                    },
+                ],
+            }
+        )
+
+        completed = self._run_batch(
+            "--matrix",
+            str(matrix),
+            "--single-run-script",
+            str(self.fake_single_run),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads((output_root / "batch-evaluation-summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["channel_aware_astar_report_count"], 6)
+        self.assertEqual(summary["channel_aware_astar_selected_count"], 3)
+        self.assertEqual(summary["channel_aware_astar_fallback_count"], 3)
+        self.assertEqual(summary["channel_aware_astar_requested_backend_counts"]["channel_aware_astar"], 6)
+        self.assertEqual(summary["channel_aware_astar_selected_backend_counts"]["channel_aware_astar"], 3)
+        self.assertEqual(summary["channel_aware_astar_selected_backend_counts"]["astar"], 3)
+        self.assertEqual(summary["channel_aware_astar_status_counts"]["selected"], 3)
+        self.assertEqual(summary["channel_aware_astar_status_counts"]["fallback"], 3)
+        self.assertEqual(
+            summary["channel_aware_astar_fallback_reason_counts"]["channel_search_failed:goal_blocked"],
+            3,
+        )
+        self.assertEqual(summary["channel_aware_astar_blocker_class_counts"]["selected"], 3)
+        self.assertEqual(summary["channel_aware_astar_blocker_class_counts"]["goal_blocked"], 3)
+        self.assertEqual(summary["channel_aware_astar_path_changed_count"], 3)
+        self.assertEqual(summary["channel_aware_astar_path_changed_rate"], 0.5)
+        self.assertEqual(summary["channel_aware_astar_path_cost_delta_count"], 3)
+        self.assertEqual(summary["channel_aware_astar_path_cost_delta_min"], 2.0)
+        self.assertEqual(summary["channel_aware_astar_path_cost_delta_max"], 2.0)
+        self.assertEqual(summary["channel_aware_astar_path_cost_delta_mean"], 2.0)
+        self.assertEqual(summary["channel_aware_astar_channel_cost_delta_count"], 3)
+        self.assertEqual(summary["channel_aware_astar_channel_cost_delta_mean"], -4.0)
+        self.assertEqual(summary["channel_aware_astar_high_cost_exposure_delta_count"], 3)
+        self.assertEqual(summary["channel_aware_astar_high_cost_exposure_delta_mean"], -3.0)
+        self.assertEqual(len(summary["channel_aware_astar_candidate_audit"]), 6)
+
+    def test_dataset_matrix_pairs_astar_baseline_with_channel_aware_runs(self) -> None:
+        matrix = json.loads(
+            (self.repo_root / "configs" / "path_feedback_batch_dataset_v1.json").read_text(encoding="utf-8")
+        )
+        runs_by_id = {run["run_id"]: run for run in matrix["runs"]}
+        expected_bases = (
+            "smoke-baseline-k1",
+            "stress-execution-k3",
+            "all-iris-k3",
+            "all-all-k3",
+        )
+
+        self.assertEqual(matrix.get("defaults", {}).get("planner_extra_args", []), [])
+        for base in expected_bases:
+            astar = runs_by_id[f"{base}-astar"]
+            channel = runs_by_id[f"{base}-channel-aware"]
+            self.assertEqual(astar["planner_extra_args"], ["--planning-backend", "astar"])
+            self.assertEqual(channel["planner_extra_args"][:2], ["--planning-backend", "channel_aware_astar"])
+            self.assertIn("--channel-aware-high-cost-threshold", channel["planner_extra_args"])
 
     def test_batch_preserves_and_aggregates_control_point_gcs_opt_in(self) -> None:
         output_root = self.temp_dir / "batch"

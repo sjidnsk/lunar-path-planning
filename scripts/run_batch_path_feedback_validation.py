@@ -457,6 +457,11 @@ def _build_evaluation_summary(
         parsed_summaries,
         route_artifact_count=int(control_point_artifacts["route_artifact_count"]),
     )
+    channel_aware_report_count = _sum_summary_int(parsed_summaries, "channel_aware_astar_report_count")
+    channel_aware_path_changed_count = _sum_summary_int(
+        parsed_summaries,
+        "channel_aware_astar_path_changed_count",
+    )
 
     return {
         "schema_version": EVALUATION_SUMMARY_SCHEMA_VERSION,
@@ -769,6 +774,57 @@ def _build_evaluation_summary(
         ),
         "gcs_control_point_candidate_artifacts": control_point_artifacts,
         "gcs_control_point_candidate_triage": control_point_triage,
+        "channel_aware_astar_report_count": channel_aware_report_count,
+        "channel_aware_astar_selected_count": _sum_summary_int(
+            parsed_summaries,
+            "channel_aware_astar_selected_count",
+        ),
+        "channel_aware_astar_fallback_count": _sum_summary_int(
+            parsed_summaries,
+            "channel_aware_astar_fallback_count",
+        ),
+        "channel_aware_astar_requested_backend_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "channel_aware_astar_requested_backend_counts",
+        ),
+        "channel_aware_astar_selected_backend_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "channel_aware_astar_selected_backend_counts",
+        ),
+        "channel_aware_astar_status_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "channel_aware_astar_status_counts",
+        ),
+        "channel_aware_astar_fallback_reason_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "channel_aware_astar_fallback_reason_counts",
+        ),
+        "channel_aware_astar_blocker_class_counts": _aggregate_summary_counter(
+            parsed_summaries,
+            "channel_aware_astar_blocker_class_counts",
+        ),
+        "channel_aware_astar_path_changed_count": channel_aware_path_changed_count,
+        "channel_aware_astar_path_changed_rate": (
+            channel_aware_path_changed_count / channel_aware_report_count
+            if channel_aware_report_count
+            else 0.0
+        ),
+        **_aggregate_summary_metric_stats(
+            parsed_summaries,
+            "channel_aware_astar_path_cost_delta",
+        ),
+        **_aggregate_summary_metric_stats(
+            parsed_summaries,
+            "channel_aware_astar_channel_cost_delta",
+        ),
+        **_aggregate_summary_metric_stats(
+            parsed_summaries,
+            "channel_aware_astar_high_cost_exposure_delta",
+        ),
+        "channel_aware_astar_candidate_audit": _aggregate_summary_list(
+            parsed_summaries,
+            "channel_aware_astar_candidate_audit",
+        ),
         "sampled_region_path_selected_count": _sum_summary_int(
             parsed_summaries,
             "sampled_region_path_selected_count",

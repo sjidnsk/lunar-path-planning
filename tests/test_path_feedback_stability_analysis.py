@@ -155,6 +155,9 @@ class PathFeedbackStabilityAnalysisTests(unittest.TestCase):
         replacement_reason: str = "unchanged",
         failure_sources: list[str] | None = None,
         open_grid: bool = False,
+        channel_aware_report_count: int = 0,
+        channel_aware_selected_count: int = 0,
+        channel_aware_fallback_count: int = 0,
     ) -> dict:
         failure_sources = list(failure_sources or [])
         gate = {
@@ -219,8 +222,67 @@ class PathFeedbackStabilityAnalysisTests(unittest.TestCase):
                     "iris_fallback_count": iris_fallback_count,
                     "region_graph_fallback_count": region_graph_fallback_count,
                     "region_graph_start_goal_disconnected_count": region_graph_disconnected_count,
+                    "channel_aware_astar_report_count": channel_aware_report_count,
+                    "channel_aware_astar_selected_count": channel_aware_selected_count,
+                    "channel_aware_astar_fallback_count": channel_aware_fallback_count,
                 }
             },
+            "channel_aware_astar_report_count": channel_aware_report_count,
+            "channel_aware_astar_selected_count": channel_aware_selected_count,
+            "channel_aware_astar_fallback_count": channel_aware_fallback_count,
+            "channel_aware_astar_requested_backend_counts": (
+                {"channel_aware_astar": channel_aware_report_count}
+                if channel_aware_report_count
+                else {}
+            ),
+            "channel_aware_astar_selected_backend_counts": (
+                {
+                    "channel_aware_astar": channel_aware_selected_count,
+                    "astar": channel_aware_fallback_count,
+                }
+                if channel_aware_report_count
+                else {}
+            ),
+            "channel_aware_astar_status_counts": (
+                {
+                    "selected": channel_aware_selected_count,
+                    "fallback": channel_aware_fallback_count,
+                }
+                if channel_aware_report_count
+                else {}
+            ),
+            "channel_aware_astar_fallback_reason_counts": (
+                {"channel_search_failed:goal_blocked": channel_aware_fallback_count}
+                if channel_aware_fallback_count
+                else {}
+            ),
+            "channel_aware_astar_blocker_class_counts": (
+                {
+                    "selected": channel_aware_selected_count,
+                    "goal_blocked": channel_aware_fallback_count,
+                }
+                if channel_aware_report_count
+                else {}
+            ),
+            "channel_aware_astar_path_changed_count": channel_aware_selected_count,
+            "channel_aware_astar_path_changed_rate": (
+                channel_aware_selected_count / channel_aware_report_count
+                if channel_aware_report_count
+                else 0.0
+            ),
+            "channel_aware_astar_path_cost_delta_count": channel_aware_selected_count,
+            "channel_aware_astar_path_cost_delta_min": 2.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_path_cost_delta_max": 2.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_path_cost_delta_mean": 2.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_channel_cost_delta_count": channel_aware_selected_count,
+            "channel_aware_astar_channel_cost_delta_min": -4.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_channel_cost_delta_max": -4.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_channel_cost_delta_mean": -4.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_high_cost_exposure_delta_count": channel_aware_selected_count,
+            "channel_aware_astar_high_cost_exposure_delta_min": -3.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_high_cost_exposure_delta_max": -3.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_high_cost_exposure_delta_mean": -3.0 if channel_aware_selected_count else None,
+            "channel_aware_astar_candidate_audit": [],
             "scenarios": [
                 {
                     "scenario_id": scenario_id,
@@ -276,6 +338,9 @@ class PathFeedbackStabilityAnalysisTests(unittest.TestCase):
             region_graph_disconnected_count=3,
             selection_changed=True,
             replacement_reason="no_feasible_candidate_after_path_feedback",
+            channel_aware_report_count=6,
+            channel_aware_selected_count=3,
+            channel_aware_fallback_count=3,
             failure_sources=[
                 "path_planning_failure",
                 "replan_required",
@@ -300,7 +365,31 @@ class PathFeedbackStabilityAnalysisTests(unittest.TestCase):
                     "top_k": 3,
                     "summary": stress_summary,
                 },
-            ]
+            ],
+            evaluation_override={
+                "channel_aware_astar_report_count": 6,
+                "channel_aware_astar_selected_count": 3,
+                "channel_aware_astar_fallback_count": 3,
+                "channel_aware_astar_requested_backend_counts": {"channel_aware_astar": 6},
+                "channel_aware_astar_selected_backend_counts": {"channel_aware_astar": 3, "astar": 3},
+                "channel_aware_astar_status_counts": {"selected": 3, "fallback": 3},
+                "channel_aware_astar_fallback_reason_counts": {"channel_search_failed:goal_blocked": 3},
+                "channel_aware_astar_blocker_class_counts": {"selected": 3, "goal_blocked": 3},
+                "channel_aware_astar_path_changed_count": 3,
+                "channel_aware_astar_path_changed_rate": 0.5,
+                "channel_aware_astar_path_cost_delta_count": 3,
+                "channel_aware_astar_path_cost_delta_min": 2.0,
+                "channel_aware_astar_path_cost_delta_max": 2.0,
+                "channel_aware_astar_path_cost_delta_mean": 2.0,
+                "channel_aware_astar_channel_cost_delta_count": 3,
+                "channel_aware_astar_channel_cost_delta_min": -4.0,
+                "channel_aware_astar_channel_cost_delta_max": -4.0,
+                "channel_aware_astar_channel_cost_delta_mean": -4.0,
+                "channel_aware_astar_high_cost_exposure_delta_count": 3,
+                "channel_aware_astar_high_cost_exposure_delta_min": -3.0,
+                "channel_aware_astar_high_cost_exposure_delta_max": -3.0,
+                "channel_aware_astar_high_cost_exposure_delta_mean": -3.0,
+            },
         )
 
         completed = self._run_stability("--batch-root", str(self.batch_root))
@@ -321,6 +410,14 @@ class PathFeedbackStabilityAnalysisTests(unittest.TestCase):
         self.assertEqual(batch_summary["by_diagnostic_profile"]["all"]["iris_fallback_count"], 3)
         self.assertEqual(batch_summary["by_top_k"]["3"]["region_graph_disconnected_count"], 3)
         self.assertEqual(batch_summary["by_scenario_group"]["stress"]["region_graph_fallback_count"], 3)
+        self.assertEqual(batch_summary["by_run"]["all-all-k3"]["channel_aware_astar_report_count"], 6)
+        self.assertEqual(batch_summary["by_scenario_set"]["all"]["channel_aware_astar_selected_count"], 3)
+        self.assertEqual(batch_summary["by_scenario_group"]["stress"]["channel_aware_astar_fallback_count"], 3)
+        self.assertEqual(batch_summary["batch_evaluation_counts"]["channel_aware_astar_fallback_count"], 3)
+        channel_evidence = batch_summary["channel_aware_astar_evidence"]
+        self.assertEqual(channel_evidence["channel_aware_astar_report_count"], 6)
+        self.assertEqual(channel_evidence["channel_aware_astar_high_cost_exposure_delta_count"], 3)
+        self.assertEqual(channel_evidence["channel_aware_astar_high_cost_exposure_delta_mean"], -3.0)
         self.assertEqual(batch_summary["source_paths"]["batch_run_index"], str(self.batch_root / "batch-run-index.json"))
         self.assertEqual(batch_summary["git_provenance"]["batch"]["parent"]["sha"], "1" * 40)
 

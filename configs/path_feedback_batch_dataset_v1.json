@@ -1,59 +1,170 @@
 {
   "schema_version": "path-feedback-batch-matrix/v1",
-  "description": "Semi-Real Batch Closed-Loop Evaluation v1 matrix. sample_quality_profile is recorded for downstream audit only and is not executed by this batch runner. Core Algorithm Stage 1 opts into path-planner channel_aware_astar planning through planner_extra_args while leaving path-planner's default CLI backend as astar.",
+  "description": "Semi-Real Batch Closed-Loop Evaluation v1 matrix. Each scenario/profile combination is run once with explicit astar baseline and once with opt-in channel_aware_astar. sample_quality_profile is recorded for downstream audit only and is not executed by this batch runner.",
   "output_root": "outputs/path_feedback_batch",
   "defaults": {
-    "planner_extra_args": [
-      "--planning-backend",
-      "channel_aware_astar",
-      "--channel-aware-neighborhood-radius-cells",
-      "1",
-      "--channel-aware-center-weight",
-      "1.0",
-      "--channel-aware-neighborhood-mean-weight",
-      "0.25",
-      "--channel-aware-neighborhood-max-weight",
-      "0.1",
-      "--channel-aware-high-cost-exposure-weight",
-      "0.5",
-      "--channel-aware-blocked-nearby-weight",
-      "0.5",
-      "--channel-aware-clearance-weight",
-      "0.25",
-      "--channel-aware-smoothness-weight",
-      "0.05",
-      "--channel-aware-high-cost-threshold",
-      "4.0"
-    ]
+    "planner_extra_args": []
   },
   "runs": [
     {
-      "run_id": "smoke-baseline-k1",
+      "run_id": "smoke-baseline-k1-astar",
       "scenario_set": "smoke",
       "diagnostic_profile": "baseline",
       "top_k": 1,
-      "sample_quality_profile": "record-only"
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "astar"
+      ]
     },
     {
-      "run_id": "stress-execution-k3",
+      "run_id": "smoke-baseline-k1-channel-aware",
+      "scenario_set": "smoke",
+      "diagnostic_profile": "baseline",
+      "top_k": 1,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
+    },
+    {
+      "run_id": "stress-execution-k3-astar",
       "scenario_set": "stress",
       "diagnostic_profile": "execution",
       "top_k": 3,
-      "sample_quality_profile": "record-only"
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "astar"
+      ]
     },
     {
-      "run_id": "all-iris-k3",
+      "run_id": "stress-execution-k3-channel-aware",
+      "scenario_set": "stress",
+      "diagnostic_profile": "execution",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
+    },
+    {
+      "run_id": "all-iris-k3-astar",
       "scenario_set": "all",
       "diagnostic_profile": "iris",
       "top_k": 3,
-      "sample_quality_profile": "record-only"
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "astar"
+      ]
     },
     {
-      "run_id": "all-all-k3",
+      "run_id": "all-iris-k3-channel-aware",
+      "scenario_set": "all",
+      "diagnostic_profile": "iris",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
+    },
+    {
+      "run_id": "all-all-k3-astar",
       "scenario_set": "all",
       "diagnostic_profile": "all",
       "top_k": 3,
-      "sample_quality_profile": "record-only"
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "astar"
+      ]
+    },
+    {
+      "run_id": "all-all-k3-channel-aware",
+      "scenario_set": "all",
+      "diagnostic_profile": "all",
+      "top_k": 3,
+      "sample_quality_profile": "record-only",
+      "planner_extra_args": [
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0"
+      ]
     }
   ]
 }

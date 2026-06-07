@@ -379,8 +379,9 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
         region_graph_fallback: bool = False,
         region_graph_connected: bool = True,
         open_grid: bool = False,
+        planning_backend: dict | None = None,
     ) -> dict:
-        return {
+        candidate = {
             "action_index": action_index,
             "cell": cell,
             "utility": utility,
@@ -395,6 +396,32 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
                 "iris_fallback_used": iris_fallback,
                 "region_graph_fallback_used": region_graph_fallback,
                 "region_graph_start_goal_connected": region_graph_connected,
+            },
+        }
+        if planning_backend is not None:
+            candidate["planning_backend"] = planning_backend
+        return candidate
+
+    def _channel_aware_backend(
+        self,
+        *,
+        status: str,
+        selected_backend: str,
+        fallback_reason: str | None = None,
+        path_cost_delta: float | None = None,
+        channel_cost_delta: float | None = None,
+        high_cost_exposure_delta: float | None = None,
+    ) -> dict:
+        return {
+            "requested_backend": "channel_aware_astar",
+            "selected_backend": selected_backend,
+            "status": status,
+            "fallback_reason": fallback_reason,
+            "comparison": {
+                "path_changed": status == "selected",
+                "path_cost_delta": path_cost_delta,
+                "channel_cost_delta": channel_cost_delta,
+                "high_cost_exposure_delta": high_cost_exposure_delta,
             },
         }
 
@@ -635,6 +662,133 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
         scenario = comparison["by_scenario_id"]["npz_shadow_corridor"]
         self.assertEqual(scenario["observation_count"], 2)
         self.assertTrue(scenario["selection_changed_between_profiles"])
+
+    def test_channel_aware_decision_audit_compares_astar_and_channel_aware_pairs(self) -> None:
+        self._write_batch(
+            [
+                {
+                    "run_id": "smoke-baseline-k4-astar",
+                    "scenario_set": "smoke",
+                    "diagnostic_profile": "baseline",
+                    "top_k": 4,
+                    "summary": self._summary(
+                        scenario_set="smoke",
+                        diagnostic_profile="baseline",
+                        top_k=4,
+                        scenario_id="npz_shadow_corridor",
+                        scenario_group="smoke",
+                        selected_before=[5, 5],
+                        selected_after=[5, 5],
+                        candidates=[
+                            self._candidate(0, [5, 5], utility=0.95, path_cost=9.0),
+                            self._candidate(1, [6, 5], utility=0.90, path_cost=9.5),
+                            self._candidate(2, [7, 5], utility=0.80, path_cost=10.0),
+                            self._candidate(3, [8, 5], utility=0.70, path_cost=10.5),
+                        ],
+                    ),
+                },
+                {
+                    "run_id": "smoke-baseline-k4-channel-aware",
+                    "scenario_set": "smoke",
+                    "diagnostic_profile": "baseline",
+                    "top_k": 4,
+                    "summary": self._summary(
+                        scenario_set="smoke",
+                        diagnostic_profile="baseline",
+                        top_k=4,
+                        scenario_id="npz_shadow_corridor",
+                        scenario_group="smoke",
+                        selected_before=[5, 5],
+                        selected_after=[6, 5],
+                        candidates=[
+                            self._candidate(
+                                0,
+                                [5, 5],
+                                utility=0.95,
+                                path_cost=11.0,
+                                planning_backend=self._channel_aware_backend(
+                                    status="selected",
+                                    selected_backend="channel_aware_astar",
+                                    path_cost_delta=2.0,
+                                    channel_cost_delta=-4.0,
+                                    high_cost_exposure_delta=-3.0,
+                                ),
+                            ),
+                            self._candidate(
+                                1,
+                                [6, 5],
+                                utility=0.90,
+                                path_cost=9.5,
+                                planning_backend=self._channel_aware_backend(
+                                    status="fallback",
+                                    selected_backend="astar",
+                                    fallback_reason="channel_search_failed:goal_blocked",
+                                ),
+                            ),
+                            self._candidate(
+                                2,
+                                [7, 5],
+                                utility=0.80,
+                                path_cost=10.0,
+                                planning_backend=self._channel_aware_backend(
+                                    status="fallback",
+                                    selected_backend="astar",
+                                    fallback_reason="channel_candidate_same_as_baseline",
+                                ),
+                            ),
+                            self._candidate(
+                                3,
+                                [8, 5],
+                                utility=0.70,
+                                path_cost=10.5,
+                                planning_backend=self._channel_aware_backend(
+                                    status="fallback",
+                                    selected_backend="astar",
+                                    fallback_reason="channel_candidate_not_lower_risk",
+                                ),
+                            ),
+                        ],
+                    ),
+                },
+            ]
+        )
+
+        completed = self._run_analysis("--batch-root", str(self.batch_root), "--config", str(self.config))
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        comparison = json.loads(
+            (self.batch_root / "policy-decision-selection-comparison-summary.json").read_text(encoding="utf-8")
+        )
+        audit = comparison["channel_aware_decision_audit"]
+        self.assertEqual(audit["schema_version"], "channel-aware-decision-audit/v1")
+        self.assertFalse(audit["route_replacement_default_changed"])
+        self.assertEqual(audit["paired_run_count"], 1)
+        self.assertEqual(audit["paired_scenario_count"], 1)
+        self.assertEqual(audit["selected_candidate_changed_count"], 1)
+        self.assertEqual(audit["selected_candidate_changed_rate"], 1.0)
+        self.assertEqual(audit["risk_high_cost_exposure_improvement_count"], 1)
+        self.assertEqual(audit["path_cost_regression_count"], 1)
+        self.assertEqual(audit["blocker_reason_counts"]["goal_blocked"], 1)
+        self.assertEqual(audit["blocker_reason_counts"]["same_as_baseline"], 1)
+        self.assertEqual(audit["blocker_reason_counts"]["not_lower_risk"], 1)
+        self.assertEqual(audit["recommendation_counts"]["keep"], 1)
+        self.assertEqual(audit["recommendation_counts"]["downweight"], 1)
+        self.assertEqual(audit["recommendation_counts"]["reject"], 2)
+        self.assertEqual(audit["conservative_recommendation"], "downweight")
+
+        records = {(record["scenario_id"], record["action_index"]): record for record in audit["records"]}
+        improved = records[("npz_shadow_corridor", 0)]
+        self.assertEqual(improved["recommendation"], "keep")
+        self.assertTrue(improved["quality_improvement"])
+        self.assertTrue(improved["path_cost_tradeoff"])
+        self.assertIn("channel_aware_quality_improved", improved["reason_codes"])
+        self.assertIn("path_cost_tradeoff", improved["reason_codes"])
+        self.assertNotIn("path_cost_regression_failure", improved["reason_codes"])
+
+        self.assertEqual(records[("npz_shadow_corridor", 1)]["recommendation"], "reject")
+        self.assertIn("goal_blocked", records[("npz_shadow_corridor", 1)]["reason_codes"])
+        self.assertIn("same_as_baseline", records[("npz_shadow_corridor", 2)]["reason_codes"])
+        self.assertIn("not_lower_risk", records[("npz_shadow_corridor", 3)]["reason_codes"])
 
     def test_validation_failures_cover_missing_schema_metadata_provenance_and_failed_sources(self) -> None:
         bad_schema = self._summary(

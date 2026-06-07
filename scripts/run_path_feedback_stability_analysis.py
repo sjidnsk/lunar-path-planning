@@ -25,6 +25,36 @@ DEFAULT_DOWNWEIGHT_REASON_CODES = {
     "region_graph_disconnected",
     "region_graph_fallback",
 }
+CHANNEL_AWARE_COUNT_METRIC_KEYS = (
+    "channel_aware_astar_report_count",
+    "channel_aware_astar_selected_count",
+    "channel_aware_astar_fallback_count",
+    "channel_aware_astar_path_changed_count",
+)
+CHANNEL_AWARE_EVIDENCE_KEYS = (
+    "channel_aware_astar_report_count",
+    "channel_aware_astar_selected_count",
+    "channel_aware_astar_fallback_count",
+    "channel_aware_astar_requested_backend_counts",
+    "channel_aware_astar_selected_backend_counts",
+    "channel_aware_astar_status_counts",
+    "channel_aware_astar_fallback_reason_counts",
+    "channel_aware_astar_blocker_class_counts",
+    "channel_aware_astar_path_changed_count",
+    "channel_aware_astar_path_changed_rate",
+    "channel_aware_astar_path_cost_delta_count",
+    "channel_aware_astar_path_cost_delta_min",
+    "channel_aware_astar_path_cost_delta_max",
+    "channel_aware_astar_path_cost_delta_mean",
+    "channel_aware_astar_channel_cost_delta_count",
+    "channel_aware_astar_channel_cost_delta_min",
+    "channel_aware_astar_channel_cost_delta_max",
+    "channel_aware_astar_channel_cost_delta_mean",
+    "channel_aware_astar_high_cost_exposure_delta_count",
+    "channel_aware_astar_high_cost_exposure_delta_min",
+    "channel_aware_astar_high_cost_exposure_delta_max",
+    "channel_aware_astar_high_cost_exposure_delta_mean",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -326,7 +356,7 @@ def _open_grid_fallback_used(summary: dict[str, Any], acceptance_metadata: dict[
 
 
 def _summary_metrics(summary: dict[str, Any]) -> dict[str, int]:
-    return {
+    metrics = {
         "scenario_count": _int_value(summary.get("scenario_count")),
         "candidate_count": _int_value(summary.get("candidate_count")),
         "open_grid_fallback_used_count": 1 if summary.get("open_grid_fallback_used") is True else 0,
@@ -336,6 +366,9 @@ def _summary_metrics(summary: dict[str, Any]) -> dict[str, int]:
         "region_graph_fallback_count": _int_value(summary.get("region_graph_fallback_count")),
         "region_graph_disconnected_count": _region_graph_disconnected_count(summary),
     }
+    for key in CHANNEL_AWARE_COUNT_METRIC_KEYS:
+        metrics[key] = _int_value(summary.get(key))
+    return metrics
 
 
 def _scenario_group_summary(summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -358,6 +391,8 @@ def _scenario_group_summary(summary: dict[str, Any]) -> dict[str, dict[str, Any]
                 payload.get("region_graph_disconnected_count", payload.get("region_graph_start_goal_disconnected_count"))
             ),
         }
+        for key in CHANNEL_AWARE_COUNT_METRIC_KEYS:
+            group_metrics[key] = _int_value(payload.get(key))
         extras = {
             key: value
             for key, value in payload.items()
@@ -406,6 +441,7 @@ def _build_batch_stability_summary(
         "failed_count": sum(1 for record in run_records if record["status"] == "failed"),
         "batch_run_index_counts": _index_counts(run_index),
         "batch_evaluation_counts": _evaluation_counts(evaluation_summary),
+        "channel_aware_astar_evidence": _channel_aware_astar_evidence(evaluation_summary),
         "git_provenance": {
             "batch": _public_git_snapshot(run_index.get("git", {})),
             "current": _git_snapshot(repo_root),
@@ -485,6 +521,7 @@ def _add_run_to_bucket(
         "iris_fallback_count",
         "region_graph_fallback_count",
         "region_graph_disconnected_count",
+        *CHANNEL_AWARE_COUNT_METRIC_KEYS,
     ):
         bucket[metric_key] += _int_value(metrics.get(metric_key))
 
@@ -505,6 +542,7 @@ def _empty_metric_bucket() -> dict[str, Any]:
         "iris_fallback_count": 0,
         "region_graph_fallback_count": 0,
         "region_graph_disconnected_count": 0,
+        **{key: 0 for key in CHANNEL_AWARE_COUNT_METRIC_KEYS},
     }
 
 
@@ -769,7 +807,7 @@ def _index_counts(run_index: dict[str, Any]) -> dict[str, int]:
 
 
 def _evaluation_counts(evaluation_summary: dict[str, Any]) -> dict[str, int]:
-    return {
+    counts = {
         "run_count": _int_value(evaluation_summary.get("run_count")),
         "passed_count": _int_value(evaluation_summary.get("passed_count")),
         "failed_count": _int_value(evaluation_summary.get("failed_count")),
@@ -780,6 +818,20 @@ def _evaluation_counts(evaluation_summary: dict[str, Any]) -> dict[str, int]:
         "region_graph_fallback_count": _int_value(evaluation_summary.get("region_graph_fallback_count")),
         "region_graph_disconnected_count": _int_value(evaluation_summary.get("region_graph_disconnected_count")),
     }
+    for key in CHANNEL_AWARE_COUNT_METRIC_KEYS:
+        counts[key] = _int_value(evaluation_summary.get(key))
+    return counts
+
+
+def _channel_aware_astar_evidence(evaluation_summary: dict[str, Any]) -> dict[str, Any]:
+    evidence: dict[str, Any] = {}
+    for key in CHANNEL_AWARE_EVIDENCE_KEYS:
+        value = evaluation_summary.get(key)
+        if isinstance(value, dict):
+            evidence[key] = dict(value)
+        else:
+            evidence[key] = value
+    return evidence
 
 
 def _validate_git_snapshot(snapshot: Any, *, prefix: str) -> list[str]:
