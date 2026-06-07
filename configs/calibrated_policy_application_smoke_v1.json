@@ -1,0 +1,28 @@
+{
+  "schema_version": "calibrated-policy-application-smoke-config/v1",
+  "description": "Calibrated Policy Application Smoke v1. This consumes channel-aware calibration, contrast coverage, and readiness summaries to audit whether calibrated target selection can be applied before any PPO training.",
+  "output_files": {
+    "calibrated_policy_application_smoke_summary": "calibrated-policy-application-smoke-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "application_thresholds": {
+    "min_applied_calibrated_candidate_count": 1,
+    "min_calibrated_selection_rate_delta": 0.01,
+    "max_safety_regression_count": 0
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_path_planner_route_contract_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_contract_change",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_real_world_performance_claim"
+  ]
+}

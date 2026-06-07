@@ -1,6 +1,6 @@
 {
   "schema_version": "channel-aware-training-readiness-gate-config/v1",
-  "description": "Channel-Aware Training Readiness Gate v1. This consumes channel-aware application smoke evidence and emits a pre-training readiness audit only; it does not train PPO, change default A*, or claim vehicle-motion feasibility.",
+  "description": "Calibration-Aware Channel Readiness Gate v1. This consumes policy-decision robustness evidence, channel-aware application smoke evidence, policy-target selection evidence, and selection-contrast calibration evidence to emit a pre-training readiness audit only; it does not train PPO, change default A*, or claim vehicle-motion feasibility.",
   "output_files": {
     "training_readiness_summary": "channel-aware-training-readiness-summary.json"
   },

@@ -1,0 +1,36 @@
+{
+  "schema_version": "channel-aware-selection-contrast-calibration-config/v1",
+  "description": "Channel-Aware Selection Contrast Calibration v1. This is an opt-in audit/calibration layer that evaluates whether channel-quality evidence can change policy target selection without changing default A* or training PPO.",
+  "output_files": {
+    "selection_contrast_calibration_summary": "channel-aware-selection-contrast-calibration-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "calibration": {
+    "eligible_recommendations": ["keep"],
+    "channel_cost_improvement_weight": 1.0,
+    "high_cost_exposure_improvement_weight": 1.0,
+    "path_cost_tradeoff_weight": 1.0,
+    "min_contrast_score": 0.0
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_path_planner_route_contract_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_contract_change",
+    "no_gcs_graph_search",
+    "no_gcs_control_point_candidate_as_default_execution_trajectory",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_real_world_performance_claim",
+    "no_c_space_iris",
+    "no_iris_np",
+    "no_iris_np2",
+    "no_iris_zo"
+  ]
+}

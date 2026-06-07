@@ -1,0 +1,29 @@
+{
+  "schema_version": "channel-aware-contrast-coverage-config/v1",
+  "description": "Channel-Aware Contrast Scenario Expansion v1 coverage gate. This consumes selection-contrast calibration evidence and summarizes whether calibrated channel-aware contrast has enough scenario coverage before policy smoke. It does not train PPO or change default A*.",
+  "output_files": {
+    "contrast_coverage_summary": "channel-aware-contrast-coverage-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "coverage_thresholds": {
+    "min_changed_scenario_count": 4,
+    "min_calibrated_selected_candidate_changed_rate": 0.3,
+    "max_blocked_candidate_rate": 0.65
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_path_planner_route_contract_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_contract_change",
+    "no_gcs_graph_search",
+    "no_gcs_control_point_candidate_as_default_execution_trajectory",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

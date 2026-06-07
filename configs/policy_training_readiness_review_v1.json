@@ -1,0 +1,32 @@
+{
+  "schema_version": "policy-training-readiness-review-config/v1",
+  "description": "Calibrated Policy Training Readiness Review v1. This consumes calibrated application smoke, channel-aware readiness, contrast coverage, and selection contrast calibration evidence to decide whether calibrated policy target selection is ready only for a limited policy training dry run.",
+  "output_files": {
+    "policy_training_readiness_review_summary": "policy-training-readiness-review-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "readiness_thresholds": {
+    "min_applied_calibrated_candidate_count": 1,
+    "min_calibrated_selection_rate_delta": 0.01,
+    "max_rejected_goal_blocked_count": 0,
+    "max_safety_regression_count": 0,
+    "max_fallback_or_open_grid_count": 0,
+    "require_smoke_ready_for_training_review": true
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_path_planner_route_contract_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_contract_change",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_large_scale_training",
+    "no_real_world_performance_claim"
+  ]
+}

@@ -134,6 +134,113 @@ class ChannelAwareTrainingReadinessGateTests(unittest.TestCase):
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return path
 
+    def _write_policy_target_evidence_summary(
+        self,
+        *,
+        selected_candidate_changed_rate: float = 0.0,
+        supports_policy_target_selection_improvement_claim: bool = False,
+        status: str = "passed",
+        reason_codes: list[str] | None = None,
+        git_mismatch: bool = False,
+    ) -> Path:
+        evidence_git = self._git_snapshot(git_mismatch=git_mismatch)
+        payload = {
+            "schema_version": "channel-aware-policy-target-selection-evidence-summary/v1",
+            "generated_at": "2026-06-07T00:00:00Z",
+            "status": status,
+            "reason_codes": list(reason_codes or []),
+            "selected_candidate_changed_rate": selected_candidate_changed_rate,
+            "supports_policy_target_selection_improvement_claim": (
+                supports_policy_target_selection_improvement_claim
+            ),
+            "git_provenance": {
+                "current": evidence_git,
+                "readiness": {"current": evidence_git},
+            },
+        }
+        path = self.batch_root / "channel-aware-policy-target-selection-evidence-summary.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+
+    def _write_policy_decision_robustness_summary(
+        self,
+        *,
+        status: str = "passed",
+        reason_codes: list[str] | None = None,
+        git_mismatch: bool = False,
+    ) -> Path:
+        robustness_git = self._git_snapshot(git_mismatch=git_mismatch)
+        payload = {
+            "schema_version": "policy-decision-robustness-summary/v1",
+            "generated_at": "2026-06-07T00:00:00Z",
+            "status": status,
+            "reason_codes": list(reason_codes or []),
+            "git_provenance": {
+                "batch": robustness_git,
+                "current": robustness_git,
+                "runs_match_batch": not git_mismatch,
+                "current_matches_batch": not git_mismatch,
+            },
+        }
+        path = self.batch_root / "policy-decision-robustness-summary.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+
+    def _write_selection_contrast_calibration_summary(
+        self,
+        *,
+        selected_candidate_changed_rate: float = 0.25,
+        selected_candidate_changed_count: int = 1,
+        changed_scenario_ids: list[str] | None = None,
+        safety_regression_count: int = 0,
+        source_selected_candidate_changed_rate: float = 0.0,
+        status: str = "passed",
+        reason_codes: list[str] | None = None,
+        git_mismatch: bool = False,
+    ) -> Path:
+        calibration_git = self._git_snapshot(git_mismatch=git_mismatch)
+        payload = {
+            "schema_version": "channel-aware-selection-contrast-calibration-summary/v1",
+            "generated_at": "2026-06-07T00:00:00Z",
+            "status": status,
+            "reason_codes": list(reason_codes or []),
+            "source_selected_candidate_changed_rate": source_selected_candidate_changed_rate,
+            "source_supports_policy_target_selection_improvement_claim": False,
+            "selected_candidate_changed_count": selected_candidate_changed_count,
+            "selected_candidate_changed_rate": selected_candidate_changed_rate,
+            "changed_scenario_ids": list(changed_scenario_ids or ["npz_fixture"]),
+            "safety_regression_count": safety_regression_count,
+            "recommended_training_readiness_action": (
+                "rerun_training_readiness_gate_after_selection_contrast_calibration"
+            ),
+            "runs_training": False,
+            "does_not_modify_default_astar": True,
+            "does_not_modify_ppo": True,
+            "does_not_modify_network": True,
+            "does_not_modify_action_space": True,
+            "does_not_modify_path_planner_route_contract": True,
+            "does_not_modify_model_explorer_contract": True,
+            "does_not_modify_path_planner_sidecar_contract": True,
+            "no_ackermann_feasible_trajectory_claim": True,
+            "git_provenance": {
+                "current": calibration_git,
+                "policy_target_evidence": {"current": calibration_git},
+                "selection_comparison": {"current": calibration_git},
+            },
+        }
+        path = self.batch_root / "channel-aware-selection-contrast-calibration-summary.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+
+    def _git_snapshot(self, *, git_mismatch: bool = False) -> dict:
+        snapshot = self.git_snapshot
+        if git_mismatch:
+            snapshot = {
+                **self.git_snapshot,
+                "parent": {**self.git_snapshot["parent"], "sha": "0" * 40},
+            }
+        return snapshot
+
     def _record(
         self,
         action_index: int,
@@ -218,6 +325,18 @@ class ChannelAwareTrainingReadinessGateTests(unittest.TestCase):
                 ),
             ]
         )
+        self._write_policy_target_evidence_summary(
+            selected_candidate_changed_rate=0.0,
+            supports_policy_target_selection_improvement_claim=False,
+        )
+        self._write_policy_decision_robustness_summary()
+        self._write_selection_contrast_calibration_summary(
+            selected_candidate_changed_rate=0.25,
+            selected_candidate_changed_count=1,
+            changed_scenario_ids=["npz_fixture"],
+            safety_regression_count=0,
+            source_selected_candidate_changed_rate=0.0,
+        )
 
         completed = self._run_gate(
             "--batch-root",
@@ -232,8 +351,26 @@ class ChannelAwareTrainingReadinessGateTests(unittest.TestCase):
         )
         self.assertEqual(summary["schema_version"], "channel-aware-training-readiness-summary/v1")
         self.assertEqual(summary["status"], "passed")
-        self.assertEqual(summary["readiness_status"], "needs_more_evidence")
-        self.assertIn("policy_target_selection_not_improved", summary["readiness_reason_codes"])
+        self.assertEqual(summary["readiness_status"], "ready_for_calibrated_policy_application_smoke")
+        self.assertEqual(
+            summary["calibrated_readiness_status"],
+            "ready_for_calibrated_policy_application_smoke",
+        )
+        self.assertEqual(summary["source_selected_candidate_changed_rate"], 0.0)
+        self.assertFalse(summary["source_supports_policy_target_selection_improvement_claim"])
+        self.assertFalse(summary["policy_target_selection_improvement_claimed"])
+        self.assertEqual(
+            summary["robustness_summary_path"],
+            str(self.batch_root / "policy-decision-robustness-summary.json"),
+        )
+        self.assertEqual(summary["calibration_selected_candidate_changed_rate"], 0.25)
+        self.assertEqual(summary["calibration_changed_scenario_ids"], ["npz_fixture"])
+        self.assertEqual(summary["calibration_safety_regression_count"], 0)
+        self.assertIn(
+            "calibrated_target_contrast_available",
+            summary["calibrated_readiness_reason_codes"],
+        )
+        self.assertNotIn("policy_target_selection_not_improved", summary["readiness_reason_codes"])
         self.assertNotIn("path_cost_tradeoff", summary["readiness_reason_codes"])
         self.assertEqual(summary["application_action_counts"]["keep_quality_evidence"], 1)
         self.assertEqual(summary["application_action_counts"]["downweight_conservative_application"], 1)
@@ -253,7 +390,174 @@ class ChannelAwareTrainingReadinessGateTests(unittest.TestCase):
         self.assertTrue(summary["does_not_modify_network"])
         self.assertTrue(summary["does_not_modify_action_space"])
         self.assertFalse(summary["route_replacement_default_changed"])
-        self.assertIn("policy_target_selection", summary["conservative_next_step"])
+        self.assertEqual(
+            summary["recommended_next_action"],
+            "run_calibrated_policy_application_smoke_before_training",
+        )
+        self.assertIn("policy_application_smoke", summary["conservative_next_step"])
+
+    def test_gate_blocks_when_calibration_summary_missing(self) -> None:
+        self._write_application_summary(
+            [
+                self._record(
+                    0,
+                    recommendation="keep",
+                    application_action="keep_quality_evidence",
+                    sample_weight=1.0,
+                    selected_candidate_changed=False,
+                    reason_codes=["channel_aware_quality_improved"],
+                    application_reason_codes=["channel_aware_application_keep_quality_evidence"],
+                )
+            ]
+        )
+        self._write_policy_target_evidence_summary()
+        self._write_policy_decision_robustness_summary()
+
+        completed = self._run_gate(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--validate-only",
+        )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        validation = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(validation["status"], "validation failed")
+        self.assertIn(
+            "channel_aware_selection_contrast_calibration_summary_missing",
+            validation["reason_codes"],
+        )
+        self.assertEqual(validation["readiness_status"], "blocked")
+        self.assertFalse((self.batch_root / "channel-aware-training-readiness-summary.json").exists())
+
+    def test_gate_blocks_when_robustness_summary_missing(self) -> None:
+        self._write_application_summary(
+            [
+                self._record(
+                    0,
+                    recommendation="keep",
+                    application_action="keep_quality_evidence",
+                    sample_weight=1.0,
+                    selected_candidate_changed=False,
+                    reason_codes=["channel_aware_quality_improved"],
+                    application_reason_codes=["channel_aware_application_keep_quality_evidence"],
+                )
+            ]
+        )
+        self._write_policy_target_evidence_summary()
+        self._write_selection_contrast_calibration_summary()
+
+        completed = self._run_gate(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--validate-only",
+        )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        validation = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(validation["status"], "validation failed")
+        self.assertIn("policy_decision_robustness_summary_missing", validation["reason_codes"])
+        self.assertEqual(validation["readiness_status"], "blocked")
+
+    def test_gate_blocks_failed_or_stale_calibration_summary(self) -> None:
+        for status, reason_codes, git_mismatch, expected_reason in (
+            (
+                "failed",
+                ["calibration_failed_fixture"],
+                False,
+                "channel_aware_selection_contrast_calibration_summary_failed",
+            ),
+            (
+                "passed",
+                [],
+                True,
+                "current_git_provenance_mismatch",
+            ),
+        ):
+            with self.subTest(status=status, git_mismatch=git_mismatch):
+                shutil.rmtree(self.batch_root)
+                self.batch_root.mkdir(parents=True)
+                self._write_application_summary(
+                    [
+                        self._record(
+                            0,
+                            recommendation="keep",
+                            application_action="keep_quality_evidence",
+                            sample_weight=1.0,
+                            selected_candidate_changed=False,
+                            reason_codes=["channel_aware_quality_improved"],
+                            application_reason_codes=["channel_aware_application_keep_quality_evidence"],
+                        )
+                    ]
+                )
+                self._write_policy_target_evidence_summary()
+                self._write_policy_decision_robustness_summary()
+                self._write_selection_contrast_calibration_summary(
+                    status=status,
+                    reason_codes=reason_codes,
+                    git_mismatch=git_mismatch,
+                )
+
+                completed = self._run_gate(
+                    "--batch-root",
+                    str(self.batch_root),
+                    "--config",
+                    str(self.config),
+                    "--validate-only",
+                )
+
+                self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                validation = json.loads(completed.stdout.splitlines()[0])
+                self.assertEqual(validation["status"], "validation failed")
+                self.assertIn(expected_reason, validation["reason_codes"])
+                self.assertEqual(validation["readiness_status"], "blocked")
+
+    def test_gate_blocks_calibration_safety_regressions_before_policy_smoke(self) -> None:
+        self._write_application_summary(
+            [
+                self._record(
+                    0,
+                    recommendation="keep",
+                    application_action="keep_quality_evidence",
+                    sample_weight=1.0,
+                    selected_candidate_changed=False,
+                    reason_codes=["channel_aware_quality_improved"],
+                    application_reason_codes=["channel_aware_application_keep_quality_evidence"],
+                )
+            ]
+        )
+        self._write_policy_target_evidence_summary()
+        self._write_policy_decision_robustness_summary()
+        self._write_selection_contrast_calibration_summary(
+            selected_candidate_changed_rate=0.25,
+            selected_candidate_changed_count=1,
+            safety_regression_count=1,
+        )
+
+        completed = self._run_gate(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "channel-aware-training-readiness-summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(summary["readiness_status"], "blocked")
+        self.assertEqual(summary["calibrated_readiness_status"], "blocked")
+        self.assertIn(
+            "calibration_safety_regression_blocks_policy_smoke",
+            summary["calibrated_readiness_reason_codes"],
+        )
+        self.assertEqual(
+            summary["recommended_next_action"],
+            "resolve_calibration_safety_regressions_before_policy_smoke",
+        )
 
     def test_validate_only_reports_git_mismatch_without_writing_summary(self) -> None:
         self._write_application_summary(
@@ -270,6 +574,9 @@ class ChannelAwareTrainingReadinessGateTests(unittest.TestCase):
             ],
             git_mismatch=True,
         )
+        self._write_policy_target_evidence_summary()
+        self._write_policy_decision_robustness_summary()
+        self._write_selection_contrast_calibration_summary()
 
         completed = self._run_gate(
             "--batch-root",

@@ -14,6 +14,9 @@ CONFIG_SCHEMA_VERSION = "channel-aware-training-readiness-gate-config/v1"
 SUMMARY_SCHEMA_VERSION = "channel-aware-training-readiness-summary/v1"
 APPLICATION_SCHEMA_VERSION = "policy-robustness-application-summary/v1"
 CHANNEL_APPLICATION_SCHEMA_VERSION = "channel-aware-application-smoke/v1"
+ROBUSTNESS_SCHEMA_VERSION = "policy-decision-robustness-summary/v1"
+POLICY_TARGET_EVIDENCE_SCHEMA_VERSION = "channel-aware-policy-target-selection-evidence-summary/v1"
+SELECTION_CONTRAST_CALIBRATION_SCHEMA_VERSION = "channel-aware-selection-contrast-calibration-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 
 
@@ -30,6 +33,18 @@ def main(argv: list[str] | None = None) -> int:
         "--application-summary",
         help="policy-robustness-application-summary/v1 JSON. Defaults to <batch-root>/policy-robustness-application-summary.json.",
     )
+    parser.add_argument(
+        "--robustness-summary",
+        help="policy-decision-robustness-summary/v1 JSON. Defaults to <batch-root>/policy-decision-robustness-summary.json.",
+    )
+    parser.add_argument(
+        "--policy-target-evidence-summary",
+        help="channel-aware-policy-target-selection-evidence-summary/v1 JSON. Defaults to <batch-root>/channel-aware-policy-target-selection-evidence-summary.json.",
+    )
+    parser.add_argument(
+        "--selection-contrast-calibration-summary",
+        help="channel-aware-selection-contrast-calibration-summary/v1 JSON. Defaults to <batch-root>/channel-aware-selection-contrast-calibration-summary.json.",
+    )
     parser.add_argument("--config", required=True, help="Channel-aware training readiness gate config JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Validate inputs and print planned output paths.")
     parser.add_argument("--validate-only", action="store_true", help="Validate inputs without writing outputs.")
@@ -42,6 +57,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.application_summary
         else batch_root / "policy-robustness-application-summary.json"
     )
+    robustness_summary_path = (
+        _resolve_path(args.robustness_summary, repo_root)
+        if args.robustness_summary
+        else batch_root / "policy-decision-robustness-summary.json"
+    )
+    policy_target_evidence_path = (
+        _resolve_path(args.policy_target_evidence_summary, repo_root)
+        if args.policy_target_evidence_summary
+        else batch_root / "channel-aware-policy-target-selection-evidence-summary.json"
+    )
+    selection_contrast_calibration_path = (
+        _resolve_path(args.selection_contrast_calibration_summary, repo_root)
+        if args.selection_contrast_calibration_summary
+        else batch_root / "channel-aware-selection-contrast-calibration-summary.json"
+    )
     config_path = _resolve_path(args.config, repo_root)
     try:
         config = _load_config(config_path)
@@ -52,6 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     summary = analyze_training_readiness(
         batch_root=batch_root,
         application_summary_path=application_summary_path,
+        robustness_summary_path=robustness_summary_path,
+        policy_target_evidence_path=policy_target_evidence_path,
+        selection_contrast_calibration_path=selection_contrast_calibration_path,
         config=config,
         repo_root=repo_root,
     )
@@ -60,10 +93,18 @@ def main(argv: list[str] | None = None) -> int:
         "status": "config validated" if summary["status"] == "passed" else "validation failed",
         "batch_root": _display_path(batch_root, repo_root),
         "application_summary": _display_path(application_summary_path, repo_root),
+        "robustness_summary": _display_path(robustness_summary_path, repo_root),
+        "policy_target_evidence_summary": _display_path(policy_target_evidence_path, repo_root),
+        "selection_contrast_calibration_summary": _display_path(
+            selection_contrast_calibration_path,
+            repo_root,
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "readiness_status": summary["readiness_status"],
         "readiness_reason_codes": summary["readiness_reason_codes"],
+        "calibrated_readiness_status": summary["calibrated_readiness_status"],
+        "calibrated_readiness_reason_codes": summary["calibrated_readiness_reason_codes"],
         "training_readiness_summary": _display_path(output_file, repo_root),
     }
     print(json.dumps(validation_message, ensure_ascii=False))
@@ -103,6 +144,9 @@ def analyze_training_readiness(
     *,
     batch_root: Path,
     application_summary_path: Path,
+    robustness_summary_path: Path,
+    policy_target_evidence_path: Path,
+    selection_contrast_calibration_path: Path,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -110,6 +154,30 @@ def analyze_training_readiness(
     source_summaries: dict[str, Any] = {}
     application = _load_application_summary(
         application_summary_path,
+        repo_root=repo_root,
+        reason_codes=global_reason_codes,
+        source_summaries=source_summaries,
+    )
+    robustness = _load_source_summary(
+        robustness_summary_path,
+        label="policy_decision_robustness_summary",
+        expected_schema=ROBUSTNESS_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=global_reason_codes,
+        source_summaries=source_summaries,
+    )
+    policy_target_evidence = _load_source_summary(
+        policy_target_evidence_path,
+        label="channel_aware_policy_target_selection_evidence_summary",
+        expected_schema=POLICY_TARGET_EVIDENCE_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=global_reason_codes,
+        source_summaries=source_summaries,
+    )
+    selection_contrast_calibration = _load_source_summary(
+        selection_contrast_calibration_path,
+        label="channel_aware_selection_contrast_calibration_summary",
+        expected_schema=SELECTION_CONTRAST_CALIBRATION_SCHEMA_VERSION,
         repo_root=repo_root,
         reason_codes=global_reason_codes,
         source_summaries=source_summaries,
@@ -126,9 +194,36 @@ def analyze_training_readiness(
         _append_reason(global_reason_codes, "git_provenance_mismatch")
     if robustness_git and robustness_git.get("runs_match_batch") is False:
         _append_reason(global_reason_codes, "git_provenance_mismatch")
+    _inspect_summary_git(
+        robustness,
+        label="policy_decision_robustness_summary",
+        current_git=current_git,
+        config=config,
+        reason_codes=global_reason_codes,
+    )
+    _inspect_summary_git(
+        policy_target_evidence,
+        label="channel_aware_policy_target_selection_evidence_summary",
+        current_git=current_git,
+        config=config,
+        reason_codes=global_reason_codes,
+    )
+    _inspect_summary_git(
+        selection_contrast_calibration,
+        label="channel_aware_selection_contrast_calibration_summary",
+        current_git=current_git,
+        config=config,
+        reason_codes=global_reason_codes,
+    )
 
     if _fail_on_input_failure(config) and application.get("status") == "failed":
         _append_reason(global_reason_codes, "policy_robustness_application_summary_failed")
+    if _fail_on_input_failure(config) and robustness.get("status") == "failed":
+        _append_reason(global_reason_codes, "policy_decision_robustness_summary_failed")
+    if _fail_on_input_failure(config) and policy_target_evidence.get("status") == "failed":
+        _append_reason(global_reason_codes, "channel_aware_policy_target_selection_evidence_summary_failed")
+    if _fail_on_input_failure(config) and selection_contrast_calibration.get("status") == "failed":
+        _append_reason(global_reason_codes, "channel_aware_selection_contrast_calibration_summary_failed")
 
     channel = _channel_application(application, reason_codes=global_reason_codes)
     records = [
@@ -137,8 +232,12 @@ def analyze_training_readiness(
         if isinstance(record, dict)
     ]
     evidence = _summarize_evidence(records)
+    policy_target = _policy_target_evidence(policy_target_evidence)
+    calibration = _calibration_evidence(selection_contrast_calibration)
     readiness = _readiness_status(
         evidence=evidence,
+        policy_target=policy_target,
+        calibration=calibration,
         validation_reason_codes=global_reason_codes,
         config=config,
     )
@@ -152,11 +251,17 @@ def analyze_training_readiness(
         "failure_reason_code_counts": dict(sorted(failure_reason_counts.items())),
         "batch_root": _display_path(batch_root, repo_root),
         "application_summary_path": _display_path(application_summary_path, repo_root),
+        "robustness_summary_path": _display_path(robustness_summary_path, repo_root),
+        "policy_target_evidence_summary_path": _display_path(policy_target_evidence_path, repo_root),
+        "calibration_summary_path": _display_path(selection_contrast_calibration_path, repo_root),
         "application_scope": "channel_aware_training_readiness_audit_only",
-        "quality_signal_use": "pre_training_readiness_gate_only",
+        "quality_signal_use": "calibration_aware_pre_training_readiness_gate_only",
         "readiness_status": readiness["status"],
         "readiness_reason_codes": readiness["reason_codes"],
+        "calibrated_readiness_status": readiness["status"],
+        "calibrated_readiness_reason_codes": readiness["reason_codes"],
         "conservative_next_step": readiness["conservative_next_step"],
+        "recommended_next_action": readiness["recommended_next_action"],
         "training_evidence_policy": {
             "keep_quality_evidence": "positive_pre_training_evidence",
             "downweight_conservative_application": "downweighted_evidence_not_strong_positive",
@@ -169,11 +274,23 @@ def analyze_training_readiness(
         "source_summaries": source_summaries,
         "git_provenance": {
             "application": dict(app_git),
+            "robustness": _public_git(robustness),
+            "policy_target_evidence": _public_git(policy_target_evidence),
+            "selection_contrast_calibration": _public_git(selection_contrast_calibration),
             "current": current_git,
             "current_matches_application": _git_snapshots_match(app_current_git, current_git)
             if app_current_git
             else None,
         },
+        "source_selected_candidate_changed_rate": policy_target["selected_candidate_changed_rate"],
+        "source_supports_policy_target_selection_improvement_claim": policy_target[
+            "supports_policy_target_selection_improvement_claim"
+        ],
+        "policy_target_selection_improvement_claimed": False,
+        "calibration_selected_candidate_changed_count": calibration["selected_candidate_changed_count"],
+        "calibration_selected_candidate_changed_rate": calibration["selected_candidate_changed_rate"],
+        "calibration_changed_scenario_ids": calibration["changed_scenario_ids"],
+        "calibration_safety_regression_count": calibration["safety_regression_count"],
         "record_count": evidence["record_count"],
         "recommendation_counts": evidence["recommendation_counts"],
         "application_action_counts": evidence["application_action_counts"],
@@ -297,6 +414,69 @@ def _load_application_summary(
     return payload
 
 
+def _load_source_summary(
+    path: Path,
+    *,
+    label: str,
+    expected_schema: str,
+    repo_root: Path,
+    reason_codes: list[str],
+    source_summaries: dict[str, Any],
+) -> dict[str, Any]:
+    record: dict[str, Any] = {"path": _display_path(path, repo_root), "exists": path.is_file()}
+    if not path.is_file():
+        _append_reason(reason_codes, f"{label}_missing")
+        source_summaries[label] = record
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        _append_reason(reason_codes, f"{label}_invalid_json")
+        source_summaries[label] = record
+        return {}
+    if not isinstance(payload, dict):
+        _append_reason(reason_codes, f"{label}_not_object")
+        source_summaries[label] = record
+        return {}
+    record.update(
+        {
+            "schema_version": payload.get("schema_version"),
+            "status": payload.get("status"),
+            "reason_codes": _string_list(payload.get("reason_codes", [])),
+        }
+    )
+    if payload.get("schema_version") != expected_schema:
+        _append_reason(reason_codes, f"{label}_schema_mismatch")
+    source_summaries[label] = record
+    return payload
+
+
+def _inspect_summary_git(
+    payload: dict[str, Any],
+    *,
+    label: str,
+    current_git: dict[str, Any],
+    config: dict[str, Any],
+    reason_codes: list[str],
+) -> None:
+    if not _require_current_git_match(config):
+        return
+    git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
+    current = git.get("current") if isinstance(git.get("current"), dict) else {}
+    if current and not _git_snapshots_match(current, current_git):
+        _append_reason(reason_codes, "current_git_provenance_mismatch")
+        _append_reason(reason_codes, f"{label}_current_git_provenance_mismatch")
+    for key in (
+        "current_matches_application",
+        "current_matches_robustness",
+        "current_matches_batch",
+        "runs_match_batch",
+    ):
+        if git.get(key) is False:
+            _append_reason(reason_codes, "git_provenance_mismatch")
+            _append_reason(reason_codes, f"{label}_git_provenance_mismatch")
+
+
 def _channel_application(application: dict[str, Any], *, reason_codes: list[str]) -> dict[str, Any]:
     channel = application.get("channel_aware_application")
     if not isinstance(channel, dict):
@@ -381,9 +561,42 @@ def _summarize_evidence(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _policy_target_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "selected_candidate_changed_rate": _safe_float(
+            payload.get("selected_candidate_changed_rate"),
+            0.0,
+        ),
+        "supports_policy_target_selection_improvement_claim": bool(
+            payload.get("supports_policy_target_selection_improvement_claim", False)
+        ),
+    }
+
+
+def _calibration_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_selected_candidate_changed_rate": _safe_float(
+            payload.get("source_selected_candidate_changed_rate"),
+            0.0,
+        ),
+        "selected_candidate_changed_count": _safe_int(
+            payload.get("selected_candidate_changed_count"),
+            0,
+        ),
+        "selected_candidate_changed_rate": _safe_float(
+            payload.get("selected_candidate_changed_rate"),
+            0.0,
+        ),
+        "changed_scenario_ids": _string_list(payload.get("changed_scenario_ids", [])),
+        "safety_regression_count": _safe_int(payload.get("safety_regression_count"), 0),
+    }
+
+
 def _readiness_status(
     *,
     evidence: dict[str, Any],
+    policy_target: dict[str, Any],
+    calibration: dict[str, Any],
     validation_reason_codes: list[str],
     config: dict[str, Any],
 ) -> dict[str, Any]:
@@ -401,6 +614,7 @@ def _readiness_status(
             "status": "blocked",
             "reason_codes": reason_codes,
             "conservative_next_step": "fix_validation_failures_before_policy_smoke",
+            "recommended_next_action": "fix_validation_failures_before_policy_smoke",
         }
     if record_count == 0:
         _append_reason(reason_codes, "channel_aware_application_records_empty")
@@ -413,35 +627,42 @@ def _readiness_status(
             "status": "blocked",
             "reason_codes": reason_codes,
             "conservative_next_step": "regenerate_channel_aware_application_evidence_before_policy_smoke",
+            "recommended_next_action": "regenerate_channel_aware_application_evidence_before_policy_smoke",
+        }
+
+    if calibration["safety_regression_count"] > 0:
+        _append_reason(reason_codes, "calibration_safety_regression_blocks_policy_smoke")
+        return {
+            "status": "blocked",
+            "reason_codes": reason_codes,
+            "conservative_next_step": "resolve_calibration_safety_regressions_before_policy_smoke",
+            "recommended_next_action": "resolve_calibration_safety_regressions_before_policy_smoke",
         }
 
     if positive_count < thresholds["min_positive_evidence_count"] or positive_rate < thresholds["min_positive_evidence_rate"]:
         _append_reason(reason_codes, "positive_channel_aware_evidence_below_threshold")
     if excluded_rate > thresholds["max_excluded_candidate_rate_for_policy_smoke"]:
         _append_reason(reason_codes, "blocked_candidate_rate_high")
-    if (
-        thresholds["require_selected_candidate_change_for_ready"]
-        and selected_changed_rate == 0.0
-    ):
-        _append_reason(reason_codes, "policy_target_selection_not_improved")
-    if evidence["application_action_counts"].get("downweight_needs_more_evidence", 0) > 0:
-        _append_reason(reason_codes, "additional_channel_aware_evidence_needed")
+    calibration_changed_rate = calibration["selected_candidate_changed_rate"]
+    if thresholds["require_selected_candidate_change_for_ready"] and calibration_changed_rate == 0.0:
+        _append_reason(reason_codes, "calibrated_target_contrast_missing")
 
     if reason_codes:
-        next_step = (
-            "collect_policy_target_selection_evidence_before_policy_smoke"
-            if "policy_target_selection_not_improved" in reason_codes
-            else "expand_channel_aware_candidate_evidence_before_policy_smoke"
-        )
+        next_step = "collect_calibrated_policy_smoke_evidence_before_training"
         return {
-            "status": "needs_more_evidence",
+            "status": "needs_policy_smoke_before_training",
             "reason_codes": reason_codes,
             "conservative_next_step": next_step,
+            "recommended_next_action": next_step,
         }
+    calibrated_reason_codes = ["calibrated_target_contrast_available"]
+    if policy_target["selected_candidate_changed_rate"] == 0.0:
+        _append_reason(calibrated_reason_codes, "source_policy_target_selection_not_improved")
     return {
-        "status": "ready_for_policy_smoke",
-        "reason_codes": ["channel_aware_training_readiness_gate_passed"],
-        "conservative_next_step": "run_guarded_policy_smoke_with_channel_aware_evidence",
+        "status": "ready_for_calibrated_policy_application_smoke",
+        "reason_codes": calibrated_reason_codes,
+        "conservative_next_step": "run_calibrated_policy_application_smoke_before_training",
+        "recommended_next_action": "run_calibrated_policy_application_smoke_before_training",
     }
 
 
@@ -467,6 +688,11 @@ def _public_config(config: dict[str, Any]) -> dict[str, Any]:
         "readiness_thresholds": dict(config.get("readiness_thresholds", {})),
         "output_files": dict(config.get("output_files", {})),
     }
+
+
+def _public_git(payload: dict[str, Any]) -> dict[str, Any]:
+    git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
+    return dict(git)
 
 
 def _require_current_git_match(config: dict[str, Any]) -> bool:
@@ -585,6 +811,13 @@ def _float_value(value: Any, field_name: str) -> float:
 def _safe_float(value: Any, default: float) -> float:
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return default
 

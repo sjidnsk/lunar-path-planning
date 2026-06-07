@@ -163,7 +163,6 @@ def analyze_policy_target_selection_evidence(
     )
     if _fail_on_input_failure(config):
         for label, payload in (
-            ("channel_aware_training_readiness_summary", readiness),
             ("policy_robustness_application_summary", application),
             ("policy_decision_selection_comparison_summary", selection_comparison),
         ):
