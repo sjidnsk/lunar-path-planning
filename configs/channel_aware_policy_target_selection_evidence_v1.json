@@ -1,0 +1,32 @@
+{
+  "schema_version": "channel-aware-policy-target-selection-evidence-config/v1",
+  "description": "Channel-Aware Policy Target Selection Evidence Expansion v1. This is an audit-only analysis that explains why channel-aware evidence did or did not change selected policy targets; it does not train PPO or change default path-planning behavior.",
+  "output_files": {
+    "policy_target_selection_evidence_summary": "channel-aware-policy-target-selection-evidence-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "thresholds": {
+    "blocked_candidate_high_rate": 0.5
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_path_planner_route_contract_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_contract_change",
+    "no_gcs_graph_search",
+    "no_gcs_control_point_candidate_as_default_execution_trajectory",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_real_world_performance_claim",
+    "no_c_space_iris",
+    "no_iris_np",
+    "no_iris_np2",
+    "no_iris_zo"
+  ]
+}

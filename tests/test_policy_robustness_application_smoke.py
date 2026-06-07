@@ -72,6 +72,7 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
         bad_robustness_schema: bool = False,
         metadata_mismatch: bool = False,
         git_mismatch: bool = False,
+        include_channel_aware_audit: bool = False,
         omit_sources: tuple[str, ...] = (),
     ) -> Path:
         run_id = "all-all-k3"
@@ -246,6 +247,11 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
                 "reason_codes": ["no_training_metric_evaluated"],
             },
         }
+        if include_channel_aware_audit:
+            comparison["channel_aware_decision_audit"] = self._channel_aware_decision_audit(
+                run_id=run_id,
+                scenario_id=scenario_id,
+            )
         sample_quality = {
             "schema_version": "sample-quality-training-application-summary/v1",
             "generated_at": "2026-06-02T00:00:00Z",
@@ -286,6 +292,66 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
                 continue
             (self.batch_root / filename).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return self.batch_root / "policy-decision-robustness-summary.json"
+
+    def _channel_aware_decision_audit(self, *, run_id: str, scenario_id: str) -> dict:
+        def record(action_index: int, recommendation: str, reason_codes: list[str]) -> dict:
+            return {
+                "pair_key": "all-all-k3",
+                "astar_run_id": f"{run_id}-astar",
+                "channel_aware_run_id": f"{run_id}-channel-aware",
+                "scenario_id": scenario_id,
+                "scenario_group": "stress",
+                "action_index": action_index,
+                "cell": [action_index + 1, action_index + 1],
+                "astar_selected_cell": [2, 2],
+                "channel_aware_selected_cell": [1, 1],
+                "selected_candidate_changed": True,
+                "present": True,
+                "selected": recommendation == "keep",
+                "quality_improvement": recommendation == "keep",
+                "risk_or_high_cost_improvement": recommendation == "keep",
+                "path_cost_tradeoff": recommendation == "keep",
+                "blocker_reason": reason_codes[-1] if reason_codes[-1] in {"goal_blocked", "same_as_baseline"} else None,
+                "recommendation": recommendation,
+                "reason_codes": reason_codes,
+                "comparison": {
+                    "path_changed": recommendation == "keep",
+                    "path_cost_delta": 1.0 if recommendation == "keep" else None,
+                    "channel_cost_delta": -2.0 if recommendation == "keep" else None,
+                    "high_cost_exposure_delta": -3.0 if recommendation == "keep" else None,
+                    "risk_delta": None,
+                },
+            }
+
+        return {
+            "schema_version": "channel-aware-decision-audit/v1",
+            "generated_at": "2026-06-02T00:00:00Z",
+            "mode": "opt_in_decision_evidence_application",
+            "route_replacement_default_changed": False,
+            "paired_run_count": 1,
+            "paired_scenario_count": 1,
+            "channel_aware_candidate_count": 4,
+            "selected_candidate_changed_count": 1,
+            "selected_candidate_changed_rate": 1.0,
+            "risk_high_cost_exposure_improvement_count": 1,
+            "risk_high_cost_exposure_improvement_rate": 0.25,
+            "path_cost_regression_count": 1,
+            "path_cost_regression_rate": 0.25,
+            "blocker_reason_counts": {"goal_blocked": 1, "same_as_baseline": 1},
+            "recommendation_counts": {
+                "keep": 1,
+                "downweight": 1,
+                "reject": 1,
+                "needs_more_evidence": 1,
+            },
+            "conservative_recommendation": "downweight",
+            "records": [
+                record(0, "keep", ["channel_aware_quality_improved", "path_cost_tradeoff"]),
+                record(1, "downweight", ["same_as_baseline"]),
+                record(2, "reject", ["goal_blocked"]),
+                record(3, "needs_more_evidence", ["channel_aware_evidence_insufficient"]),
+            ],
+        }
 
     def _candidate_comparison(
         self,
@@ -479,6 +545,53 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
         self.assertTrue(comparison["no_single_metric_improvement_claim"])
         self.assertEqual(comparison["comparison"]["decision_changed_count"], 1)
         self.assertIn("no_large_scale_training", comparison["comparison"]["reason_codes"])
+
+    def test_application_smoke_maps_channel_aware_recommendations_to_actions(self) -> None:
+        robustness_summary = self._write_sources(include_channel_aware_audit=True)
+
+        completed = self._run_smoke(
+            "--batch-root",
+            str(self.batch_root),
+            "--robustness-summary",
+            str(robustness_summary),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        application = json.loads((self.batch_root / "policy-robustness-application-summary.json").read_text(encoding="utf-8"))
+        comparison = json.loads(
+            (self.batch_root / "policy-robustness-application-comparison-summary.json").read_text(encoding="utf-8")
+        )
+        channel = application["channel_aware_application"]
+        self.assertEqual(channel["schema_version"], "channel-aware-application-smoke/v1")
+        self.assertEqual(channel["record_count"], 4)
+        self.assertEqual(channel["recommendation_counts"]["keep"], 1)
+        self.assertEqual(channel["recommendation_counts"]["downweight"], 1)
+        self.assertEqual(channel["recommendation_counts"]["reject"], 1)
+        self.assertEqual(channel["recommendation_counts"]["needs_more_evidence"], 1)
+        self.assertEqual(channel["action_counts"]["keep_quality_evidence"], 1)
+        self.assertEqual(channel["action_counts"]["downweight_conservative_application"], 1)
+        self.assertEqual(channel["action_counts"]["exclude_blocked_candidate_evidence"], 1)
+        self.assertEqual(channel["action_counts"]["downweight_needs_more_evidence"], 1)
+        self.assertEqual(channel["reason_code_counts"]["goal_blocked"], 1)
+        self.assertEqual(channel["reason_code_counts"]["same_as_baseline"], 1)
+        self.assertTrue(channel["no_large_scale_training"])
+        self.assertFalse(channel["route_replacement_default_changed"])
+
+        records_by_action = {record["action_index"]: record for record in channel["records"]}
+        self.assertEqual(records_by_action[0]["application_action"], "keep_quality_evidence")
+        self.assertEqual(records_by_action[1]["application_action"], "downweight_conservative_application")
+        self.assertEqual(records_by_action[2]["application_action"], "exclude_blocked_candidate_evidence")
+        self.assertEqual(records_by_action[3]["application_action"], "downweight_needs_more_evidence")
+        self.assertIn("channel_aware_application_keep_quality_evidence", records_by_action[0]["application_reason_codes"])
+        self.assertIn("channel_aware_application_exclude_blocked_candidate_evidence", records_by_action[2]["application_reason_codes"])
+        self.assertIn("channel_aware_application_downweight_needs_more_evidence", records_by_action[3]["application_reason_codes"])
+
+        self.assertEqual(
+            comparison["channel_aware_application"]["action_counts"],
+            channel["action_counts"],
+        )
 
     def test_validation_failures_are_written_with_machine_readable_reason_codes(self) -> None:
         robustness_summary = self._write_sources(

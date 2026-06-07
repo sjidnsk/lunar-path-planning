@@ -174,6 +174,9 @@ def analyze_application_smoke(
         config=config,
         reason_codes=global_reason_codes,
     )
+    channel_aware_application = _build_channel_aware_application_summary(
+        batch_payloads.get("policy_decision_selection_comparison_summary", {}),
+    )
     all_decision_reason_codes = Counter(
         reason for record in decision_records for reason in record["reason_codes"]
     )
@@ -213,6 +216,7 @@ def analyze_application_smoke(
         "decision_changed_count": sum(1 for record in decision_records if record["decision_changed"]),
         "decision_stable_count": sum(1 for record in decision_records if not record["decision_changed"]),
         "reason_code_counts": dict(sorted(all_decision_reason_codes.items())),
+        "channel_aware_application": channel_aware_application,
         "by_scenario_group": _aggregate_decisions(decision_records, "scenario_group"),
         "by_scenario_id": _aggregate_decisions(decision_records, "scenario_id"),
         "decision_records": decision_records,
@@ -221,6 +225,7 @@ def analyze_application_smoke(
         status=status,
         global_reason_codes=global_reason_codes,
         decision_records=decision_records,
+        channel_aware_application=channel_aware_application,
         config=config,
         batch_root=batch_root,
         repo_root=repo_root,
@@ -582,11 +587,123 @@ def _decision_bucket(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _build_channel_aware_application_summary(selection_comparison: dict[str, Any]) -> dict[str, Any]:
+    audit = (
+        selection_comparison.get("channel_aware_decision_audit")
+        if isinstance(selection_comparison.get("channel_aware_decision_audit"), dict)
+        else {}
+    )
+    records = audit.get("records") if isinstance(audit.get("records"), list) else []
+    application_records = [
+        _channel_aware_application_record(record)
+        for record in records
+        if isinstance(record, dict)
+    ]
+    recommendation_counts = Counter(record["recommendation"] for record in application_records)
+    action_counts = Counter(record["application_action"] for record in application_records)
+    reason_counts = Counter(
+        reason
+        for record in application_records
+        for reason in record["reason_codes"] + record["application_reason_codes"]
+    )
+    for recommendation in ("keep", "downweight", "reject", "needs_more_evidence"):
+        recommendation_counts.setdefault(recommendation, 0)
+    for action in (
+        "keep_quality_evidence",
+        "downweight_conservative_application",
+        "exclude_blocked_candidate_evidence",
+        "downweight_needs_more_evidence",
+    ):
+        action_counts.setdefault(action, 0)
+    summary_reason_codes = []
+    if not audit:
+        summary_reason_codes.append("channel_aware_decision_audit_missing")
+    elif not application_records:
+        summary_reason_codes.append("channel_aware_decision_audit_empty")
+    else:
+        summary_reason_codes.append("channel_aware_application_smoke_mapped")
+    return {
+        "schema_version": "channel-aware-application-smoke/v1",
+        "source_schema_version": audit.get("schema_version") if audit else None,
+        "application_scope": "channel_aware_decision_evidence_application_smoke_only",
+        "quality_signal_use": "opt_in_decision_application_evidence_only",
+        "no_large_scale_training": True,
+        "no_real_world_performance_claim": True,
+        "does_not_modify_ppo": True,
+        "does_not_modify_network": True,
+        "does_not_modify_action_space": True,
+        "route_replacement_default_changed": bool(audit.get("route_replacement_default_changed", False)) if audit else False,
+        "record_count": len(application_records),
+        "recommendation_counts": dict(sorted(recommendation_counts.items())),
+        "action_counts": dict(sorted(action_counts.items())),
+        "reason_code_counts": dict(sorted(reason_counts.items())),
+        "summary_reason_codes": summary_reason_codes,
+        "records": application_records,
+    }
+
+
+def _channel_aware_application_record(record: dict[str, Any]) -> dict[str, Any]:
+    recommendation = str(record.get("recommendation", "needs_more_evidence"))
+    action = _channel_aware_application_action(recommendation)
+    return {
+        "pair_key": record.get("pair_key"),
+        "astar_run_id": record.get("astar_run_id"),
+        "channel_aware_run_id": record.get("channel_aware_run_id"),
+        "scenario_id": record.get("scenario_id"),
+        "scenario_group": record.get("scenario_group"),
+        "action_index": _int_value(record.get("action_index")),
+        "cell": _list_value(record.get("cell")),
+        "selected_candidate_changed": bool(record.get("selected_candidate_changed", False)),
+        "recommendation": recommendation,
+        "application_action": action,
+        "application_sample_weight": _channel_aware_application_weight(action),
+        "quality_improvement": bool(record.get("quality_improvement", False)),
+        "risk_or_high_cost_improvement": bool(record.get("risk_or_high_cost_improvement", False)),
+        "path_cost_tradeoff": bool(record.get("path_cost_tradeoff", False)),
+        "reason_codes": _string_list(record.get("reason_codes", [])),
+        "application_reason_codes": _channel_aware_application_reason_codes(action),
+        "comparison": dict(record.get("comparison")) if isinstance(record.get("comparison"), dict) else {},
+    }
+
+
+def _channel_aware_application_action(recommendation: str) -> str:
+    return {
+        "keep": "keep_quality_evidence",
+        "downweight": "downweight_conservative_application",
+        "reject": "exclude_blocked_candidate_evidence",
+        "needs_more_evidence": "downweight_needs_more_evidence",
+    }.get(recommendation, "downweight_needs_more_evidence")
+
+
+def _channel_aware_application_weight(action: str) -> float:
+    if action == "keep_quality_evidence":
+        return 1.0
+    if action == "exclude_blocked_candidate_evidence":
+        return 0.0
+    return 0.5
+
+
+def _channel_aware_application_reason_codes(action: str) -> list[str]:
+    return {
+        "keep_quality_evidence": ["channel_aware_application_keep_quality_evidence"],
+        "downweight_conservative_application": [
+            "channel_aware_application_downweight_conservative_application"
+        ],
+        "exclude_blocked_candidate_evidence": [
+            "channel_aware_application_exclude_blocked_candidate_evidence"
+        ],
+        "downweight_needs_more_evidence": [
+            "channel_aware_application_downweight_needs_more_evidence"
+        ],
+    }.get(action, ["channel_aware_application_downweight_needs_more_evidence"])
+
+
 def _build_comparison_summary(
     *,
     status: str,
     global_reason_codes: list[str],
     decision_records: list[dict[str, Any]],
+    channel_aware_application: dict[str, Any],
     config: dict[str, Any],
     batch_root: Path,
     repo_root: Path,
@@ -617,6 +734,7 @@ def _build_comparison_summary(
         "decision_count": len(decision_records),
         "decision_changed_count": changed_count,
         "decision_stable_count": len(decision_records) - changed_count,
+        "channel_aware_application": _channel_aware_application_public_summary(channel_aware_application),
         "by_scenario_group": _aggregate_decisions(decision_records, "scenario_group"),
         "by_scenario_id": _aggregate_decisions(decision_records, "scenario_id"),
         "comparison": {
@@ -628,6 +746,28 @@ def _build_comparison_summary(
             "reason_codes": comparison_reason_codes,
             "single_metric_accidental_improvement": "not_evaluated_smoke_only",
         },
+    }
+
+
+def _channel_aware_application_public_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": summary.get("schema_version"),
+        "source_schema_version": summary.get("source_schema_version"),
+        "application_scope": summary.get("application_scope"),
+        "quality_signal_use": summary.get("quality_signal_use"),
+        "no_large_scale_training": bool(summary.get("no_large_scale_training", True)),
+        "route_replacement_default_changed": bool(summary.get("route_replacement_default_changed", False)),
+        "record_count": _int_value(summary.get("record_count")),
+        "recommendation_counts": dict(summary.get("recommendation_counts", {}))
+        if isinstance(summary.get("recommendation_counts"), dict)
+        else {},
+        "action_counts": dict(summary.get("action_counts", {}))
+        if isinstance(summary.get("action_counts"), dict)
+        else {},
+        "reason_code_counts": dict(summary.get("reason_code_counts", {}))
+        if isinstance(summary.get("reason_code_counts"), dict)
+        else {},
+        "summary_reason_codes": _string_list(summary.get("summary_reason_codes", [])),
     }
 
 
@@ -769,6 +909,10 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if item is not None]
+
+
+def _list_value(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list | tuple) else []
 
 
 def _dedupe(values) -> list[str]:
