@@ -194,7 +194,7 @@ Validation completed:
   `current_git_provenance_mismatch_count=1`, `git_provenance_mismatch_count=1`, and
   `trainable_anchor_projection_count=18`
 - clean-worktree formal batch:
-  `outputs/path_feedback_batch_anchor_projection_candidate_generation_v1_risk_closure_v2_clean_check/`
+  `outputs/path_feedback_batch_anchor_projection_candidate_generation_v1_risk_closure_v2_final_clean_check/`
   completed 8/8 runs
 - clean-worktree candidate-generation validate-only and summary generation passed with
   `current_git_provenance_mismatch_count=0`, `git_provenance_mismatch_count=0`,
