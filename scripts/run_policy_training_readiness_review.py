@@ -287,6 +287,22 @@ def _review_metrics(
         _int_value_or_default(smoke.get("rejected_goal_blocked_count"), 0),
         _int_value_or_default(calibration.get("goal_blocked_count"), 0),
     )
+    platform_goal_contract_mismatch_count = max(
+        _int_value_or_default(smoke.get("platform_goal_contract_mismatch_count"), 0),
+        _int_value_or_default(calibration.get("platform_goal_contract_mismatch_count"), 0),
+    )
+    platform_goal_anchor_available_count = max(
+        _int_value_or_default(smoke.get("platform_goal_anchor_available_count"), 0),
+        _int_value_or_default(calibration.get("platform_goal_anchor_available_count"), 0),
+    )
+    platform_goal_unresolved_count = max(
+        _int_value_or_default(smoke.get("platform_goal_unresolved_count"), 0),
+        _int_value_or_default(calibration.get("platform_goal_unresolved_count"), 0),
+    )
+    platform_goal_class_counts = _max_counter_dict(
+        smoke.get("platform_goal_feasibility_class_counts"),
+        calibration.get("platform_goal_feasibility_class_counts"),
+    )
     safety_regression_count = max(
         _int_value_or_default(smoke.get("safety_regression_count"), 0),
         _int_value_or_default(readiness.get("calibration_safety_regression_count"), 0),
@@ -352,6 +368,10 @@ def _review_metrics(
         "applied_calibrated_candidate_count": applied_count,
         "changed_scenario_ids": changed_scenario_ids,
         "rejected_goal_blocked_count": rejected_goal_blocked_count,
+        "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
+        "platform_goal_unresolved_count": platform_goal_unresolved_count,
+        "platform_goal_feasibility_class_counts": platform_goal_class_counts,
         "safety_regression_count": safety_regression_count,
         "fallback_or_open_grid_count": fallback_or_open_grid_count,
         "training_positive_candidate_count": applied_count,
@@ -677,6 +697,18 @@ def _string_list(value: Any) -> list[str]:
 
 def _unique(values: list[str]) -> list[str]:
     return sorted({value for value in values if value})
+
+
+def _max_counter_dict(*values: Any) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        for key, count in value.items():
+            parsed = _int_value_or_default(count, 0)
+            key_text = str(key)
+            result[key_text] = max(result.get(key_text, 0), parsed)
+    return dict(sorted(result.items()))
 
 
 def _int_value(value: Any, label: str) -> int:

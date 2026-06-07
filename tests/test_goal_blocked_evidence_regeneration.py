@@ -209,6 +209,70 @@ class GoalBlockedEvidenceRegenerationTests(unittest.TestCase):
             "reason_codes": ["goal_blocked"],
         }
 
+    def test_regeneration_classifies_platform_goal_contract_mismatch_without_training_evidence(self) -> None:
+        record = self._record(
+            "platform-mismatch",
+            comparison={
+                "path_changed": True,
+                "path_cost_delta": 1.0,
+                "channel_cost_delta": 2.0,
+                "high_cost_exposure_delta": 3.0,
+                "risk_delta": 0.5,
+            },
+            failure_taxonomy="platform_inflated_goal_blocked",
+        )
+        record["reason_codes"] = ["goal_blocked", "platform_inflated_goal_blocked"]
+        record["failure_taxonomy_source"] = "platform_goal_feasibility.classification"
+        record["platform_goal_classification"] = "platform_inflated_goal_blocked"
+        record["platform_goal_feasibility"] = {
+            "schema_version": "platform-goal-feasibility/v1",
+            "classification": "platform_inflated_goal_blocked",
+            "contract_reachable": True,
+            "original_passable": True,
+            "inflated_passable": False,
+            "blocked_by_platform_footprint": True,
+            "nearest_inflated_passable_anchor": [11, 12],
+            "anchor_distance_cells": 1,
+            "anchor_distance_m": 1.0,
+            "proxy_route_comparison": {
+                "scope": "audit_proxy_anchor_not_same_cell",
+                "anchor_route_feasible": True,
+                "anchor_path_cost": 12.0,
+                "same_cell_positive_evidence": False,
+            },
+        }
+        decision = self._decision("platform-mismatch")
+        decision["reason_codes"] = ["goal_blocked", "platform_inflated_goal_blocked"]
+        self._write_sources([record], [decision])
+
+        completed = self._run_regeneration("--batch-root", str(self.batch_root), "--config", str(self.config))
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "goal-blocked-evidence-regeneration-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            summary["failure_taxonomy_counts"]["platform_inflated_goal_blocked"],
+            1,
+        )
+        self.assertEqual(summary["platform_goal_contract_mismatch_count"], 1)
+        self.assertEqual(summary["platform_goal_anchor_available_count"], 1)
+        self.assertEqual(summary["platform_goal_unresolved_count"], 0)
+        self.assertEqual(summary["eligible_negative_evidence_candidate_count"], 0)
+        self.assertEqual(summary["still_unresolved_count"], 0)
+        regenerated = summary["regenerated_records"][0]
+        self.assertEqual(regenerated["diagnostic_decision"], "platform_goal_contract_mismatch")
+        self.assertEqual(regenerated["failure_category"], "platform_inflated_goal_blocked")
+        self.assertFalse(regenerated["eligible_negative_evidence_candidate"])
+        self.assertEqual(regenerated["platform_goal_classification"], "platform_inflated_goal_blocked")
+        self.assertFalse(
+            regenerated["platform_goal_feasibility"]["proxy_route_comparison"][
+                "same_cell_positive_evidence"
+            ]
+        )
+
     def test_regeneration_splits_goal_blocked_diagnostics_without_training(self) -> None:
         self._write_sources(
             [

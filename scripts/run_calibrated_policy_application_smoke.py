@@ -292,6 +292,21 @@ def _application_metrics(
         "applied_calibrated_records": [_public_applied_record(record) for record in applied_records],
         "changed_scenario_ids": changed_scenario_ids,
         "rejected_goal_blocked_count": _int_value_or_default(calibration.get("goal_blocked_count"), 0),
+        "platform_goal_contract_mismatch_count": _int_value_or_default(
+            calibration.get("platform_goal_contract_mismatch_count"),
+            0,
+        ),
+        "platform_goal_anchor_available_count": _int_value_or_default(
+            calibration.get("platform_goal_anchor_available_count"),
+            0,
+        ),
+        "platform_goal_unresolved_count": _int_value_or_default(
+            calibration.get("platform_goal_unresolved_count"),
+            0,
+        ),
+        "platform_goal_feasibility_class_counts": _dict_value(
+            calibration.get("platform_goal_feasibility_class_counts")
+        ),
         "safety_regression_count": safety_regression_count,
         "application_gate_reason_codes": gate_reason_codes,
         "recommended_next_action": recommended,
@@ -582,6 +597,15 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value]
+
+
+def _dict_value(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, int] = {}
+    for key, count in value.items():
+        result[str(key)] = _int_value_or_default(count, 0)
+    return result
 
 
 def _unique(values: list[str]) -> list[str]:

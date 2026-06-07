@@ -240,6 +240,46 @@ class ChannelAwareSelectionContrastCalibrationTests(unittest.TestCase):
         self.assertTrue(summary["does_not_modify_default_astar"])
         self.assertFalse(summary["policy_target_selection_improvement_claimed_without_evidence"])
 
+    def test_calibration_counts_platform_goal_contract_mismatch(self) -> None:
+        self._write_sources()
+        comparison_path = self.batch_root / "policy-decision-selection-comparison-summary.json"
+        comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+        blocked = comparison["channel_aware_decision_audit"]["records"][2]
+        blocked["reason_codes"] = ["goal_blocked", "platform_inflated_goal_blocked"]
+        blocked["failure_taxonomy"] = "platform_inflated_goal_blocked"
+        blocked["platform_goal_classification"] = "platform_inflated_goal_blocked"
+        blocked["platform_goal_feasibility"] = {
+            "classification": "platform_inflated_goal_blocked",
+            "nearest_inflated_passable_anchor": [6, 5],
+            "proxy_route_comparison": {
+                "scope": "audit_proxy_anchor_not_same_cell",
+                "same_cell_positive_evidence": False,
+            },
+        }
+        comparison_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+
+        completed = self._run_calibration(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "channel-aware-selection-contrast-calibration-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["goal_blocked_count"], 1)
+        self.assertEqual(summary["platform_goal_contract_mismatch_count"], 1)
+        self.assertEqual(summary["platform_goal_anchor_available_count"], 1)
+        self.assertEqual(summary["platform_goal_unresolved_count"], 0)
+        self.assertEqual(
+            summary["platform_goal_feasibility_class_counts"]["platform_inflated_goal_blocked"],
+            1,
+        )
+
     def test_validate_only_reports_git_mismatch_without_writing_summary(self) -> None:
         self._write_sources(git_mismatch=True)
 

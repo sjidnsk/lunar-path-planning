@@ -145,6 +145,15 @@ def analyze_policy_target_selection_evidence(
         reason_codes=global_reason_codes,
         source_summaries=source_summaries,
     )
+    if not readiness and "channel_aware_training_readiness_summary_missing" in global_reason_codes:
+        global_reason_codes = [
+            reason
+            for reason in global_reason_codes
+            if reason != "channel_aware_training_readiness_summary_missing"
+        ]
+        source_summaries["channel_aware_training_readiness_summary"][
+            "optional_bootstrap_source"
+        ] = True
     application = _load_source(
         application_summary_path,
         label="policy_robustness_application_summary",
@@ -508,6 +517,7 @@ def _summarize_selection_evidence(
             "readiness_status": readiness.get("readiness_status"),
             "readiness_reason_codes": _string_list(readiness.get("readiness_reason_codes", [])),
             "selected_candidate_changed_rate": readiness.get("selected_candidate_changed_rate"),
+            "bootstrap_without_readiness_seed": not bool(readiness),
         },
         "supports_policy_target_selection_improvement_claim": supports_improvement,
         "policy_target_selection_improvement_claim": "supported" if supports_improvement else "not_supported",

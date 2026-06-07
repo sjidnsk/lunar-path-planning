@@ -36,6 +36,18 @@ FAILURE_TAXONOMY = (
     "route_generation_failed",
     "missing_candidate_contrast",
     "blocked_by_contract",
+    "platform_inflated_goal_blocked",
+    "original_goal_blocked",
+    "out_of_bounds",
+    "unknown_contract_mismatch",
+)
+PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES = frozenset(
+    {
+        "platform_inflated_goal_blocked",
+        "original_goal_blocked",
+        "out_of_bounds",
+        "unknown_contract_mismatch",
+    }
 )
 
 
@@ -327,6 +339,19 @@ def _regeneration_metrics(
         for record in regenerated_records
         if record["diagnostic_decision"] == "eligible_negative_evidence_candidate"
     )
+    platform_goal_contract_mismatch_count = sum(
+        1
+        for record in regenerated_records
+        if record["diagnostic_decision"] == "platform_goal_contract_mismatch"
+    )
+    platform_goal_anchor_available_count = sum(
+        1 for record in regenerated_records if record.get("platform_goal_anchor_available")
+    )
+    platform_goal_unresolved_count = sum(
+        1
+        for record in regenerated_records
+        if record.get("platform_goal_classification") == "unknown_contract_mismatch"
+    )
     still_unresolved_count = sum(
         1
         for record in regenerated_records
@@ -357,6 +382,9 @@ def _regeneration_metrics(
             eligible_count=eligible_count,
         ),
         "eligible_negative_evidence_candidate_count": eligible_count,
+        "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
+        "platform_goal_unresolved_count": platform_goal_unresolved_count,
         "still_unresolved_count": still_unresolved_count,
         "contract_blockers": contract_blockers,
         "contract_mutations": contract_mutations,
@@ -401,10 +429,16 @@ def _regenerate_record(
 ) -> dict[str, Any]:
     source = source_record if isinstance(source_record, dict) else {}
     reason_codes = _all_reason_codes(decision, source)
+    platform_goal_classification = _platform_goal_failure_class(decision, source)
+    platform_goal_feasibility = _platform_goal_feasibility(decision, source)
     if global_contract_blocked:
         diagnostic_decision = "blocked_by_contract"
         failure_category: str | None = "blocked_by_contract"
         basis = "global_hard_blocker_prevents_training_readiness"
+    elif platform_goal_classification is not None:
+        diagnostic_decision = "platform_goal_contract_mismatch"
+        failure_category = platform_goal_classification
+        basis = "platform_goal_contract_mismatch_diagnostic"
     elif source and _has_explicit_candidate_contrast(source, config):
         diagnostic_decision = "eligible_negative_evidence_candidate"
         failure_category = None
@@ -413,7 +447,7 @@ def _regenerate_record(
         diagnostic_decision = "unresolved"
         failure_category = _failure_category(decision, source)
         basis = f"{failure_category}_diagnostic"
-    return {
+    payload = {
         "scenario_id": decision.get("scenario_id"),
         "pair_key": decision.get("pair_key"),
         "action_index": decision.get("action_index"),
@@ -435,9 +469,24 @@ def _regenerate_record(
         "source_failure_taxonomy_source": source.get("failure_taxonomy_source"),
         "reason_codes": _unique(reason_codes),
     }
+    if platform_goal_classification is not None:
+        payload.update(
+            {
+                "platform_goal_contract_mismatch": True,
+                "platform_goal_classification": platform_goal_classification,
+                "platform_goal_anchor_available": _platform_goal_anchor_available(
+                    platform_goal_feasibility
+                ),
+                "platform_goal_feasibility": platform_goal_feasibility,
+            }
+        )
+    return payload
 
 
 def _failure_category(decision: dict[str, Any], source: dict[str, Any]) -> str:
+    platform_class = _platform_goal_failure_class(decision, source)
+    if platform_class is not None:
+        return platform_class
     for payload in (source, decision):
         taxonomy = payload.get("failure_taxonomy")
         if isinstance(taxonomy, str) and taxonomy in FAILURE_TAXONOMY:
@@ -477,6 +526,8 @@ def _diagnostic_tokens(decision: dict[str, Any], source: dict[str, Any]) -> list
             "diagnostic_reason",
             "route_failure_reason",
             "failure_taxonomy",
+            "platform_goal_classification",
+            "platform_goal_feasibility",
             "upstream_blocker_reason",
         ):
             value = payload.get(key)
@@ -485,6 +536,36 @@ def _diagnostic_tokens(decision: dict[str, Any], source: dict[str, Any]) -> list
             elif value is not None:
                 tokens.append(value)
     return tokens
+
+
+def _platform_goal_failure_class(decision: dict[str, Any], source: dict[str, Any]) -> str | None:
+    for payload in (source, decision):
+        for key in ("failure_taxonomy", "platform_goal_classification"):
+            value = payload.get(key)
+            if isinstance(value, str) and value in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+                return value
+        for reason in _string_list(payload.get("reason_codes")):
+            if reason in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+                return reason
+        feasibility = payload.get("platform_goal_feasibility")
+        feasibility = feasibility if isinstance(feasibility, dict) else {}
+        classification = feasibility.get("classification")
+        if isinstance(classification, str) and classification in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+            return classification
+    return None
+
+
+def _platform_goal_feasibility(decision: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    for payload in (source, decision):
+        feasibility = payload.get("platform_goal_feasibility")
+        if isinstance(feasibility, dict):
+            return dict(feasibility)
+    return {}
+
+
+def _platform_goal_anchor_available(feasibility: dict[str, Any]) -> bool:
+    anchor = feasibility.get("nearest_inflated_passable_anchor")
+    return isinstance(anchor, list) and len(anchor) == 2
 
 
 def _all_reason_codes(decision: dict[str, Any], source: dict[str, Any]) -> list[str]:
@@ -501,9 +582,16 @@ def _upstream_diagnostic_blockers(
     eligible_count: int,
 ) -> list[str]:
     blockers: list[str] = []
-    if any(record.get("candidate_contrast_status") == "missing_candidate_contrast" for record in regenerated_records):
+    if any(
+        record.get("candidate_contrast_status") == "missing_candidate_contrast"
+        and record.get("diagnostic_decision") != "platform_goal_contract_mismatch"
+        for record in regenerated_records
+    ):
         _append_reason(blockers, "upstream_goal_blocked_records_without_finite_candidate_comparison")
-    if eligible_count == 0 and regenerated_records:
+    if eligible_count == 0 and any(
+        record.get("diagnostic_decision") != "platform_goal_contract_mismatch"
+        for record in regenerated_records
+    ):
         _append_reason(blockers, "upstream_goal_blocked_records_have_no_eligible_negative_evidence")
     if any(not record.get("source_failure_taxonomy") for record in regenerated_records):
         _append_reason(blockers, "upstream_goal_blocked_records_without_failure_taxonomy")

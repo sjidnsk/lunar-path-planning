@@ -36,6 +36,14 @@ CONTRACT_DECISIONS = (
     "needs_regeneration",
     "blocked_by_contract",
 )
+PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES = frozenset(
+    {
+        "platform_inflated_goal_blocked",
+        "original_goal_blocked",
+        "out_of_bounds",
+        "unknown_contract_mismatch",
+    }
+)
 
 
 class ConfigError(ValueError):
@@ -301,6 +309,19 @@ def _contract_metrics(
     decision_counts = Counter(decision["contract_decision"] for decision in contract_decisions)
     for decision in CONTRACT_DECISIONS:
         decision_counts.setdefault(decision, 0)
+    platform_goal_contract_mismatch_count = sum(
+        1 for decision in contract_decisions if decision.get("platform_goal_contract_mismatch")
+    )
+    platform_goal_anchor_available_count = sum(
+        1
+        for decision in contract_decisions
+        if decision.get("platform_goal_anchor_available")
+    )
+    platform_goal_unresolved_count = sum(
+        1
+        for decision in contract_decisions
+        if decision.get("platform_goal_classification") == "unknown_contract_mismatch"
+    )
     record_goal_blocked_count = sum(1 for record in records if _is_goal_blocked(record))
     goal_blocked_count = max(
         record_goal_blocked_count,
@@ -332,6 +353,9 @@ def _contract_metrics(
         "negative_evidence_candidate_count": decision_counts["eligible_negative_evidence"],
         "needs_regeneration_count": decision_counts["needs_regeneration"],
         "contract_decision_counts": dict(sorted(decision_counts.items())),
+        "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
+        "platform_goal_unresolved_count": platform_goal_unresolved_count,
         "contract_blockers": contract_blockers,
         "contract_mutations": contract_mutations,
         "safety_regression_count": safety_regression_count,
@@ -376,9 +400,19 @@ def _classify_record(
     config: dict[str, Any],
 ) -> dict[str, Any]:
     reason_codes = _string_list(record.get("reason_codes")) + _string_list(record.get("application_reason_codes"))
+    platform_goal_classification = _platform_goal_failure_class(record)
+    platform_goal_feasibility = record.get("platform_goal_feasibility")
+    platform_goal_feasibility = (
+        platform_goal_feasibility
+        if isinstance(platform_goal_feasibility, dict)
+        else {}
+    )
     if global_contract_blocked:
         decision = "blocked_by_contract"
         basis = "global_contract_blocker"
+    elif platform_goal_classification is not None:
+        decision = "needs_regeneration"
+        basis = "platform_goal_contract_mismatch"
     elif _is_goal_blocked(record):
         if _has_explicit_candidate_contrast(record, config):
             decision = "eligible_negative_evidence"
@@ -389,7 +423,7 @@ def _classify_record(
     else:
         decision = "excluded_from_positive_training"
         basis = "excluded_non_positive_not_goal_blocked"
-    return {
+    payload = {
         "scenario_id": record.get("scenario_id"),
         "pair_key": record.get("pair_key"),
         "action_index": record.get("action_index"),
@@ -400,9 +434,25 @@ def _classify_record(
         "decision_basis": basis,
         "reason_codes": _unique([str(reason) for reason in reason_codes]),
     }
+    if platform_goal_classification is not None:
+        payload.update(
+            {
+                "platform_goal_contract_mismatch": True,
+                "platform_goal_classification": platform_goal_classification,
+                "platform_goal_anchor_available": _platform_goal_anchor_available(
+                    platform_goal_feasibility
+                ),
+                "failure_taxonomy": record.get("failure_taxonomy"),
+                "failure_taxonomy_source": record.get("failure_taxonomy_source"),
+                "platform_goal_feasibility": platform_goal_feasibility,
+            }
+        )
+    return payload
 
 
 def _has_explicit_candidate_contrast(record: dict[str, Any], config: dict[str, Any]) -> bool:
+    if _platform_goal_failure_class(record) is not None:
+        return False
     classification = config.get("classification") if isinstance(config.get("classification"), dict) else {}
     if not bool(classification.get("require_finite_comparison_for_negative_evidence", True)):
         return True
@@ -415,6 +465,27 @@ def _has_explicit_candidate_contrast(record: dict[str, Any], config: dict[str, A
         if _finite_number(comparison.get(key)):
             return True
     return False
+
+
+def _platform_goal_failure_class(record: dict[str, Any]) -> str | None:
+    for key in ("failure_taxonomy", "platform_goal_classification"):
+        value = record.get(key)
+        if isinstance(value, str) and value in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+            return value
+    for reason in _string_list(record.get("reason_codes")):
+        if reason in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+            return reason
+    feasibility = record.get("platform_goal_feasibility")
+    feasibility = feasibility if isinstance(feasibility, dict) else {}
+    classification = feasibility.get("classification")
+    if isinstance(classification, str) and classification in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+        return classification
+    return None
+
+
+def _platform_goal_anchor_available(feasibility: dict[str, Any]) -> bool:
+    anchor = feasibility.get("nearest_inflated_passable_anchor")
+    return isinstance(anchor, list) and len(anchor) == 2
 
 
 def _contract_blockers(

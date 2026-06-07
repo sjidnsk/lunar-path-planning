@@ -80,6 +80,7 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         smoke_recommended: str = "ready_for_policy_training_readiness_review",
         open_grid_fallback_used_count: int = 0,
         contract_mutation: bool = False,
+        platform_goal_contract_mismatch_count: int = 0,
         git_mismatch: bool = False,
     ) -> None:
         git_snapshot = self._git_snapshot(git_mismatch=git_mismatch)
@@ -99,6 +100,14 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "applied_calibrated_candidate_count": applied_count,
             "changed_scenario_ids": changed_ids,
             "rejected_goal_blocked_count": rejected_goal_blocked_count,
+            "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+            "platform_goal_anchor_available_count": platform_goal_contract_mismatch_count,
+            "platform_goal_unresolved_count": 0,
+            "platform_goal_feasibility_class_counts": (
+                {"platform_inflated_goal_blocked": platform_goal_contract_mismatch_count}
+                if platform_goal_contract_mismatch_count
+                else {}
+            ),
             "safety_regression_count": safety_regression_count,
             "application_gate_reason_codes": [],
             "recommended_next_action": smoke_recommended,
@@ -154,6 +163,14 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "selected_candidate_changed_rate": calibrated_rate,
             "changed_scenario_ids": changed_ids,
             "goal_blocked_count": rejected_goal_blocked_count,
+            "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+            "platform_goal_anchor_available_count": platform_goal_contract_mismatch_count,
+            "platform_goal_unresolved_count": 0,
+            "platform_goal_feasibility_class_counts": (
+                {"platform_inflated_goal_blocked": platform_goal_contract_mismatch_count}
+                if platform_goal_contract_mismatch_count
+                else {}
+            ),
             "safety_regression_count": safety_regression_count,
             "git_provenance": {"current": git_snapshot},
         }
@@ -233,6 +250,37 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "goal_blocked_candidates_excluded_from_training_positive_evidence",
             summary["training_blockers"],
         )
+
+    def test_review_reports_platform_goal_contract_mismatch_breakdown(self) -> None:
+        self._write_sources(
+            rejected_goal_blocked_count=3,
+            platform_goal_contract_mismatch_count=3,
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+        self.assertEqual(summary["rejected_goal_blocked_count"], 3)
+        self.assertEqual(summary["platform_goal_contract_mismatch_count"], 3)
+        self.assertEqual(summary["platform_goal_anchor_available_count"], 3)
+        self.assertEqual(summary["platform_goal_unresolved_count"], 0)
+        self.assertEqual(
+            summary["platform_goal_feasibility_class_counts"]["platform_inflated_goal_blocked"],
+            3,
+        )
+        self.assertTrue(summary["no_ppo_training"])
+        self.assertFalse(summary["runs_training"])
 
     def test_review_blocks_fallback_safety_and_contract_mutation_from_training_readiness(self) -> None:
         for kwargs, expected_reason in (

@@ -69,6 +69,7 @@ class CalibratedPolicyApplicationSmokeTests(unittest.TestCase):
         safety_regression_count: int = 0,
         coverage_recommended: str = "ready_for_calibrated_policy_application_smoke",
         readiness_status: str = "ready_for_calibrated_policy_application_smoke",
+        platform_goal_contract_mismatch_count: int = 0,
         git_mismatch: bool = False,
     ) -> None:
         git_snapshot = self.git_snapshot
@@ -114,6 +115,14 @@ class CalibratedPolicyApplicationSmokeTests(unittest.TestCase):
             "selected_candidate_changed_rate": calibrated_rate,
             "changed_scenario_ids": changed_ids,
             "goal_blocked_count": 3,
+            "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+            "platform_goal_anchor_available_count": platform_goal_contract_mismatch_count,
+            "platform_goal_unresolved_count": 0,
+            "platform_goal_feasibility_class_counts": (
+                {"platform_inflated_goal_blocked": platform_goal_contract_mismatch_count}
+                if platform_goal_contract_mismatch_count
+                else {}
+            ),
             "blocked_candidate_rate": 0.25,
             "safety_regression_count": safety_regression_count,
             "calibrated_selection_records": records,
@@ -218,6 +227,31 @@ class CalibratedPolicyApplicationSmokeTests(unittest.TestCase):
         self.assertTrue(summary["does_not_modify_default_astar"])
         self.assertTrue(summary["channel_aware_backend_opt_in"])
         self.assertTrue(summary["git_provenance"]["current_matches_sources"])
+
+    def test_smoke_propagates_platform_goal_contract_mismatch_counts(self) -> None:
+        self._write_sources(platform_goal_contract_mismatch_count=3)
+
+        completed = self._run_smoke(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "calibrated-policy-application-smoke-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["rejected_goal_blocked_count"], 3)
+        self.assertEqual(summary["platform_goal_contract_mismatch_count"], 3)
+        self.assertEqual(summary["platform_goal_anchor_available_count"], 3)
+        self.assertEqual(summary["platform_goal_unresolved_count"], 0)
+        self.assertEqual(
+            summary["platform_goal_feasibility_class_counts"]["platform_inflated_goal_blocked"],
+            3,
+        )
 
     def test_smoke_recommends_gate_refinement_when_safety_regresses(self) -> None:
         self._write_sources(safety_regression_count=1)

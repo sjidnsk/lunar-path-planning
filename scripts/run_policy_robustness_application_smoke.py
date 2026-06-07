@@ -668,6 +668,8 @@ def _channel_aware_application_record(record: dict[str, Any]) -> dict[str, Any]:
         "upstream_blocker_reason",
         "failure_taxonomy",
         "failure_taxonomy_source",
+        "platform_goal_classification",
+        "platform_goal_feasibility",
         "candidate_contrast_status",
         "has_finite_candidate_comparison",
     ):

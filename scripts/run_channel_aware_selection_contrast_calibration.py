@@ -23,6 +23,14 @@ SAFETY_REGRESSION_REASONS = {
     "collision_regression",
     "motion_diagnostic_regression",
 }
+PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES = frozenset(
+    {
+        "platform_inflated_goal_blocked",
+        "original_goal_blocked",
+        "out_of_bounds",
+        "unknown_contract_mismatch",
+    }
+)
 
 
 class ConfigError(ValueError):
@@ -342,6 +350,10 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         "path_cost_delta": _safe_float_or_none(comparison.get("path_cost_delta")),
         "channel_cost_delta": _safe_float_or_none(comparison.get("channel_cost_delta")),
         "high_cost_exposure_delta": _safe_float_or_none(comparison.get("high_cost_exposure_delta")),
+        "platform_goal_classification": _platform_goal_failure_class(record),
+        "platform_goal_feasibility": dict(record.get("platform_goal_feasibility"))
+        if isinstance(record.get("platform_goal_feasibility"), dict)
+        else {},
     }
 
 
@@ -370,6 +382,19 @@ def _calibrate_selection(
 
     record_count = len(records)
     goal_blocked_count = sum(1 for record in records if _has_reason(record, "goal_blocked"))
+    platform_class_counts = Counter(
+        record["platform_goal_classification"]
+        for record in records
+        if record.get("platform_goal_classification") is not None
+    )
+    platform_goal_contract_mismatch_count = sum(
+        platform_class_counts[classification]
+        for classification in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES
+    )
+    platform_goal_anchor_available_count = sum(
+        1 for record in records if _platform_goal_anchor_available(record)
+    )
+    platform_goal_unresolved_count = platform_class_counts["unknown_contract_mismatch"]
     same_as_baseline_count = sum(1 for record in records if _has_reason(record, "same_as_baseline"))
     blocked_candidate_count = sum(1 for record in records if _is_blocked(record))
     path_cost_tradeoff_count = sum(1 for record in records if record["path_cost_tradeoff"])
@@ -399,6 +424,10 @@ def _calibrate_selection(
         "keep_selected_candidate_count": keep_selected_count,
         "keep_selected_candidate_rate": _rate(keep_selected_count, changed_context_count),
         "goal_blocked_count": goal_blocked_count,
+        "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
+        "platform_goal_anchor_available_count": platform_goal_anchor_available_count,
+        "platform_goal_unresolved_count": platform_goal_unresolved_count,
+        "platform_goal_feasibility_class_counts": dict(sorted(platform_class_counts.items())),
         "same_as_baseline_count": same_as_baseline_count,
         "blocked_candidate_count": blocked_candidate_count,
         "blocked_candidate_rate": _rate(blocked_candidate_count, record_count),
@@ -489,6 +518,29 @@ def _is_blocked(record: dict[str, Any]) -> bool:
 
 def _has_reason(record: dict[str, Any], reason: str) -> bool:
     return record.get("blocker_reason") == reason or reason in record.get("reason_codes", [])
+
+
+def _platform_goal_failure_class(record: dict[str, Any]) -> str | None:
+    for key in ("failure_taxonomy", "platform_goal_classification"):
+        value = record.get(key)
+        if isinstance(value, str) and value in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+            return value
+    for reason in _string_list(record.get("reason_codes", [])):
+        if reason in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+            return reason
+    feasibility = record.get("platform_goal_feasibility")
+    feasibility = feasibility if isinstance(feasibility, dict) else {}
+    classification = feasibility.get("classification")
+    if isinstance(classification, str) and classification in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+        return classification
+    return None
+
+
+def _platform_goal_anchor_available(record: dict[str, Any]) -> bool:
+    feasibility = record.get("platform_goal_feasibility")
+    feasibility = feasibility if isinstance(feasibility, dict) else {}
+    anchor = feasibility.get("nearest_inflated_passable_anchor")
+    return isinstance(anchor, list) and len(anchor) == 2
 
 
 def _has_safety_regression(record: dict[str, Any]) -> bool:

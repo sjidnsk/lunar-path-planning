@@ -411,8 +411,11 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
         path_cost_delta: float | None = None,
         channel_cost_delta: float | None = None,
         high_cost_exposure_delta: float | None = None,
+        platform_goal_feasibility: dict | None = None,
+        blocker_class: str | None = None,
+        failure_taxonomy: str | None = None,
     ) -> dict:
-        return {
+        payload = {
             "requested_backend": "channel_aware_astar",
             "selected_backend": selected_backend,
             "status": status,
@@ -424,6 +427,13 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
                 "high_cost_exposure_delta": high_cost_exposure_delta,
             },
         }
+        if blocker_class is not None:
+            payload["blocker_class"] = blocker_class
+        if failure_taxonomy is not None:
+            payload["failure_taxonomy"] = failure_taxonomy
+        if platform_goal_feasibility is not None:
+            payload["platform_goal_feasibility"] = platform_goal_feasibility
+        return payload
 
     def test_config_validate_and_dry_run_do_not_write_outputs(self) -> None:
         self._write_batch(
@@ -795,6 +805,108 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
         self.assertFalse(blocked["has_finite_candidate_comparison"])
         self.assertIn("same_as_baseline", records[("npz_shadow_corridor", 2)]["reason_codes"])
         self.assertIn("not_lower_risk", records[("npz_shadow_corridor", 3)]["reason_codes"])
+
+    def test_channel_aware_decision_audit_preserves_platform_goal_contract_mismatch(self) -> None:
+        platform_goal_feasibility = {
+            "schema_version": "platform-goal-feasibility/v1",
+            "cell": [6, 5],
+            "contract_reachable": True,
+            "original_passable": True,
+            "inflated_passable": False,
+            "blocked_by_platform_footprint": True,
+            "footprint_radius_m": 1.0,
+            "nearest_inflated_passable_anchor": [6, 6],
+            "anchor_distance_cells": 1,
+            "anchor_distance_m": 1.0,
+            "classification": "platform_inflated_goal_blocked",
+            "proxy_route_comparison": {
+                "scope": "audit_proxy_anchor_not_same_cell",
+                "anchor_route_feasible": True,
+                "anchor_path_cost": 12.0,
+                "same_cell_positive_evidence": False,
+            },
+        }
+        self._write_batch(
+            [
+                {
+                    "run_id": "smoke-baseline-k2-astar",
+                    "scenario_set": "smoke",
+                    "diagnostic_profile": "baseline",
+                    "top_k": 2,
+                    "summary": self._summary(
+                        scenario_set="smoke",
+                        diagnostic_profile="baseline",
+                        top_k=2,
+                        scenario_id="npz_platform_goal_blocked",
+                        scenario_group="stress",
+                        selected_before=[5, 5],
+                        selected_after=[5, 5],
+                        candidates=[
+                            self._candidate(0, [5, 5], utility=0.95, path_cost=9.0),
+                            self._candidate(1, [6, 5], utility=0.90, path_cost=9.5),
+                        ],
+                    ),
+                },
+                {
+                    "run_id": "smoke-baseline-k2-channel-aware",
+                    "scenario_set": "smoke",
+                    "diagnostic_profile": "baseline",
+                    "top_k": 2,
+                    "summary": self._summary(
+                        scenario_set="smoke",
+                        diagnostic_profile="baseline",
+                        top_k=2,
+                        scenario_id="npz_platform_goal_blocked",
+                        scenario_group="stress",
+                        selected_before=[5, 5],
+                        selected_after=[5, 5],
+                        candidates=[
+                            self._candidate(0, [5, 5], utility=0.95, path_cost=9.0),
+                            self._candidate(
+                                1,
+                                [6, 5],
+                                utility=0.90,
+                                path_cost=9.5,
+                                planning_backend=self._channel_aware_backend(
+                                    status="fallback",
+                                    selected_backend="astar",
+                                    fallback_reason="channel_search_failed:goal_blocked",
+                                    blocker_class="platform_inflated_goal_blocked",
+                                    failure_taxonomy="platform_inflated_goal_blocked",
+                                    platform_goal_feasibility=platform_goal_feasibility,
+                                ),
+                            ),
+                        ],
+                    ),
+                },
+            ]
+        )
+
+        completed = self._run_analysis("--batch-root", str(self.batch_root), "--config", str(self.config))
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        comparison = json.loads(
+            (self.batch_root / "policy-decision-selection-comparison-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        record = comparison["channel_aware_decision_audit"]["records"][0]
+        self.assertEqual(record["recommendation"], "reject")
+        self.assertIn("goal_blocked", record["reason_codes"])
+        self.assertIn("platform_inflated_goal_blocked", record["reason_codes"])
+        self.assertEqual(record["blocker_reason"], "goal_blocked")
+        self.assertEqual(record["platform_goal_classification"], "platform_inflated_goal_blocked")
+        self.assertEqual(record["failure_taxonomy"], "platform_inflated_goal_blocked")
+        self.assertEqual(record["failure_taxonomy_source"], "failure_taxonomy")
+        self.assertEqual(
+            record["platform_goal_feasibility"]["proxy_route_comparison"]["scope"],
+            "audit_proxy_anchor_not_same_cell",
+        )
+        self.assertFalse(
+            record["platform_goal_feasibility"]["proxy_route_comparison"]["same_cell_positive_evidence"]
+        )
+        self.assertEqual(record["candidate_contrast_status"], "missing_candidate_contrast")
+        self.assertFalse(record["has_finite_candidate_comparison"])
 
     def test_validation_failures_cover_missing_schema_metadata_provenance_and_failed_sources(self) -> None:
         bad_schema = self._summary(

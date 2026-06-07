@@ -609,6 +609,71 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
             channel["action_counts"],
         )
 
+    def test_application_smoke_propagates_platform_goal_contract_mismatch_fields(self) -> None:
+        robustness_summary = self._write_sources(include_channel_aware_audit=True)
+        comparison_path = self.batch_root / "policy-decision-selection-comparison-summary.json"
+        comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+        blocked = comparison["channel_aware_decision_audit"]["records"][2]
+        blocked["reason_codes"] = ["goal_blocked", "platform_inflated_goal_blocked"]
+        blocked["failure_taxonomy"] = "platform_inflated_goal_blocked"
+        blocked["failure_taxonomy_source"] = "platform_goal_feasibility.classification"
+        blocked["platform_goal_classification"] = "platform_inflated_goal_blocked"
+        blocked["platform_goal_feasibility"] = {
+            "schema_version": "platform-goal-feasibility/v1",
+            "classification": "platform_inflated_goal_blocked",
+            "contract_reachable": True,
+            "original_passable": True,
+            "inflated_passable": False,
+            "blocked_by_platform_footprint": True,
+            "nearest_inflated_passable_anchor": [3, 4],
+            "anchor_distance_cells": 1,
+            "anchor_distance_m": 1.0,
+            "proxy_route_comparison": {
+                "scope": "audit_proxy_anchor_not_same_cell",
+                "anchor_route_feasible": True,
+                "same_cell_positive_evidence": False,
+            },
+        }
+        comparison_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+
+        completed = self._run_smoke(
+            "--batch-root",
+            str(self.batch_root),
+            "--robustness-summary",
+            str(robustness_summary),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        application = json.loads(
+            (self.batch_root / "policy-robustness-application-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        blocked_record = {
+            record["action_index"]: record
+            for record in application["channel_aware_application"]["records"]
+        }[2]
+        self.assertEqual(blocked_record["failure_taxonomy"], "platform_inflated_goal_blocked")
+        self.assertEqual(
+            blocked_record["failure_taxonomy_source"],
+            "platform_goal_feasibility.classification",
+        )
+        self.assertEqual(
+            blocked_record["platform_goal_classification"],
+            "platform_inflated_goal_blocked",
+        )
+        self.assertEqual(
+            blocked_record["platform_goal_feasibility"]["classification"],
+            "platform_inflated_goal_blocked",
+        )
+        self.assertFalse(
+            blocked_record["platform_goal_feasibility"]["proxy_route_comparison"][
+                "same_cell_positive_evidence"
+            ]
+        )
+
     def test_validation_failures_are_written_with_machine_readable_reason_codes(self) -> None:
         robustness_summary = self._write_sources(
             robustness_status="failed",

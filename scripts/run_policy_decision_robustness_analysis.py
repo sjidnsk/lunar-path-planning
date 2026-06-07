@@ -24,6 +24,25 @@ APPLICATION_SCHEMA_VERSION = "sample-quality-training-application-summary/v1"
 TRAINING_SELECTION_SCHEMA_VERSION = "training-selection-stability-summary/v1"
 PATH_FEEDBACK_SUMMARY_SCHEMA_VERSION = "path-feedback-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
+PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES = frozenset(
+    {
+        "platform_inflated_goal_blocked",
+        "original_goal_blocked",
+        "out_of_bounds",
+        "unknown_contract_mismatch",
+    }
+)
+FAILURE_TAXONOMY = frozenset(
+    {
+        "target_unreachable",
+        "candidate_generation_failed",
+        "candidate_mask_empty",
+        "route_generation_failed",
+        "missing_candidate_contrast",
+        "blocked_by_contract",
+        *PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES,
+    }
+)
 SOURCE_FILES = {
     "batch_run_index": ("batch-run-index.json", RUN_INDEX_SCHEMA_VERSION),
     "batch_evaluation_summary": ("batch-evaluation-summary.json", EVALUATION_SUMMARY_SCHEMA_VERSION),
@@ -1018,12 +1037,16 @@ def _channel_aware_candidate_records(
         planning_backend = candidate.get("planning_backend")
         audit = _classify_channel_aware_decision_evidence(planning_backend)
         if audit["present"]:
+            report = dict(planning_backend) if isinstance(planning_backend, dict) else {}
+            platform_goal_feasibility = candidate.get("platform_goal_feasibility")
+            if isinstance(platform_goal_feasibility, dict):
+                report["platform_goal_feasibility"] = platform_goal_feasibility
             records.append(
                 {
                     "scenario_id": scenario.get("scenario_id"),
                     "action_index": candidate.get("action_index"),
                     "cell": candidate.get("cell"),
-                    "planning_backend": planning_backend,
+                    "planning_backend": report,
                 }
             )
     if records:
@@ -1099,6 +1122,13 @@ def _classify_channel_aware_decision_evidence(report: Any) -> dict[str, Any]:
     )
     blocker = _channel_aware_blocker_reason(report)
     upstream_blocker_reason = _channel_aware_upstream_blocker_reason(report)
+    platform_goal_feasibility = report.get("platform_goal_feasibility")
+    platform_goal_feasibility = (
+        platform_goal_feasibility
+        if isinstance(platform_goal_feasibility, dict)
+        else {}
+    )
+    platform_goal_classification = _platform_goal_failure_class(report)
     has_finite_candidate_comparison = any(
         value is not None
         for value in (
@@ -1122,10 +1152,12 @@ def _classify_channel_aware_decision_evidence(report: Any) -> dict[str, Any]:
         reason_codes.append("path_cost_tradeoff")
     if blocker not in (None, "selected"):
         reason_codes.append(blocker)
+    if platform_goal_classification is not None:
+        reason_codes.append(platform_goal_classification)
 
     if quality_improvement:
         recommendation = "keep"
-    elif blocker in {"goal_blocked", "not_lower_risk"}:
+    elif blocker in {"goal_blocked", "not_lower_risk"} or platform_goal_classification is not None:
         recommendation = "reject"
     elif blocker == "same_as_baseline" or selected:
         recommendation = "downweight"
@@ -1145,6 +1177,10 @@ def _classify_channel_aware_decision_evidence(report: Any) -> dict[str, Any]:
         "path_cost_tradeoff": path_cost_tradeoff,
         "blocker_reason": blocker,
         "upstream_blocker_reason": upstream_blocker_reason,
+        "platform_goal_classification": platform_goal_classification,
+        "platform_goal_feasibility": platform_goal_feasibility
+        if platform_goal_feasibility
+        else None,
         "failure_taxonomy": failure_taxonomy,
         "failure_taxonomy_source": failure_taxonomy_source,
         "candidate_contrast_status": "finite_candidate_comparison"
@@ -1178,15 +1214,11 @@ def _channel_aware_failure_taxonomy(
     report: dict[str, Any],
 ) -> tuple[str | None, str | None]:
     explicit = report.get("failure_taxonomy")
-    if isinstance(explicit, str) and explicit in {
-        "target_unreachable",
-        "candidate_generation_failed",
-        "candidate_mask_empty",
-        "route_generation_failed",
-        "missing_candidate_contrast",
-        "blocked_by_contract",
-    }:
+    if isinstance(explicit, str) and explicit in FAILURE_TAXONOMY:
         return explicit, "failure_taxonomy"
+    platform_class = _platform_goal_failure_class(report)
+    if platform_class is not None:
+        return platform_class, "platform_goal_feasibility.classification"
     if blocker != "goal_blocked":
         return None, None
     text = " ".join(
@@ -1212,10 +1244,35 @@ def _channel_aware_failure_taxonomy(
 
 
 def _channel_aware_failure_taxonomy_source(report: dict[str, Any]) -> str:
-    for key in ("failure_taxonomy", "fallback_reason", "blocker_class", "failure_reason", "route_failure_reason"):
+    for key in (
+        "failure_taxonomy",
+        "platform_goal_feasibility",
+        "fallback_reason",
+        "blocker_class",
+        "failure_reason",
+        "route_failure_reason",
+    ):
         if report.get(key) is not None:
+            if key == "platform_goal_feasibility":
+                return "platform_goal_feasibility.classification"
             return key
     return "derived_goal_blocked_blocker"
+
+
+def _platform_goal_failure_class(report: dict[str, Any]) -> str | None:
+    explicit = report.get("failure_taxonomy")
+    if isinstance(explicit, str) and explicit in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+        return explicit
+    for key in ("platform_goal_classification", "blocker_class"):
+        value = report.get(key)
+        if isinstance(value, str) and value in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+            return value
+    feasibility = report.get("platform_goal_feasibility")
+    feasibility = feasibility if isinstance(feasibility, dict) else {}
+    classification = feasibility.get("classification")
+    if isinstance(classification, str) and classification in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
+        return classification
+    return None
 
 
 def _channel_aware_blocker_reason(report: dict[str, Any]) -> str | None:

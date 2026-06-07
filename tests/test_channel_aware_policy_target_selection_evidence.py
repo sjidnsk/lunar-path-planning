@@ -68,6 +68,7 @@ class ChannelAwarePolicyTargetSelectionEvidenceTests(unittest.TestCase):
         git_mismatch: bool = False,
         readiness_status: str = "passed",
         readiness_reason_codes: list[str] | None = None,
+        omit_readiness: bool = False,
     ) -> None:
         source_git = self.git_snapshot
         if git_mismatch:
@@ -159,10 +160,11 @@ class ChannelAwarePolicyTargetSelectionEvidenceTests(unittest.TestCase):
                 "records": records,
             },
         }
-        (self.batch_root / "channel-aware-training-readiness-summary.json").write_text(
-            json.dumps(readiness, indent=2),
-            encoding="utf-8",
-        )
+        if not omit_readiness:
+            (self.batch_root / "channel-aware-training-readiness-summary.json").write_text(
+                json.dumps(readiness, indent=2),
+                encoding="utf-8",
+            )
         (self.batch_root / "policy-robustness-application-summary.json").write_text(
             json.dumps(application, indent=2),
             encoding="utf-8",
@@ -369,6 +371,44 @@ class ChannelAwarePolicyTargetSelectionEvidenceTests(unittest.TestCase):
         self.assertTrue(summary["supports_policy_target_selection_improvement_claim"])
         readiness_source = summary["source_summaries"]["channel_aware_training_readiness_summary"]
         self.assertEqual(readiness_source["status"], "failed")
+
+    def test_missing_readiness_can_bootstrap_policy_target_evidence(self) -> None:
+        self._write_sources(
+            [
+                self._audit_record(
+                    0,
+                    scenario_id="npz_changed_without_readiness_seed",
+                    recommendation="keep",
+                    selected=True,
+                    reason_codes=["channel_aware_quality_improved", "path_cost_tradeoff"],
+                    blocker_reason="selected",
+                    path_cost_tradeoff=True,
+                    selected_candidate_changed=True,
+                )
+            ],
+            omit_readiness=True,
+        )
+
+        completed = self._run_audit(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "channel-aware-policy-target-selection-evidence-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertEqual(summary["selected_candidate_changed_rate"], 1.0)
+        self.assertTrue(summary["supports_policy_target_selection_improvement_claim"])
+        readiness_source = summary["source_summaries"]["channel_aware_training_readiness_summary"]
+        self.assertFalse(readiness_source["exists"])
+        self.assertTrue(summary["readiness_gate_input"]["bootstrap_without_readiness_seed"])
 
     def test_validate_only_reports_git_mismatch_without_writing_summary(self) -> None:
         self._write_sources(
