@@ -197,11 +197,33 @@ readiness、goal-blocked、audit-only anchor contract 和新 candidate-generatio
 只存在于失败后的 audit proxy scope；前移到 candidate generation 后，source selection 已经
 产生非零变化并得到 18 条 trainable projected target context。
 
-但 PPO 仍不能启动，因为 60 个 blocked target context 仍不可训练，policy training readiness
-仍是 `needs_training_contract_refinement`。下一步应做
-`Anchor-Projection Readiness Contract Integration v1`：把 candidate-generation summary 与
-anchor-projection contract 的训练口径对齐，明确哪些 projected contexts 可以进入训练输入，
-哪些仍应保持 `sample_weight=0.0`。
+`Anchor-Projection Readiness Contract Integration v1` 已把 candidate-generation summary 与
+anchor-projection contract/readiness 的训练口径对齐。新的
+`outputs/path_feedback_batch_anchor_projection_contract_integration_v1/` root 中：
+
+- batch：8/8 passed，`open_grid_fallback_used_count=0`。
+- candidate-generation：`status=passed`，`reason_codes=[]`，
+  `trainable_anchor_projection_count=18`，
+  `nontrainable_blocked_target_count=60`，
+  `nontrainable_anchor_unreachable_count=36`，
+  `nontrainable_source_candidate_not_selected_count=24`，
+  `source_selection_quality_regression_count=0`，
+  `positive_training_evidence_contains_audit_proxy_anchor_count=0`。
+- evidence-contract：`contract_source=anchor_projection_candidate_generation_summary`，
+  `trainable_anchor_projection_count=18`，
+  `nontrainable_blocked_target_count=60`，
+  `candidate_contract_alignment_gap_count=0`，
+  `contract_blockers=[]`。
+- policy readiness：`application_scope=anchor_projection_readiness_contract_review_only`，
+  `anchor_projection_readiness_trainable_count=18`，
+  `anchor_projection_candidate_contract_alignment_gap_count=0`，
+  但仍为 `training_readiness_status=needs_training_contract_refinement`，
+  `training_blockers=["anchor_projection_nontrainable_contexts_remain"]`。
+
+PPO 仍不能启动。当前剩余瓶颈不再是 18/78 与 3/42 的 contract 口径不一致，而是
+60 个 nontrainable context：36 个 `anchor_unreachable` 与 24 个
+`source_candidate_not_selected`。下一阶段应分别分析平台 footprint/地形可达性与
+source-selection margin，而不是扩大样本或放宽正样本边界。
 
 ## 非目标
 

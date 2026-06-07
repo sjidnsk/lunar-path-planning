@@ -202,3 +202,33 @@ Validation completed:
 
 The remaining blocker is no longer provenance; it is reconciling candidate-generation evidence with
 the anchor-projection evidence contract before any training dry-run.
+
+- [x] **Step 8: Anchor-Projection Readiness Contract Integration v1**
+
+Aligned candidate-generation, evidence-contract, and policy-readiness counting around the same
+projected execution target contract.
+
+- Candidate-generation summaries now expose top-level nontrainable cause counts:
+  `nontrainable_anchor_unreachable_count`,
+  `nontrainable_source_candidate_not_selected_count`, and `audit_proxy_positive_count`.
+- Evidence-contract can use `anchor-projection-candidate-generation-summary/v1` as the contract
+  source when old goal-blocked/readiness audit summaries are absent, while preserving the old
+  audit-only mode for legacy roots.
+- Policy readiness now supports an anchor-only review mode and keeps the old channel-aware/audit
+  counts separate from candidate-generation counts.
+
+Validation:
+
+- targeted anchor-projection/readiness/provenance tests:
+  `27 passed, 5 subtests passed`
+- parent `tests`: `113 passed, 10 subtests passed`
+- `model-explorer/tests`: `191 passed, 13 subtests passed`
+- integration root:
+  `outputs/path_feedback_batch_anchor_projection_contract_integration_v1/`
+  completed 8/8 batch runs; candidate-generation and evidence-contract both report
+  `trainable_anchor_projection_count=18`, `nontrainable_blocked_target_count=60`,
+  and `candidate_contract_alignment_gap_count=0`.
+
+Readiness remains blocked by `anchor_projection_nontrainable_contexts_remain`; the next algorithm
+work is to split the 36 `anchor_unreachable` contexts from the 24
+`source_candidate_not_selected` contexts and address their separate causes.
