@@ -787,6 +787,12 @@ class PolicyDecisionRobustnessAnalysisTests(unittest.TestCase):
 
         self.assertEqual(records[("npz_shadow_corridor", 1)]["recommendation"], "reject")
         self.assertIn("goal_blocked", records[("npz_shadow_corridor", 1)]["reason_codes"])
+        blocked = records[("npz_shadow_corridor", 1)]
+        self.assertEqual(blocked["upstream_blocker_reason"], "channel_search_failed:goal_blocked")
+        self.assertEqual(blocked["failure_taxonomy"], "route_generation_failed")
+        self.assertEqual(blocked["failure_taxonomy_source"], "fallback_reason")
+        self.assertEqual(blocked["candidate_contrast_status"], "missing_candidate_contrast")
+        self.assertFalse(blocked["has_finite_candidate_comparison"])
         self.assertIn("same_as_baseline", records[("npz_shadow_corridor", 2)]["reason_codes"])
         self.assertIn("not_lower_risk", records[("npz_shadow_corridor", 3)]["reason_codes"])
 

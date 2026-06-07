@@ -1098,6 +1098,21 @@ def _classify_channel_aware_decision_evidence(report: Any) -> dict[str, Any]:
         or (risk_delta is not None and risk_delta < 0.0)
     )
     blocker = _channel_aware_blocker_reason(report)
+    upstream_blocker_reason = _channel_aware_upstream_blocker_reason(report)
+    has_finite_candidate_comparison = any(
+        value is not None
+        for value in (
+            path_cost_delta,
+            channel_cost_delta,
+            high_cost_exposure_delta,
+            risk_delta,
+        )
+    )
+    failure_taxonomy, failure_taxonomy_source = _channel_aware_failure_taxonomy(
+        blocker=blocker,
+        upstream_blocker_reason=upstream_blocker_reason,
+        report=report,
+    )
     reason_codes: list[str] = []
     if quality_improvement:
         reason_codes.append("channel_aware_quality_improved")
@@ -1129,6 +1144,13 @@ def _classify_channel_aware_decision_evidence(report: Any) -> dict[str, Any]:
         "risk_or_high_cost_improvement": risk_or_high_cost_improvement,
         "path_cost_tradeoff": path_cost_tradeoff,
         "blocker_reason": blocker,
+        "upstream_blocker_reason": upstream_blocker_reason,
+        "failure_taxonomy": failure_taxonomy,
+        "failure_taxonomy_source": failure_taxonomy_source,
+        "candidate_contrast_status": "finite_candidate_comparison"
+        if has_finite_candidate_comparison
+        else "missing_candidate_contrast",
+        "has_finite_candidate_comparison": has_finite_candidate_comparison,
         "recommendation": recommendation,
         "reason_codes": _dedupe(reason_codes),
         "comparison": {
@@ -1139,6 +1161,61 @@ def _classify_channel_aware_decision_evidence(report: Any) -> dict[str, Any]:
             "risk_delta": risk_delta,
         },
     }
+
+
+def _channel_aware_upstream_blocker_reason(report: dict[str, Any]) -> str | None:
+    for key in ("fallback_reason", "blocker_class", "failure_reason", "route_failure_reason"):
+        value = report.get(key)
+        if value is not None:
+            return str(value)
+    return None
+
+
+def _channel_aware_failure_taxonomy(
+    *,
+    blocker: str | None,
+    upstream_blocker_reason: str | None,
+    report: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    explicit = report.get("failure_taxonomy")
+    if isinstance(explicit, str) and explicit in {
+        "target_unreachable",
+        "candidate_generation_failed",
+        "candidate_mask_empty",
+        "route_generation_failed",
+        "missing_candidate_contrast",
+        "blocked_by_contract",
+    }:
+        return explicit, "failure_taxonomy"
+    if blocker != "goal_blocked":
+        return None, None
+    text = " ".join(
+        str(value).lower()
+        for value in (
+            upstream_blocker_reason,
+            report.get("fallback_reason"),
+            report.get("blocker_class"),
+            report.get("failure_reason"),
+            report.get("route_failure_reason"),
+        )
+        if value is not None
+    )
+    if "target_unreachable" in text or "goal_unreachable" in text:
+        return "target_unreachable", _channel_aware_failure_taxonomy_source(report)
+    if "candidate_mask_empty" in text or "mask_empty" in text or "candidate_list_empty" in text:
+        return "candidate_mask_empty", _channel_aware_failure_taxonomy_source(report)
+    if "candidate_generation_failed" in text or "candidate_generation" in text:
+        return "candidate_generation_failed", _channel_aware_failure_taxonomy_source(report)
+    if "route_generation" in text or "route_failed" in text or "search_failed" in text or "goal_blocked" in text:
+        return "route_generation_failed", _channel_aware_failure_taxonomy_source(report)
+    return "missing_candidate_contrast", _channel_aware_failure_taxonomy_source(report)
+
+
+def _channel_aware_failure_taxonomy_source(report: dict[str, Any]) -> str:
+    for key in ("failure_taxonomy", "fallback_reason", "blocker_class", "failure_reason", "route_failure_reason"):
+        if report.get(key) is not None:
+            return key
+    return "derived_goal_blocked_blocker"
 
 
 def _channel_aware_blocker_reason(report: dict[str, Any]) -> str | None:

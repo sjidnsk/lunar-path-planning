@@ -295,7 +295,7 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
 
     def _channel_aware_decision_audit(self, *, run_id: str, scenario_id: str) -> dict:
         def record(action_index: int, recommendation: str, reason_codes: list[str]) -> dict:
-            return {
+            payload = {
                 "pair_key": "all-all-k3",
                 "astar_run_id": f"{run_id}-astar",
                 "channel_aware_run_id": f"{run_id}-channel-aware",
@@ -322,6 +322,17 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
                     "risk_delta": None,
                 },
             }
+            if "goal_blocked" in reason_codes:
+                payload.update(
+                    {
+                        "upstream_blocker_reason": "channel_search_failed:goal_blocked",
+                        "failure_taxonomy": "route_generation_failed",
+                        "failure_taxonomy_source": "fallback_reason",
+                        "candidate_contrast_status": "missing_candidate_contrast",
+                        "has_finite_candidate_comparison": False,
+                    }
+                )
+            return payload
 
         return {
             "schema_version": "channel-aware-decision-audit/v1",
@@ -587,6 +598,11 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
         self.assertIn("channel_aware_application_keep_quality_evidence", records_by_action[0]["application_reason_codes"])
         self.assertIn("channel_aware_application_exclude_blocked_candidate_evidence", records_by_action[2]["application_reason_codes"])
         self.assertIn("channel_aware_application_downweight_needs_more_evidence", records_by_action[3]["application_reason_codes"])
+        self.assertEqual(records_by_action[2]["upstream_blocker_reason"], "channel_search_failed:goal_blocked")
+        self.assertEqual(records_by_action[2]["failure_taxonomy"], "route_generation_failed")
+        self.assertEqual(records_by_action[2]["failure_taxonomy_source"], "fallback_reason")
+        self.assertEqual(records_by_action[2]["candidate_contrast_status"], "missing_candidate_contrast")
+        self.assertFalse(records_by_action[2]["has_finite_candidate_comparison"])
 
         self.assertEqual(
             comparison["channel_aware_application"]["action_counts"],

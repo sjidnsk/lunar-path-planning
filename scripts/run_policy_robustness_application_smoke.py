@@ -645,7 +645,7 @@ def _build_channel_aware_application_summary(selection_comparison: dict[str, Any
 def _channel_aware_application_record(record: dict[str, Any]) -> dict[str, Any]:
     recommendation = str(record.get("recommendation", "needs_more_evidence"))
     action = _channel_aware_application_action(recommendation)
-    return {
+    payload = {
         "pair_key": record.get("pair_key"),
         "astar_run_id": record.get("astar_run_id"),
         "channel_aware_run_id": record.get("channel_aware_run_id"),
@@ -664,6 +664,16 @@ def _channel_aware_application_record(record: dict[str, Any]) -> dict[str, Any]:
         "application_reason_codes": _channel_aware_application_reason_codes(action),
         "comparison": dict(record.get("comparison")) if isinstance(record.get("comparison"), dict) else {},
     }
+    for key in (
+        "upstream_blocker_reason",
+        "failure_taxonomy",
+        "failure_taxonomy_source",
+        "candidate_contrast_status",
+        "has_finite_candidate_comparison",
+    ):
+        if key in record:
+            payload[key] = record.get(key)
+    return payload
 
 
 def _channel_aware_application_action(recommendation: str) -> str:

@@ -1,0 +1,27 @@
+{
+  "schema_version": "goal-blocked-evidence-regeneration-config/v1",
+  "description": "Goal-Blocked Evidence Regeneration v1. This audit-only stage re-diagnoses goal_blocked needs_regeneration records into explicit failure taxonomy before rerunning contract refinement.",
+  "output_files": {
+    "goal_blocked_evidence_regeneration_summary": "goal-blocked-evidence-regeneration-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true
+  },
+  "diagnostic": {
+    "require_finite_comparison_for_negative_evidence": true
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_large_scale_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_route_contract_change",
+    "no_path_planner_sidecar_contract_change",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_real_world_performance_claim"
+  ]
+}
