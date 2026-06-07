@@ -530,7 +530,7 @@ def _classify_candidate_generation_context(record: dict[str, Any], *, config: di
     distance_m = _number_or_none(record.get("projection_distance_m"))
     distance_cells = _int_or_none(record.get("projection_distance_cells"))
     anchor_reachable = bool(record.get("anchor_reachable"))
-    reject_reasons = _string_list(record.get("reject_reasons"))
+    reject_reasons = [] if record.get("trainable") is True else _string_list(record.get("reject_reasons"))
     if classification not in PLATFORM_GOAL_CONTRACT_MISMATCH_CLASSES:
         reject_reasons.append("not_platform_goal_contract_mismatch")
     if classification == "unknown_contract_mismatch":
@@ -1053,6 +1053,8 @@ def _int_value(value: Any, label: str) -> int:
 def _int_or_none(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
+    if isinstance(value, float) and value.is_integer() and math.isfinite(value):
+        return int(value)
     return None
 
 

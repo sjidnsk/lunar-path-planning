@@ -277,10 +277,10 @@ class AnchorProjectionEvidenceContractTests(unittest.TestCase):
                             "training_use": "trainable_anchor_projection_contrast",
                             "comparison_scope": "projected_target_anchor_contrast",
                             "projection_distance_m": 0.5,
-                            "projection_distance_cells": 1,
+                            "projection_distance_cells": 1.0,
                             "positive_audit_proxy": False,
                             "source_selection_quality_regression": False,
-                            "reject_reasons": [],
+                            "reject_reasons": ["audit_proxy_scope_not_positive_evidence"],
                         },
                         {
                             "run_id": "all-all-k3-astar",
