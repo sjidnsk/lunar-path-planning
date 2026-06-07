@@ -477,6 +477,8 @@ def _candidate_generation_contract_metrics(
         else "keep_platform_blocked_targets_out_of_training"
     )
     reason_counts = _candidate_nontrainable_reason_counts(candidate)
+    coverage_diagnosis = candidate.get("anchor_projection_coverage_diagnosis")
+    coverage_diagnosis = coverage_diagnosis if isinstance(coverage_diagnosis, dict) else {}
     return {
         "contract_source": "anchor_projection_candidate_generation_summary",
         "platform_goal_contract_mismatch_count": platform_goal_contract_mismatch_count,
@@ -492,6 +494,26 @@ def _candidate_generation_contract_metrics(
         ),
         "nontrainable_source_candidate_not_selected_count": _int_value_or_default(
             reason_counts.get("source_candidate_not_selected"), 0
+        ),
+        "reachable_substitute_anchor_found_count": _int_value_or_default(
+            candidate.get("reachable_substitute_anchor_found_count"),
+            _int_value_or_default(coverage_diagnosis.get("reachable_substitute_anchor_found_count"), 0),
+        ),
+        "anchor_unreachable_repaired_by_reachable_substitute_count": _int_value_or_default(
+            candidate.get("anchor_unreachable_repaired_by_reachable_substitute_count"),
+            _int_value_or_default(
+                coverage_diagnosis.get("anchor_unreachable_repaired_by_reachable_substitute_count"),
+                0,
+            ),
+        ),
+        "true_geometry_unreachable_count": _int_value_or_default(
+            candidate.get("true_geometry_unreachable_count"),
+            _int_value_or_default(coverage_diagnosis.get("true_geometry_unreachable_count"), 0),
+        ),
+        "anchor_selection_status_counts": (
+            coverage_diagnosis.get("anchor_selection_status_counts")
+            if isinstance(coverage_diagnosis.get("anchor_selection_status_counts"), dict)
+            else {}
         ),
         "platform_goal_anchor_available_count": sum(1 for decision in decisions if decision.get("anchor_available")),
         "platform_goal_unresolved_count": unresolved_count,
@@ -578,6 +600,26 @@ def _classify_candidate_generation_context(record: dict[str, Any], *, config: di
         "platform_goal_classification": classification,
         "anchor_available": anchor is not None,
         "anchor_reachable": anchor_reachable,
+        "nearest_anchor_reachable": (
+            bool(record.get("nearest_anchor_reachable"))
+            if record.get("nearest_anchor_reachable") is not None
+            else None
+        ),
+        "anchor_selection_status": record.get("anchor_selection_status"),
+        "start_component_id": _int_or_none(record.get("start_component_id")),
+        "target_component_id": _int_or_none(record.get("target_component_id")),
+        "nearest_anchor_component_id": _int_or_none(record.get("nearest_anchor_component_id")),
+        "projected_anchor_component_id": _int_or_none(record.get("projected_anchor_component_id")),
+        "start_component_size": _int_or_none(record.get("start_component_size")),
+        "target_component_size": _int_or_none(record.get("target_component_size")),
+        "nearest_anchor_component_size": _int_or_none(record.get("nearest_anchor_component_size")),
+        "projected_anchor_component_size": _int_or_none(record.get("projected_anchor_component_size")),
+        "reachable_substitute_anchor_available": bool(
+            record.get("reachable_substitute_anchor_available", False)
+        ),
+        "reachable_substitute_anchor_count": _int_or_none(
+            record.get("reachable_substitute_anchor_count")
+        ),
         "projection_distance_m": distance_m,
         "projection_distance_cells": distance_cells,
         "comparison_scope": comparison_scope,

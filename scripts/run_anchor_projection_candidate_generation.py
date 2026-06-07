@@ -173,6 +173,13 @@ def analyze_anchor_projection_candidate_generation(
     )
     coverage_diagnosis = _anchor_projection_coverage_diagnosis(contexts.values())
     nontrainable_reason_counts = coverage_diagnosis["nontrainable_primary_reason_counts"]
+    reachable_substitute_anchor_found_count = int(
+        coverage_diagnosis["reachable_substitute_anchor_found_count"]
+    )
+    anchor_unreachable_repaired_count = int(
+        coverage_diagnosis["anchor_unreachable_repaired_by_reachable_substitute_count"]
+    )
+    true_geometry_unreachable_count = int(coverage_diagnosis["true_geometry_unreachable_count"])
     if trainable_count < config["thresholds"]["min_trainable_anchor_projection_count"]:
         _append_reason(reason_codes, "trainable_anchor_projection_count_below_threshold")
     if source_changed_rate < config["thresholds"]["min_source_selected_candidate_changed_rate"]:
@@ -213,6 +220,9 @@ def analyze_anchor_projection_candidate_generation(
         "nontrainable_source_candidate_not_selected_count": int(
             nontrainable_reason_counts.get("source_candidate_not_selected", 0) or 0
         ),
+        "reachable_substitute_anchor_found_count": reachable_substitute_anchor_found_count,
+        "anchor_unreachable_repaired_by_reachable_substitute_count": anchor_unreachable_repaired_count,
+        "true_geometry_unreachable_count": true_geometry_unreachable_count,
         "source_selected_candidate_changed_count": source_changed_count,
         "source_selected_candidate_changed_rate": source_changed_rate,
         "source_selection_quality_regression_count": source_selection_quality_regression_count,
@@ -316,10 +326,26 @@ def _collect_contexts(
                     "source_selection_risk_margin_vs_best_alternative": None,
                     "projection_distance_cells": None,
                     "projection_distance_m": None,
+                    "nearest_inflated_passable_anchor": None,
+                    "nearest_anchor_reachable": None,
+                    "nearest_anchor_distance_cells": None,
+                    "nearest_anchor_distance_m": None,
+                    "anchor_selection_status": None,
+                    "start_component_id": None,
+                    "target_component_id": None,
+                    "nearest_anchor_component_id": None,
+                    "projected_anchor_component_id": None,
+                    "start_component_size": None,
+                    "target_component_size": None,
+                    "nearest_anchor_component_size": None,
+                    "projected_anchor_component_size": None,
+                    "reachable_substitute_anchor_available": False,
+                    "reachable_substitute_anchor_count": 0,
                 },
             )
             projection = feasibility.get("anchor_projection")
             projection = projection if isinstance(projection, dict) else {}
+            _copy_anchor_reachability_fields(context, projection)
             anchor = _cell_tuple(
                 projection.get("projected_anchor_cell")
                 or projection.get("nearest_inflated_passable_anchor")
@@ -354,6 +380,7 @@ def _collect_contexts(
             generation_distance_m = _float_optional(generation.get("projection_distance_m"))
             if generation_distance_m is not None:
                 context["projection_distance_m"] = generation_distance_m
+            _copy_anchor_reachability_fields(context, generation)
             if selected_candidate is not None:
                 context["selected_action_index"] = selected_candidate.get("action_index")
                 context["selected_candidate_role"] = selected_candidate.get("candidate_role")
@@ -436,6 +463,39 @@ def _collect_contexts(
                 context["positive_audit_proxy"] = comparison_scope == "audit_proxy_anchor_not_same_cell"
 
 
+def _copy_anchor_reachability_fields(context: dict[str, Any], source: dict[str, Any]) -> None:
+    nearest_anchor = _cell_tuple(source.get("nearest_inflated_passable_anchor"))
+    if nearest_anchor is not None:
+        context["nearest_inflated_passable_anchor"] = list(nearest_anchor)
+    if "nearest_anchor_reachable" in source:
+        context["nearest_anchor_reachable"] = bool(source.get("nearest_anchor_reachable"))
+    status = source.get("anchor_selection_status")
+    if status:
+        context["anchor_selection_status"] = str(status)
+    for field in ("nearest_anchor_distance_cells", "nearest_anchor_distance_m"):
+        value = _float_optional(source.get(field))
+        if value is not None:
+            context[field] = value
+    for field in (
+        "start_component_id",
+        "target_component_id",
+        "nearest_anchor_component_id",
+        "projected_anchor_component_id",
+        "start_component_size",
+        "target_component_size",
+        "nearest_anchor_component_size",
+        "projected_anchor_component_size",
+        "reachable_substitute_anchor_count",
+    ):
+        value = _int_optional(source.get(field))
+        if value is not None:
+            context[field] = value
+    if "reachable_substitute_anchor_available" in source:
+        context["reachable_substitute_anchor_available"] = bool(
+            source.get("reachable_substitute_anchor_available")
+        )
+
+
 def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]:
     contexts = list(context_values)
     trainable = [context for context in contexts if context["trainable"]]
@@ -462,6 +522,28 @@ def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]
         _primary_nontrainable_reason(context) for context in nontrainable
     )
     primary_reason_counts.pop(None, None)
+    anchor_selection_status_counts = Counter(
+        str(context.get("anchor_selection_status"))
+        for context in contexts
+        if context.get("anchor_selection_status")
+    )
+    reachable_substitute_anchor_found = [
+        context
+        for context in contexts
+        if context.get("anchor_selection_status") == "reachable_substitute_anchor_found"
+    ]
+    true_geometry_unreachable = [
+        context
+        for context in contexts
+        if context.get("anchor_selection_status") == "true_geometry_unreachable"
+    ]
+    repaired_by_reachable_substitute = [
+        context
+        for context in reachable_substitute_anchor_found
+        if context.get("nearest_anchor_reachable") is False
+        and context.get("anchor_reachable") is True
+        and context.get("projected_candidate_generated") is True
+    ]
     distance_cells = [
         context["projection_distance_cells"]
         for context in contexts
@@ -489,6 +571,12 @@ def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]
         "generated_nontrainable_count": len(generated_nontrainable),
         "source_selection_quality_regression_count": len(quality_regressions),
         "anchor_unreachable_not_generated_count": len(anchor_unreachable_not_generated),
+        "anchor_selection_status_counts": dict(sorted(anchor_selection_status_counts.items())),
+        "reachable_substitute_anchor_found_count": len(reachable_substitute_anchor_found),
+        "true_geometry_unreachable_count": len(true_geometry_unreachable),
+        "anchor_unreachable_repaired_by_reachable_substitute_count": len(
+            repaired_by_reachable_substitute
+        ),
         "nontrainable_primary_reason_counts": dict(sorted(primary_reason_counts.items())),
         "scenario_diagnosis_counts": dict(
             sorted(Counter("trainable" if context["trainable"] else "nontrainable" for context in contexts).items())
@@ -626,6 +714,15 @@ def _float_optional(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if isfinite(number) else None
+
+
+def _int_optional(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _delta(first: float | None, second: float | None) -> float | None:

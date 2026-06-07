@@ -570,6 +570,15 @@ def _review_metrics(
         "anchor_projection_source_candidate_not_selected_count": anchor_projection_readiness[
             "source_candidate_not_selected_count"
         ],
+        "anchor_projection_reachable_substitute_anchor_found_count": anchor_projection_readiness[
+            "reachable_substitute_anchor_found_count"
+        ],
+        "anchor_projection_anchor_unreachable_repaired_by_reachable_substitute_count": (
+            anchor_projection_readiness["anchor_unreachable_repaired_by_reachable_substitute_count"]
+        ),
+        "anchor_projection_true_geometry_unreachable_count": anchor_projection_readiness[
+            "true_geometry_unreachable_count"
+        ],
         "anchor_projection_audit_proxy_positive_count": anchor_projection_readiness[
             "audit_proxy_positive_count"
         ],
@@ -831,6 +840,30 @@ def _anchor_projection_readiness(
         candidate,
         "source_candidate_not_selected",
     )
+    reachable_substitute_anchor_found_count = max(
+        _int_value_or_default(candidate.get("reachable_substitute_anchor_found_count"), 0),
+        _int_value_or_default(contract.get("reachable_substitute_anchor_found_count"), 0),
+        _coverage_diagnosis_int(candidate, "reachable_substitute_anchor_found_count"),
+    )
+    anchor_unreachable_repaired_count = max(
+        _int_value_or_default(
+            candidate.get("anchor_unreachable_repaired_by_reachable_substitute_count"),
+            0,
+        ),
+        _int_value_or_default(
+            contract.get("anchor_unreachable_repaired_by_reachable_substitute_count"),
+            0,
+        ),
+        _coverage_diagnosis_int(
+            candidate,
+            "anchor_unreachable_repaired_by_reachable_substitute_count",
+        ),
+    )
+    true_geometry_unreachable_count = max(
+        _int_value_or_default(candidate.get("true_geometry_unreachable_count"), 0),
+        _int_value_or_default(contract.get("true_geometry_unreachable_count"), 0),
+        _coverage_diagnosis_int(candidate, "true_geometry_unreachable_count"),
+    )
     audit_proxy_positive_count = max(
         _int_value_or_default(candidate.get("positive_training_evidence_contains_audit_proxy_anchor_count"), 0),
         _int_value_or_default(candidate.get("audit_proxy_positive_count"), 0),
@@ -904,6 +937,9 @@ def _anchor_projection_readiness(
         "candidate_contract_alignment_gap_count": alignment_gap,
         "anchor_unreachable_count": anchor_unreachable_count,
         "source_candidate_not_selected_count": source_candidate_not_selected_count,
+        "reachable_substitute_anchor_found_count": reachable_substitute_anchor_found_count,
+        "anchor_unreachable_repaired_by_reachable_substitute_count": anchor_unreachable_repaired_count,
+        "true_geometry_unreachable_count": true_geometry_unreachable_count,
         "audit_proxy_positive_count": audit_proxy_positive_count,
         "source_selection_quality_regression_count": source_quality_regression_count,
         "max_source_selection_path_cost_margin_vs_best_alternative": max_path_margin,
@@ -942,6 +978,12 @@ def _candidate_nontrainable_reason_count(payload: dict[str, Any], reason: str) -
     if field:
         return _int_value_or_default(diagnosis.get(field), 0)
     return 0
+
+
+def _coverage_diagnosis_int(payload: dict[str, Any], field: str) -> int:
+    diagnosis = payload.get("anchor_projection_coverage_diagnosis")
+    diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
+    return _int_value_or_default(diagnosis.get(field), 0)
 
 
 def _quality_regression_count_from_contexts(payload: dict[str, Any]) -> int:

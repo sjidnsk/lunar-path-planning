@@ -387,6 +387,55 @@ class AnchorProjectionEvidenceContractTests(unittest.TestCase):
         self.assertEqual(decisions["trainable"]["sample_weight"], 1.0)
         self.assertEqual(decisions["not-selected"]["sample_weight"], 0.0)
 
+    def test_contract_preserves_reachability_aware_candidate_diagnosis(self) -> None:
+        candidate_path = self._write_candidate_generation_summary_only()
+        candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        candidate["reachable_substitute_anchor_found_count"] = 1
+        candidate["anchor_unreachable_repaired_by_reachable_substitute_count"] = 1
+        candidate["true_geometry_unreachable_count"] = 1
+        candidate["anchor_projection_coverage_diagnosis"].update(
+            {
+                "anchor_selection_status_counts": {
+                    "reachable_substitute_anchor_found": 1,
+                    "true_geometry_unreachable": 1,
+                },
+                "reachable_substitute_anchor_found_count": 1,
+                "anchor_unreachable_repaired_by_reachable_substitute_count": 1,
+                "true_geometry_unreachable_count": 1,
+            }
+        )
+        candidate["context_records"][0].update(
+            {
+                "nearest_anchor_reachable": False,
+                "anchor_selection_status": "reachable_substitute_anchor_found",
+                "start_component_id": 0,
+                "nearest_anchor_component_id": 1,
+                "projected_anchor_component_id": 0,
+                "reachable_substitute_anchor_available": True,
+                "reachable_substitute_anchor_count": 5,
+            }
+        )
+        candidate_path.write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+
+        completed = self._run_contract("--batch-root", str(self.batch_root), "--config", str(self.config))
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "anchor-projection-evidence-contract-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["reachable_substitute_anchor_found_count"], 1)
+        self.assertEqual(summary["anchor_unreachable_repaired_by_reachable_substitute_count"], 1)
+        self.assertEqual(summary["true_geometry_unreachable_count"], 1)
+        decisions = {item["scenario_id"]: item for item in summary["anchor_projection_decisions"]}
+        self.assertEqual(
+            decisions["trainable"]["anchor_selection_status"],
+            "reachable_substitute_anchor_found",
+        )
+        self.assertEqual(decisions["trainable"]["start_component_id"], 0)
+        self.assertEqual(decisions["trainable"]["projected_anchor_component_id"], 0)
+
     def test_contract_fails_when_platform_goal_classification_is_unresolved(self) -> None:
         self._write_sources([self._platform_record("unknown", classification="unknown_contract_mismatch")])
 

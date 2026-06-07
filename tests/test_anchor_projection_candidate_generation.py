@@ -48,6 +48,7 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
         stale_git: bool = False,
         open_grid_count: int = 0,
         safety_regression_count: int = 0,
+        summary: dict | None = None,
     ) -> None:
         git = self._current_git()
         if stale_git:
@@ -56,7 +57,7 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
         run_root.mkdir()
         summary_path = run_root / "path-feedback-summary.json"
         summary_path.write_text(
-            json.dumps(self._path_feedback_summary(), indent=2),
+            json.dumps(summary or self._path_feedback_summary(), indent=2),
             encoding="utf-8",
         )
         (self.batch_root / "batch-run-index.json").write_text(
@@ -227,6 +228,142 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             },
         }
 
+    def _reachability_diagnosis_summary(self) -> dict:
+        substitute_generation = {
+            "schema_version": "anchor-projection-candidate/v1",
+            "candidate_role": "projected_execution_target",
+            "source_action_index": 0,
+            "policy_target_cell": [3, 2],
+            "execution_goal_cell": [0, 2],
+            "projected_anchor_cell": [0, 2],
+            "nearest_inflated_passable_anchor": [4, 2],
+            "projection_distance_cells": 3,
+            "projection_distance_m": 3.0,
+            "nearest_anchor_distance_cells": 1,
+            "nearest_anchor_distance_m": 1.0,
+            "anchor_reachable": True,
+            "nearest_anchor_reachable": False,
+            "anchor_selection_status": "reachable_substitute_anchor_found",
+            "start_component_id": 0,
+            "target_component_id": None,
+            "nearest_anchor_component_id": 1,
+            "projected_anchor_component_id": 0,
+            "start_component_size": 5,
+            "nearest_anchor_component_size": 3,
+            "projected_anchor_component_size": 5,
+            "reachable_substitute_anchor_available": True,
+            "reachable_substitute_anchor_count": 5,
+            "comparison_scope": "projected_target_anchor_contrast",
+            "training_use": "trainable_anchor_projection_contrast",
+            "sample_weight": 1.0,
+            "reject_reason": None,
+            "source_selection_status": "source_selected",
+            "evidence_boundary": "source_selected_projected_target_candidate",
+        }
+        true_geometry_projection = {
+            "projected_anchor_cell": [4, 2],
+            "nearest_inflated_passable_anchor": [4, 2],
+            "projection_distance_cells": 1,
+            "projection_distance_m": 1.0,
+            "nearest_anchor_distance_cells": 1,
+            "nearest_anchor_distance_m": 1.0,
+            "anchor_reachable": False,
+            "nearest_anchor_reachable": False,
+            "anchor_selection_status": "true_geometry_unreachable",
+            "start_component_id": 0,
+            "target_component_id": None,
+            "nearest_anchor_component_id": 1,
+            "projected_anchor_component_id": 1,
+            "start_component_size": 5,
+            "nearest_anchor_component_size": 3,
+            "projected_anchor_component_size": 3,
+            "reachable_substitute_anchor_available": False,
+            "reachable_substitute_anchor_count": 0,
+            "comparison_scope": "audit_proxy_anchor_not_same_cell",
+            "training_use": "not_positive_evidence",
+            "sample_weight": 0.0,
+            "reject_reason": "anchor_not_reachable",
+            "source_selection_status": "not_source_candidate",
+            "evidence_boundary": "audit_projection_not_same_cell_positive_evidence",
+        }
+        return {
+            "schema_version": "path-feedback-summary/v1",
+            "scenario_count": 2,
+            "open_grid_fallback_used": False,
+            "tracking_safety_violation_count": 0,
+            "scenarios": [
+                {
+                    "scenario_id": "substitute",
+                    "selected_cell_before_path_feedback": [3, 2],
+                    "selected_cell_after_path_feedback": [0, 2],
+                    "selection_changed_by_path_feedback": True,
+                    "path_feedback": {
+                        "candidates": [
+                            {
+                                "action_index": 0,
+                                "cell": [3, 2],
+                                "candidate_role": "policy_target",
+                                "policy_target_cell": [3, 2],
+                                "execution_goal_cell": None,
+                                "platform_goal_feasibility": {
+                                    "classification": "platform_inflated_goal_blocked",
+                                    "policy_target_cell": [3, 2],
+                                    "execution_goal_cell": None,
+                                    "nearest_inflated_passable_anchor": [4, 2],
+                                    "anchor_projection": dict(substitute_generation, training_use="not_positive_evidence", sample_weight=0.0, reject_reason="audit_proxy_scope_not_positive_evidence", source_selection_status="not_source_candidate"),
+                                },
+                            },
+                            {
+                                "action_index": 2,
+                                "source_action_index": 0,
+                                "cell": [0, 2],
+                                "candidate_role": "projected_execution_target",
+                                "policy_target_cell": [3, 2],
+                                "execution_goal_cell": [0, 2],
+                                "reachable": True,
+                                "replan_required": False,
+                                "path_cost": 2.0,
+                                "risk": 0.1,
+                                "utility": 0.9,
+                                "candidate_generation": dict(substitute_generation),
+                                "platform_goal_feasibility": {
+                                    "classification": "platform_inflated_goal_blocked",
+                                    "policy_target_cell": [3, 2],
+                                    "execution_goal_cell": [0, 2],
+                                    "nearest_inflated_passable_anchor": [4, 2],
+                                    "anchor_projection": dict(substitute_generation),
+                                },
+                            },
+                        ]
+                    },
+                },
+                {
+                    "scenario_id": "true-geometry",
+                    "selected_cell_before_path_feedback": [3, 2],
+                    "selected_cell_after_path_feedback": [0, 4],
+                    "selection_changed_by_path_feedback": True,
+                    "path_feedback": {
+                        "candidates": [
+                            {
+                                "action_index": 0,
+                                "cell": [3, 2],
+                                "candidate_role": "policy_target",
+                                "policy_target_cell": [3, 2],
+                                "execution_goal_cell": None,
+                                "platform_goal_feasibility": {
+                                    "classification": "platform_inflated_goal_blocked",
+                                    "policy_target_cell": [3, 2],
+                                    "execution_goal_cell": None,
+                                    "nearest_inflated_passable_anchor": [4, 2],
+                                    "anchor_projection": true_geometry_projection,
+                                },
+                            }
+                        ]
+                    },
+                },
+            ],
+        }
+
     def test_summary_counts_trainable_source_selected_projection_without_audit_proxy_positive(self) -> None:
         self._write_batch()
 
@@ -274,6 +411,36 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             contexts["trainable"]["source_selection_best_alternative_candidate_role"],
             "policy_target",
         )
+
+    def test_summary_splits_reachability_aware_anchor_outcomes(self) -> None:
+        self._write_batch(summary=self._reachability_diagnosis_summary())
+
+        completed = self._run()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "anchor-projection-candidate-generation-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["reachable_substitute_anchor_found_count"], 1)
+        self.assertEqual(summary["anchor_unreachable_repaired_by_reachable_substitute_count"], 1)
+        self.assertEqual(summary["true_geometry_unreachable_count"], 1)
+        diagnosis = summary["anchor_projection_coverage_diagnosis"]
+        self.assertEqual(diagnosis["anchor_selection_status_counts"]["reachable_substitute_anchor_found"], 1)
+        self.assertEqual(diagnosis["anchor_selection_status_counts"]["true_geometry_unreachable"], 1)
+        self.assertEqual(diagnosis["reachable_substitute_anchor_found_count"], 1)
+        self.assertEqual(diagnosis["true_geometry_unreachable_count"], 1)
+        self.assertEqual(diagnosis["anchor_unreachable_repaired_by_reachable_substitute_count"], 1)
+        contexts = {item["scenario_id"]: item for item in summary["context_records"]}
+        self.assertEqual(contexts["substitute"]["anchor_selection_status"], "reachable_substitute_anchor_found")
+        self.assertFalse(contexts["substitute"]["nearest_anchor_reachable"])
+        self.assertTrue(contexts["substitute"]["anchor_reachable"])
+        self.assertEqual(contexts["substitute"]["start_component_id"], 0)
+        self.assertEqual(contexts["substitute"]["projected_anchor_component_id"], 0)
+        self.assertEqual(contexts["true-geometry"]["anchor_selection_status"], "true_geometry_unreachable")
+        self.assertFalse(contexts["true-geometry"]["reachable_substitute_anchor_available"])
 
     def test_validate_only_fails_on_current_git_provenance_mismatch(self) -> None:
         self._write_batch(stale_git=True)
