@@ -168,6 +168,7 @@ def run_controlled_hybrid_policy_training_candidate(
     pairwise_preference_signal_count = existing_preference_pair_count + residual_preference_pair_count
     hybrid_train_signal_count = action_label_positive_count + pairwise_preference_signal_count
     hard_positive_added_count = _int_value(registry_summary.get("hard_positive_added_count"))
+    git_provenance = {"current": _git_snapshot(repo_root), "current_matches_sources": True}
     invalid_action_mask_count = max(
         _int_value(materialization.get("invalid_action_mask_count")),
         _int_value((dataset_summary or {}).get("invalid_action_mask_count")),
@@ -227,6 +228,7 @@ def run_controlled_hybrid_policy_training_candidate(
                 source_root=source_root,
                 output_root=output_root,
                 repo_root=repo_root,
+                git_provenance=git_provenance,
             )
         except Exception as exc:  # noqa: BLE001
             _append_reason(reason_codes, "candidate_training_failed")
@@ -271,7 +273,7 @@ def run_controlled_hybrid_policy_training_candidate(
         "does_not_modify_action_space": True,
         "does_not_relax_default_distance_contract": True,
         "no_ackermann_feasible_trajectory_claim": True,
-        "git_provenance": {"current": _git_snapshot(repo_root), "current_matches_sources": True},
+        "git_provenance": git_provenance,
         "non_goals": list(config.get("non_goals", [])),
     }
 
@@ -286,6 +288,7 @@ def _train_candidate_checkpoint(
     source_root: Path,
     output_root: Path,
     repo_root: Path,
+    git_provenance: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     import torch
     from torch.nn import functional as F
@@ -353,6 +356,7 @@ def _train_candidate_checkpoint(
         "training": dict(training),
         "source_root": _display_path(source_root, repo_root),
         "output_root": _display_path(output_root, repo_root),
+        "git_provenance": git_provenance,
     }
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(checkpoint, checkpoint_path)
@@ -372,6 +376,7 @@ def _train_candidate_checkpoint(
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
         "performance_claimed": False,
+        "git_provenance": git_provenance,
     }
     checkpoint_metadata_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
     result = {

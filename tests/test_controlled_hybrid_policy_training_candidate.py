@@ -413,6 +413,15 @@ class ControlledHybridPolicyTrainingCandidateTests(unittest.TestCase):
         self.assertTrue(metadata["experimental"])
         self.assertFalse(metadata["publishes_checkpoint"])
         self.assertFalse(metadata["replaces_default_policy"])
+        self.assertEqual(
+            metadata["git_provenance"]["current"]["parent"]["sha"],
+            self.git_snapshot["parent"]["sha"],
+        )
+        self.assertEqual(
+            metadata["git_provenance"]["current"]["submodules"]["model-explorer"]["sha"],
+            self.git_snapshot["submodules"]["model-explorer"]["sha"],
+        )
+        self.assertTrue(metadata["git_provenance"]["current_matches_sources"])
 
     def test_holdout_evaluation_reports_zero_safety_contract_and_action_mask_regressions(self) -> None:
         self._write_source_artifacts()
