@@ -870,6 +870,38 @@ replace the default policy, change network/action space/default A*, relax the
 distance contract, claim Ackermann-feasible trajectory, or claim policy
 performance.
 
+**Raw Policy Generalization and Anti-Overfit Closure v1** adds the next
+shadow-only gate after raw alignment. The previous scenario-disjoint HOLD root
+is now treated as dev/calibration evidence because it already supplied
+raw-regression preference samples. It must not be reused as the final
+generalization exam.
+
+The new opt-in closure introduces TRAIN/VAL/TEST scenario sets and matrices:
+`raw_align_train`, `raw_align_val`, `raw_align_test`, plus
+`configs/path_feedback_batch_raw_policy_generalization_train_v1.json`,
+`configs/path_feedback_batch_raw_policy_generalization_val_v1.json`, and
+`configs/path_feedback_batch_raw_policy_generalization_test_v1.json`.
+TRAIN/dev roots may write `raw_policy_regression_preference_pair` samples.
+VAL/TEST use `configs/raw_policy_regression_mining_diagnostic_v1.json` and
+write diagnostics only.
+
+The candidate stage is driven by
+`configs/raw_policy_generalization_candidate_v1.json` and
+`scripts/run_raw_policy_generalization_candidate.py`: it combines TRAIN/dev raw
+preferences, rejects any VAL/TEST context leakage, trains experimental local
+seed candidates, and selects the best seed by VAL raw-regression count. The
+final evaluator is `scripts/run_raw_policy_generalization_evaluation.py` with
+`configs/raw_policy_generalization_evaluation_v1.json`; TEST is the only final
+acceptance split. Readiness may advance to
+`raw_policy_generalization_evaluated` only when TEST controlled regression and
+all safety/contract/path/risk/source-selection gates are 0, TEST raw regression
+drops by at least 50% versus baseline, and `overfit_gap<=0.15`.
+
+This remains experimental shadow evaluation. It still does not start PPO
+rollout, publish or replace a policy, alter network/action space/default A*,
+relax the distance contract, claim Ackermann-feasible trajectory, treat
+IRIS/GCS diagnostics as training release evidence, or claim performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

@@ -25,6 +25,7 @@
     "max_identity_overlap_count": 0,
     "max_legacy_identity_fallback_count": 0,
     "require_candidate_git_current_match": true,
+    "allow_dirty_current_git_match": true,
     "max_action_mask_invalid_count": 0,
     "max_empty_action_mask_count": 0,
     "max_fallback_or_open_grid_count": 0,

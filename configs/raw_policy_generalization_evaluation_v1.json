@@ -1,18 +1,9 @@
 {
-  "schema_version": "scenario-disjoint-policy-rollout-evaluation-config/v1",
-  "description": "Shadow-first controlled rollout evaluation for a local experimental hybrid policy candidate on scenario-disjoint holdout contexts.",
-  "input_files": {
-    "source_batch_summary": "batch-evaluation-summary.json",
-    "holdout_batch_summary": "batch-evaluation-summary.json",
-    "fresh_holdout_summary": "fresh-holdout-policy-candidate-evaluation-summary.json",
-    "candidate_summary": "controlled-hybrid-policy-training-candidate-summary.json",
-    "checkpoint": "experimental-hybrid-policy-candidate.pt",
-    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
-  },
+  "schema_version": "raw-policy-generalization-evaluation-config/v1",
+  "description": "Evaluate raw-policy generalization on DEV/VAL/TEST while keeping TEST final-only.",
   "output_files": {
-    "decisions": "scenario-disjoint-policy-rollout-decisions.jsonl",
-    "regression_report": "scenario-disjoint-policy-rollout-regression-report.json",
-    "summary": "scenario-disjoint-policy-rollout-evaluation-summary.json"
+    "summary": "raw-policy-generalization-evaluation-summary.json",
+    "overfit_report": "raw-policy-generalization-evaluation-overfit-report.json"
   },
   "evaluation": {
     "shadow_mode": true,
@@ -22,6 +13,12 @@
     "max_risk_regression": 0.0
   },
   "validation": {
+    "baseline_candidate_summary_schema_versions": [
+      "controlled-hybrid-policy-training-candidate-summary/v1"
+    ],
+    "aligned_candidate_summary_schema_versions": [
+      "raw-policy-generalization-candidate-summary/v1"
+    ],
     "min_scenario_disjoint_context_count": 1,
     "require_context_id": true,
     "require_candidate_git_current_match": true,
@@ -33,7 +30,11 @@
     "max_path_cost_regression_count": 0,
     "max_risk_regression_count": 0,
     "max_source_selection_regression_count": 0,
-    "max_regression_count": 0
+    "max_regression_count": 0,
+    "min_test_raw_policy_regression_reduction_rate": 0.5,
+    "max_overfit_gap": 0.15,
+    "max_context_overlap_count": 0,
+    "max_candidate_leaked_context_id_count": 0
   },
   "non_goals": [
     "no_formal_ppo_rollout",

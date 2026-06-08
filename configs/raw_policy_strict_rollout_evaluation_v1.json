@@ -28,6 +28,7 @@
     "min_scenario_disjoint_context_count": 1,
     "require_context_id": true,
     "require_candidate_git_current_match": true,
+    "allow_dirty_current_git_match": true,
     "baseline_raw_policy_regression_count": 10,
     "max_raw_policy_regression_count": 9,
     "max_invalid_action_mask_count": 0,

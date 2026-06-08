@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     output_paths = _output_paths(holdout_root, config)
-    summary, samples, exclusion_report = run_raw_policy_regression_mining(
+    summary, samples, diagnostics, exclusion_report = run_raw_policy_regression_mining(
         source_root=source_root,
         holdout_root=holdout_root,
         config=config,
@@ -87,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
             "".join(json.dumps(sample, ensure_ascii=False) + "\n" for sample in samples),
             encoding="utf-8",
         )
+        output_paths["diagnostics"].write_text(
+            "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in diagnostics),
+            encoding="utf-8",
+        )
     return 1 if summary["status"] == "failed" else 0
 
 
@@ -97,7 +101,7 @@ def run_raw_policy_regression_mining(
     config: dict[str, Any],
     repo_root: Path,
     output_paths: dict[str, Path],
-) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     reason_codes: list[str] = []
     paths = _input_paths(source_root, holdout_root, config)
     source_batch = _load_json(paths["source_batch_summary"], "source_batch_summary", reason_codes)
@@ -113,8 +117,17 @@ def run_raw_policy_regression_mining(
             _append_reason(reason_codes, "rollout_summary_failed")
 
     current_git = _git_snapshot(repo_root)
-    source_git_current_matches = _source_batch_git_current_matches(source_batch, current_git)
-    rollout_git_current_matches = _summary_git_matches_current(rollout_summary, current_git)
+    allow_dirty_match = bool(validation.get("allow_dirty_current_git_match"))
+    source_git_current_matches = _source_batch_git_current_matches(
+        source_batch,
+        current_git,
+        allow_dirty_match=allow_dirty_match,
+    )
+    rollout_git_current_matches = _summary_git_matches_current(
+        rollout_summary,
+        current_git,
+        allow_dirty_match=allow_dirty_match,
+    )
     if validation.get("require_current_git_match", True):
         if not source_git_current_matches:
             _append_reason(reason_codes, "source_batch_git_current_mismatch")
@@ -130,8 +143,10 @@ def run_raw_policy_regression_mining(
         or _string_list(decision.get("raw_policy_regression_reason_codes"))
     ]
     samples: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
     seen_decision_keys: set[str] = set()
+    sample_mode = str(config.get("sample", {}).get("mode") or "training")
 
     for decision in raw_regression_decisions:
         key = _decision_key(decision)
@@ -155,7 +170,10 @@ def run_raw_policy_regression_mining(
         if exclusion_reason:
             exclusions.append(_exclusion(decision, exclusion_reason))
             continue
-        samples.append(_sample(decision, group, preferred, alternative, config=config))
+        if sample_mode == "diagnostic_only":
+            diagnostics.append(_diagnostic(decision, group, preferred, alternative))
+        else:
+            samples.append(_sample(decision, group, preferred, alternative, config=config))
 
     hard_positive_added_count = 0
     if hard_positive_added_count > _int_value(validation.get("max_hard_positive_added_count")):
@@ -163,7 +181,9 @@ def run_raw_policy_regression_mining(
     expected = validation.get("expected_raw_policy_regression_input_count")
     if expected is not None and len(raw_regression_decisions) != _int_value(expected):
         _append_reason(reason_codes, "raw_policy_regression_input_count_mismatch")
-    if len(samples) < _int_value(validation.get("min_raw_policy_regression_preference_pair_count")):
+    if sample_mode != "diagnostic_only" and len(samples) < _int_value(
+        validation.get("min_raw_policy_regression_preference_pair_count")
+    ):
         _append_reason(reason_codes, "raw_policy_regression_preference_pair_count_below_threshold")
 
     status = "failed" if reason_codes else "passed"
@@ -189,9 +209,12 @@ def run_raw_policy_regression_mining(
         "rollout_summary_path": _display_path(paths["rollout_summary"], repo_root),
         "rollout_decisions_path": _display_path(paths["rollout_decisions"], repo_root),
         "samples_path": _display_path(output_paths["samples"], repo_root),
+        "diagnostics_path": _display_path(output_paths["diagnostics"], repo_root),
         "exclusion_report_path": _display_path(output_paths["exclusion_report"], repo_root),
+        "sample_mode": sample_mode,
         "raw_policy_regression_input_count": len(raw_regression_decisions),
         "raw_policy_regression_preference_pair_count": len(samples),
+        "raw_policy_regression_diagnostic_count": len(diagnostics),
         "raw_policy_regression_excluded_count": len(exclusions),
         "unique_raw_policy_regression_decision_count": len(seen_decision_keys),
         "hard_positive_added_count": hard_positive_added_count,
@@ -205,7 +228,7 @@ def run_raw_policy_regression_mining(
         "git_provenance": {"current": current_git, "current_matches_sources": True},
         "non_goals": list(config.get("non_goals", [])),
     }
-    return summary, samples, exclusion_report
+    return summary, samples, diagnostics, exclusion_report
 
 
 def _sample(
@@ -279,6 +302,38 @@ def _sample_side(candidate: dict[str, Any]) -> dict[str, Any]:
         "replan_required": candidate.get("replan_required"),
         "source_selection_status": candidate.get("source_selection_status"),
         "candidate_features": _candidate_features(candidate),
+    }
+
+
+def _diagnostic(
+    decision: dict[str, Any],
+    group: dict[str, Any],
+    preferred: dict[str, Any],
+    alternative: dict[str, Any],
+) -> dict[str, Any]:
+    path_delta = _delta(alternative.get("path_cost"), preferred.get("path_cost"))
+    risk_delta = _delta(alternative.get("risk"), preferred.get("risk"))
+    return {
+        "schema_version": "raw-policy-regression-diagnostic/v1",
+        "sample_type": "raw_policy_regression_diagnostic",
+        "split_role": "eval_diagnostic",
+        "context_id": preferred.get("context_id"),
+        "alternative_context_id": alternative.get("context_id"),
+        "scenario_id": group.get("scenario_id"),
+        "scenario_group": group.get("scenario_group"),
+        "scenario_seed": group.get("scenario_seed"),
+        "scenario_variant_id": group.get("scenario_variant_id"),
+        "source_selected_action_index": decision.get("source_selected_action_index"),
+        "raw_policy_selected_action_index": decision.get("raw_policy_selected_action_index"),
+        "path_cost_delta": path_delta,
+        "risk_delta": risk_delta,
+        "raw_policy_regression_reason_codes": _string_list(
+            decision.get("raw_policy_regression_reason_codes")
+        ),
+        "hard_positive_added": False,
+        "publishes_checkpoint": False,
+        "replaces_default_policy": False,
+        "performance_claimed": False,
     }
 
 
@@ -372,6 +427,8 @@ def _output_paths(holdout_root: Path, config: dict[str, Any]) -> dict[str, Path]
     return {
         "summary": holdout_root / outputs["summary"],
         "samples": holdout_root / outputs["samples"],
+        "diagnostics": holdout_root
+        / outputs.get("diagnostics", "raw-policy-regression-diagnostics.jsonl"),
         "exclusion_report": holdout_root / outputs["exclusion_report"],
     }
 
@@ -425,18 +482,32 @@ def _load_jsonl(path: Path, label: str, reason_codes: list[str]) -> list[dict[st
     return rows
 
 
-def _summary_git_matches_current(payload: dict[str, Any], current_git: dict[str, Any]) -> bool:
+def _summary_git_matches_current(
+    payload: dict[str, Any],
+    current_git: dict[str, Any],
+    *,
+    allow_dirty_match: bool = False,
+) -> bool:
     git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
     source_current = git.get("current") if isinstance(git.get("current"), dict) else {}
     if not source_current or git.get("current_matches_sources") is False:
         return False
-    return _git_snapshots_match(source_current, current_git)
+    return _git_snapshots_match(source_current, current_git, allow_dirty_match=allow_dirty_match)
 
 
-def _source_batch_git_current_matches(payload: dict[str, Any], current_git: dict[str, Any]) -> bool:
+def _source_batch_git_current_matches(
+    payload: dict[str, Any],
+    current_git: dict[str, Any],
+    *,
+    allow_dirty_match: bool = False,
+) -> bool:
     git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
     if git:
-        return _summary_git_matches_current(payload, current_git)
+        return _summary_git_matches_current(
+            payload,
+            current_git,
+            allow_dirty_match=allow_dirty_match,
+        )
     return _int_value(payload.get("current_git_provenance_mismatch_count")) == 0
 
 

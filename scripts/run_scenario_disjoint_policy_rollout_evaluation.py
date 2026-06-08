@@ -156,8 +156,17 @@ def run_scenario_disjoint_policy_rollout_evaluation(
         _append_reason(reason_codes, "experimental_checkpoint_missing")
 
     current_git = _git_snapshot(repo_root)
-    candidate_git_current_matches_sources = _summary_git_matches_current(candidate, current_git)
-    checkpoint_metadata_git_current_matches_sources = _summary_git_matches_current(metadata, current_git)
+    allow_dirty_match = bool(config["validation"].get("allow_dirty_current_git_match"))
+    candidate_git_current_matches_sources = _summary_git_matches_current(
+        candidate,
+        current_git,
+        allow_dirty_match=allow_dirty_match,
+    )
+    checkpoint_metadata_git_current_matches_sources = _summary_git_matches_current(
+        metadata,
+        current_git,
+        allow_dirty_match=allow_dirty_match,
+    )
     if config["validation"].get("require_candidate_git_current_match"):
         if not candidate_git_current_matches_sources:
             _append_reason(reason_codes, "candidate_git_current_mismatch")
@@ -644,12 +653,17 @@ def _planning_backend(summary: dict[str, Any]) -> str:
     return "path_planner_route"
 
 
-def _summary_git_matches_current(payload: dict[str, Any], current_git: dict[str, Any]) -> bool:
+def _summary_git_matches_current(
+    payload: dict[str, Any],
+    current_git: dict[str, Any],
+    *,
+    allow_dirty_match: bool = False,
+) -> bool:
     git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
     source_current = git.get("current") if isinstance(git.get("current"), dict) else {}
     if not source_current or git.get("current_matches_sources") is False:
         return False
-    return _git_snapshots_match(source_current, current_git)
+    return _git_snapshots_match(source_current, current_git, allow_dirty_match=allow_dirty_match)
 
 
 def _input_paths(source_root: Path, candidate_root: Path, batch_root: Path, config: dict[str, Any]) -> dict[str, Path]:

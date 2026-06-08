@@ -42,7 +42,9 @@ Options:
   --output-root PATH    Output root for generated maps, sidecars, manifest, and reports.
                         Default: outputs/path_feedback_validation
   --top-k N            Number of candidate goals per scenario to evaluate. Default: 3
-  --scenario-set NAME   Validation scenario set: smoke, stress, holdout, or all. Default: smoke
+  --scenario-set NAME   Validation scenario set: smoke, stress, holdout,
+                        raw_align_train, raw_align_val, raw_align_test, or all.
+                        Default: smoke
   --diagnostic-profile NAME
                         Diagnostic profile: baseline, execution, iris, or all.
                         Default: baseline
@@ -317,10 +319,10 @@ PY
 fi
 
 case "$SCENARIO_SET" in
-  smoke|stress|holdout|all)
+  smoke|stress|holdout|raw_align_train|raw_align_val|raw_align_test|all)
     ;;
   *)
-    echo "--scenario-set must be one of: smoke, stress, holdout, all" >&2
+    echo "--scenario-set must be one of: smoke, stress, holdout, raw_align_train, raw_align_val, raw_align_test, all" >&2
     exit 2
     ;;
 esac

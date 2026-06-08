@@ -137,8 +137,17 @@ def run_fresh_holdout_policy_candidate_evaluation(
     if _string_list(batch_summary.get("reason_codes")):
         _append_reason(reason_codes, "fresh_holdout_batch_failed")
     current_git = _git_snapshot(repo_root)
-    candidate_git_current_matches_sources = _summary_git_matches_current(candidate, current_git)
-    checkpoint_metadata_git_current_matches_sources = _summary_git_matches_current(metadata, current_git)
+    allow_dirty_match = bool(config["validation"].get("allow_dirty_current_git_match"))
+    candidate_git_current_matches_sources = _summary_git_matches_current(
+        candidate,
+        current_git,
+        allow_dirty_match=allow_dirty_match,
+    )
+    checkpoint_metadata_git_current_matches_sources = _summary_git_matches_current(
+        metadata,
+        current_git,
+        allow_dirty_match=allow_dirty_match,
+    )
     validation = config["validation"]
     if validation.get("require_candidate_git_current_match"):
         if not candidate_git_current_matches_sources:
@@ -533,14 +542,19 @@ def _planning_backend_from_record(candidate: dict[str, Any], summary: dict[str, 
     return "path_planner_route"
 
 
-def _summary_git_matches_current(payload: dict[str, Any], current_git: dict[str, Any]) -> bool:
+def _summary_git_matches_current(
+    payload: dict[str, Any],
+    current_git: dict[str, Any],
+    *,
+    allow_dirty_match: bool = False,
+) -> bool:
     git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
     source_current = git.get("current") if isinstance(git.get("current"), dict) else {}
     if not source_current:
         return False
     if git.get("current_matches_sources") is False:
         return False
-    return _git_snapshots_match(source_current, current_git)
+    return _git_snapshots_match(source_current, current_git, allow_dirty_match=allow_dirty_match)
 
 
 def _action_label_gate_counts(records: list[dict[str, Any]]) -> tuple[int, int, int]:
