@@ -809,6 +809,31 @@ default policy, start formal PPO rollout, relax the distance contract, change
 network/action space/default A*, or claim Ackermann-feasible trajectory or
 policy performance.
 
+**Controlled Scenario-Disjoint Policy Rollout Evaluation v1** is the next
+shadow gate after scenario-disjoint candidate evaluation. It adds
+`configs/scenario_disjoint_policy_rollout_evaluation_v1.json`,
+`scripts/run_scenario_disjoint_policy_rollout_evaluation.py`, the matching
+shell wrapper, `tests/test_scenario_disjoint_policy_rollout_evaluation.py`, and
+`docs/superpowers/specs/2026-06-08-scenario-disjoint-policy-rollout-evaluation.md`.
+The evaluator loads the local experimental checkpoint from the controlled
+candidate root and scores HOLD `path-feedback-summary.json` candidates.
+
+Default mode is `shadow_mode=true` and `controlled_selection_mode=false`: the
+raw policy top choice is recorded, then action-mask, contract, fallback, safety,
+path/risk, and source-selection gates produce the controlled shadow decision.
+The HOLD root receives `scenario-disjoint-policy-rollout-decisions.jsonl`,
+`scenario-disjoint-policy-rollout-regression-report.json`, and
+`scenario-disjoint-policy-rollout-evaluation-summary.json`.
+
+Passing rollout readiness requires `scenario_disjoint_context_count > 0`,
+`invalid_action_mask_count=0`, `regression_count=0`, and fallback/open-grid,
+safety, contract, path/risk, and source-selection regression counts all 0.
+Readiness may then advance to `scenario_disjoint_policy_rollout_evaluated`.
+This remains controlled shadow evaluation only: no formal PPO rollout,
+checkpoint publication, default policy replacement, distance-contract
+relaxation, network/action-space/default-A* change, Ackermann-feasible
+trajectory claim, or policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
