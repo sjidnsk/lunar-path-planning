@@ -20,6 +20,7 @@ PAIRWISE_SAMPLE_TYPES = {
     "counterfactual_preference_pair",
     "boundary_negative_preference_pair",
     "blocked_target_negative_pair",
+    "raw_policy_regression_preference_pair",
 }
 
 

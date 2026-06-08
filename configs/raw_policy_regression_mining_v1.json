@@ -1,0 +1,36 @@
+{
+  "schema_version": "raw-policy-regression-mining-config/v1",
+  "description": "Mine raw-policy regressive shadow-rollout choices into pairwise preference samples without adding hard positives.",
+  "input_files": {
+    "source_batch_summary": "batch-evaluation-summary.json",
+    "rollout_summary": "scenario-disjoint-policy-rollout-evaluation-summary.json",
+    "rollout_decisions": "scenario-disjoint-policy-rollout-decisions.jsonl"
+  },
+  "output_files": {
+    "summary": "raw-policy-regression-mining-summary.json",
+    "samples": "raw-policy-regression-preference-samples.jsonl",
+    "exclusion_report": "raw-policy-regression-exclusion-report.json"
+  },
+  "sample": {
+    "sample_weight": 8.0
+  },
+  "validation": {
+    "expected_raw_policy_regression_input_count": null,
+    "min_raw_policy_regression_preference_pair_count": 1,
+    "max_hard_positive_added_count": 0,
+    "require_source_batch_passed": true,
+    "require_rollout_summary_passed": true,
+    "require_current_git_match": true
+  },
+  "non_goals": [
+    "no_hard_positive_addition",
+    "no_rollout_episode_materialization",
+    "no_formal_ppo_rollout",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_distance_contract_relaxation",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

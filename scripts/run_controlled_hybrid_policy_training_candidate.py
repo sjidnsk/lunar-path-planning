@@ -130,6 +130,29 @@ def run_controlled_hybrid_policy_training_candidate(
     pairwise_samples = [
         record for record in registry if record.get("sample_type") in PAIRWISE_SAMPLE_TYPES
     ]
+    raw_policy_regression_mining = {}
+    raw_policy_regression_samples: list[dict[str, Any]] = []
+    if "raw_policy_regression_mining_summary" in paths:
+        raw_policy_regression_mining = _load_summary(
+            paths["raw_policy_regression_mining_summary"],
+            expected_schema="raw-policy-regression-mining-summary/v1",
+            label="raw_policy_regression_mining_summary",
+            reason_codes=reason_codes,
+        )
+        if raw_policy_regression_mining.get("status") != "passed" or _string_list(
+            raw_policy_regression_mining.get("reason_codes")
+        ):
+            _append_reason(reason_codes, "raw_policy_regression_mining_summary_failed")
+        raw_policy_regression_samples = [
+            record
+            for record in _load_jsonl(
+                paths["raw_policy_regression_preference_samples"],
+                "raw_policy_regression_preference_samples",
+                reason_codes,
+            )
+            if record.get("sample_type") == "raw_policy_regression_preference_pair"
+        ]
+        pairwise_samples.extend(raw_policy_regression_samples)
     episodes = ()
     dataset_summary: dict[str, Any] | None = None
     training_error: str | None = None
@@ -163,9 +186,14 @@ def run_controlled_hybrid_policy_training_candidate(
         1 for record in pairwise_samples if record.get("sample_type") == "counterfactual_preference_pair"
     )
     residual_preference_pair_count = sum(
-        1 for record in pairwise_samples if record.get("sample_type") != "counterfactual_preference_pair"
+        1
+        for record in pairwise_samples
+        if record.get("sample_type")
+        not in {"counterfactual_preference_pair", "raw_policy_regression_preference_pair"}
     )
+    raw_policy_regression_preference_pair_count = len(raw_policy_regression_samples)
     pairwise_preference_signal_count = existing_preference_pair_count + residual_preference_pair_count
+    pairwise_preference_signal_count += raw_policy_regression_preference_pair_count
     hybrid_train_signal_count = action_label_positive_count + pairwise_preference_signal_count
     hard_positive_added_count = _int_value(registry_summary.get("hard_positive_added_count"))
     git_provenance = {"current": _git_snapshot(repo_root), "current_matches_sources": True}
@@ -191,6 +219,13 @@ def run_controlled_hybrid_policy_training_candidate(
         "expected_pairwise_preference_signal_count",
         pairwise_preference_signal_count,
         "pairwise_preference_signal_count_mismatch",
+    )
+    _check_expected_count(
+        reason_codes,
+        config["validation"],
+        "expected_raw_policy_regression_preference_pair_count",
+        raw_policy_regression_preference_pair_count,
+        "raw_policy_regression_preference_pair_count_mismatch",
     )
     _check_expected_count(
         reason_codes,
@@ -249,6 +284,10 @@ def run_controlled_hybrid_policy_training_candidate(
         "action_label_positive_count": action_label_positive_count,
         "existing_preference_pair_count": existing_preference_pair_count,
         "residual_preference_pair_count": residual_preference_pair_count,
+        "raw_policy_regression_preference_pair_count": raw_policy_regression_preference_pair_count,
+        "raw_policy_regression_input_count": _int_value(
+            raw_policy_regression_mining.get("raw_policy_regression_input_count")
+        ),
         "pairwise_preference_signal_count": pairwise_preference_signal_count,
         "hybrid_train_signal_count": hybrid_train_signal_count,
         "hard_positive_added_count": hard_positive_added_count,
@@ -403,7 +442,7 @@ def _train_candidate_checkpoint(
 def _input_paths(source_root: Path, output_root: Path, config: dict[str, Any]) -> dict[str, Path]:
     inputs = config["input_files"]
     outputs = config["output_files"]
-    return {
+    paths = {
         "batch_summary": source_root / inputs["batch_summary"],
         "anchor_candidate_summary": source_root / inputs["anchor_candidate_summary"],
         "planner_validated_mining_summary": source_root / inputs["planner_validated_mining_summary"],
@@ -416,6 +455,17 @@ def _input_paths(source_root: Path, output_root: Path, config: dict[str, Any]) -
         "checkpoint": output_root / outputs["checkpoint"],
         "checkpoint_metadata": output_root / outputs["checkpoint_metadata"],
     }
+    if "raw_policy_regression_mining_summary" in inputs:
+        paths["raw_policy_regression_mining_summary"] = _source_relative_path(
+            source_root,
+            inputs["raw_policy_regression_mining_summary"],
+        )
+    if "raw_policy_regression_preference_samples" in inputs:
+        paths["raw_policy_regression_preference_samples"] = _source_relative_path(
+            source_root,
+            inputs["raw_policy_regression_preference_samples"],
+        )
+    return paths
 
 
 def _load_source_payloads(paths: dict[str, Path], reason_codes: list[str]) -> dict[str, dict[str, Any]]:
@@ -532,7 +582,15 @@ def _source_summaries(paths: dict[str, Path], repo_root: Path) -> dict[str, dict
         "rollout_episodes",
         "unified_policy_sample_registry",
     )
-    return {label: {"path": _display_path(paths[label], repo_root), "exists": paths[label].is_file()} for label in labels}
+    optional_labels = (
+        "raw_policy_regression_mining_summary",
+        "raw_policy_regression_preference_samples",
+    )
+    existing_labels = [label for label in labels + optional_labels if label in paths]
+    return {
+        label: {"path": _display_path(paths[label], repo_root), "exists": paths[label].is_file()}
+        for label in existing_labels
+    }
 
 
 def _fallback_or_open_grid_count(payloads: dict[str, dict[str, Any]]) -> int:
@@ -558,6 +616,11 @@ def _install_model_explorer_path(repo_root: Path) -> None:
 def _resolve_path(value: str | Path, repo_root: Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else repo_root / path
+
+
+def _source_relative_path(source_root: Path, value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else source_root / path
 
 
 def _display_path(path: Path, repo_root: Path) -> str:

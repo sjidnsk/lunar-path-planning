@@ -834,6 +834,42 @@ checkpoint publication, default policy replacement, distance-contract
 relaxation, network/action-space/default-A* change, Ackermann-feasible
 trajectory claim, or policy performance claim.
 
+**Raw Policy Decision Alignment and Objective Calibration v1** addresses the
+remaining gap exposed by controlled rollout: the controlled gate can keep the
+shadow decision safe, but the raw policy top choice may still prefer a
+regressive alternative. The new opt-in loop adds
+`configs/raw_policy_regression_mining_v1.json`,
+`configs/raw_policy_decision_alignment_candidate_v1.json`,
+`configs/raw_policy_strict_rollout_evaluation_v1.json`,
+`scripts/run_raw_policy_regression_mining.py`,
+`scripts/run_raw_policy_decision_alignment_candidate.py`,
+`scripts/run_raw_policy_strict_rollout_evaluation.py`, and
+`scripts/run_raw_policy_decision_alignment_closure.sh`.
+
+Mining reads HOLD rollout decisions and path-feedback candidates, then converts
+raw-regressive choices into `raw_policy_regression_preference_pair` samples:
+the source-selected/controlled-safe candidate is preferred, and the raw
+regressive candidate is the alternative. These samples are pairwise ranking
+signals only; `hard_positive_added_count=0`, and they are never materialized as
+`RolloutEpisode` action labels.
+
+The alignment candidate reuses the existing experimental hybrid trainer with
+an opt-in raw-regression pairwise input, writing
+`raw-policy-decision-alignment-candidate-summary.json`. Strict rollout writes
+`raw-policy-strict-rollout-decisions.jsonl`,
+`raw-policy-strict-rollout-regression-report.json`, and
+`raw-policy-strict-rollout-evaluation-summary.json`. Readiness may advance to
+`raw_policy_decision_alignment_evaluated` only when strict rollout passes,
+controlled regression remains 0, invalid mask/fallback/safety/contract/path/
+risk/source-selection regression are all 0, and `raw_policy_regression_count`
+is below the configured baseline threshold. If raw regression does not improve,
+the next required change is `policy_objective_or_feature_refinement_required`.
+
+This stage still does not start formal PPO rollout, publish a checkpoint,
+replace the default policy, change network/action space/default A*, relax the
+distance contract, claim Ackermann-feasible trajectory, or claim policy
+performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

@@ -35,6 +35,7 @@ FRESH_HOLDOUT_SCHEMA_VERSION = "fresh-holdout-policy-candidate-evaluation-summar
 SCENARIO_DISJOINT_ROLLOUT_SCHEMA_VERSION = (
     "scenario-disjoint-policy-rollout-evaluation-summary/v1"
 )
+RAW_POLICY_STRICT_ROLLOUT_SCHEMA_VERSION = "raw-policy-strict-rollout-evaluation-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 READY_SMOKE_ACTION = "ready_for_policy_training_readiness_review"
 READY_DRY_RUN_ACTION = "ready_for_limited_policy_training_dry_run"
@@ -49,8 +50,12 @@ SCENARIO_DISJOINT_POLICY_CANDIDATE_EVALUATED_ACTION = (
 SCENARIO_DISJOINT_POLICY_ROLLOUT_EVALUATED_ACTION = (
     "scenario_disjoint_policy_rollout_evaluated"
 )
+RAW_POLICY_DECISION_ALIGNMENT_EVALUATED_ACTION = "raw_policy_decision_alignment_evaluated"
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
+)
+RAW_POLICY_ALIGNMENT_NEXT_REQUIRED_CHANGE = (
+    "policy_objective_or_feature_refinement_required"
 )
 CONTRACT_GUARD_FIELDS = (
     "does_not_modify_default_astar",
@@ -132,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional scenario-disjoint-policy-rollout-evaluation-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--raw-policy-strict-rollout-evaluation-summary",
+        help="Optional raw-policy-strict-rollout-evaluation-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -207,6 +216,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.scenario_disjoint_policy_rollout_evaluation_summary
         else batch_root / "scenario-disjoint-policy-rollout-evaluation-summary.json"
     )
+    raw_strict_rollout_path = (
+        _resolve_path(args.raw_policy_strict_rollout_evaluation_summary, repo_root)
+        if args.raw_policy_strict_rollout_evaluation_summary
+        else batch_root / "raw-policy-strict-rollout-evaluation-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -234,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         controlled_holdout_path=controlled_holdout_path,
         fresh_holdout_path=fresh_holdout_path,
         scenario_rollout_path=scenario_rollout_path,
+        raw_strict_rollout_path=raw_strict_rollout_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -251,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         fresh_holdout_required=bool(args.fresh_holdout_policy_candidate_evaluation_summary),
         scenario_rollout_required=bool(args.scenario_disjoint_policy_rollout_evaluation_summary),
+        raw_strict_rollout_required=bool(args.raw_policy_strict_rollout_evaluation_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -313,6 +329,12 @@ def main(argv: list[str] | None = None) -> int:
             or args.scenario_disjoint_policy_rollout_evaluation_summary
             else None
         ),
+        "raw_policy_strict_rollout_evaluation_summary": (
+            _display_path(raw_strict_rollout_path, repo_root)
+            if raw_strict_rollout_path.is_file()
+            or args.raw_policy_strict_rollout_evaluation_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -373,6 +395,7 @@ def analyze_policy_training_readiness_review(
     controlled_holdout_path: Path,
     fresh_holdout_path: Path,
     scenario_rollout_path: Path,
+    raw_strict_rollout_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -382,6 +405,7 @@ def analyze_policy_training_readiness_review(
     controlled_holdout_required: bool = False,
     fresh_holdout_required: bool = False,
     scenario_rollout_required: bool = False,
+    raw_strict_rollout_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -541,6 +565,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=scenario_rollout_required,
     )
+    raw_strict_rollout = _load_optional_source(
+        raw_strict_rollout_path,
+        label="raw_policy_strict_rollout_evaluation_summary",
+        expected_schema=RAW_POLICY_STRICT_ROLLOUT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=raw_strict_rollout_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -556,6 +589,7 @@ def analyze_policy_training_readiness_review(
             ("controlled_hybrid_policy_holdout_evaluation_summary", controlled_holdout),
             ("fresh_holdout_policy_candidate_evaluation_summary", fresh_holdout),
             ("scenario_disjoint_policy_rollout_evaluation_summary", scenario_rollout),
+            ("raw_policy_strict_rollout_evaluation_summary", raw_strict_rollout),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -661,6 +695,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if raw_strict_rollout:
+        source_git_matches.append(
+            _inspect_git(
+                raw_strict_rollout,
+                label="raw_policy_strict_rollout_evaluation_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -676,6 +720,7 @@ def analyze_policy_training_readiness_review(
         controlled_holdout=controlled_holdout,
         fresh_holdout=fresh_holdout,
         scenario_rollout=scenario_rollout,
+        raw_strict_rollout=raw_strict_rollout,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -732,6 +777,11 @@ def analyze_policy_training_readiness_review(
             if scenario_rollout
             else None
         ),
+        "raw_policy_strict_rollout_evaluation_summary_path": (
+            _display_path(raw_strict_rollout_path, repo_root)
+            if raw_strict_rollout
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -755,6 +805,7 @@ def analyze_policy_training_readiness_review(
             "controlled_hybrid_policy_holdout_evaluation": _public_git(controlled_holdout),
             "fresh_holdout_policy_candidate_evaluation": _public_git(fresh_holdout),
             "scenario_disjoint_policy_rollout_evaluation": _public_git(scenario_rollout),
+            "raw_policy_strict_rollout_evaluation": _public_git(raw_strict_rollout),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -791,6 +842,7 @@ def _review_metrics(
     controlled_holdout: dict[str, Any],
     fresh_holdout: dict[str, Any],
     scenario_rollout: dict[str, Any],
+    raw_strict_rollout: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -873,6 +925,7 @@ def _review_metrics(
             "controlled_hybrid_policy_holdout_evaluation": controlled_holdout,
             "fresh_holdout_policy_candidate_evaluation": fresh_holdout,
             "scenario_disjoint_policy_rollout_evaluation": scenario_rollout,
+            "raw_policy_strict_rollout_evaluation": raw_strict_rollout,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -885,11 +938,14 @@ def _review_metrics(
     hybrid_training_readiness = _hybrid_training_readiness(hybrid_training_dry_run)
     fresh_holdout_readiness = _fresh_holdout_policy_candidate_readiness(fresh_holdout)
     scenario_rollout_readiness = _scenario_disjoint_policy_rollout_readiness(scenario_rollout)
+    raw_strict_rollout_readiness = _raw_policy_strict_rollout_readiness(raw_strict_rollout)
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
         holdout=controlled_holdout,
         allow_fresh_holdout_substitute=(
-            fresh_holdout_readiness["present"] or scenario_rollout_readiness["present"]
+            fresh_holdout_readiness["present"]
+            or scenario_rollout_readiness["present"]
+            or raw_strict_rollout_readiness["present"]
         ),
     )
     training_blockers: list[str] = []
@@ -930,6 +986,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in scenario_rollout_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in raw_strict_rollout_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -938,6 +996,9 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif raw_strict_rollout_readiness["present"] and raw_strict_rollout_readiness["completed"]:
+        training_readiness_status = RAW_POLICY_DECISION_ALIGNMENT_EVALUATED_ACTION
+        recommended_next_action = RAW_POLICY_DECISION_ALIGNMENT_EVALUATED_ACTION
     elif scenario_rollout_readiness["present"] and scenario_rollout_readiness["completed"]:
         training_readiness_status = SCENARIO_DISJOINT_POLICY_ROLLOUT_EVALUATED_ACTION
         recommended_next_action = SCENARIO_DISJOINT_POLICY_ROLLOUT_EVALUATED_ACTION
@@ -983,6 +1044,7 @@ def _review_metrics(
         "controlled_hybrid_training_candidate_readiness": controlled_candidate_readiness,
         "fresh_holdout_policy_candidate_readiness": fresh_holdout_readiness,
         "scenario_disjoint_policy_rollout_readiness": scenario_rollout_readiness,
+        "raw_policy_strict_rollout_readiness": raw_strict_rollout_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1033,7 +1095,8 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
-            fresh_holdout_readiness.get("next_required_change")
+            raw_strict_rollout_readiness.get("next_required_change")
+            or fresh_holdout_readiness.get("next_required_change")
             or scenario_rollout_readiness.get("next_required_change")
             or controlled_candidate_readiness.get("next_required_change")
         ),
@@ -1990,6 +2053,109 @@ def _scenario_disjoint_policy_rollout_readiness(summary: dict[str, Any]) -> dict
         "raw_policy_regression_count": _int_value_or_default(summary.get("raw_policy_regression_count"), 0),
         "invalid_action_mask_count": _int_value_or_default(summary.get("invalid_action_mask_count"), 0),
         "fallback_or_open_grid_count": _int_value_or_default(summary.get("fallback_or_open_grid_count"), 0),
+        "safety_regression_count": _int_value_or_default(summary.get("safety_regression_count"), 0),
+        "contract_violation_count": _int_value_or_default(summary.get("contract_violation_count"), 0),
+        "path_cost_regression_count": _int_value_or_default(summary.get("path_cost_regression_count"), 0),
+        "risk_regression_count": _int_value_or_default(summary.get("risk_regression_count"), 0),
+        "source_selection_regression_count": _int_value_or_default(
+            summary.get("source_selection_regression_count"),
+            0,
+        ),
+    }
+
+
+def _raw_policy_strict_rollout_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "formal_training_ready_claimed": False,
+        "performance_claimed": False,
+        "scenario_disjoint_context_count": 0,
+        "policy_decision_count": 0,
+        "regression_count": 0,
+        "raw_policy_regression_count": 0,
+        "invalid_action_mask_count": 0,
+        "fallback_or_open_grid_count": 0,
+        "safety_regression_count": 0,
+        "contract_violation_count": 0,
+        "path_cost_regression_count": 0,
+        "risk_regression_count": 0,
+        "source_selection_regression_count": 0,
+    }
+    if not summary:
+        return empty
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "raw_policy_strict_rollout_evaluation_not_passed")
+    if _int_value_or_default(summary.get("scenario_disjoint_context_count"), 0) <= 0:
+        _append_reason(blockers, "raw_policy_strict_rollout_context_count_zero")
+    if _int_value_or_default(summary.get("policy_decision_count"), 0) <= 0:
+        _append_reason(blockers, "raw_policy_strict_rollout_decision_count_zero")
+    if summary.get("raw_policy_alignment_improved") is False:
+        _append_reason(blockers, "raw_policy_alignment_not_improved")
+    if _int_value_or_default(summary.get("regression_count"), 0):
+        _append_reason(blockers, "raw_policy_controlled_rollout_regression")
+    if _int_value_or_default(summary.get("invalid_action_mask_count"), 0):
+        _append_reason(blockers, "raw_policy_strict_rollout_invalid_action_mask")
+    if _int_value_or_default(summary.get("fallback_or_open_grid_count"), 0):
+        _append_reason(blockers, "raw_policy_strict_rollout_fallback_or_open_grid")
+    if _int_value_or_default(summary.get("safety_regression_count"), 0):
+        _append_reason(blockers, "raw_policy_strict_rollout_safety_regression")
+    if _int_value_or_default(summary.get("contract_violation_count"), 0):
+        _append_reason(blockers, "raw_policy_strict_rollout_contract_violation")
+    if _int_value_or_default(summary.get("path_cost_regression_count"), 0):
+        _append_reason(blockers, "raw_policy_strict_rollout_path_cost_regression")
+    if _int_value_or_default(summary.get("risk_regression_count"), 0):
+        _append_reason(blockers, "raw_policy_strict_rollout_risk_regression")
+    if _int_value_or_default(summary.get("source_selection_regression_count"), 0):
+        _append_reason(blockers, "raw_policy_strict_rollout_source_selection_regression")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "raw_policy_strict_rollout_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "raw_policy_strict_rollout_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "raw_policy_strict_rollout_policy_performance_claimed")
+    if summary.get("candidate_git_current_matches_sources") is False:
+        _append_reason(blockers, "raw_policy_strict_rollout_candidate_git_current_mismatch")
+    if summary.get("checkpoint_metadata_git_current_matches_sources") is False:
+        _append_reason(blockers, "raw_policy_strict_rollout_checkpoint_metadata_git_current_mismatch")
+
+    formal_training_ready_claimed = bool(
+        summary.get("formal_training_ready_claimed")
+        or summary.get("policy_training_ready")
+        or summary.get("performance_claimed")
+    )
+    if formal_training_ready_claimed:
+        _append_reason(blockers, "raw_policy_strict_rollout_formal_training_ready_claimed")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": (
+            summary.get("next_required_change")
+            if blockers
+            else None
+        )
+        or (RAW_POLICY_ALIGNMENT_NEXT_REQUIRED_CHANGE if blockers else None),
+        "formal_training_ready_claimed": formal_training_ready_claimed,
+        "performance_claimed": bool(summary.get("performance_claimed")),
+        "scenario_disjoint_context_count": _int_value_or_default(
+            summary.get("scenario_disjoint_context_count"),
+            0,
+        ),
+        "policy_decision_count": _int_value_or_default(summary.get("policy_decision_count"), 0),
+        "regression_count": _int_value_or_default(summary.get("regression_count"), 0),
+        "raw_policy_regression_count": _int_value_or_default(
+            summary.get("raw_policy_regression_count"),
+            0,
+        ),
+        "invalid_action_mask_count": _int_value_or_default(summary.get("invalid_action_mask_count"), 0),
+        "fallback_or_open_grid_count": _int_value_or_default(
+            summary.get("fallback_or_open_grid_count"),
+            0,
+        ),
         "safety_regression_count": _int_value_or_default(summary.get("safety_regression_count"), 0),
         "contract_violation_count": _int_value_or_default(summary.get("contract_violation_count"), 0),
         "path_cost_regression_count": _int_value_or_default(summary.get("path_cost_regression_count"), 0),

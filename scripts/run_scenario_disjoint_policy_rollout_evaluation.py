@@ -117,7 +117,7 @@ def run_scenario_disjoint_policy_rollout_evaluation(
     )
     candidate = _load_summary(
         paths["candidate_summary"],
-        expected_schema=CANDIDATE_SUMMARY_SCHEMA_VERSION,
+        expected_schema=None,
         label="candidate_summary",
         reason_codes=reason_codes,
     )
@@ -138,6 +138,12 @@ def run_scenario_disjoint_policy_rollout_evaluation(
         _append_reason(reason_codes, "candidate_summary_failed")
     if _string_list(candidate.get("reason_codes")):
         _append_reason(reason_codes, "candidate_summary_failed")
+    allowed_candidate_schemas = config["validation"].get(
+        "candidate_summary_schema_versions",
+        [CANDIDATE_SUMMARY_SCHEMA_VERSION],
+    )
+    if candidate.get("schema_version") not in allowed_candidate_schemas:
+        _append_reason(reason_codes, "candidate_summary_schema_version_mismatch")
     if not metadata.get("experimental", False):
         _append_reason(reason_codes, "checkpoint_metadata_not_experimental")
     if metadata.get("publishes_checkpoint") or candidate.get("publishes_checkpoint"):
@@ -402,6 +408,9 @@ def _decision_record(
     decision_class = "regression" if controlled_reasons else ("acceptable_alternative" if decision_changed else "aligned")
     raw_policy_changed = _action_index(raw_policy) != _action_index(source)
     raw_policy_decision_class = "regression" if raw_reasons else ("acceptable_alternative" if raw_policy_changed else "aligned")
+    source_logit = _float_or_none(source.get("policy_logit"))
+    raw_policy_logit = _float_or_none(raw_policy.get("policy_logit"))
+    controlled_logit = _float_or_none(controlled.get("policy_logit"))
     return {
         "schema_version": DECISION_SCHEMA_VERSION,
         "run_id": group.get("run_id"),
@@ -419,6 +428,10 @@ def _decision_record(
         "source_selected_context_id": source.get("context_id"),
         "raw_policy_selected_context_id": raw_policy.get("context_id"),
         "policy_selected_context_id": controlled.get("context_id"),
+        "source_selected_policy_logit": source_logit,
+        "raw_policy_selected_policy_logit": raw_policy_logit,
+        "policy_selected_policy_logit": controlled_logit,
+        "raw_policy_logit_margin_vs_source": _delta(raw_policy_logit, source_logit),
         "action_mask_valid": bool(action_mask_valid),
         "policy_selected_candidate_present": bool(controlled),
         "policy_selected_contract_safe": _contract_safe(controlled),
