@@ -24,9 +24,11 @@ ANCHOR_CANDIDATE_SCHEMA_VERSION = "anchor-projection-candidate-generation-summar
 ANCHOR_CONTRACT_SCHEMA_VERSION = "anchor-projection-evidence-contract-summary/v1"
 CONTRACT_AWARE_TARGET_SCHEMA_VERSION = "anchor-projection-contract-aware-trainable-target-summary/v1"
 PLANNER_VALIDATED_MINING_SCHEMA_VERSION = "planner-validated-trainable-target-mining-summary/v1"
+HYBRID_TRAINING_DRY_RUN_SCHEMA_VERSION = "hybrid-policy-training-dry-run-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 READY_SMOKE_ACTION = "ready_for_policy_training_readiness_review"
 READY_DRY_RUN_ACTION = "ready_for_limited_policy_training_dry_run"
+HYBRID_DRY_RUN_COMPLETED_ACTION = "hybrid_training_dry_run_completed"
 CONTRACT_GUARD_FIELDS = (
     "does_not_modify_default_astar",
     "does_not_modify_ppo",
@@ -87,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional planner-validated-trainable-target-mining-summary/v1 JSON. Defaults to <batch-root>/planner-validated-trainable-target-mining-summary.json when present.",
     )
     parser.add_argument(
+        "--hybrid-policy-training-dry-run-summary",
+        help="Optional hybrid-policy-training-dry-run-summary/v1 JSON. Defaults to <batch-root>/hybrid-policy-training-dry-run-summary.json when present.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -137,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.planner_validated_trainable_target_mining_summary
         else batch_root / "planner-validated-trainable-target-mining-summary.json"
     )
+    hybrid_training_dry_run_path = (
+        _resolve_path(args.hybrid_policy_training_dry_run_summary, repo_root)
+        if args.hybrid_policy_training_dry_run_summary
+        else batch_root / "hybrid-policy-training-dry-run-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -159,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         anchor_contract_path=anchor_contract_path,
         contract_aware_target_path=contract_aware_target_path,
         planner_validated_mining_path=planner_validated_mining_path,
+        hybrid_training_dry_run_path=hybrid_training_dry_run_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -167,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         planner_validated_mining_required=bool(
             args.planner_validated_trainable_target_mining_summary
         ),
+        hybrid_training_dry_run_required=bool(args.hybrid_policy_training_dry_run_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -197,6 +210,12 @@ def main(argv: list[str] | None = None) -> int:
             _display_path(planner_validated_mining_path, repo_root)
             if planner_validated_mining_path.is_file()
             or args.planner_validated_trainable_target_mining_summary
+            else None
+        ),
+        "hybrid_policy_training_dry_run_summary": (
+            _display_path(hybrid_training_dry_run_path, repo_root)
+            if hybrid_training_dry_run_path.is_file()
+            or args.hybrid_policy_training_dry_run_summary
             else None
         ),
         "config": _display_path(config_path, repo_root),
@@ -254,10 +273,12 @@ def analyze_policy_training_readiness_review(
     anchor_contract_path: Path,
     contract_aware_target_path: Path,
     planner_validated_mining_path: Path,
+    hybrid_training_dry_run_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
     planner_validated_mining_required: bool = False,
+    hybrid_training_dry_run_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -372,6 +393,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=planner_validated_mining_required,
     )
+    hybrid_training_dry_run = _load_optional_source(
+        hybrid_training_dry_run_path,
+        label="hybrid_policy_training_dry_run_summary",
+        expected_schema=HYBRID_TRAINING_DRY_RUN_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=hybrid_training_dry_run_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -382,6 +412,7 @@ def analyze_policy_training_readiness_review(
             ("anchor_projection_evidence_contract_summary", anchor_contract),
             ("contract_aware_trainable_target_summary", contract_aware_target),
             ("planner_validated_trainable_target_mining_summary", planner_validated_mining),
+            ("hybrid_policy_training_dry_run_summary", hybrid_training_dry_run),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -437,6 +468,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if hybrid_training_dry_run:
+        source_git_matches.append(
+            _inspect_git(
+                hybrid_training_dry_run,
+                label="hybrid_policy_training_dry_run_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -447,6 +488,7 @@ def analyze_policy_training_readiness_review(
         anchor_contract=anchor_contract,
         contract_aware_target=contract_aware_target,
         planner_validated_mining=planner_validated_mining,
+        hybrid_training_dry_run=hybrid_training_dry_run,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -478,6 +520,11 @@ def analyze_policy_training_readiness_review(
             if planner_validated_mining
             else None
         ),
+        "hybrid_policy_training_dry_run_summary_path": (
+            _display_path(hybrid_training_dry_run_path, repo_root)
+            if hybrid_training_dry_run
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -496,6 +543,7 @@ def analyze_policy_training_readiness_review(
             "anchor_projection_evidence_contract": _public_git(anchor_contract),
             "contract_aware_trainable_target": _public_git(contract_aware_target),
             "planner_validated_trainable_target_mining": _public_git(planner_validated_mining),
+            "hybrid_policy_training_dry_run": _public_git(hybrid_training_dry_run),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -527,6 +575,7 @@ def _review_metrics(
     anchor_contract: dict[str, Any],
     contract_aware_target: dict[str, Any],
     planner_validated_mining: dict[str, Any],
+    hybrid_training_dry_run: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -604,6 +653,7 @@ def _review_metrics(
             "anchor_projection_evidence_contract": anchor_contract,
             "contract_aware_trainable_target": contract_aware_target,
             "planner_validated_trainable_target_mining": planner_validated_mining,
+            "hybrid_policy_training_dry_run": hybrid_training_dry_run,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -613,6 +663,7 @@ def _review_metrics(
         planner_validated_mining=planner_validated_mining,
         thresholds=thresholds,
     )
+    hybrid_training_readiness = _hybrid_training_readiness(hybrid_training_dry_run)
     training_blockers: list[str] = []
     if validation_reason_codes:
         for reason in validation_reason_codes:
@@ -643,6 +694,8 @@ def _review_metrics(
         _append_reason(training_blockers, "anchor_projection_nontrainable_contexts_remain")
     for reason in anchor_projection_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in hybrid_training_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -651,6 +704,9 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif hybrid_training_readiness["present"] and hybrid_training_readiness["completed"]:
+        training_readiness_status = HYBRID_DRY_RUN_COMPLETED_ACTION
+        recommended_next_action = HYBRID_DRY_RUN_COMPLETED_ACTION
     else:
         training_readiness_status = READY_DRY_RUN_ACTION
         recommended_next_action = READY_DRY_RUN_ACTION
@@ -676,6 +732,7 @@ def _review_metrics(
         "training_positive_candidate_count": applied_count,
         "excluded_candidate_count": excluded_candidate_count,
         "anchor_projection_readiness": anchor_projection_readiness,
+        "hybrid_training_readiness": hybrid_training_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -736,9 +793,13 @@ def _review_metrics(
             ),
             "calibrated_selection_only": source_rate == 0.0 and calibrated_rate > 0.0,
             "policy_training_scope": (
-                "limited_policy_training_dry_run_only"
-                if recommended_next_action == READY_DRY_RUN_ACTION
-                else "audit_contract_refinement_only"
+                "hybrid_training_dry_run_only"
+                if recommended_next_action == HYBRID_DRY_RUN_COMPLETED_ACTION
+                else (
+                    "limited_policy_training_dry_run_only"
+                    if recommended_next_action == READY_DRY_RUN_ACTION
+                    else "audit_contract_refinement_only"
+                )
             ),
         },
         "recommended_next_action": recommended_next_action,
@@ -1180,6 +1241,98 @@ def _anchor_projection_readiness(
         "diagnostic_max_source_selection_risk_margin_vs_best_alternative": diagnostic_max_risk_margin,
         "quality_regression_blockers": quality_blockers,
         "training_blockers": training_blockers,
+    }
+
+
+def _hybrid_training_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    if not summary:
+        return {
+            "present": False,
+            "completed": False,
+            "training_blockers": [],
+            "formal_training_ready_claimed": False,
+            "action_label_positive_count": 0,
+            "existing_preference_pair_count": 0,
+            "residual_preference_pair_count": 0,
+            "pairwise_preference_signal_count": 0,
+            "hybrid_train_signal_count": 0,
+            "hard_positive_added_count": 0,
+            "invalid_action_mask_count": 0,
+            "empty_action_mask_count": 0,
+            "publishes_checkpoint": False,
+            "performance_claimed": False,
+        }
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or summary.get("dry_run_status") != "passed":
+        _append_reason(blockers, "hybrid_training_dry_run_not_passed")
+    if _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "hybrid_training_dry_run_reason_codes_present")
+    if _int_value_or_default(summary.get("action_label_positive_count"), 0) != 24:
+        _append_reason(blockers, "hybrid_action_label_positive_count_mismatch")
+    if _int_value_or_default(summary.get("existing_preference_pair_count"), 0) != 24:
+        _append_reason(blockers, "hybrid_existing_preference_pair_count_mismatch")
+    if _int_value_or_default(summary.get("residual_preference_pair_count"), 0) != 30:
+        _append_reason(blockers, "hybrid_residual_preference_pair_count_mismatch")
+    if _int_value_or_default(summary.get("pairwise_preference_signal_count"), 0) != 54:
+        _append_reason(blockers, "hybrid_pairwise_preference_signal_count_mismatch")
+    if _int_value_or_default(summary.get("hybrid_train_signal_count"), 0) != 78:
+        _append_reason(blockers, "hybrid_train_signal_count_mismatch")
+    if _int_value_or_default(summary.get("hard_positive_added_count"), 0) != 0:
+        _append_reason(blockers, "hybrid_hard_positive_added_count_nonzero")
+    if _int_value_or_default(summary.get("invalid_action_mask_count"), 0) != 0:
+        _append_reason(blockers, "hybrid_invalid_action_mask_count_nonzero")
+    if _int_value_or_default(summary.get("empty_action_mask_count"), 0) != 0:
+        _append_reason(blockers, "hybrid_empty_action_mask_count_nonzero")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "hybrid_checkpoint_publication_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "hybrid_policy_performance_claimed")
+    formal_training_ready_claimed = bool(
+        summary.get("formal_training_ready_claimed")
+        or summary.get("policy_training_ready")
+        or summary.get("performance_claimed")
+    )
+    if formal_training_ready_claimed:
+        _append_reason(blockers, "hybrid_formal_training_ready_claimed")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "formal_training_ready_claimed": formal_training_ready_claimed,
+        "action_label_positive_count": _int_value_or_default(
+            summary.get("action_label_positive_count"),
+            0,
+        ),
+        "existing_preference_pair_count": _int_value_or_default(
+            summary.get("existing_preference_pair_count"),
+            0,
+        ),
+        "residual_preference_pair_count": _int_value_or_default(
+            summary.get("residual_preference_pair_count"),
+            0,
+        ),
+        "pairwise_preference_signal_count": _int_value_or_default(
+            summary.get("pairwise_preference_signal_count"),
+            0,
+        ),
+        "hybrid_train_signal_count": _int_value_or_default(
+            summary.get("hybrid_train_signal_count"),
+            0,
+        ),
+        "hard_positive_added_count": _int_value_or_default(
+            summary.get("hard_positive_added_count"),
+            0,
+        ),
+        "invalid_action_mask_count": _int_value_or_default(
+            summary.get("invalid_action_mask_count"),
+            0,
+        ),
+        "empty_action_mask_count": _int_value_or_default(
+            summary.get("empty_action_mask_count"),
+            0,
+        ),
+        "publishes_checkpoint": bool(summary.get("publishes_checkpoint")),
+        "performance_claimed": bool(summary.get("performance_claimed")),
     }
 
 

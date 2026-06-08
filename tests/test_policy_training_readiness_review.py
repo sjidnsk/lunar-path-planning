@@ -954,6 +954,60 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "ready_for_limited_policy_training_dry_run",
         )
 
+    def test_review_records_hybrid_training_dry_run_completion_without_formal_training_claim(self) -> None:
+        self._write_sources()
+        hybrid_path = self.batch_root / "hybrid-policy-training-dry-run-summary.json"
+        hybrid_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "hybrid-policy-training-dry-run-summary/v1",
+                    "generated_at": "2026-06-08T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "dry_run_status": "passed",
+                    "action_label_positive_count": 24,
+                    "existing_preference_pair_count": 24,
+                    "residual_preference_pair_count": 30,
+                    "pairwise_preference_signal_count": 54,
+                    "hybrid_train_signal_count": 78,
+                    "hard_positive_added_count": 0,
+                    "invalid_action_mask_count": 0,
+                    "empty_action_mask_count": 0,
+                    "publishes_checkpoint": False,
+                    "performance_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                    "runs_large_scale_training": False,
+                    "dry_run_only": True,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--hybrid-policy-training-dry-run-summary",
+            str(hybrid_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["training_readiness_status"], "hybrid_training_dry_run_completed")
+        self.assertEqual(summary["recommended_next_action"], "hybrid_training_dry_run_completed")
+        self.assertEqual(summary["hybrid_training_readiness"]["hybrid_train_signal_count"], 78)
+        self.assertEqual(summary["hybrid_training_readiness"]["action_label_positive_count"], 24)
+        self.assertEqual(summary["hybrid_training_readiness"]["pairwise_preference_signal_count"], 54)
+        self.assertFalse(summary["hybrid_training_readiness"]["formal_training_ready_claimed"])
+        self.assertTrue(summary["no_ppo_training"])
+        self.assertFalse(summary["runs_training"])
+
     def test_review_auto_detects_anchor_only_mode_when_default_anchor_summaries_exist(self) -> None:
         self._write_anchor_projection_summaries(
             candidate_trainable_count=1,

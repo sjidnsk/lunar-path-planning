@@ -666,6 +666,27 @@ This means the 78 contexts now have unified training-signal coverage:
 It does **not** mean there are 78 PPO hard positives; the hard-positive stream
 remains exactly 24.
 
+The next **Hybrid Training Objective Integration v1** gate consumes these two
+training-signal families in one opt-in local dry-run. New artifacts are:
+
+- `configs/hybrid_policy_training_dry_run_v1.json`
+- `scripts/run_hybrid_policy_training_dry_run.py`
+- `scripts/run_hybrid_policy_training_dry_run.sh`
+- `tests/test_hybrid_policy_training_dry_run.py`
+- `docs/superpowers/specs/2026-06-08-hybrid-training-objective-integration.md`
+
+The hybrid dry-run keeps hard positives on the existing
+`RolloutEpisode.action_index` path and applies pairwise ranking loss only to the
+54 preference/negative samples. Current output reports
+`dry_run_status=passed`, `action_label_positive_count=24`,
+`existing_preference_pair_count=24`, `residual_preference_pair_count=30`,
+`pairwise_preference_signal_count=54`, `hybrid_train_signal_count=78`,
+`hard_positive_added_count=0`, `invalid_action_mask_count=0`, and
+`empty_action_mask_count=0`. It also reports `publishes_checkpoint=false` and
+`performance_claimed=false`. Readiness review can now record
+`hybrid_training_dry_run_completed`, but this remains a dry-run milestone rather
+than formal PPO readiness or a policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
