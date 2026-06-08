@@ -1,0 +1,38 @@
+{
+  "schema_version": "controlled-hybrid-policy-holdout-evaluation-config/v1",
+  "description": "Offline holdout gate for a controlled experimental hybrid policy candidate. Reports safety, contract, action-mask, path/risk, source-selection, and preference-margin metrics without claiming performance.",
+  "input_files": {
+    "batch_summary": "batch-evaluation-summary.json",
+    "anchor_candidate_summary": "anchor-projection-candidate-generation-summary.json",
+    "planner_validated_mining_summary": "planner-validated-trainable-target-mining-summary.json",
+    "unified_policy_sample_registry": "unified-policy-sample-registry.jsonl",
+    "candidate_summary": "controlled-hybrid-policy-training-candidate-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "summary": "controlled-hybrid-policy-holdout-evaluation-summary.json"
+  },
+  "validation": {
+    "max_action_mask_invalid_count": 0,
+    "max_empty_action_mask_count": 0,
+    "max_fallback_or_open_grid_count": 0,
+    "max_safety_regression_count": 0,
+    "max_contract_violation_count": 0
+  },
+  "evaluation": {
+    "hidden_size": 16,
+    "preference_margin_threshold": 0.0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_production_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

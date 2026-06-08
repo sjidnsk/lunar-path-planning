@@ -708,6 +708,38 @@ current evidence/readiness mismatch only; it still does not publish a model,
 start formal PPO, change the network/action space/default A*, relax the default
 distance contract, or claim Ackermann-feasible execution.
 
+The next **Controlled Hybrid Policy Training Candidate v1** gate upgrades the
+hybrid dry-run into a strictly local experimental checkpoint candidate. It adds:
+
+- `configs/controlled_hybrid_policy_training_candidate_v1.json`
+- `configs/controlled_hybrid_policy_holdout_evaluation_v1.json`
+- `scripts/run_controlled_hybrid_policy_training_candidate.py`
+- `scripts/run_controlled_hybrid_policy_training_candidate.sh`
+- `scripts/run_controlled_hybrid_policy_holdout_evaluation.py`
+- `scripts/run_controlled_hybrid_policy_holdout_evaluation.sh`
+- `tests/test_controlled_hybrid_policy_training_candidate.py`
+- `docs/superpowers/specs/2026-06-08-controlled-hybrid-policy-training-candidate.md`
+
+The candidate training input remains the same 78-signal hybrid set:
+`action_label_positive_count=24`, `pairwise_preference_signal_count=54`,
+`hybrid_train_signal_count=78`, and `hard_positive_added_count=0`. The new output
+root is
+`outputs/path_feedback_batch_controlled_hybrid_policy_training_candidate_v1/`.
+It may write a local `experimental-hybrid-policy-candidate.pt` plus metadata,
+but both candidate and holdout summaries must keep `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `performance_claimed=false`.
+
+The holdout evaluation gate reports action-mask, fallback/open-grid, safety,
+contract, path-cost, risk, source-selection, and preference-margin fields. The
+hard safety gate requires `action_mask_invalid_count=0`,
+`empty_action_mask_count=0`, `fallback_or_open_grid_count=0`,
+`safety_regression_count=0`, and `contract_violation_count=0`. If path/risk or
+source-selection regressions are present, readiness remains blocked with
+`next_required_change=training_objective_or_sample_weight_refinement_required`.
+When both candidate and holdout summaries pass without those regressions,
+readiness may record `controlled_hybrid_training_candidate_evaluated`; this is
+still not formal PPO readiness or a policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
