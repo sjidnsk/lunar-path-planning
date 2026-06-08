@@ -886,6 +886,74 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         self.assertIn("anchor_projection_nontrainable_contexts_remain", summary["training_blockers"])
         self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
 
+    def test_review_uses_planner_validated_mining_summary_to_clear_anchor_blocker(self) -> None:
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=18,
+            candidate_nontrainable_count=60,
+            contract_trainable_count=18,
+            contract_nontrainable_count=60,
+            source_candidate_not_selected_count=60,
+        )
+        mining_path = self.batch_root / "planner-validated-trainable-target-mining-summary.json"
+        mining_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "planner-validated-trainable-target-mining-summary/v1",
+                    "generated_at": "2026-06-08T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "planner_validated_trainable_target_count": 24,
+                    "default_contract_trainable_target_count": 18,
+                    "planner_validated_distance_exception_count": 6,
+                    "nontrainable_blocked_target_count": 54,
+                    "nontrainable_blocked_target_count_delta": -6,
+                    "distance_contract_blocked_count": 18,
+                    "source_selection_not_selected_count": 30,
+                    "quality_regression_rejected_count": 6,
+                    "candidate_contract_alignment_gap_count": 0,
+                    "main_success_gate_failures": [],
+                    "next_required_change": None,
+                    "readiness_impact": {
+                        "recommended_training_blockers": [],
+                    },
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                    "runs_training": False,
+                    "audit_only": True,
+                    "no_ppo_training": True,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+            "--planner-validated-trainable-target-mining-summary",
+            str(mining_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["anchor_projection_ppo_consumable_trainable_target_count"], 24)
+        self.assertEqual(summary["anchor_projection_planner_validated_trainable_target_count"], 24)
+        self.assertEqual(summary["anchor_projection_planner_validated_distance_exception_count"], 6)
+        self.assertNotIn("anchor_projection_nontrainable_contexts_remain", summary["training_blockers"])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "ready_for_limited_policy_training_dry_run",
+        )
+
     def test_review_auto_detects_anchor_only_mode_when_default_anchor_summaries_exist(self) -> None:
         self._write_anchor_projection_summaries(
             candidate_trainable_count=1,

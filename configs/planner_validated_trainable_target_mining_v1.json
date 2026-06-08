@@ -1,0 +1,44 @@
+{
+  "schema_version": "planner-validated-trainable-target-mining-config/v1",
+  "description": "Planner-Validated Trainable Target Mining v1 summary. Audit-only opt-in gate that mines source-selected, PPO-consumable, planner-validated anchor-projection targets after path-feedback evidence is available.",
+  "output_files": {
+    "planner_validated_trainable_target_mining_summary": "planner-validated-trainable-target-mining-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "allow_dirty_current_git_match": true,
+    "fail_on_input_failure": true,
+    "fail_on_fallback_or_open_grid": true,
+    "fail_on_safety_regression": true
+  },
+  "baseline_counts": {
+    "planner_validated_trainable_target_count_floor": 18,
+    "nontrainable_blocked_target_count": 60
+  },
+  "thresholds": {
+    "max_trainable_projection_distance_cells": 2,
+    "max_trainable_projection_distance_m": 1.0,
+    "max_planner_validated_distance_cells": 3,
+    "max_planner_validated_distance_m": 1.5,
+    "max_source_selection_path_cost_regression": 6.0,
+    "max_source_selection_risk_regression": 0.5
+  },
+  "mining": {
+    "allow_planner_validated_distance_exception": true
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_path_planner_route_stable_field_semantics_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_stable_field_semantics_change",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_c_space_iris_or_iris_np",
+    "no_gcs_or_iris_training_release_claim",
+    "no_real_world_performance_claim"
+  ]
+}

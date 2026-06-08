@@ -23,6 +23,7 @@ CALIBRATION_SCHEMA_VERSION = "channel-aware-selection-contrast-calibration-summa
 ANCHOR_CANDIDATE_SCHEMA_VERSION = "anchor-projection-candidate-generation-summary/v1"
 ANCHOR_CONTRACT_SCHEMA_VERSION = "anchor-projection-evidence-contract-summary/v1"
 CONTRACT_AWARE_TARGET_SCHEMA_VERSION = "anchor-projection-contract-aware-trainable-target-summary/v1"
+PLANNER_VALIDATED_MINING_SCHEMA_VERSION = "planner-validated-trainable-target-mining-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 READY_SMOKE_ACTION = "ready_for_policy_training_readiness_review"
 READY_DRY_RUN_ACTION = "ready_for_limited_policy_training_dry_run"
@@ -82,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional anchor-projection-contract-aware-trainable-target-summary/v1 JSON. Defaults to <batch-root>/anchor-projection-contract-aware-trainable-target-summary.json when present.",
     )
     parser.add_argument(
+        "--planner-validated-trainable-target-mining-summary",
+        help="Optional planner-validated-trainable-target-mining-summary/v1 JSON. Defaults to <batch-root>/planner-validated-trainable-target-mining-summary.json when present.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -127,6 +132,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.contract_aware_trainable_target_summary
         else batch_root / "anchor-projection-contract-aware-trainable-target-summary.json"
     )
+    planner_validated_mining_path = (
+        _resolve_path(args.planner_validated_trainable_target_mining_summary, repo_root)
+        if args.planner_validated_trainable_target_mining_summary
+        else batch_root / "planner-validated-trainable-target-mining-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -148,11 +158,15 @@ def main(argv: list[str] | None = None) -> int:
         anchor_candidate_path=anchor_candidate_path,
         anchor_contract_path=anchor_contract_path,
         contract_aware_target_path=contract_aware_target_path,
+        planner_validated_mining_path=planner_validated_mining_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
         or anchor_only_defaults_available,
         contract_aware_target_required=bool(args.contract_aware_trainable_target_summary),
+        planner_validated_mining_required=bool(
+            args.planner_validated_trainable_target_mining_summary
+        ),
         config=config,
         repo_root=repo_root,
     )
@@ -177,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
         "contract_aware_trainable_target_summary": (
             _display_path(contract_aware_target_path, repo_root)
             if contract_aware_target_path.is_file() or args.contract_aware_trainable_target_summary
+            else None
+        ),
+        "planner_validated_trainable_target_mining_summary": (
+            _display_path(planner_validated_mining_path, repo_root)
+            if planner_validated_mining_path.is_file()
+            or args.planner_validated_trainable_target_mining_summary
             else None
         ),
         "config": _display_path(config_path, repo_root),
@@ -233,9 +253,11 @@ def analyze_policy_training_readiness_review(
     anchor_candidate_path: Path,
     anchor_contract_path: Path,
     contract_aware_target_path: Path,
+    planner_validated_mining_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
+    planner_validated_mining_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -341,6 +363,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=contract_aware_target_required,
     )
+    planner_validated_mining = _load_optional_source(
+        planner_validated_mining_path,
+        label="planner_validated_trainable_target_mining_summary",
+        expected_schema=PLANNER_VALIDATED_MINING_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=planner_validated_mining_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -350,6 +381,7 @@ def analyze_policy_training_readiness_review(
             ("anchor_projection_candidate_generation_summary", anchor_candidate),
             ("anchor_projection_evidence_contract_summary", anchor_contract),
             ("contract_aware_trainable_target_summary", contract_aware_target),
+            ("planner_validated_trainable_target_mining_summary", planner_validated_mining),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -395,6 +427,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if planner_validated_mining:
+        source_git_matches.append(
+            _inspect_git(
+                planner_validated_mining,
+                label="planner_validated_trainable_target_mining_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -404,6 +446,7 @@ def analyze_policy_training_readiness_review(
         anchor_candidate=anchor_candidate,
         anchor_contract=anchor_contract,
         contract_aware_target=contract_aware_target,
+        planner_validated_mining=planner_validated_mining,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -430,6 +473,11 @@ def analyze_policy_training_readiness_review(
         "contract_aware_trainable_target_summary_path": (
             _display_path(contract_aware_target_path, repo_root) if contract_aware_target else None
         ),
+        "planner_validated_trainable_target_mining_summary_path": (
+            _display_path(planner_validated_mining_path, repo_root)
+            if planner_validated_mining
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -447,6 +495,7 @@ def analyze_policy_training_readiness_review(
             "anchor_projection_candidate_generation": _public_git(anchor_candidate),
             "anchor_projection_evidence_contract": _public_git(anchor_contract),
             "contract_aware_trainable_target": _public_git(contract_aware_target),
+            "planner_validated_trainable_target_mining": _public_git(planner_validated_mining),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -477,6 +526,7 @@ def _review_metrics(
     anchor_candidate: dict[str, Any],
     anchor_contract: dict[str, Any],
     contract_aware_target: dict[str, Any],
+    planner_validated_mining: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -527,6 +577,7 @@ def _review_metrics(
         _int_value_or_default(anchor_candidate.get("safety_regression_count"), 0),
         _int_value_or_default(anchor_contract.get("safety_regression_count"), 0),
         _int_value_or_default(contract_aware_target.get("safety_regression_count"), 0),
+        _int_value_or_default(planner_validated_mining.get("safety_regression_count"), 0),
     )
     fallback_or_open_grid_count = max(
         _fallback_or_open_grid_count(smoke),
@@ -536,6 +587,7 @@ def _review_metrics(
         _fallback_or_open_grid_count(anchor_candidate),
         _fallback_or_open_grid_count(anchor_contract),
         _fallback_or_open_grid_count(contract_aware_target),
+        _fallback_or_open_grid_count(planner_validated_mining),
     )
     changed_scenario_ids = _unique(
         _string_list(smoke.get("changed_scenario_ids"))
@@ -551,12 +603,14 @@ def _review_metrics(
             "anchor_projection_candidate_generation": anchor_candidate,
             "anchor_projection_evidence_contract": anchor_contract,
             "contract_aware_trainable_target": contract_aware_target,
+            "planner_validated_trainable_target_mining": planner_validated_mining,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
         candidate=anchor_candidate,
         contract=anchor_contract,
         contract_aware_target=contract_aware_target,
+        planner_validated_mining=planner_validated_mining,
         thresholds=thresholds,
     )
     training_blockers: list[str] = []
@@ -629,6 +683,12 @@ def _review_metrics(
         "anchor_projection_readiness_trainable_count": anchor_projection_readiness["readiness_trainable_count"],
         "anchor_projection_ppo_consumable_trainable_target_count": anchor_projection_readiness[
             "ppo_consumable_trainable_target_count"
+        ],
+        "anchor_projection_planner_validated_trainable_target_count": anchor_projection_readiness[
+            "planner_validated_trainable_target_count"
+        ],
+        "anchor_projection_planner_validated_distance_exception_count": anchor_projection_readiness[
+            "planner_validated_distance_exception_count"
         ],
         "anchor_projection_candidate_contract_alignment_gap_count": anchor_projection_readiness[
             "candidate_contract_alignment_gap_count"
@@ -899,6 +959,7 @@ def _anchor_projection_readiness(
     candidate: dict[str, Any],
     contract: dict[str, Any],
     contract_aware_target: dict[str, Any],
+    planner_validated_mining: dict[str, Any],
     thresholds: dict[str, Any],
 ) -> dict[str, Any]:
     candidate_present = bool(candidate)
@@ -916,6 +977,18 @@ def _anchor_projection_readiness(
     ppo_consumable_trainable_target_count = max(
         _int_value_or_default(candidate.get("ppo_consumable_trainable_target_count"), 0),
         _int_value_or_default(contract_aware_target.get("ppo_consumable_trainable_target_count"), 0),
+        _int_value_or_default(
+            planner_validated_mining.get("planner_validated_trainable_target_count"),
+            0,
+        ),
+    )
+    planner_validated_trainable_target_count = _int_value_or_default(
+        planner_validated_mining.get("planner_validated_trainable_target_count"),
+        0,
+    )
+    planner_validated_distance_exception_count = _int_value_or_default(
+        planner_validated_mining.get("planner_validated_distance_exception_count"),
+        0,
     )
     if candidate_present and contract_present:
         readiness_trainable = min(candidate_trainable, contract_trainable)
@@ -927,6 +1000,7 @@ def _anchor_projection_readiness(
         alignment_gap,
         _int_value_or_default(candidate.get("candidate_contract_alignment_gap_count"), 0),
         _int_value_or_default(contract_aware_target.get("candidate_contract_alignment_gap_count"), 0),
+        _int_value_or_default(planner_validated_mining.get("candidate_contract_alignment_gap_count"), 0),
     )
     anchor_unreachable_count = _candidate_nontrainable_reason_count(candidate, "anchor_unreachable")
     source_candidate_not_selected_count = _candidate_nontrainable_reason_count(
@@ -1052,6 +1126,22 @@ def _anchor_projection_readiness(
             recommended = ["anchor_projection_nontrainable_contexts_remain"]
         for reason in recommended:
             _append_reason(training_blockers, reason)
+    mining_failures = _string_list(planner_validated_mining.get("main_success_gate_failures"))
+    mining_next_required_change = planner_validated_mining.get("next_required_change")
+    if mining_failures or mining_next_required_change:
+        readiness_impact = planner_validated_mining.get("readiness_impact")
+        readiness_impact = readiness_impact if isinstance(readiness_impact, dict) else {}
+        recommended = _string_list(readiness_impact.get("recommended_training_blockers"))
+        if not recommended:
+            recommended = ["anchor_projection_nontrainable_contexts_remain"]
+        for reason in recommended:
+            _append_reason(training_blockers, reason)
+    elif planner_validated_mining:
+        training_blockers = [
+            reason
+            for reason in training_blockers
+            if reason != "anchor_projection_nontrainable_contexts_remain"
+        ]
     if audit_proxy_positive_count > 0:
         _append_reason(training_blockers, "anchor_projection_positive_evidence_contains_audit_proxy_anchor")
     for reason in quality_blockers:
@@ -1065,6 +1155,8 @@ def _anchor_projection_readiness(
         "contract_nontrainable_count": contract_nontrainable,
         "readiness_trainable_count": readiness_trainable,
         "ppo_consumable_trainable_target_count": ppo_consumable_trainable_target_count,
+        "planner_validated_trainable_target_count": planner_validated_trainable_target_count,
+        "planner_validated_distance_exception_count": planner_validated_distance_exception_count,
         "candidate_contract_alignment_gap_count": alignment_gap,
         "anchor_unreachable_count": anchor_unreachable_count,
         "source_candidate_not_selected_count": source_candidate_not_selected_count,

@@ -541,6 +541,51 @@ therefore must set
 `next_required_change=action_or_target_contract_change_required`, and the
 readiness review must keep `anchor_projection_nontrainable_contexts_remain`.
 
+The follow-on implementation gate is **Planner-Validated Trainable Target
+Mining v1**. It keeps the contract-aware generation path, but moves final
+training-positive accounting after planner feedback is available. Each blocked
+context receives exactly one final decision:
+`selected_default_contract_trainable`,
+`selected_planner_validated_distance_exception`,
+`rejected_distance_contract`, `rejected_not_source_selected`,
+`rejected_quality_regression`, or `rejected_not_ppo_consumable`.
+
+New artifacts:
+
+- `configs/path_feedback_batch_planner_validated_trainable_target_mining_v1.json`
+- `configs/planner_validated_trainable_target_mining_v1.json`
+- `scripts/run_planner_validated_trainable_target_mining.py`
+- `scripts/run_planner_validated_trainable_target_mining.sh`
+- `tests/test_planner_validated_trainable_target_mining.py`
+- `docs/superpowers/specs/2026-06-08-planner-validated-trainable-target-mining.md`
+
+The target evidence root is
+`outputs/path_feedback_batch_planner_validated_trainable_target_mining_v1/`.
+The default distance contract remains 2 cells / 1.0 m. The 3 cells / 1.5 m
+gate is only an opt-in planner-validated exception and can become positive only
+when the same-action substitute is source-selected, reachable, non-replan,
+PPO-consumable, and within source-selection path/risk regression gates. A
+planner-repaired target that is not source-selected remains diagnostic. If
+`planner_validated_trainable_target_count <= 18` or
+`nontrainable_blocked_target_count >= 60`, the mining summary must set
+`next_required_change=source_selection_or_target_contract_change_required` and
+readiness must stay blocked.
+
+Current validation for this root is 8/8 passed with fallback/open-grid,
+safety-regression, and provenance mismatch counts all zero. Candidate generation
+remains `18 trainable + 60 nontrainable` under the default contract, while the
+planner-validated mining summary reports
+`planner_validated_trainable_target_count=24`,
+`default_contract_trainable_target_count=18`,
+`planner_validated_distance_exception_count=6`,
+`nontrainable_blocked_target_count=54`,
+`nontrainable_blocked_target_count_delta=-6`,
+`candidate_contract_alignment_gap_count=0`, and
+`next_required_change=null`. The readiness review for this evidence root reports
+`training_readiness_status=ready_for_limited_policy_training_dry_run` with
+`training_blockers=[]`. This is still a limited dry-run review gate, not PPO
+training execution.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

@@ -354,6 +354,8 @@ def _collect_contexts(
                     "projected_candidate_path_cost": None,
                     "projected_candidate_risk": None,
                     "projected_candidate_utility": None,
+                    "reachable": None,
+                    "replan_required": None,
                     "selected_candidate_path_cost": None,
                     "selected_candidate_risk": None,
                     "selected_candidate_utility": None,
@@ -384,6 +386,12 @@ def _collect_contexts(
                     "target_binding_mode": None,
                     "ppo_consumable_action": False,
                     "contract_safe": False,
+                    "default_distance_contract_safe": False,
+                    "default_distance_contract_reject_reasons": [],
+                    "planner_validated_distance_exception": False,
+                    "planner_validated_exception_safe": False,
+                    "planner_validated_trainable_target_mining": False,
+                    "planner_validated_mining_decision": None,
                     "trainability_gate": {},
                 },
             )
@@ -413,6 +421,24 @@ def _collect_contexts(
             generation = generation if isinstance(generation, dict) else {}
             if generation.get("candidate_role") != "projected_execution_target":
                 continue
+            existing_status = str(context.get("source_selection_status") or "")
+            existing_same_action_source_selected = (
+                context.get("target_binding_mode") == "same_action_execution_substitute"
+                and context.get("ppo_consumable_action") is True
+                and existing_status.startswith("source_selected")
+            )
+            incoming_status = str(
+                generation.get("source_selection_status")
+                or projection.get("source_selection_status")
+                or ""
+            )
+            incoming_same_action_source_selected = (
+                generation.get("target_binding_mode") == "same_action_execution_substitute"
+                and generation.get("ppo_consumable_action") is True
+                and incoming_status.startswith("source_selected")
+            )
+            if existing_same_action_source_selected and not incoming_same_action_source_selected:
+                continue
             if (
                 context["trainable"]
                 and context.get("ppo_consumable_action") is True
@@ -427,6 +453,12 @@ def _collect_contexts(
             context["projected_candidate_path_cost"] = _float_optional(candidate.get("path_cost"))
             context["projected_candidate_risk"] = _float_optional(candidate.get("risk"))
             context["projected_candidate_utility"] = _float_optional(candidate.get("utility"))
+            context["reachable"] = bool(candidate.get("reachable")) if candidate.get("reachable") is not None else None
+            context["replan_required"] = (
+                bool(candidate.get("replan_required"))
+                if candidate.get("replan_required") is not None
+                else None
+            )
             generation_distance_cells = _float_optional(generation.get("projection_distance_cells"))
             if generation_distance_cells is not None:
                 context["projection_distance_cells"] = generation_distance_cells
@@ -437,6 +469,27 @@ def _collect_contexts(
             context["target_binding_mode"] = generation.get("target_binding_mode")
             context["ppo_consumable_action"] = bool(generation.get("ppo_consumable_action", False))
             context["contract_safe"] = bool(generation.get("contract_safe", False))
+            context["default_distance_contract_safe"] = bool(
+                generation.get("default_distance_contract_safe", context["contract_safe"])
+            )
+            default_reasons = generation.get("default_distance_contract_reject_reasons")
+            if isinstance(default_reasons, list):
+                context["default_distance_contract_reject_reasons"] = [
+                    str(reason) for reason in default_reasons if reason
+                ]
+            context["planner_validated_distance_exception"] = bool(
+                generation.get("planner_validated_distance_exception", False)
+            )
+            context["planner_validated_exception_safe"] = bool(
+                generation.get("planner_validated_exception_safe", False)
+            )
+            context["planner_validated_trainable_target_mining"] = bool(
+                generation.get("planner_validated_trainable_target_mining", False)
+            )
+            if generation.get("planner_validated_mining_decision"):
+                context["planner_validated_mining_decision"] = str(
+                    generation.get("planner_validated_mining_decision")
+                )
             trainability_gate = generation.get("trainability_gate")
             context["trainability_gate"] = trainability_gate if isinstance(trainability_gate, dict) else {}
             if selected_candidate is not None:
