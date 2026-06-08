@@ -1,0 +1,33 @@
+{
+  "schema_version": "counterfactual-preference-training-dry-run-config/v1",
+  "description": "One-epoch local pairwise preference dry-run over counterfactual preference samples. Does not call train_policy_on_episodes and does not publish a checkpoint.",
+  "input_files": {
+    "samples": "counterfactual-preference-training-samples.jsonl",
+    "summary": "counterfactual-preference-training-summary.json"
+  },
+  "output_files": {
+    "summary": "counterfactual-preference-training-dry-run-summary.json"
+  },
+  "validation": {
+    "expected_preference_pair_count": 24
+  },
+  "training": {
+    "seed": 0,
+    "hidden_size": 16,
+    "learning_rate": 0.001,
+    "epochs": 1,
+    "margin": 0.1,
+    "checkpoint_path": null
+  },
+  "non_goals": [
+    "no_hard_positive_expansion",
+    "no_default_ppo_training_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_checkpoint_publication",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

@@ -611,6 +611,28 @@ Current materialization output under the same evidence root reports
 the remaining 54 contract/source-selection blockers and does not publish or
 evaluate a trained policy.
 
+The follow-on **Counterfactual Preference Training Samples v1** gate handles the
+36 `source_selection_not_selected` contexts as preference evidence rather than
+hard positives. These contexts remain `synthetic_projection` and
+`ppo_consumable_action=false`, so they are not inserted into the
+`RolloutEpisode.action_index` label stream. Instead, the pipeline writes
+`counterfactual-preference-training-samples.jsonl`,
+`counterfactual-preference-training-summary.json`, and
+`counterfactual-preference-exclusion-report.json`, then runs a local pairwise
+preference dry-run.
+
+Current results classify all 36 not-source-selected contexts:
+`preference_pair_count=24`, split into
+`selected_over_alternative_negative_count=12` and
+`tradeoff_preference_pair_count=12`; the remaining
+`rejected_binding_or_distance_required_count=12` stay excluded for later action
+binding / distance-contract work. `hard_positive_added_count=0`. The preference
+dry-run reports `preference_dry_run_status=passed`,
+`preference_train_sample_count=24`, `publishes_checkpoint=false`, and
+`performance_claimed=false`. This trains only the local ranking boundary in a
+dry-run; it does not change default PPO training, network architecture, action
+space, default A*, or distance contract behavior.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
