@@ -687,6 +687,27 @@ The hybrid dry-run keeps hard positives on the existing
 `hybrid_training_dry_run_completed`, but this remains a dry-run milestone rather
 than formal PPO readiness or a policy performance claim.
 
+The follow-on **Current-HEAD Hybrid Evidence Refresh and Readiness Closure v1**
+does not add another sample type. It reruns the complete path-feedback,
+sample-registry, limited training, preference, residual, hybrid, and readiness
+pipeline under the current repository HEAD so the evidence no longer fails on
+`current_git_provenance_mismatch`.
+
+The refreshed evidence root is:
+
+`outputs/path_feedback_batch_hybrid_current_head_readiness_closure_v1/`
+
+The acceptance state for this root is: batch `failed_count=0`,
+fallback/open-grid count `0`, safety regression `0`, summary
+`reason_codes=[]`, and current git provenance mismatch count `0`. The hybrid
+summary must preserve `action_label_positive_count=24`,
+`pairwise_preference_signal_count=54`, `hybrid_train_signal_count=78`, and
+`hard_positive_added_count=0`. The readiness review may then report
+`training_readiness_status=hybrid_training_dry_run_completed`. This closes the
+current evidence/readiness mismatch only; it still does not publish a model,
+start formal PPO, change the network/action space/default A*, relax the default
+distance contract, or claim Ackermann-feasible execution.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
