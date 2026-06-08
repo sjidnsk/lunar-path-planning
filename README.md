@@ -448,6 +448,99 @@ candidate-list action space, implement GCS or vehicle feasibility, claim
 Ackermann-feasible trajectories, or treat IRIS/region-graph diagnostics as GCS
 or vehicle-feasibility proof.
 
+## Current Training-Readiness Gate
+
+The active model-explorer gate is **Distance-Contract Relaxation Safety Audit
+v1**. It consumes the anchor-projection candidate-generation, evidence-contract,
+and policy-readiness summaries to decide whether source-selected projected
+anchors beyond the current 2-cell / 1.0 m training distance contract are safe
+enough for an explicit opt-in relaxation profile.
+
+The audit keeps provenance, fallback/open-grid, safety, source-selection quality
+regression, audit-proxy-positive, and contract-alignment gates intact. A passed
+audit summary is not PPO readiness. If any far-distance, not-source-selected, or
+unsafe context remains, the expected recommendation is
+`keep_current_training_distance_contract`, and PPO remains blocked by
+`anchor_projection_nontrainable_contexts_remain`.
+
+Clean validation for
+`outputs/path_feedback_batch_anchor_projection_distance_contract_relaxation_safety_audit_v1/`
+keeps that recommendation: batch is 8/8 passed, candidate-generation remains
+`18 trainable + 60 nontrainable`, the distance audit reports 36 rejected contexts
+with 12 source-selected and 24 not-source-selected, and readiness remains
+`needs_training_contract_refinement`.
+
+The next active gate is **Anchor Projection Nontrainable Context Reduction /
+Source-Selection Candidate Quality v1**. It does not reinterpret the distance
+audit as training readiness. Instead it turns the remaining 60 nontrainable
+contexts into an explicit accounting report:
+
+- `safe_default_training_conversion_count=0`; the default 2-cell / 1.0 m
+  distance contract remains unchanged.
+- 6 source-selected near-distance contexts may only be treated as follow-up
+  candidates for an explicit opt-in relaxation review.
+- The full 60-context blocker is retained until source-selection quality,
+  distance rejection, and audit-proxy gates prove otherwise.
+
+The target evidence root is
+`outputs/path_feedback_batch_anchor_projection_nontrainable_context_reduction_v1/`.
+The new summary is
+`anchor-projection-nontrainable-context-reduction-summary/v1` and must keep
+`anchor_projection_nontrainable_contexts_remain` when any nontrainable context
+remains.
+
+Clean validation for that root was generated from a clean worktree. Batch is
+8/8 passed, provenance mismatch counts are 0, and the nontrainable-reduction
+summary reports:
+
+- `recommendation=keep_training_blocker_focus_source_selection_candidate_quality`
+- `generated_not_source_selected_count=48`
+- `distance_contract_rejected_count=36`
+- `source_selected_distance_rejected_count=12`
+- `not_source_selected_distance_rejected_count=24`
+- `source_selection_quality_regression_count=0`
+- `positive_training_evidence_contains_audit_proxy_anchor_count=0`
+- `candidate_contract_alignment_gap_count=0`
+
+The next implementation gate is **Contract-Aware Trainable Target Generation
+v1**. It moves the training contract check upstream into opt-in anchor-projection
+candidate generation and source selection. Instead of relaxing the default
+2-cell / 1.0 m distance contract, it generates same-action execution substitutes:
+the policy action remains the original `top_goals` index, while
+`execution_goal_cell` points to the reachable anchor. A candidate is counted as
+PPO-consumable only when it is source-selected, contract-safe, free of
+source-selection quality regression, and marked `ppo_consumable_action=true`.
+
+New artifacts:
+
+- `configs/path_feedback_batch_anchor_projection_contract_aware_trainable_target_v1.json`
+- `configs/anchor_projection_contract_aware_trainable_target_v1.json`
+- `scripts/run_anchor_projection_contract_aware_trainable_target.py`
+- `scripts/run_anchor_projection_contract_aware_trainable_target.sh`
+- `tests/test_anchor_projection_contract_aware_trainable_target.py`
+- `docs/superpowers/specs/2026-06-08-anchor-projection-contract-aware-trainable-target.md`
+
+The target evidence root is
+`outputs/path_feedback_batch_anchor_projection_contract_aware_trainable_target_v1/`.
+The summary
+`anchor-projection-contract-aware-trainable-target-summary/v1` reports
+`contract_trainable_contrast_count`,
+`ppo_consumable_trainable_target_count`, nontrainable/distance/source-selection
+deltas against the current 60/36/48 baseline, and `next_required_change`. If no
+PPO-consumable target is produced, the summary must set
+`next_required_change=action_or_target_contract_change_required` and readiness
+must keep `anchor_projection_nontrainable_contexts_remain`.
+
+Current verification expectation for this root is conservative: same-action
+substitutes produce `ppo_consumable_trainable_target_count=18` with
+`candidate_contract_alignment_gap_count=0`, but
+`nontrainable_blocked_target_count` remains 60, so
+`nontrainable_blocked_target_count_delta=0`. That means the PPO-consumable
+threshold is met but the main success gate is not. The contract-aware summary
+therefore must set
+`next_required_change=action_or_target_contract_change_required`, and the
+readiness review must keep `anchor_projection_nontrainable_contexts_remain`.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

@@ -10,6 +10,10 @@ ANCHOR_PROJECTION_CANDIDATE_GENERATION=0
 ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS="0.0"
 ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION="6.0"
 ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION="0.5"
+ANCHOR_PROJECTION_CONTRACT_AWARE_TRAINABLE_TARGET_GENERATION=0
+ANCHOR_PROJECTION_PREFER_CONTRACT_SAFE_TRAINABLE_TARGETS=0
+ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_CELLS="2"
+ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_M="1.0"
 PLANNER_EXTRA_ARGS=()
 MODULES=(path-planner model-explorer dev-platform-constraints)
 DEFAULT_PYTHON="/home/kai/anaconda3/envs/lunar-explorer/bin/python"
@@ -67,6 +71,17 @@ Options:
                         Maximum risk regression versus the best feasible
                         alternative for a source-selected projected candidate
                         to remain trainable. Manifest-only.
+  --anchor-projection-contract-aware-trainable-target-generation
+                        Generate opt-in same-action execution substitutes that
+                        keep the policy action index inside the current
+                        model-explorer action mask.
+  --anchor-projection-prefer-contract-safe-trainable-targets
+                        Prefer contract-safe same-action substitutes before
+                        ordinary path-cost ranking when quality gates allow it.
+  --anchor-projection-max-trainable-distance-cells VALUE
+                        Default trainable anchor-projection distance gate in cells.
+  --anchor-projection-max-trainable-distance-m VALUE
+                        Default trainable anchor-projection distance gate in meters.
   --gcs-control-point-terrain-weight VALUE
                         Forward explicit control-point terrain objective weight.
   --gcs-control-point-second-difference-weight VALUE
@@ -159,6 +174,24 @@ while [[ $# -gt 0 ]]; do
       ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION="$2"
       shift 2
       ;;
+    --anchor-projection-contract-aware-trainable-target-generation)
+      ANCHOR_PROJECTION_CONTRACT_AWARE_TRAINABLE_TARGET_GENERATION=1
+      shift
+      ;;
+    --anchor-projection-prefer-contract-safe-trainable-targets)
+      ANCHOR_PROJECTION_PREFER_CONTRACT_SAFE_TRAINABLE_TARGETS=1
+      shift
+      ;;
+    --anchor-projection-max-trainable-distance-cells)
+      require_value "$1" "${2:-}"
+      ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_CELLS="$2"
+      shift 2
+      ;;
+    --anchor-projection-max-trainable-distance-m)
+      require_value "$1" "${2:-}"
+      ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_M="$2"
+      shift 2
+      ;;
     --gcs-control-point-terrain-weight|--gcs-control-point-second-difference-weight|--gcs-control-point-high-cost-exposure-weight|--gcs-control-point-direction-cone-max-error-deg|--gcs-control-point-direction-cone-rho-floor-m|--gcs-control-point-direction-cone-seed-rho-ratio|--channel-aware-neighborhood-radius-cells|--channel-aware-center-weight|--channel-aware-neighborhood-mean-weight|--channel-aware-neighborhood-max-weight|--channel-aware-high-cost-exposure-weight|--channel-aware-blocked-nearby-weight|--channel-aware-clearance-weight|--channel-aware-smoothness-weight|--channel-aware-high-cost-threshold)
       require_value "$1" "${2:-}"
       PLANNER_EXTRA_ARGS+=("$1" "$2")
@@ -215,7 +248,9 @@ fi
 
 for numeric_gate in \
   "$ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION" \
-  "$ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION"; do
+  "$ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION" \
+  "$ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_CELLS" \
+  "$ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_M"; do
   if ! "$PYTHON_BIN" - "$numeric_gate" <<'PY'
 import math
 import sys
@@ -240,6 +275,10 @@ raise SystemExit(0 if float(sys.argv[1]) == 0.0 else 1)
 PY
   then
     echo "--anchor-projection-selection-path-cost-bonus requires --anchor-projection-candidate-generation" >&2
+    exit 2
+  fi
+  if [[ "$ANCHOR_PROJECTION_CONTRACT_AWARE_TRAINABLE_TARGET_GENERATION" -ne 0 || "$ANCHOR_PROJECTION_PREFER_CONTRACT_SAFE_TRAINABLE_TARGETS" -ne 0 ]]; then
+    echo "contract-aware anchor-projection options require --anchor-projection-candidate-generation" >&2
     exit 2
   fi
 fi
@@ -407,7 +446,7 @@ write_manifest() {
     return
   fi
 
-  "$PYTHON_BIN" - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "$PYTHON_BIN" "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" "$ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS" "$ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION" "$ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
+  "$PYTHON_BIN" - "$SCENARIO_CONFIG" "$EXPORT_DIR" "$MANIFEST_PATH" "$SUMMARY_PATH" "$REPORT_PATH" "$TOP_K" "$SCENARIO_SET" "$DIAGNOSTIC_PROFILE" "$ACCEPTANCE_GATE" "$PATH_PLANNER_ROOT" "$PYTHON_BIN" "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" "$ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS" "$ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION" "$ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION" "$ANCHOR_PROJECTION_CONTRACT_AWARE_TRAINABLE_TARGET_GENERATION" "$ANCHOR_PROJECTION_PREFER_CONTRACT_SAFE_TRAINABLE_TARGETS" "$ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_CELLS" "$ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_M" "${PLANNER_EXTRA_ARGS[@]}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -427,7 +466,11 @@ anchor_projection_candidate_generation = sys.argv[12] == "1"
 anchor_projection_selection_path_cost_bonus = float(sys.argv[13])
 anchor_projection_max_selection_path_cost_regression = float(sys.argv[14])
 anchor_projection_max_selection_risk_regression = float(sys.argv[15])
-extra_args = sys.argv[16:]
+anchor_projection_contract_aware_trainable_target_generation = sys.argv[16] == "1"
+anchor_projection_prefer_contract_safe_trainable_targets = sys.argv[17] == "1"
+anchor_projection_max_trainable_distance_cells = int(float(sys.argv[18]))
+anchor_projection_max_trainable_distance_m = float(sys.argv[19])
+extra_args = sys.argv[20:]
 
 payload = json.loads(scenario_config.read_text(encoding="utf-8"))
 scenarios = []
@@ -462,6 +505,10 @@ manifest = {
         "anchor_projection_selection_path_cost_bonus": anchor_projection_selection_path_cost_bonus,
         "anchor_projection_max_selection_path_cost_regression": anchor_projection_max_selection_path_cost_regression,
         "anchor_projection_max_selection_risk_regression": anchor_projection_max_selection_risk_regression,
+        "anchor_projection_contract_aware_trainable_target_generation": anchor_projection_contract_aware_trainable_target_generation,
+        "anchor_projection_prefer_contract_safe_trainable_targets": anchor_projection_prefer_contract_safe_trainable_targets,
+        "anchor_projection_max_trainable_distance_cells": anchor_projection_max_trainable_distance_cells,
+        "anchor_projection_max_trainable_distance_m": anchor_projection_max_trainable_distance_m,
         "open_grid_fallback_used": None,
         "open_grid_fallback_used_gate": {
             "status": "pending",
@@ -496,6 +543,10 @@ if anchor_projection_candidate_generation:
         "source_selection_path_cost_bonus": anchor_projection_selection_path_cost_bonus,
         "max_source_selection_path_cost_regression": anchor_projection_max_selection_path_cost_regression,
         "max_source_selection_risk_regression": anchor_projection_max_selection_risk_regression,
+        "contract_aware_trainable_target_generation": anchor_projection_contract_aware_trainable_target_generation,
+        "prefer_contract_safe_trainable_targets": anchor_projection_prefer_contract_safe_trainable_targets,
+        "max_trainable_projection_distance_cells": anchor_projection_max_trainable_distance_cells,
+        "max_trainable_projection_distance_m": anchor_projection_max_trainable_distance_m,
     }
 manifest_path.parent.mkdir(parents=True, exist_ok=True)
 manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -769,6 +820,10 @@ Anchor projection candidate generation: $([[ "$ANCHOR_PROJECTION_CANDIDATE_GENER
 Anchor projection selection path-cost bonus: $ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS
 Anchor projection max selection path-cost regression: $ANCHOR_PROJECTION_MAX_SELECTION_PATH_COST_REGRESSION
 Anchor projection max selection risk regression: $ANCHOR_PROJECTION_MAX_SELECTION_RISK_REGRESSION
+Anchor projection contract-aware trainable target generation: $([[ "$ANCHOR_PROJECTION_CONTRACT_AWARE_TRAINABLE_TARGET_GENERATION" -eq 1 ]] && echo enabled || echo disabled)
+Anchor projection prefer contract-safe trainable targets: $([[ "$ANCHOR_PROJECTION_PREFER_CONTRACT_SAFE_TRAINABLE_TARGETS" -eq 1 ]] && echo enabled || echo disabled)
+Anchor projection max trainable distance cells: $ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_CELLS
+Anchor projection max trainable distance m: $ANCHOR_PROJECTION_MAX_TRAINABLE_DISTANCE_M
 INFO
 
 ensure_submodules

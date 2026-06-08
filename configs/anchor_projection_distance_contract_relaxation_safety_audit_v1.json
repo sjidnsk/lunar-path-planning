@@ -1,0 +1,35 @@
+{
+  "schema_version": "anchor-projection-distance-contract-relaxation-safety-audit-config/v1",
+  "description": "Distance-Contract Relaxation Safety Audit v1. Audit-only check for whether source-selected anchor projection samples beyond the current training distance contract can support an explicit opt-in relaxation profile.",
+  "output_files": {
+    "distance_contract_relaxation_safety_audit_summary": "anchor-projection-distance-contract-relaxation-safety-audit-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "fail_on_input_failure": true,
+    "fail_on_fallback_or_open_grid": true,
+    "fail_on_safety_regression": true
+  },
+  "relaxation_thresholds": {
+    "max_opt_in_projection_distance_cells": 3,
+    "max_opt_in_projection_distance_m": 1.5,
+    "max_path_cost_margin_vs_selected": 0.0,
+    "max_risk_margin_vs_selected": 0.0,
+    "max_source_selection_quality_regression_count": 0,
+    "max_audit_proxy_positive_count": 0
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_path_planner_route_stable_field_semantics_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_stable_field_semantics_change",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_c_space_iris_or_iris_np",
+    "no_gcs_or_iris_training_release_claim",
+    "no_real_world_performance_claim"
+  ]
+}

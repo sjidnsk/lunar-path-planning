@@ -247,6 +247,7 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
                     "status": "passed",
                     "reason_codes": [],
                     "trainable_anchor_projection_count": candidate_trainable_count,
+                    "candidate_contract_alignment_gap_count": 0,
                     "nontrainable_blocked_target_count": candidate_nontrainable_count,
                     "platform_goal_contract_mismatch_count": (
                         candidate_trainable_count + candidate_nontrainable_count
@@ -762,6 +763,174 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         self.assertEqual(summary["anchor_projection_readiness"]["source_candidate_not_selected_count"], 1)
         self.assertFalse(summary["runs_training"])
         self.assertTrue(summary["no_ppo_training"])
+
+    def test_review_uses_contract_aware_ppo_consumable_summary_to_clear_anchor_blocker(self) -> None:
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=2,
+            candidate_nontrainable_count=58,
+            contract_trainable_count=2,
+            contract_nontrainable_count=58,
+            source_candidate_not_selected_count=46,
+        )
+        contract_aware_path = self.batch_root / "anchor-projection-contract-aware-trainable-target-summary.json"
+        contract_aware_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "anchor-projection-contract-aware-trainable-target-summary/v1",
+                    "generated_at": "2026-06-08T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "contract_trainable_contrast_count": 2,
+                    "ppo_consumable_trainable_target_count": 2,
+                    "nontrainable_blocked_target_count": 58,
+                    "nontrainable_blocked_target_count_delta": -2,
+                    "distance_contract_rejected_count_delta": -2,
+                    "source_candidate_not_selected_count_delta": -2,
+                    "next_required_change": None,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                    "runs_training": False,
+                    "audit_only": True,
+                    "no_ppo_training": True,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+            "--contract-aware-trainable-target-summary",
+            str(contract_aware_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["anchor_projection_ppo_consumable_trainable_target_count"], 2)
+        self.assertNotIn("anchor_projection_nontrainable_contexts_remain", summary["training_blockers"])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "ready_for_limited_policy_training_dry_run",
+        )
+
+    def test_review_keeps_anchor_blocker_when_contract_aware_main_success_fails(self) -> None:
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=2,
+            candidate_nontrainable_count=60,
+            contract_trainable_count=2,
+            contract_nontrainable_count=60,
+            source_candidate_not_selected_count=48,
+        )
+        contract_aware_path = self.batch_root / "anchor-projection-contract-aware-trainable-target-summary.json"
+        contract_aware_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "anchor-projection-contract-aware-trainable-target-summary/v1",
+                    "generated_at": "2026-06-08T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "contract_trainable_contrast_count": 2,
+                    "ppo_consumable_trainable_target_count": 2,
+                    "nontrainable_blocked_target_count": 60,
+                    "nontrainable_blocked_target_count_delta": 0,
+                    "candidate_contract_alignment_gap_count": 0,
+                    "main_success_gate_failures": [
+                        "nontrainable_blocked_target_count_not_reduced",
+                    ],
+                    "next_required_change": "action_or_target_contract_change_required",
+                    "readiness_impact": {
+                        "recommended_training_blockers": [
+                            "anchor_projection_nontrainable_contexts_remain",
+                        ],
+                    },
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                    "runs_training": False,
+                    "audit_only": True,
+                    "no_ppo_training": True,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+            "--contract-aware-trainable-target-summary",
+            str(contract_aware_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["anchor_projection_ppo_consumable_trainable_target_count"], 2)
+        self.assertIn("anchor_projection_nontrainable_contexts_remain", summary["training_blockers"])
+        self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+
+    def test_review_auto_detects_anchor_only_mode_when_default_anchor_summaries_exist(self) -> None:
+        self._write_anchor_projection_summaries(
+            candidate_trainable_count=1,
+            candidate_nontrainable_count=1,
+            contract_trainable_count=1,
+            contract_nontrainable_count=1,
+            source_candidate_not_selected_count=1,
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["application_scope"], "anchor_projection_readiness_contract_review_only")
+        self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertIn("anchor_projection_nontrainable_contexts_remain", summary["training_blockers"])
+
+    def test_review_uses_default_config_when_config_argument_is_omitted(self) -> None:
+        self._write_anchor_projection_summaries(
+            candidate_trainable_count=1,
+            candidate_nontrainable_count=1,
+            contract_trainable_count=1,
+            contract_nontrainable_count=1,
+            source_candidate_not_selected_count=1,
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("configs/policy_training_readiness_review_v1.json", completed.stdout)
+        self.assertIn("anchor_projection_nontrainable_contexts_remain", completed.stdout)
 
     def test_anchor_projection_margin_blocker_ignores_unselected_diagnostic_margin(self) -> None:
         self._write_sources()

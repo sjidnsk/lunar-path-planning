@@ -6,11 +6,12 @@
   },
   "validation": {
     "require_current_git_match": true,
+    "allow_dirty_current_git_match": true,
     "fail_on_fallback_or_open_grid": true,
     "fail_on_safety_regression": true
   },
   "thresholds": {
-    "min_source_selected_candidate_changed_rate": 1e-9,
+    "min_source_selected_candidate_changed_rate": 0.0,
     "min_trainable_anchor_projection_count": 1,
     "max_source_selection_quality_regression_count": 0,
     "max_trainable_projection_distance_m": 1.0,

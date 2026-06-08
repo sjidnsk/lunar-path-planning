@@ -95,6 +95,39 @@ class GitProvenanceTests(unittest.TestCase):
         self.assertFalse(git_snapshots_match(dirty_snapshot, dirty_snapshot, submodules=()))
         self.assertTrue(git_snapshots_match(legacy_source, dirty_snapshot, submodules=()))
 
+    def test_snapshot_match_can_allow_identical_dirty_fingerprint_when_explicit(self) -> None:
+        from git_provenance import git_snapshot, git_snapshots_match
+
+        repo = self.temp_dir / "repo"
+        self._init_repo(repo)
+        self._commit_file(repo, "tracked.txt", "clean\n")
+        (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+        (repo / "scratch.txt").write_text("scratch\n", encoding="utf-8")
+        dirty_source = git_snapshot(repo, submodules=())
+        dirty_current = git_snapshot(repo, submodules=())
+
+        self.assertFalse(git_snapshots_match(dirty_source, dirty_current, submodules=()))
+        self.assertTrue(
+            git_snapshots_match(
+                dirty_source,
+                dirty_current,
+                submodules=(),
+                allow_dirty_match=True,
+            )
+        )
+
+        (repo / "scratch.txt").write_text("changed scratch\n", encoding="utf-8")
+        changed_current = git_snapshot(repo, submodules=())
+
+        self.assertFalse(
+            git_snapshots_match(
+                dirty_source,
+                changed_current,
+                submodules=(),
+                allow_dirty_match=True,
+            )
+        )
+
     def test_inspect_source_git_provenance_fails_missing_current_with_specific_reasons(self) -> None:
         from git_provenance import git_snapshot, inspect_source_git_provenance
 

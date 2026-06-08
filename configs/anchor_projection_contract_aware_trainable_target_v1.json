@@ -1,0 +1,34 @@
+{
+  "schema_version": "anchor-projection-contract-aware-trainable-target-config/v1",
+  "description": "Contract-Aware Trainable Target Generation v1 summary. Audit-only gate that checks whether opt-in same-action anchor-projection substitutes produce PPO-consumable trainable targets under the default distance contract.",
+  "output_files": {
+    "contract_aware_trainable_target_summary": "anchor-projection-contract-aware-trainable-target-summary.json"
+  },
+  "validation": {
+    "require_current_git_match": true,
+    "allow_dirty_current_git_match": true,
+    "fail_on_input_failure": true,
+    "fail_on_fallback_or_open_grid": true,
+    "fail_on_safety_regression": true
+  },
+  "baseline_counts": {
+    "nontrainable_blocked_target_count": 60,
+    "distance_contract_rejected_count": 36,
+    "source_candidate_not_selected_count": 48
+  },
+  "non_goals": [
+    "no_ppo_training",
+    "no_ppo_main_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_path_planner_route_stable_field_semantics_change",
+    "no_model_explorer_contract_change",
+    "no_path_planner_sidecar_stable_field_semantics_change",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_c_space_iris_or_iris_np",
+    "no_gcs_or_iris_training_release_claim",
+    "no_real_world_performance_claim"
+  ]
+}

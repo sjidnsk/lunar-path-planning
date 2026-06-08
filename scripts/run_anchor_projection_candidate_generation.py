@@ -120,7 +120,11 @@ def analyze_anchor_projection_candidate_generation(
     git_mismatch = 0
     if config["validation"]["require_current_git_match"]:
         stored_git = run_index.get("git") if isinstance(run_index.get("git"), dict) else {}
-        if stored_git and not _git_snapshots_match(stored_git, current_git):
+        if stored_git and not _git_snapshots_match(
+            stored_git,
+            current_git,
+            allow_dirty_match=config["validation"]["allow_dirty_current_git_match"],
+        ):
             current_git_mismatch = 1
             git_mismatch = 1
             _append_reason(reason_codes, "current_git_provenance_mismatch")
@@ -158,6 +162,12 @@ def analyze_anchor_projection_candidate_generation(
     trainable_contexts = [context for context in contexts.values() if context["trainable"]]
     trainable_count = len(trainable_contexts)
     nontrainable_count = platform_goal_contract_mismatch_count - trainable_count
+    ppo_consumable_trainable_count = sum(
+        1 for context in trainable_contexts if context.get("ppo_consumable_action") is True
+    )
+    candidate_contract_alignment_gap_count = sum(
+        1 for context in trainable_contexts if _candidate_contract_alignment_gap(context)
+    )
     source_changed_count = sum(1 for context in trainable_contexts if context["source_selected_candidate_changed"])
     source_changed_rate = _rate(source_changed_count, platform_goal_contract_mismatch_count)
     positive_audit_proxy_count = sum(1 for context in trainable_contexts if context["positive_audit_proxy"])
@@ -228,6 +238,8 @@ def analyze_anchor_projection_candidate_generation(
         "platform_goal_anchor_available_count": anchor_available_count,
         "platform_goal_unresolved_count": unresolved_count,
         "trainable_anchor_projection_count": trainable_count,
+        "ppo_consumable_trainable_target_count": ppo_consumable_trainable_count,
+        "candidate_contract_alignment_gap_count": candidate_contract_alignment_gap_count,
         "nontrainable_blocked_target_count": nontrainable_count,
         "nontrainable_anchor_unreachable_count": int(
             nontrainable_reason_counts.get("anchor_unreachable", 0) or 0
@@ -369,6 +381,10 @@ def _collect_contexts(
                     "projected_anchor_component_size": None,
                     "reachable_substitute_anchor_available": False,
                     "reachable_substitute_anchor_count": 0,
+                    "target_binding_mode": None,
+                    "ppo_consumable_action": False,
+                    "contract_safe": False,
+                    "trainability_gate": {},
                 },
             )
             projection = feasibility.get("anchor_projection")
@@ -397,6 +413,15 @@ def _collect_contexts(
             generation = generation if isinstance(generation, dict) else {}
             if generation.get("candidate_role") != "projected_execution_target":
                 continue
+            if (
+                context["trainable"]
+                and context.get("ppo_consumable_action") is True
+                and (
+                    generation.get("source_selection_status") != "source_selected"
+                    or generation.get("ppo_consumable_action") is not True
+                )
+            ):
+                continue
             context["projected_candidate_generated"] = True
             context["generated_action_index"] = candidate.get("action_index")
             context["projected_candidate_path_cost"] = _float_optional(candidate.get("path_cost"))
@@ -409,6 +434,11 @@ def _collect_contexts(
             if generation_distance_m is not None:
                 context["projection_distance_m"] = generation_distance_m
             _copy_anchor_reachability_fields(context, generation)
+            context["target_binding_mode"] = generation.get("target_binding_mode")
+            context["ppo_consumable_action"] = bool(generation.get("ppo_consumable_action", False))
+            context["contract_safe"] = bool(generation.get("contract_safe", False))
+            trainability_gate = generation.get("trainability_gate")
+            context["trainability_gate"] = trainability_gate if isinstance(trainability_gate, dict) else {}
             if selected_candidate is not None:
                 context["selected_action_index"] = selected_candidate.get("action_index")
                 context["selected_candidate_role"] = selected_candidate.get("candidate_role")
@@ -543,6 +573,17 @@ def _projection_distance_reject_reasons(context: dict[str, Any], *, config: dict
     if max_m is not None and distance_m is not None and distance_m > float(max_m):
         reasons.append("projection_distance_m_exceeds_contract")
     return reasons
+
+
+def _candidate_contract_alignment_gap(context: dict[str, Any]) -> bool:
+    gate = context.get("trainability_gate")
+    gate = gate if isinstance(gate, dict) else {}
+    return not (
+        context.get("ppo_consumable_action") is True
+        and context.get("contract_safe") is True
+        and gate.get("status") == "selected_trainable"
+        and not gate.get("reason_codes")
+    )
 
 
 def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]:
@@ -1004,6 +1045,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     config = dict(payload)
     config["validation"] = {
         "require_current_git_match": bool(validation.get("require_current_git_match", True)),
+        "allow_dirty_current_git_match": bool(validation.get("allow_dirty_current_git_match", False)),
         "fail_on_fallback_or_open_grid": bool(validation.get("fail_on_fallback_or_open_grid", True)),
         "fail_on_safety_regression": bool(validation.get("fail_on_safety_regression", True)),
     }

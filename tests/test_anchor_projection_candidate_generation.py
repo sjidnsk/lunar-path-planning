@@ -218,6 +218,64 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             },
         }
 
+    def _same_action_substitute_candidate(self, *, source_selected: bool = True) -> dict:
+        training_use = "trainable_anchor_projection_contrast" if source_selected else "not_positive_evidence"
+        sample_weight = 1.0 if source_selected else 0.0
+        reject_reason = None if source_selected else "source_candidate_not_selected"
+        selection_status = "source_selected" if source_selected else "not_source_selected"
+        generation = {
+            "schema_version": "anchor-projection-candidate/v1",
+            "candidate_role": "projected_execution_target",
+            "target_binding_mode": "same_action_execution_substitute",
+            "source_action_index": 0,
+            "policy_target_cell": [2, 1],
+            "execution_goal_cell": [1, 1],
+            "projected_anchor_cell": [1, 1],
+            "projection_distance_cells": 1.0,
+            "projection_distance_m": 0.5,
+            "anchor_reachable": True,
+            "comparison_scope": "projected_target_anchor_contrast",
+            "training_use": training_use,
+            "sample_weight": sample_weight,
+            "reject_reason": reject_reason,
+            "source_selection_status": selection_status,
+            "evidence_boundary": "source_selected_projected_target_candidate"
+            if source_selected
+            else "source_candidate_not_selected_not_positive_evidence",
+            "ppo_consumable_action": True,
+            "contract_safe": True,
+            "trainability_gate": {
+                "status": "selected_trainable" if source_selected else "rejected",
+                "reason_codes": [] if source_selected else ["source_candidate_not_selected"],
+                "ppo_consumable_action": True,
+                "source_action_index": 0,
+                "policy_target_cell": [2, 1],
+                "execution_goal_cell": [1, 1],
+                "contract_safe": True,
+            },
+        }
+        return {
+            "action_index": 0,
+            "source_action_index": 0,
+            "cell": [2, 1],
+            "candidate_role": "projected_execution_target",
+            "policy_target_cell": [2, 1],
+            "execution_goal_cell": [1, 1],
+            "utility": 0.9,
+            "reachable": True,
+            "replan_required": False,
+            "path_cost": 4.0,
+            "risk": 0.1,
+            "candidate_generation": dict(generation),
+            "platform_goal_feasibility": {
+                "classification": "platform_inflated_goal_blocked",
+                "policy_target_cell": [2, 1],
+                "execution_goal_cell": [1, 1],
+                "nearest_inflated_passable_anchor": [1, 1],
+                "anchor_projection": dict(generation),
+            },
+        }
+
     def _normal_candidate(self, *, action_index: int, path_cost: float, risk: float) -> dict:
         return {
             "action_index": action_index,
@@ -497,6 +555,52 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             contexts["trainable"]["source_selection_best_alternative_candidate_role"],
             "policy_target",
         )
+
+    def test_summary_preserves_source_selected_same_action_substitute_as_ppo_consumable(self) -> None:
+        self._write_batch(
+            summary={
+                "schema_version": "path-feedback-summary/v1",
+                "scenario_count": 1,
+                "open_grid_fallback_used": False,
+                "tracking_safety_violation_count": 0,
+                "scenarios": [
+                    {
+                        "scenario_id": "same-action-substitute",
+                        "selected_cell_before_path_feedback": [2, 1],
+                        "selected_cell_after_path_feedback": [2, 1],
+                        "selection_changed_by_path_feedback": False,
+                        "path_feedback": {
+                            "candidates": [
+                                self._blocked_candidate(action_index=0),
+                                self._same_action_substitute_candidate(source_selected=True),
+                                self._projected_candidate(action_index=2, source_selected=False),
+                                self._normal_candidate(action_index=1, path_cost=8.0, risk=0.4),
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
+
+        completed = self._run()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "anchor-projection-candidate-generation-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["trainable_anchor_projection_count"], 1)
+        self.assertEqual(summary["ppo_consumable_trainable_target_count"], 1)
+        self.assertEqual(summary["candidate_contract_alignment_gap_count"], 0)
+        self.assertEqual(summary["nontrainable_blocked_target_count"], 0)
+        self.assertEqual(summary["source_selected_candidate_changed_rate"], 0.0)
+        context = summary["context_records"][0]
+        self.assertEqual(context["target_binding_mode"], "same_action_execution_substitute")
+        self.assertTrue(context["ppo_consumable_action"])
+        self.assertTrue(context["contract_safe"])
+        self.assertEqual(context["trainability_gate"]["status"], "selected_trainable")
 
     def test_summary_splits_reachability_aware_anchor_outcomes(self) -> None:
         self._write_batch(summary=self._reachability_diagnosis_summary())

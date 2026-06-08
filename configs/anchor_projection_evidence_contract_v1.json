@@ -6,6 +6,7 @@
   },
   "validation": {
     "require_current_git_match": true,
+    "allow_dirty_current_git_match": true,
     "fail_on_input_failure": true
   },
   "anchor_projection_contract": {

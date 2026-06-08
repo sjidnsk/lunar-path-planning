@@ -912,6 +912,7 @@ def _inspect_git(
         require_current_git_match=_require_current_git_match(config),
         reason_codes=reason_codes,
         submodules=SUBMODULES,
+        allow_dirty_current_git_match=_allow_dirty_current_git_match(config),
     )
 
 
@@ -1006,6 +1007,13 @@ def _require_current_git_match(config: dict[str, Any]) -> bool:
     if not isinstance(validation, dict):
         return True
     return bool(validation.get("require_current_git_match", True))
+
+
+def _allow_dirty_current_git_match(config: dict[str, Any]) -> bool:
+    validation = config.get("validation")
+    if not isinstance(validation, dict):
+        return False
+    return bool(validation.get("allow_dirty_current_git_match", False))
 
 
 def _fail_on_input_failure(config: dict[str, Any]) -> bool:
