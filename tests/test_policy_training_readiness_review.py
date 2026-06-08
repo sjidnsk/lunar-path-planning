@@ -1113,6 +1113,32 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
 
     def test_review_advances_to_scenario_disjoint_policy_candidate_evaluated(self) -> None:
         self._write_sources()
+        candidate_path = self.batch_root / "controlled-hybrid-policy-training-candidate-summary.json"
+        candidate_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "controlled-hybrid-policy-training-candidate-summary/v1",
+                    "generated_at": "2026-06-08T00:00:00Z",
+                    "status": "passed",
+                    "candidate_training_status": "passed",
+                    "reason_codes": [],
+                    "action_label_positive_count": 24,
+                    "pairwise_preference_signal_count": 54,
+                    "hybrid_train_signal_count": 78,
+                    "hard_positive_added_count": 0,
+                    "invalid_action_mask_count": 0,
+                    "empty_action_mask_count": 0,
+                    "experimental_checkpoint": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         fresh_path = self.batch_root / "fresh-holdout-policy-candidate-evaluation-summary.json"
         fresh_path.write_text(
             json.dumps(
@@ -1159,6 +1185,8 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             str(self.batch_root),
             "--config",
             str(self.config),
+            "--controlled-hybrid-policy-training-candidate-summary",
+            str(candidate_path),
             "--fresh-holdout-policy-candidate-evaluation-summary",
             str(fresh_path),
         )

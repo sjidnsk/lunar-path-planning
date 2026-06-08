@@ -829,11 +829,12 @@ def _review_metrics(
         thresholds=thresholds,
     )
     hybrid_training_readiness = _hybrid_training_readiness(hybrid_training_dry_run)
+    fresh_holdout_readiness = _fresh_holdout_policy_candidate_readiness(fresh_holdout)
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
         holdout=controlled_holdout,
+        allow_fresh_holdout_substitute=fresh_holdout_readiness["present"],
     )
-    fresh_holdout_readiness = _fresh_holdout_policy_candidate_readiness(fresh_holdout)
     training_blockers: list[str] = []
     if validation_reason_codes:
         for reason in validation_reason_codes:
@@ -1536,6 +1537,7 @@ def _controlled_hybrid_training_candidate_readiness(
     *,
     candidate: dict[str, Any],
     holdout: dict[str, Any],
+    allow_fresh_holdout_substitute: bool = False,
 ) -> dict[str, Any]:
     if not candidate and not holdout:
         return {
@@ -1562,7 +1564,7 @@ def _controlled_hybrid_training_candidate_readiness(
     blockers: list[str] = []
     if not candidate:
         _append_reason(blockers, "controlled_hybrid_training_candidate_summary_missing")
-    if not holdout:
+    if not holdout and not allow_fresh_holdout_substitute:
         _append_reason(blockers, "controlled_hybrid_holdout_evaluation_summary_missing")
     if candidate and (
         candidate.get("status") != "passed"
@@ -1673,6 +1675,9 @@ def _controlled_hybrid_training_candidate_readiness(
         "preference_margin_improved_count": _int_value_or_default(
             holdout.get("preference_margin_improved_count"),
             0,
+        ),
+        "holdout_substituted_by_fresh_holdout": bool(
+            allow_fresh_holdout_substitute and not holdout
         ),
         "publishes_checkpoint": bool(candidate.get("publishes_checkpoint") or holdout.get("publishes_checkpoint")),
         "replaces_default_policy": bool(
