@@ -25,7 +25,7 @@ GCS_CONTROL_POINT_CANDIDATE_ARTIFACT_INDEX_SCHEMA_VERSION = (
 GCS_CONTROL_POINT_CANDIDATE_CALIBRATION_SWEEP_SCHEMA_VERSION = (
     "gcs-control-point-candidate-calibration-sweep/v1"
 )
-SCENARIO_SETS = {"smoke", "stress", "all"}
+SCENARIO_SETS = {"smoke", "stress", "holdout", "all"}
 DIAGNOSTIC_PROFILES = {"baseline", "execution", "iris", "all"}
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")

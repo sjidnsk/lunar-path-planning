@@ -426,8 +426,17 @@ def _action_label_positive_record(record: dict[str, Any], *, sample_index: int) 
         "sample_type": "action_label_positive",
         "training_signal_type": "rollout_action_label",
         "context_id": _context_id(record),
+        "context_id_schema_version": record.get("context_id_schema_version"),
+        "context_id_source": record.get("context_id_source"),
+        "legacy_identity_fallback_used": bool(record.get("legacy_identity_fallback_used")),
         "run_id": record.get("run_id"),
         "scenario_id": record.get("scenario_id"),
+        "scenario_group": record.get("scenario_group"),
+        "scenario_seed": record.get("scenario_seed"),
+        "scenario_variant_id": record.get("scenario_variant_id"),
+        "diagnostic_profile": record.get("diagnostic_profile"),
+        "planning_backend": record.get("planning_backend"),
+        "top_k": record.get("top_k"),
         "source_action_index": _int_value(record.get("source_action_index")),
         "policy_target_cell": _list_cell(record.get("policy_target_cell")),
         "execution_goal_cell": _list_cell(record.get("execution_goal_cell")),
@@ -451,8 +460,17 @@ def _existing_preference_record(sample: dict[str, Any], *, sample_index: int) ->
         "sample_type": "counterfactual_preference_pair",
         "training_signal_type": "pairwise_preference",
         "context_id": _sample_context_id(sample),
+        "context_id_schema_version": sample.get("context_id_schema_version"),
+        "context_id_source": sample.get("context_id_source"),
+        "legacy_identity_fallback_used": bool(sample.get("legacy_identity_fallback_used")),
         "run_id": sample.get("run_id"),
         "scenario_id": sample.get("scenario_id"),
+        "scenario_group": sample.get("scenario_group"),
+        "scenario_seed": sample.get("scenario_seed"),
+        "scenario_variant_id": sample.get("scenario_variant_id"),
+        "diagnostic_profile": sample.get("diagnostic_profile"),
+        "planning_backend": sample.get("planning_backend"),
+        "top_k": sample.get("top_k"),
         "preference_decision": sample.get("preference_decision"),
         "sample_weight": float(sample.get("sample_weight", 1.0)),
         "preferred": sample.get("selected"),
@@ -493,8 +511,17 @@ def _residual_preference_record(
         "sample_type": sample_type,
         "training_signal_type": "pairwise_preference",
         "context_id": _context_id(record),
+        "context_id_schema_version": record.get("context_id_schema_version"),
+        "context_id_source": record.get("context_id_source"),
+        "legacy_identity_fallback_used": bool(record.get("legacy_identity_fallback_used")),
         "run_id": record.get("run_id"),
         "scenario_id": record.get("scenario_id"),
+        "scenario_group": record.get("scenario_group"),
+        "scenario_seed": record.get("scenario_seed"),
+        "scenario_variant_id": record.get("scenario_variant_id"),
+        "diagnostic_profile": record.get("diagnostic_profile"),
+        "planning_backend": record.get("planning_backend"),
+        "top_k": record.get("top_k"),
         "preference_decision": sample_type,
         "sample_weight": sample_weight,
         "preferred": {
@@ -623,6 +650,8 @@ def _fallback_record_key(record: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _context_id(record: dict[str, Any]) -> str:
+    if record.get("context_id"):
+        return str(record["context_id"])
     parts = [
         str(record.get("run_id")),
         str(record.get("scenario_id")),
@@ -634,6 +663,8 @@ def _context_id(record: dict[str, Any]) -> str:
 
 
 def _sample_context_id(sample: dict[str, Any]) -> str:
+    if sample.get("context_id"):
+        return str(sample["context_id"])
     alternative = sample.get("alternative") if isinstance(sample.get("alternative"), dict) else {}
     parts = [
         str(sample.get("run_id")),

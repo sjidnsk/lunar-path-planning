@@ -1111,6 +1111,143 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         )
         self.assertEqual(summary["training_readiness_status"], "ready_for_limited_policy_training_dry_run")
 
+    def test_review_advances_to_scenario_disjoint_policy_candidate_evaluated(self) -> None:
+        self._write_sources()
+        fresh_path = self.batch_root / "fresh-holdout-policy-candidate-evaluation-summary.json"
+        fresh_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "fresh-holdout-policy-candidate-evaluation-summary/v1",
+                    "generated_at": "2026-06-08T00:00:00Z",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "fresh_disjoint_context_count": 156,
+                    "require_context_id": True,
+                    "require_scenario_disjoint": True,
+                    "raw_holdout_context_count": 156,
+                    "identity_overlap_count": 0,
+                    "identity_key_missing_count": 0,
+                    "accepted_identity_overlap_count": 0,
+                    "accepted_identity_key_missing_count": 0,
+                    "scenario_overlap_count": 0,
+                    "scenario_disjoint": True,
+                    "context_id_missing_count": 0,
+                    "legacy_identity_fallback_count": 0,
+                    "context_id_coverage_rate": 1.0,
+                    "fallback_or_open_grid_count": 0,
+                    "safety_regression_count": 0,
+                    "contract_violation_count": 0,
+                    "path_cost_regression_count": 0,
+                    "risk_regression_count": 0,
+                    "source_selection_regression_count": 0,
+                    "experimental_checkpoint": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "candidate_git_current_matches_sources": True,
+                    "checkpoint_metadata_git_current_matches_sources": True,
+                    "next_required_change": None,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--fresh-holdout-policy-candidate-evaluation-summary",
+            str(fresh_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "scenario_disjoint_policy_candidate_evaluated",
+        )
+        self.assertEqual(
+            summary["recommended_next_action"],
+            "scenario_disjoint_policy_candidate_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["next_required_change"], None)
+        fresh_readiness = summary["fresh_holdout_policy_candidate_readiness"]
+        self.assertTrue(fresh_readiness["scenario_disjoint"])
+        self.assertEqual(fresh_readiness["legacy_identity_fallback_count"], 0)
+
+    def test_review_blocks_failed_scenario_disjoint_context_id_gate(self) -> None:
+        self._write_sources()
+        fresh_path = self.batch_root / "fresh-holdout-policy-candidate-evaluation-summary.json"
+        fresh_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "fresh-holdout-policy-candidate-evaluation-summary/v1",
+                    "generated_at": "2026-06-08T00:00:00Z",
+                    "status": "failed",
+                    "reason_codes": ["scenario_overlap", "legacy_identity_fallback_used"],
+                    "fresh_disjoint_context_count": 1,
+                    "require_context_id": True,
+                    "require_scenario_disjoint": True,
+                    "identity_overlap_count": 1,
+                    "identity_key_missing_count": 0,
+                    "accepted_identity_overlap_count": 0,
+                    "accepted_identity_key_missing_count": 0,
+                    "scenario_overlap_count": 1,
+                    "scenario_disjoint": False,
+                    "context_id_missing_count": 1,
+                    "legacy_identity_fallback_count": 1,
+                    "fallback_or_open_grid_count": 0,
+                    "safety_regression_count": 0,
+                    "contract_violation_count": 0,
+                    "path_cost_regression_count": 0,
+                    "risk_regression_count": 0,
+                    "source_selection_regression_count": 0,
+                    "experimental_checkpoint": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "next_required_change": "scenario_disjoint_holdout_generation_required",
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--fresh-holdout-policy-candidate-evaluation-summary",
+            str(fresh_path),
+        )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["training_readiness_status"], "blocked_by_validation")
+        self.assertIn(
+            "fresh_holdout_policy_candidate_evaluation_not_passed",
+            summary["training_blockers"],
+        )
+        self.assertEqual(
+            summary["next_required_change"],
+            "scenario_disjoint_holdout_generation_required",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

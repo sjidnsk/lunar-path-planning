@@ -299,6 +299,10 @@ def _collect_contexts(
             continue
         scenario_id = scenario.get("scenario_id")
         scenario_group = scenario.get("scenario_group")
+        scenario_seed = scenario.get("scenario_seed")
+        scenario_variant_id = scenario.get("scenario_variant_id")
+        diagnostic_profile = summary.get("diagnostic_profile")
+        top_k = summary.get("top_k")
         before_cell = _cell_tuple(scenario.get("selected_cell_before_path_feedback"))
         after_cell = _cell_tuple(scenario.get("selected_cell_after_path_feedback"))
         feedback = scenario.get("path_feedback") if isinstance(scenario.get("path_feedback"), dict) else {}
@@ -330,6 +334,15 @@ def _collect_contexts(
                     "run_id": source_path.parent.name,
                     "scenario_id": scenario_id,
                     "scenario_group": scenario_group,
+                    "scenario_seed": scenario_seed,
+                    "scenario_variant_id": scenario_variant_id,
+                    "diagnostic_profile": diagnostic_profile,
+                    "planning_backend": _planning_backend_from_summary(summary, candidate),
+                    "top_k": top_k,
+                    "context_id": candidate.get("context_id"),
+                    "context_id_schema_version": candidate.get("context_id_schema_version"),
+                    "context_id_source": candidate.get("context_id_source"),
+                    "legacy_identity_fallback_used": candidate.get("legacy_identity_fallback_used"),
                     "source_action_index": source_action_index,
                     "policy_target_cell": list(policy_target),
                     "execution_goal_cell": None,
@@ -449,6 +462,11 @@ def _collect_contexts(
             ):
                 continue
             context["projected_candidate_generated"] = True
+            if candidate.get("context_id"):
+                context["context_id"] = candidate.get("context_id")
+                context["context_id_schema_version"] = candidate.get("context_id_schema_version")
+                context["context_id_source"] = candidate.get("context_id_source")
+                context["legacy_identity_fallback_used"] = candidate.get("legacy_identity_fallback_used")
             context["generated_action_index"] = candidate.get("action_index")
             context["projected_candidate_path_cost"] = _float_optional(candidate.get("path_cost"))
             context["projected_candidate_risk"] = _float_optional(candidate.get("risk"))
@@ -1204,6 +1222,21 @@ def _float_value(value: Any, *, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return number
+
+
+def _planning_backend_from_summary(summary: dict[str, Any], candidate: dict[str, Any]) -> str:
+    args = summary.get("planner_extra_args")
+    args = args if isinstance(args, list) else []
+    for index, value in enumerate(args):
+        if value == "--planning-backend" and index + 1 < len(args):
+            return str(args[index + 1])
+    backend = candidate.get("planning_backend")
+    if isinstance(backend, dict):
+        for key in ("backend", "name", "source"):
+            value = backend.get(key)
+            if value:
+                return str(value)
+    return "path_planner_route"
 
 
 def _rate(numerator: int, denominator: int) -> float:

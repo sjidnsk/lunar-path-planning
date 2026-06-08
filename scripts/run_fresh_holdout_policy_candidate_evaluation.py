@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from git_provenance import git_snapshot as _git_snapshot
+from git_provenance import git_snapshots_match as _git_snapshots_match
 
 from run_controlled_hybrid_policy_training_candidate import (
     CHECKPOINT_METADATA_SCHEMA_VERSION,
@@ -21,6 +22,8 @@ from run_hybrid_policy_training_dry_run import PAIRWISE_SAMPLE_TYPES, _pairwise_
 CONFIG_SCHEMA_VERSION = "fresh-holdout-policy-candidate-evaluation-config/v1"
 SUMMARY_SCHEMA_VERSION = "fresh-holdout-policy-candidate-evaluation-summary/v1"
 NEXT_FRESH_HOLDOUT_REQUIRED = "fresh_holdout_scenario_or_candidate_generation_required"
+NEXT_SCENARIO_DISJOINT_REQUIRED = "scenario_disjoint_holdout_generation_required"
+NEXT_STABLE_CONTEXT_ID_REQUIRED = "stable_context_id_contract_required"
 NEXT_TRAINING_OBJECTIVE_REQUIRED = "training_objective_or_sample_weight_refinement_required"
 
 
@@ -133,6 +136,15 @@ def run_fresh_holdout_policy_candidate_evaluation(
         _append_reason(reason_codes, "fresh_holdout_batch_failed")
     if _string_list(batch_summary.get("reason_codes")):
         _append_reason(reason_codes, "fresh_holdout_batch_failed")
+    current_git = _git_snapshot(repo_root)
+    candidate_git_current_matches_sources = _summary_git_matches_current(candidate, current_git)
+    checkpoint_metadata_git_current_matches_sources = _summary_git_matches_current(metadata, current_git)
+    validation = config["validation"]
+    if validation.get("require_candidate_git_current_match"):
+        if not candidate_git_current_matches_sources:
+            _append_reason(reason_codes, "candidate_git_current_mismatch")
+        if not checkpoint_metadata_git_current_matches_sources:
+            _append_reason(reason_codes, "checkpoint_metadata_git_current_mismatch")
 
     source_records = _collect_context_records(source_root, repo_root, source_label="source")
     source_records.extend(_collect_context_records(candidate_root, repo_root, source_label="candidate"))
@@ -141,6 +153,10 @@ def run_fresh_holdout_policy_candidate_evaluation(
     source_scenarios = {record["scenario_id"] for record in source_records if record.get("scenario_id")}
     holdout_scenarios = {record["scenario_id"] for record in holdout_records if record.get("scenario_id")}
     scenario_overlap_ids = sorted(source_scenarios & holdout_scenarios)
+    context_id_missing_count = sum(1 for record in holdout_records if not record.get("context_id"))
+    legacy_identity_fallback_count = sum(
+        1 for record in holdout_records if record.get("legacy_identity_fallback_used")
+    )
 
     accepted_records: list[dict[str, Any]] = []
     excluded_records: list[dict[str, Any]] = []
@@ -178,9 +194,24 @@ def run_fresh_holdout_policy_candidate_evaluation(
         _action_label_gate_counts(accepted_records)
     )
 
-    validation = config["validation"]
     if len(accepted_records) < _int_value(validation.get("min_fresh_disjoint_context_count")):
         _append_reason(reason_codes, "fresh_disjoint_context_count_zero")
+    max_identity_overlap_count = validation.get("max_identity_overlap_count")
+    if max_identity_overlap_count is not None and identity_overlap_count > _int_value(max_identity_overlap_count):
+        _append_reason(reason_codes, "identity_overlap")
+    if validation.get("require_context_id") and context_id_missing_count:
+        _append_reason(reason_codes, "context_id_missing")
+    max_legacy_identity_fallback_count = validation.get("max_legacy_identity_fallback_count")
+    if (
+        max_legacy_identity_fallback_count is not None
+        and legacy_identity_fallback_count > _int_value(max_legacy_identity_fallback_count)
+    ):
+        _append_reason(reason_codes, "legacy_identity_fallback_used")
+    if validation.get("require_scenario_disjoint") and scenario_overlap_ids:
+        _append_reason(reason_codes, "scenario_overlap")
+    max_scenario_overlap_count = validation.get("max_scenario_overlap_count")
+    if max_scenario_overlap_count is not None and len(scenario_overlap_ids) > _int_value(max_scenario_overlap_count):
+        _append_reason(reason_codes, "scenario_overlap")
     if fallback_or_open_grid_count > _int_value(validation.get("max_fallback_or_open_grid_count")):
         _append_reason(reason_codes, "fallback_or_open_grid")
     if safety_regression_count > _int_value(validation.get("max_safety_regression_count")):
@@ -212,6 +243,8 @@ def run_fresh_holdout_policy_candidate_evaluation(
         "fresh_disjoint_context_count": len(accepted_records),
         "identity_overlap_count": identity_overlap_count,
         "identity_key_missing_count": identity_key_missing_count,
+        "context_id_missing_count": context_id_missing_count,
+        "legacy_identity_fallback_count": legacy_identity_fallback_count,
         "accepted_identity_overlap_count": 0,
         "accepted_identity_key_missing_count": 0,
         "scenario_overlap_count": len(scenario_overlap_ids),
@@ -229,8 +262,20 @@ def run_fresh_holdout_policy_candidate_evaluation(
         or source_selection_regression_count
     )
     next_required_change = None
+    scenario_disjoint_required = bool(
+        validation.get("require_scenario_disjoint")
+        or validation.get("max_scenario_overlap_count") is not None
+    )
+    stable_context_id_required = bool(
+        validation.get("require_context_id")
+        or validation.get("max_legacy_identity_fallback_count") is not None
+    )
     if len(accepted_records) <= 0:
         next_required_change = NEXT_FRESH_HOLDOUT_REQUIRED
+    if scenario_disjoint_required and scenario_overlap_ids:
+        next_required_change = NEXT_SCENARIO_DISJOINT_REQUIRED
+    elif stable_context_id_required and (context_id_missing_count or legacy_identity_fallback_count):
+        next_required_change = NEXT_STABLE_CONTEXT_ID_REQUIRED
     elif quality_failed:
         next_required_change = NEXT_TRAINING_OBJECTIVE_REQUIRED
 
@@ -252,11 +297,26 @@ def run_fresh_holdout_policy_candidate_evaluation(
         "checkpoint_metadata_path": _display_path(paths["checkpoint_metadata"], repo_root),
         "raw_holdout_context_count": len(holdout_records),
         "fresh_disjoint_context_count": len(accepted_records),
+        "require_context_id": bool(validation.get("require_context_id")),
+        "require_scenario_disjoint": bool(validation.get("require_scenario_disjoint")),
         "identity_overlap_count": identity_overlap_count,
         "identity_key_missing_count": identity_key_missing_count,
+        "identity_overlap_ratio": (
+            identity_overlap_count / len(holdout_records)
+            if holdout_records
+            else 0.0
+        ),
+        "context_id_missing_count": context_id_missing_count,
+        "context_id_coverage_rate": (
+            (len(holdout_records) - context_id_missing_count) / len(holdout_records)
+            if holdout_records
+            else 0.0
+        ),
+        "legacy_identity_fallback_count": legacy_identity_fallback_count,
         "accepted_identity_overlap_count": 0,
         "accepted_identity_key_missing_count": 0,
         "scenario_overlap_count": len(scenario_overlap_ids),
+        "scenario_disjoint": len(scenario_overlap_ids) == 0,
         "fallback_or_open_grid_count": fallback_or_open_grid_count,
         "safety_regression_count": safety_regression_count,
         "contract_violation_count": contract_violation_count,
@@ -276,7 +336,9 @@ def run_fresh_holdout_policy_candidate_evaluation(
         "replaces_default_policy": False,
         "performance_claimed": False,
         "formal_training_ready_claimed": False,
-        "git_provenance": {"current": _git_snapshot(repo_root), "current_matches_sources": True},
+        "candidate_git_current_matches_sources": candidate_git_current_matches_sources,
+        "checkpoint_metadata_git_current_matches_sources": checkpoint_metadata_git_current_matches_sources,
+        "git_provenance": {"current": current_git, "current_matches_sources": True},
         "overlap_report": overlap_report,
         "candidate_score_report": score_report,
         "non_goals": list(config.get("non_goals", [])),
@@ -324,6 +386,7 @@ def _records_from_path_feedback_summary(
             record = _record_from_candidate(
                 candidate,
                 scenario=scenario,
+                summary=payload,
                 run_id=run_id,
                 source_label=source_label,
                 summary_path=summary_path,
@@ -338,6 +401,7 @@ def _record_from_candidate(
     candidate: dict[str, Any],
     *,
     scenario: dict[str, Any],
+    summary: dict[str, Any],
     run_id: str,
     source_label: str,
     summary_path: Path,
@@ -351,13 +415,24 @@ def _record_from_candidate(
     execution_goal_cell = _cell(candidate.get("execution_goal_cell"), candidate.get("cell"))
     target_binding_mode = str(candidate.get("target_binding_mode") or candidate.get("candidate_role") or "path_feedback_candidate")
     scenario_id = str(scenario.get("scenario_id", ""))
+    context_id = candidate.get("context_id")
     record = {
         "source_label": source_label,
         "source_path": _display_path(summary_path, repo_root),
         "root_relative_path": _display_path(summary_path, root),
         "run_id": run_id,
         "scenario_id": scenario_id,
+        "scenario_group": str(scenario.get("scenario_group") or "unknown"),
+        "scenario_seed": scenario.get("scenario_seed"),
+        "scenario_variant_id": scenario.get("scenario_variant_id"),
+        "diagnostic_profile": summary.get("diagnostic_profile"),
+        "planning_backend": _planning_backend_from_record(candidate, summary),
+        "top_k": _optional_int(summary.get("top_k")),
         "sample_type": "path_feedback_candidate",
+        "candidate_role": str(candidate.get("candidate_role") or "policy_target"),
+        "context_id": str(context_id) if context_id else None,
+        "context_id_schema_version": candidate.get("context_id_schema_version"),
+        "context_id_source": candidate.get("context_id_source"),
         "source_action_index": _optional_int(source_action_index),
         "action_index": _optional_int(candidate.get("action_index")),
         "policy_target_cell": policy_target_cell,
@@ -392,7 +467,17 @@ def _record_from_registry(
         "source_path": _display_path(repo_root / "unified-policy-sample-registry.jsonl", repo_root),
         "run_id": str(payload.get("run_id", "")),
         "scenario_id": str(payload.get("scenario_id", "")),
+        "scenario_group": str(payload.get("scenario_group") or "unknown"),
+        "scenario_seed": payload.get("scenario_seed"),
+        "scenario_variant_id": payload.get("scenario_variant_id"),
+        "diagnostic_profile": payload.get("diagnostic_profile"),
+        "planning_backend": payload.get("planning_backend"),
+        "top_k": _optional_int(payload.get("top_k")),
         "sample_type": str(payload.get("sample_type", "")),
+        "candidate_role": str(payload.get("candidate_role") or payload.get("sample_type", "")),
+        "context_id": str(payload.get("context_id")) if payload.get("context_id") else None,
+        "context_id_schema_version": payload.get("context_id_schema_version"),
+        "context_id_source": payload.get("context_id_source"),
         "source_action_index": _optional_int(payload.get("source_action_index")),
         "action_index": _optional_int(payload.get("action_index")),
         "policy_target_cell": _cell(payload.get("policy_target_cell")),
@@ -414,6 +499,10 @@ def _record_from_registry(
 
 
 def _identity_key(record: dict[str, Any]) -> str | None:
+    context_id = record.get("context_id")
+    if context_id:
+        record["legacy_identity_fallback_used"] = False
+        return "context:" + str(context_id)
     fields = {
         "scenario_id": record.get("scenario_id"),
         "sample_type": record.get("sample_type"),
@@ -423,8 +512,35 @@ def _identity_key(record: dict[str, Any]) -> str | None:
         "target_binding_mode": record.get("target_binding_mode"),
     }
     if any(value in (None, "", []) for value in fields.values()):
+        record["legacy_identity_fallback_used"] = False
         return None
-    return json.dumps(fields, sort_keys=True, separators=(",", ":"))
+    record["legacy_identity_fallback_used"] = True
+    return "legacy:" + json.dumps(fields, sort_keys=True, separators=(",", ":"))
+
+
+def _planning_backend_from_record(candidate: dict[str, Any], summary: dict[str, Any]) -> str:
+    args = summary.get("planner_extra_args")
+    args = args if isinstance(args, list) else []
+    for index, value in enumerate(args):
+        if value == "--planning-backend" and index + 1 < len(args):
+            return str(args[index + 1])
+    backend = candidate.get("planning_backend")
+    if isinstance(backend, dict):
+        for key in ("backend", "name", "source"):
+            value = backend.get(key)
+            if value:
+                return str(value)
+    return "path_planner_route"
+
+
+def _summary_git_matches_current(payload: dict[str, Any], current_git: dict[str, Any]) -> bool:
+    git = payload.get("git_provenance") if isinstance(payload.get("git_provenance"), dict) else {}
+    source_current = git.get("current") if isinstance(git.get("current"), dict) else {}
+    if not source_current:
+        return False
+    if git.get("current_matches_sources") is False:
+        return False
+    return _git_snapshots_match(source_current, current_git)
 
 
 def _action_label_gate_counts(records: list[dict[str, Any]]) -> tuple[int, int, int]:
@@ -714,7 +830,18 @@ def _report_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "source_path",
         "run_id",
         "scenario_id",
+        "scenario_group",
+        "scenario_seed",
+        "scenario_variant_id",
+        "diagnostic_profile",
+        "planning_backend",
+        "top_k",
         "sample_type",
+        "candidate_role",
+        "context_id",
+        "context_id_schema_version",
+        "context_id_source",
+        "legacy_identity_fallback_used",
         "source_action_index",
         "policy_target_cell",
         "execution_goal_cell",

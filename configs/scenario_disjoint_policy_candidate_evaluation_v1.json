@@ -1,0 +1,49 @@
+{
+  "schema_version": "fresh-holdout-policy-candidate-evaluation-config/v1",
+  "description": "Strict scenario-disjoint context-id holdout gate for the local experimental hybrid policy candidate. Requires stable policy-context-id/v1 metadata and forbids scenario or identity overlap with source/candidate roots.",
+  "default_roots": {
+    "source_root": "outputs/path_feedback_batch_clean_head_hybrid_readiness_closure_v1",
+    "candidate_root": "outputs/path_feedback_batch_clean_head_controlled_hybrid_policy_candidate_v1"
+  },
+  "input_files": {
+    "source_batch_summary": "batch-evaluation-summary.json",
+    "batch_summary": "batch-evaluation-summary.json",
+    "candidate_summary": "controlled-hybrid-policy-training-candidate-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "summary": "fresh-holdout-policy-candidate-evaluation-summary.json",
+    "overlap_report": "fresh-holdout-overlap-report.json",
+    "score_report": "fresh-holdout-candidate-score-report.json"
+  },
+  "validation": {
+    "min_fresh_disjoint_context_count": 1,
+    "require_context_id": true,
+    "require_scenario_disjoint": true,
+    "max_scenario_overlap_count": 0,
+    "max_identity_overlap_count": 0,
+    "max_legacy_identity_fallback_count": 0,
+    "require_candidate_git_current_match": true,
+    "max_action_mask_invalid_count": 0,
+    "max_empty_action_mask_count": 0,
+    "max_fallback_or_open_grid_count": 0,
+    "max_safety_regression_count": 0,
+    "max_contract_violation_count": 0
+  },
+  "evaluation": {
+    "hidden_size": 16,
+    "preference_margin_threshold": 0.0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_production_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

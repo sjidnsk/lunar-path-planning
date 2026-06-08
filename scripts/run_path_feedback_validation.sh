@@ -42,7 +42,7 @@ Options:
   --output-root PATH    Output root for generated maps, sidecars, manifest, and reports.
                         Default: outputs/path_feedback_validation
   --top-k N            Number of candidate goals per scenario to evaluate. Default: 3
-  --scenario-set NAME   Validation scenario set: smoke, stress, or all. Default: smoke
+  --scenario-set NAME   Validation scenario set: smoke, stress, holdout, or all. Default: smoke
   --diagnostic-profile NAME
                         Diagnostic profile: baseline, execution, iris, or all.
                         Default: baseline
@@ -317,10 +317,10 @@ PY
 fi
 
 case "$SCENARIO_SET" in
-  smoke|stress|all)
+  smoke|stress|holdout|all)
     ;;
   *)
-    echo "--scenario-set must be one of: smoke, stress, all" >&2
+    echo "--scenario-set must be one of: smoke, stress, holdout, all" >&2
     exit 2
     ;;
 esac
@@ -517,6 +517,8 @@ for item in payload["scenarios"]:
         {
             "scenario_id": scenario_id,
             "scenario_group": item.get("scenario_group", "unknown"),
+            "scenario_seed": item.get("seed"),
+            "scenario_variant_id": item.get("scenario_variant_id"),
             "contract": str(export_dir / f"{scenario_id}.contract.json"),
             "sidecar": str(export_dir / f"{scenario_id}.path-planner-sidecar.json"),
             "current_cell": item["start_cell"],
@@ -739,6 +741,13 @@ groups_by_id = {
     item["scenario_id"]: item.get("scenario_group", "unknown")
     for item in scenario_config["scenarios"]
 }
+metadata_by_id = {
+    item["scenario_id"]: {
+        "scenario_seed": item.get("seed"),
+        "scenario_variant_id": item.get("scenario_variant_id"),
+    }
+    for item in scenario_config["scenarios"]
+}
 for item in summary.get("scenarios", []):
     expected_group = groups_by_id.get(item.get("scenario_id"), "unknown")
     if item.get("scenario_group") != expected_group:
@@ -746,12 +755,29 @@ for item in summary.get("scenarios", []):
             f"{summary_path}: expected {item.get('scenario_id')} scenario_group={expected_group!r}, "
             f"got {item.get('scenario_group')!r}"
         )
+    expected_metadata = metadata_by_id.get(item.get("scenario_id"), {})
+    for metadata_key, expected_value in expected_metadata.items():
+        if item.get(metadata_key) != expected_value:
+            raise SystemExit(
+                f"{summary_path}: expected {item.get('scenario_id')} {metadata_key}={expected_value!r}, "
+                f"got {item.get(metadata_key)!r}"
+            )
     scenario_interpretation = item.get("diagnostic_interpretation")
     if not isinstance(scenario_interpretation, dict):
         raise SystemExit(f"{summary_path}: {item.get('scenario_id')} missing diagnostic_interpretation")
     if "target_replacement_reason" not in scenario_interpretation:
         raise SystemExit(f"{summary_path}: {item.get('scenario_id')} missing target_replacement_reason")
     for candidate in item.get("path_feedback", {}).get("candidates", []):
+        if not candidate.get("context_id"):
+            raise SystemExit(
+                f"{summary_path}: {item.get('scenario_id')} candidate {candidate.get('action_index')} "
+                "missing policy context_id"
+            )
+        if candidate.get("legacy_identity_fallback_used") is not False:
+            raise SystemExit(
+                f"{summary_path}: {item.get('scenario_id')} candidate {candidate.get('action_index')} "
+                "must not use legacy identity fallback"
+            )
         candidate_interpretation = candidate.get("diagnostic_interpretation")
         if not isinstance(candidate_interpretation, dict):
             raise SystemExit(

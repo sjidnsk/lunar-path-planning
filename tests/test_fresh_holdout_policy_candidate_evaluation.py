@@ -84,6 +84,46 @@ class FreshHoldoutPolicyCandidateEvaluationTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
 
+    def _run_fresh_with_config(self, config_path: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "bash",
+                str(self.script),
+                "--source-root",
+                str(self.source_root),
+                "--candidate-root",
+                str(self.candidate_root),
+                "--batch-root",
+                str(self.holdout_root),
+                "--config",
+                str(config_path),
+            ],
+            cwd=self.repo_root,
+            env=self._env(),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def _strict_config(self, **validation_overrides: object) -> Path:
+        payload = json.loads(self.config.read_text(encoding="utf-8"))
+        validation = dict(payload["validation"])
+        validation.update(
+            {
+                "require_context_id": True,
+                "require_scenario_disjoint": True,
+                "max_scenario_overlap_count": 0,
+                "max_identity_overlap_count": 0,
+                "max_legacy_identity_fallback_count": 0,
+                "require_candidate_git_current_match": True,
+                **validation_overrides,
+            }
+        )
+        payload["validation"] = validation
+        config_path = self.temp_dir / "strict-fresh-config.json"
+        config_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return config_path
+
     def _write_common_artifacts(self) -> None:
         self._write_batch_root(self.source_root, run_id="source-run", candidate_cells=[(10, 10)])
         self._write_batch_root(self.holdout_root, run_id="fresh-run", candidate_cells=[(10, 10), (11, 10)])
@@ -388,6 +428,26 @@ class FreshHoldoutPolicyCandidateEvaluationTests(unittest.TestCase):
             "fresh_holdout_policy_candidate_evaluated",
         )
         self.assertFalse(readiness["fresh_holdout_policy_candidate_readiness"]["performance_claimed"])
+
+    def test_strict_fresh_holdout_requires_scenario_disjoint_context_ids(self) -> None:
+        self._write_common_artifacts()
+
+        completed = self._run_fresh_with_config(self._strict_config())
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.holdout_root / "fresh-holdout-policy-candidate-evaluation-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["scenario_overlap_count"], 1)
+        self.assertGreater(summary["legacy_identity_fallback_count"], 0)
+        self.assertIn("scenario_overlap", summary["reason_codes"])
+        self.assertIn("legacy_identity_fallback_used", summary["reason_codes"])
+        self.assertEqual(
+            summary["next_required_change"],
+            "scenario_disjoint_holdout_generation_required",
+        )
 
 
 if __name__ == "__main__":

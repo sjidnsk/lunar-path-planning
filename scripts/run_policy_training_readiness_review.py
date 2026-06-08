@@ -40,6 +40,9 @@ CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION = (
     "controlled_hybrid_training_candidate_evaluated"
 )
 FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION = "fresh_holdout_policy_candidate_evaluated"
+SCENARIO_DISJOINT_POLICY_CANDIDATE_EVALUATED_ACTION = (
+    "scenario_disjoint_policy_candidate_evaluated"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -876,8 +879,12 @@ def _review_metrics(
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
     elif fresh_holdout_readiness["present"] and fresh_holdout_readiness["completed"]:
-        training_readiness_status = FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION
-        recommended_next_action = FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION
+        if fresh_holdout_readiness.get("scenario_disjoint_completed"):
+            training_readiness_status = SCENARIO_DISJOINT_POLICY_CANDIDATE_EVALUATED_ACTION
+            recommended_next_action = SCENARIO_DISJOINT_POLICY_CANDIDATE_EVALUATED_ACTION
+        else:
+            training_readiness_status = FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION
+            recommended_next_action = FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION
     elif controlled_candidate_readiness["present"] and controlled_candidate_readiness["completed"]:
         training_readiness_status = CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION
         recommended_next_action = CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION
@@ -988,6 +995,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == SCENARIO_DISJOINT_POLICY_CANDIDATE_EVALUATED_ACTION:
+        return "scenario_disjoint_policy_candidate_evaluation_only"
     if recommended_next_action == FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION:
         return "fresh_holdout_policy_candidate_evaluation_only"
     if recommended_next_action == CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION:
@@ -1681,6 +1690,13 @@ def _fresh_holdout_policy_candidate_readiness(summary: dict[str, Any]) -> dict[s
             "next_required_change": None,
             "formal_training_ready_claimed": False,
             "performance_claimed": False,
+            "scenario_disjoint": False,
+            "scenario_disjoint_completed": False,
+            "context_id_missing_count": 0,
+            "legacy_identity_fallback_count": 0,
+            "context_id_coverage_rate": 0.0,
+            "candidate_git_current_matches_sources": False,
+            "checkpoint_metadata_git_current_matches_sources": False,
             "fresh_disjoint_context_count": 0,
             "identity_overlap_count": 0,
             "identity_key_missing_count": 0,
@@ -1703,6 +1719,39 @@ def _fresh_holdout_policy_candidate_readiness(summary: dict[str, Any]) -> dict[s
         _append_reason(blockers, "fresh_holdout_accepted_identity_overlap")
     if _int_value_or_default(summary.get("accepted_identity_key_missing_count"), 0) != 0:
         _append_reason(blockers, "fresh_holdout_accepted_identity_key_missing")
+    scenario_disjoint = bool(summary.get("scenario_disjoint"))
+    require_context_id = summary.get("require_context_id") is True
+    require_scenario_disjoint = summary.get("require_scenario_disjoint") is True
+    context_id_missing_count = _int_value_or_default(summary.get("context_id_missing_count"), 0)
+    legacy_identity_fallback_count = _int_value_or_default(
+        summary.get("legacy_identity_fallback_count"),
+        0,
+    )
+    candidate_git_current_matches_sources = summary.get("candidate_git_current_matches_sources") is not False
+    checkpoint_metadata_git_current_matches_sources = (
+        summary.get("checkpoint_metadata_git_current_matches_sources") is not False
+    )
+    scenario_disjoint_completed = (
+        require_context_id
+        and require_scenario_disjoint
+        and scenario_disjoint
+        and _int_value_or_default(summary.get("scenario_overlap_count"), 0) == 0
+        and _int_value_or_default(summary.get("identity_overlap_count"), 0) == 0
+        and context_id_missing_count == 0
+        and legacy_identity_fallback_count == 0
+        and candidate_git_current_matches_sources
+        and checkpoint_metadata_git_current_matches_sources
+    )
+    if require_scenario_disjoint and summary.get("scenario_disjoint") is False:
+        _append_reason(blockers, "fresh_holdout_scenario_overlap")
+    if require_context_id and context_id_missing_count:
+        _append_reason(blockers, "fresh_holdout_context_id_missing")
+    if require_context_id and legacy_identity_fallback_count:
+        _append_reason(blockers, "fresh_holdout_legacy_identity_fallback_used")
+    if require_scenario_disjoint and not candidate_git_current_matches_sources:
+        _append_reason(blockers, "fresh_holdout_candidate_git_current_mismatch")
+    if require_scenario_disjoint and not checkpoint_metadata_git_current_matches_sources:
+        _append_reason(blockers, "fresh_holdout_checkpoint_metadata_git_current_mismatch")
     if summary.get("experimental_checkpoint") is not True:
         _append_reason(blockers, "fresh_holdout_checkpoint_not_experimental")
     if summary.get("publishes_checkpoint") is True:
@@ -1753,6 +1802,17 @@ def _fresh_holdout_policy_candidate_readiness(summary: dict[str, Any]) -> dict[s
         "next_required_change": next_required_change,
         "formal_training_ready_claimed": formal_training_ready_claimed,
         "performance_claimed": bool(summary.get("performance_claimed")),
+        "scenario_disjoint": scenario_disjoint,
+        "require_context_id": require_context_id,
+        "require_scenario_disjoint": require_scenario_disjoint,
+        "scenario_disjoint_completed": scenario_disjoint_completed,
+        "context_id_missing_count": context_id_missing_count,
+        "legacy_identity_fallback_count": legacy_identity_fallback_count,
+        "context_id_coverage_rate": float(summary.get("context_id_coverage_rate") or 0.0),
+        "candidate_git_current_matches_sources": candidate_git_current_matches_sources,
+        "checkpoint_metadata_git_current_matches_sources": (
+            checkpoint_metadata_git_current_matches_sources
+        ),
         "fresh_disjoint_context_count": _int_value_or_default(
             summary.get("fresh_disjoint_context_count"),
             0,

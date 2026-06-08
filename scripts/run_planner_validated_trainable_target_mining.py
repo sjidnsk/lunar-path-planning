@@ -359,7 +359,17 @@ def _feasible_no_replan(context: dict[str, Any]) -> bool:
 
 def _decision_record(context: dict[str, Any], *, decision: str) -> dict[str, Any]:
     return {
+        "context_id": context.get("context_id"),
+        "context_id_schema_version": context.get("context_id_schema_version"),
+        "context_id_source": context.get("context_id_source"),
+        "legacy_identity_fallback_used": context.get("legacy_identity_fallback_used"),
         "scenario_id": context.get("scenario_id"),
+        "scenario_group": context.get("scenario_group"),
+        "scenario_seed": context.get("scenario_seed"),
+        "scenario_variant_id": context.get("scenario_variant_id"),
+        "diagnostic_profile": context.get("diagnostic_profile"),
+        "planning_backend": context.get("planning_backend"),
+        "top_k": context.get("top_k"),
         "run_id": context.get("run_id"),
         "source_action_index": context.get("source_action_index"),
         "policy_target_cell": context.get("policy_target_cell"),
