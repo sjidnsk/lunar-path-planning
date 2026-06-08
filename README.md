@@ -586,6 +586,31 @@ planner-validated mining summary reports
 `training_blockers=[]`. This is still a limited dry-run review gate, not PPO
 training execution.
 
+The next gate, **Limited Policy Training Dry-Run Input Materialization v1**,
+converts only those 24 planner-validated positives into the existing
+`RolloutEpisode` / `RolloutTransition` contract and then runs a one-epoch local
+`train_policy_on_episodes` smoke pass. New artifacts are:
+
+- `configs/planner_validated_training_input_materialization_v1.json`
+- `configs/limited_policy_training_dry_run_v1.json`
+- `scripts/run_planner_validated_training_input_materialization.py`
+- `scripts/run_planner_validated_training_input_materialization.sh`
+- `scripts/run_limited_policy_training_dry_run.py`
+- `scripts/run_limited_policy_training_dry_run.sh`
+- `tests/test_limited_policy_training_dry_run_input_materialization.py`
+- `docs/superpowers/specs/2026-06-08-limited-policy-training-dry-run-input-materialization.md`
+
+Current materialization output under the same evidence root reports
+`input_positive_count=24`, `default_contract_positive_count=18`,
+`planner_validated_exception_positive_count=6`,
+`excluded_nontrainable_count=54`, `invalid_action_mask_count=0`, and
+`empty_action_mask_count=0`. The dry-run summary reports
+`dry_run_status=passed`, `train_policy_sample_count=24`,
+`publishes_checkpoint=false`, and `performance_claimed=false`. This proves the
+24 mined samples are consumable by the existing training path; it does not solve
+the remaining 54 contract/source-selection blockers and does not publish or
+evaluate a trained policy.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

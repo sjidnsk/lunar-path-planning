@@ -1,0 +1,34 @@
+{
+  "schema_version": "limited-policy-training-dry-run-config/v1",
+  "description": "Strict local dry-run that validates materialized planner-validated positives and runs one minimal train_policy_on_episodes smoke pass without publishing a model.",
+  "input_files": {
+    "rollout_episodes": "planner-validated-rollout-episodes.jsonl",
+    "materialization_summary": "planner-validated-training-input-materialization-summary.json"
+  },
+  "output_files": {
+    "summary": "limited-policy-training-dry-run-summary.json"
+  },
+  "validation": {
+    "expected_input_positive_count": 24,
+    "max_invalid_action_mask_count": 0,
+    "max_empty_action_mask_count": 0
+  },
+  "training": {
+    "seed": 0,
+    "hidden_size": 16,
+    "learning_rate": 0.001,
+    "epochs": 1,
+    "checkpoint_path": null
+  },
+  "non_goals": [
+    "no_formal_ppo_training",
+    "no_model_publication",
+    "no_policy_performance_claim",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_iris_or_gcs_training_release_claim"
+  ]
+}

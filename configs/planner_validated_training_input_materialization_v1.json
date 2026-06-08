@@ -1,0 +1,40 @@
+{
+  "schema_version": "planner-validated-training-input-materialization-config/v1",
+  "description": "Materialize planner-validated trainable anchor-projection targets into the existing RolloutEpisode/RolloutTransition training input contract.",
+  "input_files": {
+    "planner_validated_trainable_target_mining_summary": "planner-validated-trainable-target-mining-summary.json",
+    "anchor_projection_candidate_generation_summary": "anchor-projection-candidate-generation-summary.json"
+  },
+  "output_files": {
+    "rollout_episodes": "planner-validated-rollout-episodes.jsonl",
+    "summary": "planner-validated-training-input-materialization-summary.json",
+    "exclusion_report": "planner-validated-training-exclusion-report.json"
+  },
+  "validation": {
+    "fail_on_input_failure": true,
+    "fail_on_provenance_mismatch": true,
+    "fail_on_fallback_or_open_grid": true,
+    "fail_on_safety_regression": true
+  },
+  "expected_counts": {
+    "input_positive_count": 24,
+    "default_contract_positive_count": 18,
+    "planner_validated_exception_positive_count": 6,
+    "excluded_nontrainable_count": 54
+  },
+  "materialization": {
+    "reward": 1.0,
+    "max_action_count": 8
+  },
+  "non_goals": [
+    "no_formal_ppo_training",
+    "no_model_publication",
+    "no_policy_performance_claim",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_iris_or_gcs_training_release_claim"
+  ]
+}
