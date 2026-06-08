@@ -1,0 +1,49 @@
+{
+  "schema_version": "unified-policy-sample-registry-config/v1",
+  "description": "Build a unified registry for 24 action-label positives, 24 existing preference pairs, and 30 residual boundary/blocked negative preference signals.",
+  "input_files": {
+    "planner_validated_trainable_target_mining_summary": "planner-validated-trainable-target-mining-summary.json",
+    "anchor_projection_candidate_generation_summary": "anchor-projection-candidate-generation-summary.json",
+    "planner_validated_training_input_materialization_summary": "planner-validated-training-input-materialization-summary.json",
+    "planner_validated_rollout_episodes": "planner-validated-rollout-episodes.jsonl",
+    "counterfactual_preference_training_summary": "counterfactual-preference-training-summary.json",
+    "counterfactual_preference_training_samples": "counterfactual-preference-training-samples.jsonl",
+    "counterfactual_preference_exclusion_report": "counterfactual-preference-exclusion-report.json"
+  },
+  "output_files": {
+    "registry": "unified-policy-sample-registry.jsonl",
+    "summary": "unified-policy-sample-registry-summary.json",
+    "exclusion_report": "unified-policy-sample-exclusion-report.json"
+  },
+  "validation": {
+    "fail_on_input_failure": true,
+    "fail_on_provenance_mismatch": true,
+    "fail_on_fallback_or_open_grid": true,
+    "fail_on_safety_regression": true
+  },
+  "expected_counts": {
+    "action_label_positive_count": 24,
+    "existing_preference_pair_count": 24,
+    "boundary_negative_preference_pair_count": 12,
+    "blocked_target_negative_pair_count": 18,
+    "residual_trainable_signal_count": 30,
+    "pairwise_preference_signal_count": 54,
+    "unified_context_coverage_count": 78,
+    "hard_positive_added_count": 0
+  },
+  "residual_preference": {
+    "boundary_negative_weight": 0.25,
+    "blocked_target_negative_weight": 1.0
+  },
+  "non_goals": [
+    "no_hard_positive_expansion",
+    "no_default_ppo_training_path_change",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_checkpoint_publication",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

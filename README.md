@@ -633,6 +633,39 @@ dry-run reports `preference_dry_run_status=passed`,
 dry-run; it does not change default PPO training, network architecture, action
 space, default A*, or distance contract behavior.
 
+The follow-on **Unified Sample Taxonomy and Residual Boundary Preference v1**
+gate completes the sample accounting for all 78 blocked contexts without
+relabeling residual diagnostics as PPO action positives. New artifacts are:
+
+- `configs/unified_policy_sample_registry_v1.json`
+- `configs/residual_boundary_preference_training_dry_run_v1.json`
+- `scripts/run_unified_policy_sample_registry.py`
+- `scripts/run_unified_policy_sample_registry.sh`
+- `scripts/run_residual_boundary_preference_training_dry_run.py`
+- `scripts/run_residual_boundary_preference_training_dry_run.sh`
+- `tests/test_unified_policy_sample_registry.py`
+- `docs/superpowers/specs/2026-06-08-unified-sample-taxonomy-residual-boundary-preference.md`
+
+Current registry output under the same evidence root reports
+`action_label_positive_count=24`, `existing_preference_pair_count=24`,
+`boundary_negative_preference_pair_count=12`,
+`blocked_target_negative_pair_count=18`,
+`residual_trainable_signal_count=30`,
+`pairwise_preference_signal_count=54`,
+`unified_context_coverage_count=78`, and `hard_positive_added_count=0`.
+The 12 boundary-negative samples are the near-corridor synthetic projections
+that still require action binding; the 18 blocked-target negative samples are
+the dense-rock-choke projections beyond both the default and planner-validated
+distance gates. The residual dry-run reports
+`residual_preference_dry_run_status=passed`,
+`residual_train_sample_count=30`, `publishes_checkpoint=false`, and
+`performance_claimed=false`.
+
+This means the 78 contexts now have unified training-signal coverage:
+24 existing action-label positives plus 54 pairwise preference/negative signals.
+It does **not** mean there are 78 PPO hard positives; the hard-positive stream
+remains exactly 24.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
