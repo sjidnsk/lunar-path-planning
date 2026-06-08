@@ -257,7 +257,59 @@ class AnchorProjectionEvidenceContractTests(unittest.TestCase):
                     "anchor_projection_coverage_diagnosis": {
                         "nontrainable_primary_reason_counts": {
                             "source_candidate_not_selected": 1
-                        }
+                        },
+                        "projection_distance_contract_rejected_count": 1,
+                    },
+                    "source_selected_but_distance_rejected_count": 1,
+                    "distance_contract_rejected_source_selected_count": 1,
+                    "distance_contract_rejected_by_distance_bin": {
+                        "count": 1,
+                        "source_selected_count": 1,
+                        "not_source_selected_count": 0,
+                        "by_projection_distance_cells": {
+                            "3": {
+                                "count": 1,
+                                "source_selected_count": 1,
+                                "not_source_selected_count": 0,
+                                "scenario_id_counts": {"trainable": 1},
+                                "run_id_counts": {"all-all-k3-astar": 1},
+                            }
+                        },
+                        "by_projection_distance_m": {
+                            "1.5": {
+                                "count": 1,
+                                "source_selected_count": 1,
+                                "not_source_selected_count": 0,
+                                "scenario_id_counts": {"trainable": 1},
+                                "run_id_counts": {"all-all-k3-astar": 1},
+                            }
+                        },
+                    },
+                    "source_candidate_not_selected_by_best_alternative_reason": {
+                        "distance_contract_rejected": 0,
+                        "higher_path_cost": 1,
+                        "higher_path_cost_and_risk": 0,
+                        "higher_risk": 0,
+                        "lower_utility_or_coverage": 0,
+                        "ranking_weight_tradeoff_or_unobserved_utility": 0,
+                        "no_selected_candidate_comparison": 0,
+                    },
+                    "source_selection_quality_tradeoff_summary": {
+                        "generated_not_source_selected_count": 1,
+                        "source_selected_but_distance_rejected_count": 1,
+                        "distance_contract_rejected_count": 1,
+                        "source_candidate_not_selected_reason_counts": {
+                            "distance_contract_rejected": 0,
+                            "higher_path_cost": 1,
+                            "higher_path_cost_and_risk": 0,
+                            "higher_risk": 0,
+                            "lower_utility_or_coverage": 0,
+                            "ranking_weight_tradeoff_or_unobserved_utility": 0,
+                            "no_selected_candidate_comparison": 0,
+                        },
+                        "distance_contract_relaxation_recommendation": (
+                            "record_only_keep_current_training_distance_contract"
+                        ),
                     },
                     "context_records": [
                         {
@@ -435,6 +487,31 @@ class AnchorProjectionEvidenceContractTests(unittest.TestCase):
         )
         self.assertEqual(decisions["trainable"]["start_component_id"], 0)
         self.assertEqual(decisions["trainable"]["projected_anchor_component_id"], 0)
+
+    def test_contract_preserves_source_selection_distance_contract_calibration(self) -> None:
+        self._write_candidate_generation_summary_only()
+
+        completed = self._run_contract("--batch-root", str(self.batch_root), "--config", str(self.config))
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "anchor-projection-evidence-contract-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["source_selected_but_distance_rejected_count"], 1)
+        self.assertEqual(summary["distance_contract_rejected_source_selected_count"], 1)
+        self.assertEqual(summary["distance_contract_rejected_by_distance_bin"]["count"], 1)
+        self.assertEqual(
+            summary["source_candidate_not_selected_by_best_alternative_reason"]["higher_path_cost"],
+            1,
+        )
+        self.assertEqual(
+            summary["source_selection_quality_tradeoff_summary"][
+                "distance_contract_relaxation_recommendation"
+            ],
+            "record_only_keep_current_training_distance_contract",
+        )
 
     def test_contract_fails_when_platform_goal_classification_is_unresolved(self) -> None:
         self._write_sources([self._platform_record("unknown", classification="unknown_contract_mismatch")])

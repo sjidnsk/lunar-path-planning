@@ -510,6 +510,32 @@ def _candidate_generation_contract_metrics(
             candidate.get("true_geometry_unreachable_count"),
             _int_value_or_default(coverage_diagnosis.get("true_geometry_unreachable_count"), 0),
         ),
+        "source_selected_but_distance_rejected_count": _int_value_or_default(
+            candidate.get("source_selected_but_distance_rejected_count"),
+            _int_value_or_default(
+                coverage_diagnosis.get("source_selected_but_distance_rejected_count"),
+                0,
+            ),
+        ),
+        "distance_contract_rejected_source_selected_count": _int_value_or_default(
+            candidate.get("distance_contract_rejected_source_selected_count"),
+            _int_value_or_default(
+                coverage_diagnosis.get("distance_contract_rejected_source_selected_count"),
+                0,
+            ),
+        ),
+        "distance_contract_rejected_by_distance_bin": _mapping_or_empty(
+            candidate.get("distance_contract_rejected_by_distance_bin"),
+            coverage_diagnosis.get("distance_contract_rejected_by_distance_bin"),
+        ),
+        "source_candidate_not_selected_by_best_alternative_reason": _mapping_or_empty(
+            candidate.get("source_candidate_not_selected_by_best_alternative_reason"),
+            coverage_diagnosis.get("source_candidate_not_selected_by_best_alternative_reason"),
+        ),
+        "source_selection_quality_tradeoff_summary": _mapping_or_empty(
+            candidate.get("source_selection_quality_tradeoff_summary"),
+            coverage_diagnosis.get("source_selection_quality_tradeoff_summary"),
+        ),
         "anchor_selection_status_counts": (
             coverage_diagnosis.get("anchor_selection_status_counts")
             if isinstance(coverage_diagnosis.get("anchor_selection_status_counts"), dict)
@@ -1102,6 +1128,13 @@ def _int_or_none(value: Any) -> int | None:
 
 def _int_value_or_default(value: Any, default: int) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def _mapping_or_empty(*values: Any) -> dict[str, Any]:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return {}
 
 
 def _finite_number(value: Any) -> bool:

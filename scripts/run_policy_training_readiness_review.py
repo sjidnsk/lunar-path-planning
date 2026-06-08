@@ -579,6 +579,21 @@ def _review_metrics(
         "anchor_projection_true_geometry_unreachable_count": anchor_projection_readiness[
             "true_geometry_unreachable_count"
         ],
+        "anchor_projection_source_selected_but_distance_rejected_count": anchor_projection_readiness[
+            "source_selected_but_distance_rejected_count"
+        ],
+        "anchor_projection_distance_contract_rejected_source_selected_count": anchor_projection_readiness[
+            "distance_contract_rejected_source_selected_count"
+        ],
+        "anchor_projection_distance_contract_rejected_by_distance_bin": anchor_projection_readiness[
+            "distance_contract_rejected_by_distance_bin"
+        ],
+        "anchor_projection_source_candidate_not_selected_by_best_alternative_reason": (
+            anchor_projection_readiness["source_candidate_not_selected_by_best_alternative_reason"]
+        ),
+        "anchor_projection_source_selection_quality_tradeoff_summary": anchor_projection_readiness[
+            "source_selection_quality_tradeoff_summary"
+        ],
         "anchor_projection_audit_proxy_positive_count": anchor_projection_readiness[
             "audit_proxy_positive_count"
         ],
@@ -864,6 +879,31 @@ def _anchor_projection_readiness(
         _int_value_or_default(contract.get("true_geometry_unreachable_count"), 0),
         _coverage_diagnosis_int(candidate, "true_geometry_unreachable_count"),
     )
+    source_selected_but_distance_rejected_count = max(
+        _int_value_or_default(candidate.get("source_selected_but_distance_rejected_count"), 0),
+        _int_value_or_default(contract.get("source_selected_but_distance_rejected_count"), 0),
+        _coverage_diagnosis_int(candidate, "source_selected_but_distance_rejected_count"),
+    )
+    distance_contract_rejected_source_selected_count = max(
+        _int_value_or_default(candidate.get("distance_contract_rejected_source_selected_count"), 0),
+        _int_value_or_default(contract.get("distance_contract_rejected_source_selected_count"), 0),
+        _coverage_diagnosis_int(candidate, "distance_contract_rejected_source_selected_count"),
+    )
+    distance_contract_rejected_by_distance_bin = _mapping_or_empty(
+        candidate.get("distance_contract_rejected_by_distance_bin"),
+        contract.get("distance_contract_rejected_by_distance_bin"),
+        _coverage_diagnosis_mapping(candidate, "distance_contract_rejected_by_distance_bin"),
+    )
+    source_candidate_not_selected_by_best_alternative_reason = _mapping_or_empty(
+        candidate.get("source_candidate_not_selected_by_best_alternative_reason"),
+        contract.get("source_candidate_not_selected_by_best_alternative_reason"),
+        _coverage_diagnosis_mapping(candidate, "source_candidate_not_selected_by_best_alternative_reason"),
+    )
+    source_selection_quality_tradeoff_summary = _mapping_or_empty(
+        candidate.get("source_selection_quality_tradeoff_summary"),
+        contract.get("source_selection_quality_tradeoff_summary"),
+        _coverage_diagnosis_mapping(candidate, "source_selection_quality_tradeoff_summary"),
+    )
     audit_proxy_positive_count = max(
         _int_value_or_default(candidate.get("positive_training_evidence_contains_audit_proxy_anchor_count"), 0),
         _int_value_or_default(candidate.get("audit_proxy_positive_count"), 0),
@@ -940,6 +980,15 @@ def _anchor_projection_readiness(
         "reachable_substitute_anchor_found_count": reachable_substitute_anchor_found_count,
         "anchor_unreachable_repaired_by_reachable_substitute_count": anchor_unreachable_repaired_count,
         "true_geometry_unreachable_count": true_geometry_unreachable_count,
+        "source_selected_but_distance_rejected_count": source_selected_but_distance_rejected_count,
+        "distance_contract_rejected_source_selected_count": (
+            distance_contract_rejected_source_selected_count
+        ),
+        "distance_contract_rejected_by_distance_bin": distance_contract_rejected_by_distance_bin,
+        "source_candidate_not_selected_by_best_alternative_reason": (
+            source_candidate_not_selected_by_best_alternative_reason
+        ),
+        "source_selection_quality_tradeoff_summary": source_selection_quality_tradeoff_summary,
         "audit_proxy_positive_count": audit_proxy_positive_count,
         "source_selection_quality_regression_count": source_quality_regression_count,
         "max_source_selection_path_cost_margin_vs_best_alternative": max_path_margin,
@@ -984,6 +1033,20 @@ def _coverage_diagnosis_int(payload: dict[str, Any], field: str) -> int:
     diagnosis = payload.get("anchor_projection_coverage_diagnosis")
     diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
     return _int_value_or_default(diagnosis.get(field), 0)
+
+
+def _coverage_diagnosis_mapping(payload: dict[str, Any], field: str) -> dict[str, Any]:
+    diagnosis = payload.get("anchor_projection_coverage_diagnosis")
+    diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
+    value = diagnosis.get(field)
+    return value if isinstance(value, dict) else {}
+
+
+def _mapping_or_empty(*values: Any) -> dict[str, Any]:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return {}
 
 
 def _quality_regression_count_from_contexts(payload: dict[str, Any]) -> int:

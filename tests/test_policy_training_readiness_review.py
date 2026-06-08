@@ -206,9 +206,39 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         reachable_substitute_anchor_found_count: int = 0,
         anchor_unreachable_repaired_count: int = 0,
         true_geometry_unreachable_count: int = 0,
+        source_selected_but_distance_rejected_count: int = 0,
+        distance_contract_rejected_source_selected_count: int = 0,
+        distance_contract_rejected_by_distance_bin: dict | None = None,
+        source_candidate_not_selected_by_best_alternative_reason: dict | None = None,
+        source_selection_quality_tradeoff_summary: dict | None = None,
     ) -> tuple[Path, Path]:
         candidate_path = self.batch_root / "anchor-projection-candidate-generation-summary.json"
         contract_path = self.batch_root / "anchor-projection-evidence-contract-summary.json"
+        distance_bins = distance_contract_rejected_by_distance_bin or {
+            "count": 0,
+            "source_selected_count": 0,
+            "not_source_selected_count": 0,
+            "by_projection_distance_cells": {},
+            "by_projection_distance_m": {},
+        }
+        not_selected_reasons = source_candidate_not_selected_by_best_alternative_reason or {
+            "distance_contract_rejected": 0,
+            "higher_path_cost": 0,
+            "higher_path_cost_and_risk": 0,
+            "higher_risk": 0,
+            "lower_utility_or_coverage": 0,
+            "ranking_weight_tradeoff_or_unobserved_utility": 0,
+            "no_selected_candidate_comparison": 0,
+        }
+        tradeoff_summary = source_selection_quality_tradeoff_summary or {
+            "generated_not_source_selected_count": source_candidate_not_selected_count,
+            "source_selected_but_distance_rejected_count": source_selected_but_distance_rejected_count,
+            "distance_contract_rejected_count": distance_bins["count"],
+            "source_candidate_not_selected_reason_counts": not_selected_reasons,
+            "distance_contract_relaxation_recommendation": (
+                "record_only_keep_current_training_distance_contract"
+            ),
+        }
         candidate_path.write_text(
             json.dumps(
                 {
@@ -227,6 +257,15 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
                         anchor_unreachable_repaired_count
                     ),
                     "true_geometry_unreachable_count": true_geometry_unreachable_count,
+                    "source_selected_but_distance_rejected_count": (
+                        source_selected_but_distance_rejected_count
+                    ),
+                    "distance_contract_rejected_source_selected_count": (
+                        distance_contract_rejected_source_selected_count
+                    ),
+                    "distance_contract_rejected_by_distance_bin": distance_bins,
+                    "source_candidate_not_selected_by_best_alternative_reason": not_selected_reasons,
+                    "source_selection_quality_tradeoff_summary": tradeoff_summary,
                     "anchor_projection_coverage_diagnosis": {
                         "nontrainable_primary_reason_counts": {
                             "anchor_unreachable": anchor_unreachable_count,
@@ -243,6 +282,7 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
                             anchor_unreachable_repaired_count
                         ),
                         "true_geometry_unreachable_count": true_geometry_unreachable_count,
+                        "projection_distance_contract_rejected_count": distance_bins["count"],
                         "source_selection_margin": {
                             "max_path_cost_margin": max_path_cost_margin,
                             "max_risk_margin": max_risk_margin,
@@ -274,6 +314,15 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
                         anchor_unreachable_repaired_count
                     ),
                     "true_geometry_unreachable_count": true_geometry_unreachable_count,
+                    "source_selected_but_distance_rejected_count": (
+                        source_selected_but_distance_rejected_count
+                    ),
+                    "distance_contract_rejected_source_selected_count": (
+                        distance_contract_rejected_source_selected_count
+                    ),
+                    "distance_contract_rejected_by_distance_bin": distance_bins,
+                    "source_candidate_not_selected_by_best_alternative_reason": not_selected_reasons,
+                    "source_selection_quality_tradeoff_summary": tradeoff_summary,
                     "positive_training_evidence_contains_audit_proxy_anchor_count": 0,
                     "recommended_next_action": "rerun_policy_training_readiness_review_with_anchor_projection_contract",
                     "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
@@ -586,6 +635,99 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         self.assertEqual(readiness["true_geometry_unreachable_count"], 30)
         self.assertEqual(summary["anchor_projection_reachable_substitute_anchor_found_count"], 6)
         self.assertEqual(summary["anchor_projection_true_geometry_unreachable_count"], 30)
+
+    def test_anchor_projection_readiness_preserves_distance_contract_calibration(self) -> None:
+        self._write_sources()
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=18,
+            candidate_nontrainable_count=60,
+            contract_trainable_count=18,
+            contract_nontrainable_count=60,
+            source_candidate_not_selected_count=48,
+            source_selected_but_distance_rejected_count=12,
+            distance_contract_rejected_source_selected_count=12,
+            distance_contract_rejected_by_distance_bin={
+                "count": 36,
+                "source_selected_count": 12,
+                "not_source_selected_count": 24,
+                "by_projection_distance_cells": {
+                    "3": {
+                        "count": 18,
+                        "source_selected_count": 6,
+                        "not_source_selected_count": 12,
+                    }
+                },
+                "by_projection_distance_m": {
+                    "1.5": {
+                        "count": 18,
+                        "source_selected_count": 6,
+                        "not_source_selected_count": 12,
+                    }
+                },
+            },
+            source_candidate_not_selected_by_best_alternative_reason={
+                "distance_contract_rejected": 24,
+                "higher_path_cost": 24,
+                "higher_path_cost_and_risk": 0,
+                "higher_risk": 0,
+                "lower_utility_or_coverage": 0,
+                "ranking_weight_tradeoff_or_unobserved_utility": 0,
+                "no_selected_candidate_comparison": 0,
+            },
+            source_selection_quality_tradeoff_summary={
+                "generated_not_source_selected_count": 48,
+                "source_selected_but_distance_rejected_count": 12,
+                "distance_contract_rejected_count": 36,
+                "source_candidate_not_selected_reason_counts": {
+                    "distance_contract_rejected": 24,
+                    "higher_path_cost": 24,
+                    "higher_path_cost_and_risk": 0,
+                    "higher_risk": 0,
+                    "lower_utility_or_coverage": 0,
+                    "ranking_weight_tradeoff_or_unobserved_utility": 0,
+                    "no_selected_candidate_comparison": 0,
+                },
+                "distance_contract_relaxation_recommendation": (
+                    "record_only_keep_current_training_distance_contract"
+                ),
+            },
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--anchor-projection-candidate-generation-summary",
+            str(candidate_path),
+            "--anchor-projection-evidence-contract-summary",
+            str(contract_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        readiness = summary["anchor_projection_readiness"]
+        self.assertEqual(readiness["source_selected_but_distance_rejected_count"], 12)
+        self.assertEqual(readiness["distance_contract_rejected_source_selected_count"], 12)
+        self.assertEqual(readiness["distance_contract_rejected_by_distance_bin"]["count"], 36)
+        self.assertEqual(
+            readiness["source_candidate_not_selected_by_best_alternative_reason"][
+                "distance_contract_rejected"
+            ],
+            24,
+        )
+        self.assertEqual(
+            readiness["source_selection_quality_tradeoff_summary"][
+                "distance_contract_relaxation_recommendation"
+            ],
+            "record_only_keep_current_training_distance_contract",
+        )
+        self.assertEqual(summary["anchor_projection_source_selected_but_distance_rejected_count"], 12)
+        self.assertEqual(summary["anchor_projection_distance_contract_rejected_source_selected_count"], 12)
 
     def test_review_can_run_anchor_only_with_candidate_and_contract_summaries(self) -> None:
         candidate_path, contract_path = self._write_anchor_projection_summaries(

@@ -154,7 +154,16 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             },
         }
 
-    def _projected_candidate(self, *, action_index: int, source_selected: bool) -> dict:
+    def _projected_candidate(
+        self,
+        *,
+        action_index: int,
+        source_selected: bool,
+        path_cost: float = 5.0,
+        risk: float = 0.3,
+        projection_distance_cells: float = 1.0,
+        projection_distance_m: float = 1.0,
+    ) -> dict:
         training_use = "trainable_anchor_projection_contrast" if source_selected else "not_positive_evidence"
         sample_weight = 1.0 if source_selected else 0.0
         reject_reason = None if source_selected else "source_candidate_not_selected"
@@ -166,8 +175,8 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             "policy_target_cell": [2, 1],
             "execution_goal_cell": [1, 1],
             "projected_anchor_cell": [1, 1],
-            "projection_distance_cells": 1,
-            "projection_distance_m": 1.0,
+            "projection_distance_cells": projection_distance_cells,
+            "projection_distance_m": projection_distance_m,
             "anchor_reachable": True,
             "comparison_scope": "projected_target_anchor_contrast",
             "training_use": training_use,
@@ -197,8 +206,8 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             "utility": 0.8,
             "reachable": True,
             "replan_required": False,
-            "path_cost": 5.0,
-            "risk": 0.3,
+            "path_cost": path_cost,
+            "risk": risk,
             "candidate_generation": dict(generation),
             "platform_goal_feasibility": {
                 "classification": "platform_inflated_goal_blocked",
@@ -364,6 +373,83 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
             ],
         }
 
+    def _distance_contract_calibration_summary(self) -> dict:
+        return {
+            "schema_version": "path-feedback-summary/v1",
+            "scenario_count": 4,
+            "open_grid_fallback_used": False,
+            "tracking_safety_violation_count": 0,
+            "scenarios": [
+                {
+                    "scenario_id": "trainable",
+                    "selected_cell_before_path_feedback": [2, 1],
+                    "selected_cell_after_path_feedback": [1, 1],
+                    "selection_changed_by_path_feedback": True,
+                    "path_feedback": {
+                        "candidates": [
+                            self._blocked_candidate(action_index=0),
+                            self._projected_candidate(action_index=2, source_selected=True),
+                            self._normal_candidate(action_index=1, path_cost=8.0, risk=0.4),
+                        ]
+                    },
+                },
+                {
+                    "scenario_id": "source-selected-distance",
+                    "selected_cell_before_path_feedback": [2, 1],
+                    "selected_cell_after_path_feedback": [1, 1],
+                    "selection_changed_by_path_feedback": True,
+                    "path_feedback": {
+                        "candidates": [
+                            self._blocked_candidate(action_index=0),
+                            self._projected_candidate(
+                                action_index=2,
+                                source_selected=True,
+                                projection_distance_cells=3.0,
+                                projection_distance_m=1.5,
+                            ),
+                            self._normal_candidate(action_index=1, path_cost=8.0, risk=0.4),
+                        ]
+                    },
+                },
+                {
+                    "scenario_id": "not-selected-distance",
+                    "selected_cell_before_path_feedback": [2, 1],
+                    "selected_cell_after_path_feedback": [0, 2],
+                    "selection_changed_by_path_feedback": True,
+                    "path_feedback": {
+                        "candidates": [
+                            self._blocked_candidate(action_index=0),
+                            self._projected_candidate(
+                                action_index=2,
+                                source_selected=False,
+                                projection_distance_cells=3.0,
+                                projection_distance_m=1.5,
+                            ),
+                            self._normal_candidate(action_index=1, path_cost=3.0, risk=0.2),
+                        ]
+                    },
+                },
+                {
+                    "scenario_id": "not-selected-path-cost",
+                    "selected_cell_before_path_feedback": [2, 1],
+                    "selected_cell_after_path_feedback": [0, 2],
+                    "selection_changed_by_path_feedback": True,
+                    "path_feedback": {
+                        "candidates": [
+                            self._blocked_candidate(action_index=0),
+                            self._projected_candidate(
+                                action_index=2,
+                                source_selected=False,
+                                path_cost=5.0,
+                                risk=0.1,
+                            ),
+                            self._normal_candidate(action_index=1, path_cost=3.0, risk=0.2),
+                        ]
+                    },
+                },
+            ],
+        }
+
     def test_summary_counts_trainable_source_selected_projection_without_audit_proxy_positive(self) -> None:
         self._write_batch()
 
@@ -441,6 +527,49 @@ class AnchorProjectionCandidateGenerationTests(unittest.TestCase):
         self.assertEqual(contexts["substitute"]["projected_anchor_component_id"], 0)
         self.assertEqual(contexts["true-geometry"]["anchor_selection_status"], "true_geometry_unreachable")
         self.assertFalse(contexts["true-geometry"]["reachable_substitute_anchor_available"])
+
+    def test_summary_explains_distance_contract_and_source_selection_tradeoffs(self) -> None:
+        self._write_batch(summary=self._distance_contract_calibration_summary())
+
+        completed = self._run()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "anchor-projection-candidate-generation-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["trainable_anchor_projection_count"], 1)
+        self.assertEqual(summary["nontrainable_blocked_target_count"], 3)
+        self.assertEqual(summary["source_selected_but_distance_rejected_count"], 1)
+        self.assertEqual(summary["distance_contract_rejected_source_selected_count"], 1)
+
+        distance_bins = summary["distance_contract_rejected_by_distance_bin"]
+        self.assertEqual(distance_bins["count"], 2)
+        self.assertEqual(distance_bins["source_selected_count"], 1)
+        self.assertEqual(distance_bins["not_source_selected_count"], 1)
+        self.assertEqual(distance_bins["by_projection_distance_cells"]["3"]["count"], 2)
+        self.assertEqual(distance_bins["by_projection_distance_cells"]["3"]["source_selected_count"], 1)
+        self.assertEqual(
+            distance_bins["by_projection_distance_cells"]["3"]["scenario_id_counts"],
+            {"not-selected-distance": 1, "source-selected-distance": 1},
+        )
+
+        reason_counts = summary["source_candidate_not_selected_by_best_alternative_reason"]
+        self.assertEqual(reason_counts["distance_contract_rejected"], 1)
+        self.assertEqual(reason_counts["higher_path_cost"], 1)
+        self.assertEqual(reason_counts["higher_risk"], 0)
+        self.assertEqual(reason_counts["ranking_weight_tradeoff_or_unobserved_utility"], 0)
+
+        tradeoff = summary["source_selection_quality_tradeoff_summary"]
+        self.assertEqual(tradeoff["generated_not_source_selected_count"], 2)
+        self.assertEqual(tradeoff["source_selected_but_distance_rejected_count"], 1)
+        self.assertEqual(tradeoff["distance_contract_rejected_count"], 2)
+        self.assertEqual(tradeoff["source_candidate_not_selected_reason_counts"], reason_counts)
+        self.assertEqual(
+            tradeoff["distance_contract_relaxation_recommendation"],
+            "record_only_keep_current_training_distance_contract",
+        )
 
     def test_validate_only_fails_on_current_git_provenance_mismatch(self) -> None:
         self._write_batch(stale_git=True)

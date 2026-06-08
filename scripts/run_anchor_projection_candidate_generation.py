@@ -25,6 +25,15 @@ MISMATCH_CLASSES = {
     "out_of_bounds",
     "unknown_contract_mismatch",
 }
+SOURCE_CANDIDATE_NOT_SELECTED_REASON_KEYS = (
+    "distance_contract_rejected",
+    "higher_path_cost_and_risk",
+    "higher_path_cost",
+    "higher_risk",
+    "lower_utility_or_coverage",
+    "ranking_weight_tradeoff_or_unobserved_utility",
+    "no_selected_candidate_comparison",
+)
 
 
 class ConfigError(ValueError):
@@ -180,6 +189,12 @@ def analyze_anchor_projection_candidate_generation(
         coverage_diagnosis["anchor_unreachable_repaired_by_reachable_substitute_count"]
     )
     true_geometry_unreachable_count = int(coverage_diagnosis["true_geometry_unreachable_count"])
+    source_selected_but_distance_rejected_count = int(
+        coverage_diagnosis["source_selected_but_distance_rejected_count"]
+    )
+    distance_contract_rejected_source_selected_count = int(
+        coverage_diagnosis["distance_contract_rejected_source_selected_count"]
+    )
     if trainable_count < config["thresholds"]["min_trainable_anchor_projection_count"]:
         _append_reason(reason_codes, "trainable_anchor_projection_count_below_threshold")
     if source_changed_rate < config["thresholds"]["min_source_selected_candidate_changed_rate"]:
@@ -223,6 +238,17 @@ def analyze_anchor_projection_candidate_generation(
         "reachable_substitute_anchor_found_count": reachable_substitute_anchor_found_count,
         "anchor_unreachable_repaired_by_reachable_substitute_count": anchor_unreachable_repaired_count,
         "true_geometry_unreachable_count": true_geometry_unreachable_count,
+        "source_selected_but_distance_rejected_count": source_selected_but_distance_rejected_count,
+        "distance_contract_rejected_source_selected_count": distance_contract_rejected_source_selected_count,
+        "distance_contract_rejected_by_distance_bin": coverage_diagnosis[
+            "distance_contract_rejected_by_distance_bin"
+        ],
+        "source_candidate_not_selected_by_best_alternative_reason": coverage_diagnosis[
+            "source_candidate_not_selected_by_best_alternative_reason"
+        ],
+        "source_selection_quality_tradeoff_summary": coverage_diagnosis[
+            "source_selection_quality_tradeoff_summary"
+        ],
         "source_selected_candidate_changed_count": source_changed_count,
         "source_selected_candidate_changed_rate": source_changed_rate,
         "source_selection_quality_regression_count": source_selection_quality_regression_count,
@@ -308,6 +334,7 @@ def _collect_contexts(
                     "evidence_boundary": None,
                     "projected_candidate_generated": False,
                     "projected_candidate_source_selected": False,
+                    "source_selection_status": None,
                     "generated_action_index": None,
                     "selected_action_index": None,
                     "selected_candidate_role": None,
@@ -399,6 +426,8 @@ def _collect_contexts(
             source_selection_status = generation.get("source_selection_status") or projection.get(
                 "source_selection_status"
             )
+            if source_selection_status:
+                context["source_selection_status"] = str(source_selection_status)
             context["source_selection_quality_regression"] = bool(
                 source_selection_status == "source_selected_quality_regression"
                 or generation.get("reject_reason") == "source_selection_quality_regression"
@@ -567,8 +596,12 @@ def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]
     projection_distance_contract_rejected = [
         context
         for context in contexts
-        if "projection_distance_cells_exceeds_contract" in context.get("reject_reasons", [])
-        or "projection_distance_m_exceeds_contract" in context.get("reject_reasons", [])
+        if _has_distance_contract_reject(context)
+    ]
+    source_selected_but_distance_rejected = [
+        context
+        for context in projection_distance_contract_rejected
+        if context.get("projected_candidate_source_selected")
     ]
     distance_cells = [
         context["projection_distance_cells"]
@@ -585,6 +618,15 @@ def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]
         for context in generated_not_source_selected
         if context.get("path_cost_margin_vs_selected") is not None
     ]
+    not_selected_reason_counts = _source_candidate_not_selected_reason_counts(generated_not_source_selected)
+    distance_contract_bins = _distance_contract_rejected_bins(projection_distance_contract_rejected)
+    tradeoff_summary = _source_selection_quality_tradeoff_summary(
+        generated_not_source_selected=generated_not_source_selected,
+        projection_distance_contract_rejected=projection_distance_contract_rejected,
+        source_selected_but_distance_rejected=source_selected_but_distance_rejected,
+        reason_counts=not_selected_reason_counts,
+        quality_regressions=quality_regressions,
+    )
     return {
         "schema_version": "anchor-projection-coverage-diagnosis/v1",
         "context_count": len(contexts),
@@ -604,6 +646,11 @@ def _anchor_projection_coverage_diagnosis(context_values: Any) -> dict[str, Any]
             repaired_by_reachable_substitute
         ),
         "projection_distance_contract_rejected_count": len(projection_distance_contract_rejected),
+        "source_selected_but_distance_rejected_count": len(source_selected_but_distance_rejected),
+        "distance_contract_rejected_source_selected_count": len(source_selected_but_distance_rejected),
+        "distance_contract_rejected_by_distance_bin": distance_contract_bins,
+        "source_candidate_not_selected_by_best_alternative_reason": not_selected_reason_counts,
+        "source_selection_quality_tradeoff_summary": tradeoff_summary,
         "nontrainable_primary_reason_counts": dict(sorted(primary_reason_counts.items())),
         "scenario_diagnosis_counts": dict(
             sorted(Counter("trainable" if context["trainable"] else "nontrainable" for context in contexts).items())
@@ -640,6 +687,186 @@ def _primary_nontrainable_reason(context: dict[str, Any]) -> str | None:
         return "source_selection_quality_regression"
     reasons = [reason for reason in context.get("reject_reasons", []) if reason]
     return str(reasons[0]) if reasons else "unknown_nontrainable_anchor_projection"
+
+
+def _has_distance_contract_reject(context: dict[str, Any]) -> bool:
+    reasons = context.get("reject_reasons")
+    if not isinstance(reasons, list):
+        return False
+    return (
+        "projection_distance_cells_exceeds_contract" in reasons
+        or "projection_distance_m_exceeds_contract" in reasons
+    )
+
+
+def _source_candidate_not_selected_reason_counts(contexts: list[dict[str, Any]]) -> dict[str, int]:
+    counts = Counter(_source_candidate_not_selected_reason(context) for context in contexts)
+    return {key: int(counts.get(key, 0)) for key in SOURCE_CANDIDATE_NOT_SELECTED_REASON_KEYS}
+
+
+def _source_candidate_not_selected_reason(context: dict[str, Any]) -> str:
+    if _has_distance_contract_reject(context):
+        return "distance_contract_rejected"
+    path_margin = _float_optional(context.get("path_cost_margin_vs_selected"))
+    risk_margin = _float_optional(context.get("risk_margin_vs_selected"))
+    if path_margin is None and risk_margin is None:
+        return "no_selected_candidate_comparison"
+    path_worse = path_margin is not None and path_margin > 0.0
+    risk_worse = risk_margin is not None and risk_margin > 0.0
+    if path_worse and risk_worse:
+        return "higher_path_cost_and_risk"
+    if path_worse:
+        return "higher_path_cost"
+    if risk_worse:
+        return "higher_risk"
+    projected_utility = _float_optional(context.get("projected_candidate_utility"))
+    selected_utility = _float_optional(context.get("selected_candidate_utility"))
+    if projected_utility is not None and selected_utility is not None and projected_utility < selected_utility:
+        return "lower_utility_or_coverage"
+    return "ranking_weight_tradeoff_or_unobserved_utility"
+
+
+def _distance_contract_rejected_bins(contexts: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "count": len(contexts),
+        "source_selected_count": sum(
+            1 for context in contexts if context.get("projected_candidate_source_selected")
+        ),
+        "not_source_selected_count": sum(
+            1 for context in contexts if not context.get("projected_candidate_source_selected")
+        ),
+        "by_projection_distance_cells": _distance_bin_counts(contexts, "projection_distance_cells"),
+        "by_projection_distance_m": _distance_bin_counts(contexts, "projection_distance_m"),
+        "by_scenario_id": _nested_count(contexts, "scenario_id"),
+        "by_run_id": _nested_count(contexts, "run_id"),
+        "by_backend": _backend_counts(contexts),
+        "path_cost_margin_vs_selected": _numeric_summary(
+            [
+                context["path_cost_margin_vs_selected"]
+                for context in contexts
+                if isinstance(context.get("path_cost_margin_vs_selected"), int | float)
+            ]
+        ),
+        "risk_margin_vs_selected": _numeric_summary(
+            [
+                context["risk_margin_vs_selected"]
+                for context in contexts
+                if isinstance(context.get("risk_margin_vs_selected"), int | float)
+            ]
+        ),
+        "source_selected_path_cost_margin_vs_selected": _numeric_summary(
+            [
+                context["path_cost_margin_vs_selected"]
+                for context in contexts
+                if context.get("projected_candidate_source_selected")
+                and isinstance(context.get("path_cost_margin_vs_selected"), int | float)
+            ]
+        ),
+        "source_selected_risk_margin_vs_selected": _numeric_summary(
+            [
+                context["risk_margin_vs_selected"]
+                for context in contexts
+                if context.get("projected_candidate_source_selected")
+                and isinstance(context.get("risk_margin_vs_selected"), int | float)
+            ]
+        ),
+    }
+
+
+def _distance_bin_counts(contexts: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    bins: dict[str, list[dict[str, Any]]] = {}
+    for context in contexts:
+        value = _float_optional(context.get(field))
+        key = "missing" if value is None else _number_bin_key(value)
+        bins.setdefault(key, []).append(context)
+    result: dict[str, Any] = {}
+    for key, members in sorted(bins.items(), key=lambda item: _bin_sort_key(item[0])):
+        result[key] = {
+            "count": len(members),
+            "source_selected_count": sum(
+                1 for context in members if context.get("projected_candidate_source_selected")
+            ),
+            "not_source_selected_count": sum(
+                1 for context in members if not context.get("projected_candidate_source_selected")
+            ),
+            "scenario_id_counts": _nested_count(members, "scenario_id"),
+            "run_id_counts": _nested_count(members, "run_id"),
+            "backend_counts": _backend_counts(members),
+            "path_cost_margin_vs_selected": _numeric_summary(
+                [
+                    context["path_cost_margin_vs_selected"]
+                    for context in members
+                    if isinstance(context.get("path_cost_margin_vs_selected"), int | float)
+                ]
+            ),
+            "risk_margin_vs_selected": _numeric_summary(
+                [
+                    context["risk_margin_vs_selected"]
+                    for context in members
+                    if isinstance(context.get("risk_margin_vs_selected"), int | float)
+                ]
+            ),
+        }
+    return result
+
+
+def _source_selection_quality_tradeoff_summary(
+    *,
+    generated_not_source_selected: list[dict[str, Any]],
+    projection_distance_contract_rejected: list[dict[str, Any]],
+    source_selected_but_distance_rejected: list[dict[str, Any]],
+    reason_counts: dict[str, int],
+    quality_regressions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    distance_rejected_not_selected = [
+        context
+        for context in projection_distance_contract_rejected
+        if not context.get("projected_candidate_source_selected")
+    ]
+    recommendation = (
+        "no_distance_contract_relaxation_needed"
+        if not projection_distance_contract_rejected
+        else "record_only_keep_current_training_distance_contract"
+    )
+    return {
+        "generated_not_source_selected_count": len(generated_not_source_selected),
+        "source_selected_but_distance_rejected_count": len(source_selected_but_distance_rejected),
+        "distance_contract_rejected_count": len(projection_distance_contract_rejected),
+        "distance_contract_rejected_not_source_selected_count": len(distance_rejected_not_selected),
+        "source_selection_quality_regression_count": len(quality_regressions),
+        "source_candidate_not_selected_reason_counts": dict(reason_counts),
+        "generated_not_source_selected_margin": _selection_margin_summary(generated_not_source_selected),
+        "distance_contract_rejected_margin": _selection_margin_summary(projection_distance_contract_rejected),
+        "source_selected_distance_rejected_margin": _selection_margin_summary(
+            source_selected_but_distance_rejected
+        ),
+        "quality_regression_absent_for_distance_contract_relaxation": len(quality_regressions) == 0,
+        "distance_contract_relaxation_recommendation": recommendation,
+    }
+
+
+def _backend_counts(contexts: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(sorted(Counter(_backend_from_run_id(str(context.get("run_id") or "")) for context in contexts).items()))
+
+
+def _backend_from_run_id(run_id: str) -> str:
+    if run_id.endswith("-channel-aware"):
+        return "channel-aware"
+    if run_id.endswith("-astar"):
+        return "astar"
+    return "unknown"
+
+
+def _number_bin_key(value: float) -> str:
+    value = float(value)
+    return str(int(value)) if value.is_integer() else str(value)
+
+
+def _bin_sort_key(value: str) -> tuple[int, float | str]:
+    try:
+        return (0, float(value))
+    except ValueError:
+        return (1, value)
 
 
 def _nested_count(contexts: list[dict[str, Any]], field: str) -> dict[str, int]:
