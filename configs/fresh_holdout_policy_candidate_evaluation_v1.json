@@ -1,0 +1,44 @@
+{
+  "schema_version": "fresh-holdout-policy-candidate-evaluation-config/v1",
+  "description": "Fresh disjoint holdout gate for the controlled experimental hybrid policy candidate. It evaluates only candidate/sample contexts whose identity keys are disjoint from the source and candidate evidence roots.",
+  "default_roots": {
+    "source_root": "outputs/path_feedback_batch_hybrid_current_head_readiness_closure_v1",
+    "candidate_root": "outputs/path_feedback_batch_controlled_hybrid_policy_training_candidate_v1"
+  },
+  "input_files": {
+    "source_batch_summary": "batch-evaluation-summary.json",
+    "batch_summary": "batch-evaluation-summary.json",
+    "candidate_summary": "controlled-hybrid-policy-training-candidate-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "summary": "fresh-holdout-policy-candidate-evaluation-summary.json",
+    "overlap_report": "fresh-holdout-overlap-report.json",
+    "score_report": "fresh-holdout-candidate-score-report.json"
+  },
+  "validation": {
+    "min_fresh_disjoint_context_count": 1,
+    "max_action_mask_invalid_count": 0,
+    "max_empty_action_mask_count": 0,
+    "max_fallback_or_open_grid_count": 0,
+    "max_safety_regression_count": 0,
+    "max_contract_violation_count": 0
+  },
+  "evaluation": {
+    "hidden_size": 16,
+    "preference_margin_threshold": 0.0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_retraining",
+    "no_production_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

@@ -740,6 +740,41 @@ When both candidate and holdout summaries pass without those regressions,
 readiness may record `controlled_hybrid_training_candidate_evaluated`; this is
 still not formal PPO readiness or a policy performance claim.
 
+The next **Fresh Holdout Policy Candidate Evaluation v1** gate makes the
+candidate evaluation stricter. The existing controlled holdout reuses the
+current candidate evidence root and is therefore not a fresh/disjoint
+generalization check. Fresh holdout adds:
+
+- `configs/path_feedback_batch_fresh_holdout_policy_candidate_evaluation_v1.json`
+- `configs/fresh_holdout_policy_candidate_evaluation_v1.json`
+- `scripts/run_fresh_holdout_policy_candidate_evaluation.py`
+- `scripts/run_fresh_holdout_policy_candidate_evaluation.sh`
+- `tests/test_fresh_holdout_policy_candidate_evaluation.py`
+- `docs/superpowers/specs/2026-06-08-fresh-holdout-policy-candidate-evaluation.md`
+
+The fresh evidence root is
+`outputs/path_feedback_batch_fresh_holdout_policy_candidate_evaluation_v1/`.
+The evaluator reuses the controlled candidate checkpoint, but accepts only
+candidate/sample context identity keys that are disjoint from both
+`outputs/path_feedback_batch_hybrid_current_head_readiness_closure_v1/` and
+`outputs/path_feedback_batch_controlled_hybrid_policy_training_candidate_v1/`.
+It writes `fresh-holdout-policy-candidate-evaluation-summary.json`,
+`fresh-holdout-overlap-report.json`, and
+`fresh-holdout-candidate-score-report.json`. Scenario ids may overlap; those
+overlaps are reported as `scenario_overlap_count` and must not be described as
+scenario-level generalization.
+
+Fresh holdout passes only when `fresh_disjoint_context_count > 0`, accepted
+samples have `identity_overlap_count=0` and `identity_key_missing_count=0`, and
+fallback/open-grid, safety, contract, path/risk, and source-selection regression
+counts are all 0. Passing readiness may advance only to
+`fresh_holdout_policy_candidate_evaluated`. If no disjoint samples exist, the
+required next change is fresh holdout scenario or candidate generation; if
+quality regressions exist, the required next change is training objective or
+sample-weight refinement. This remains a candidate-context holdout gate, not
+production readiness, not checkpoint publication, and not a policy performance
+claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

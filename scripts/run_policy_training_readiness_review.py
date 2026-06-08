@@ -31,6 +31,7 @@ CONTROLLED_HYBRID_CANDIDATE_SCHEMA_VERSION = (
 CONTROLLED_HYBRID_HOLDOUT_SCHEMA_VERSION = (
     "controlled-hybrid-policy-holdout-evaluation-summary/v1"
 )
+FRESH_HOLDOUT_SCHEMA_VERSION = "fresh-holdout-policy-candidate-evaluation-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 READY_SMOKE_ACTION = "ready_for_policy_training_readiness_review"
 READY_DRY_RUN_ACTION = "ready_for_limited_policy_training_dry_run"
@@ -38,6 +39,7 @@ HYBRID_DRY_RUN_COMPLETED_ACTION = "hybrid_training_dry_run_completed"
 CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION = (
     "controlled_hybrid_training_candidate_evaluated"
 )
+FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION = "fresh_holdout_policy_candidate_evaluated"
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -113,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional controlled-hybrid-policy-holdout-evaluation-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--fresh-holdout-policy-candidate-evaluation-summary",
+        help="Optional fresh-holdout-policy-candidate-evaluation-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -178,6 +184,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.controlled_hybrid_policy_holdout_evaluation_summary
         else batch_root / "controlled-hybrid-policy-holdout-evaluation-summary.json"
     )
+    fresh_holdout_path = (
+        _resolve_path(args.fresh_holdout_policy_candidate_evaluation_summary, repo_root)
+        if args.fresh_holdout_policy_candidate_evaluation_summary
+        else batch_root / "fresh-holdout-policy-candidate-evaluation-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -203,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         hybrid_training_dry_run_path=hybrid_training_dry_run_path,
         controlled_candidate_path=controlled_candidate_path,
         controlled_holdout_path=controlled_holdout_path,
+        fresh_holdout_path=fresh_holdout_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -218,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         controlled_holdout_required=bool(
             args.controlled_hybrid_policy_holdout_evaluation_summary
         ),
+        fresh_holdout_required=bool(args.fresh_holdout_policy_candidate_evaluation_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -266,6 +279,12 @@ def main(argv: list[str] | None = None) -> int:
             _display_path(controlled_holdout_path, repo_root)
             if controlled_holdout_path.is_file()
             or args.controlled_hybrid_policy_holdout_evaluation_summary
+            else None
+        ),
+        "fresh_holdout_policy_candidate_evaluation_summary": (
+            _display_path(fresh_holdout_path, repo_root)
+            if fresh_holdout_path.is_file()
+            or args.fresh_holdout_policy_candidate_evaluation_summary
             else None
         ),
         "config": _display_path(config_path, repo_root),
@@ -326,6 +345,7 @@ def analyze_policy_training_readiness_review(
     hybrid_training_dry_run_path: Path,
     controlled_candidate_path: Path,
     controlled_holdout_path: Path,
+    fresh_holdout_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -333,6 +353,7 @@ def analyze_policy_training_readiness_review(
     hybrid_training_dry_run_required: bool = False,
     controlled_candidate_required: bool = False,
     controlled_holdout_required: bool = False,
+    fresh_holdout_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -474,6 +495,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=controlled_holdout_required,
     )
+    fresh_holdout = _load_optional_source(
+        fresh_holdout_path,
+        label="fresh_holdout_policy_candidate_evaluation_summary",
+        expected_schema=FRESH_HOLDOUT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=fresh_holdout_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -487,6 +517,7 @@ def analyze_policy_training_readiness_review(
             ("hybrid_policy_training_dry_run_summary", hybrid_training_dry_run),
             ("controlled_hybrid_policy_training_candidate_summary", controlled_candidate),
             ("controlled_hybrid_policy_holdout_evaluation_summary", controlled_holdout),
+            ("fresh_holdout_policy_candidate_evaluation_summary", fresh_holdout),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -572,6 +603,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if fresh_holdout:
+        source_git_matches.append(
+            _inspect_git(
+                fresh_holdout,
+                label="fresh_holdout_policy_candidate_evaluation_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -585,6 +626,7 @@ def analyze_policy_training_readiness_review(
         hybrid_training_dry_run=hybrid_training_dry_run,
         controlled_candidate=controlled_candidate,
         controlled_holdout=controlled_holdout,
+        fresh_holdout=fresh_holdout,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -631,6 +673,11 @@ def analyze_policy_training_readiness_review(
             if controlled_holdout
             else None
         ),
+        "fresh_holdout_policy_candidate_evaluation_summary_path": (
+            _display_path(fresh_holdout_path, repo_root)
+            if fresh_holdout
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -652,6 +699,7 @@ def analyze_policy_training_readiness_review(
             "hybrid_policy_training_dry_run": _public_git(hybrid_training_dry_run),
             "controlled_hybrid_policy_training_candidate": _public_git(controlled_candidate),
             "controlled_hybrid_policy_holdout_evaluation": _public_git(controlled_holdout),
+            "fresh_holdout_policy_candidate_evaluation": _public_git(fresh_holdout),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -686,6 +734,7 @@ def _review_metrics(
     hybrid_training_dry_run: dict[str, Any],
     controlled_candidate: dict[str, Any],
     controlled_holdout: dict[str, Any],
+    fresh_holdout: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -766,6 +815,7 @@ def _review_metrics(
             "hybrid_policy_training_dry_run": hybrid_training_dry_run,
             "controlled_hybrid_policy_training_candidate": controlled_candidate,
             "controlled_hybrid_policy_holdout_evaluation": controlled_holdout,
+            "fresh_holdout_policy_candidate_evaluation": fresh_holdout,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -780,6 +830,7 @@ def _review_metrics(
         candidate=controlled_candidate,
         holdout=controlled_holdout,
     )
+    fresh_holdout_readiness = _fresh_holdout_policy_candidate_readiness(fresh_holdout)
     training_blockers: list[str] = []
     if validation_reason_codes:
         for reason in validation_reason_codes:
@@ -814,6 +865,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in controlled_candidate_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in fresh_holdout_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -822,6 +875,9 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif fresh_holdout_readiness["present"] and fresh_holdout_readiness["completed"]:
+        training_readiness_status = FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION
+        recommended_next_action = FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION
     elif controlled_candidate_readiness["present"] and controlled_candidate_readiness["completed"]:
         training_readiness_status = CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION
         recommended_next_action = CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION
@@ -855,6 +911,7 @@ def _review_metrics(
         "anchor_projection_readiness": anchor_projection_readiness,
         "hybrid_training_readiness": hybrid_training_readiness,
         "controlled_hybrid_training_candidate_readiness": controlled_candidate_readiness,
+        "fresh_holdout_policy_candidate_readiness": fresh_holdout_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -904,7 +961,10 @@ def _review_metrics(
             "audit_proxy_positive_count"
         ],
         "training_blockers": training_blockers,
-        "next_required_change": controlled_candidate_readiness.get("next_required_change"),
+        "next_required_change": (
+            fresh_holdout_readiness.get("next_required_change")
+            or controlled_candidate_readiness.get("next_required_change")
+        ),
         "contract_impact": {
             "training_contract_status": contract_status,
             "contract_mutations": contract_mutations,
@@ -915,19 +975,7 @@ def _review_metrics(
                 )
             ),
             "calibrated_selection_only": source_rate == 0.0 and calibrated_rate > 0.0,
-            "policy_training_scope": (
-                "controlled_hybrid_training_candidate_evaluation_only"
-                if recommended_next_action == CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION
-                else (
-                    "hybrid_training_dry_run_only"
-                    if recommended_next_action == HYBRID_DRY_RUN_COMPLETED_ACTION
-                    else (
-                        "limited_policy_training_dry_run_only"
-                        if recommended_next_action == READY_DRY_RUN_ACTION
-                        else "audit_contract_refinement_only"
-                    )
-                )
-            ),
+            "policy_training_scope": _policy_training_scope(recommended_next_action),
         },
         "recommended_next_action": recommended_next_action,
         "readiness_source_status": {
@@ -937,6 +985,18 @@ def _review_metrics(
             "coverage_recommended_next_action": str(coverage.get("recommended_next_action", "")),
         },
     }
+
+
+def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == FRESH_HOLDOUT_CANDIDATE_EVALUATED_ACTION:
+        return "fresh_holdout_policy_candidate_evaluation_only"
+    if recommended_next_action == CONTROLLED_HYBRID_CANDIDATE_EVALUATED_ACTION:
+        return "controlled_hybrid_training_candidate_evaluation_only"
+    if recommended_next_action == HYBRID_DRY_RUN_COMPLETED_ACTION:
+        return "hybrid_training_dry_run_only"
+    if recommended_next_action == READY_DRY_RUN_ACTION:
+        return "limited_policy_training_dry_run_only"
+    return "audit_contract_refinement_only"
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -1609,6 +1669,113 @@ def _controlled_hybrid_training_candidate_readiness(
         "replaces_default_policy": bool(
             candidate.get("replaces_default_policy") or holdout.get("replaces_default_policy")
         ),
+    }
+
+
+def _fresh_holdout_policy_candidate_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    if not summary:
+        return {
+            "present": False,
+            "completed": False,
+            "training_blockers": [],
+            "next_required_change": None,
+            "formal_training_ready_claimed": False,
+            "performance_claimed": False,
+            "fresh_disjoint_context_count": 0,
+            "identity_overlap_count": 0,
+            "identity_key_missing_count": 0,
+            "scenario_overlap_count": 0,
+            "fallback_or_open_grid_count": 0,
+            "safety_regression_count": 0,
+            "contract_violation_count": 0,
+            "path_cost_regression_count": 0,
+            "risk_regression_count": 0,
+            "source_selection_regression_count": 0,
+            "preference_margin_satisfied_count": 0,
+            "preference_margin_failed_count": 0,
+        }
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "fresh_holdout_policy_candidate_evaluation_not_passed")
+    if _int_value_or_default(summary.get("fresh_disjoint_context_count"), 0) <= 0:
+        _append_reason(blockers, "fresh_holdout_disjoint_context_count_zero")
+    if _int_value_or_default(summary.get("accepted_identity_overlap_count"), 0) != 0:
+        _append_reason(blockers, "fresh_holdout_accepted_identity_overlap")
+    if _int_value_or_default(summary.get("accepted_identity_key_missing_count"), 0) != 0:
+        _append_reason(blockers, "fresh_holdout_accepted_identity_key_missing")
+    if summary.get("experimental_checkpoint") is not True:
+        _append_reason(blockers, "fresh_holdout_checkpoint_not_experimental")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "fresh_holdout_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "fresh_holdout_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "fresh_holdout_policy_performance_claimed")
+
+    fallback_or_open_grid_count = _int_value_or_default(summary.get("fallback_or_open_grid_count"), 0)
+    safety_regression_count = _int_value_or_default(summary.get("safety_regression_count"), 0)
+    contract_violation_count = _int_value_or_default(summary.get("contract_violation_count"), 0)
+    path_cost_regression_count = _int_value_or_default(summary.get("path_cost_regression_count"), 0)
+    risk_regression_count = _int_value_or_default(summary.get("risk_regression_count"), 0)
+    source_selection_regression_count = _int_value_or_default(
+        summary.get("source_selection_regression_count"),
+        0,
+    )
+    if fallback_or_open_grid_count:
+        _append_reason(blockers, "fresh_holdout_fallback_or_open_grid")
+    if safety_regression_count:
+        _append_reason(blockers, "fresh_holdout_safety_regression")
+    if contract_violation_count:
+        _append_reason(blockers, "fresh_holdout_contract_violation")
+    if path_cost_regression_count:
+        _append_reason(blockers, "fresh_holdout_path_cost_regression")
+    if risk_regression_count:
+        _append_reason(blockers, "fresh_holdout_risk_regression")
+    if source_selection_regression_count:
+        _append_reason(blockers, "fresh_holdout_source_selection_regression")
+
+    formal_training_ready_claimed = bool(
+        summary.get("formal_training_ready_claimed")
+        or summary.get("policy_training_ready")
+        or summary.get("performance_claimed")
+    )
+    if formal_training_ready_claimed:
+        _append_reason(blockers, "fresh_holdout_formal_training_ready_claimed")
+    next_required_change = (
+        summary.get("next_required_change")
+        if blockers
+        else None
+    )
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": next_required_change,
+        "formal_training_ready_claimed": formal_training_ready_claimed,
+        "performance_claimed": bool(summary.get("performance_claimed")),
+        "fresh_disjoint_context_count": _int_value_or_default(
+            summary.get("fresh_disjoint_context_count"),
+            0,
+        ),
+        "identity_overlap_count": _int_value_or_default(summary.get("identity_overlap_count"), 0),
+        "identity_key_missing_count": _int_value_or_default(summary.get("identity_key_missing_count"), 0),
+        "scenario_overlap_count": _int_value_or_default(summary.get("scenario_overlap_count"), 0),
+        "fallback_or_open_grid_count": fallback_or_open_grid_count,
+        "safety_regression_count": safety_regression_count,
+        "contract_violation_count": contract_violation_count,
+        "path_cost_regression_count": path_cost_regression_count,
+        "risk_regression_count": risk_regression_count,
+        "source_selection_regression_count": source_selection_regression_count,
+        "preference_margin_satisfied_count": _int_value_or_default(
+            summary.get("preference_margin_satisfied_count"),
+            0,
+        ),
+        "preference_margin_failed_count": _int_value_or_default(
+            summary.get("preference_margin_failed_count"),
+            0,
+        ),
+        "publishes_checkpoint": bool(summary.get("publishes_checkpoint")),
+        "replaces_default_policy": bool(summary.get("replaces_default_policy")),
     }
 
 
