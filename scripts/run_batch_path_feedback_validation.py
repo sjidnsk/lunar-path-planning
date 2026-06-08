@@ -32,11 +32,46 @@ SCENARIO_SETS = {
     "raw_align_train",
     "raw_align_val",
     "raw_align_test",
+    "policy_canary",
     "all",
 }
 DIAGNOSTIC_PROFILES = {"baseline", "execution", "iris", "all"}
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+OPTIONAL_BOOL_ARGS = {
+    "anchor_projection_candidate_generation": "--anchor-projection-candidate-generation",
+    "anchor_projection_contract_aware_trainable_target_generation": (
+        "--anchor-projection-contract-aware-trainable-target-generation"
+    ),
+    "anchor_projection_prefer_contract_safe_trainable_targets": (
+        "--anchor-projection-prefer-contract-safe-trainable-targets"
+    ),
+    "anchor_projection_planner_validated_trainable_target_mining": (
+        "--anchor-projection-planner-validated-trainable-target-mining"
+    ),
+    "anchor_projection_allow_planner_validated_distance_exception": (
+        "--anchor-projection-allow-planner-validated-distance-exception"
+    ),
+}
+OPTIONAL_VALUE_ARGS = {
+    "anchor_projection_selection_path_cost_bonus": "--anchor-projection-selection-path-cost-bonus",
+    "anchor_projection_max_selection_path_cost_regression": (
+        "--anchor-projection-max-selection-path-cost-regression"
+    ),
+    "anchor_projection_max_selection_risk_regression": (
+        "--anchor-projection-max-selection-risk-regression"
+    ),
+    "anchor_projection_max_trainable_distance_cells": (
+        "--anchor-projection-max-trainable-distance-cells"
+    ),
+    "anchor_projection_max_trainable_distance_m": "--anchor-projection-max-trainable-distance-m",
+    "anchor_projection_max_planner_validated_distance_cells": (
+        "--anchor-projection-max-planner-validated-distance-cells"
+    ),
+    "anchor_projection_max_planner_validated_distance_m": (
+        "--anchor-projection-max-planner-validated-distance-m"
+    ),
+}
 
 
 class MatrixError(ValueError):
@@ -220,6 +255,8 @@ def _build_batch_plan(
             "--output-root",
             str(run_output_root),
         ]
+        optional_cli_args = _optional_cli_args(merged, index=index)
+        argv.extend(optional_cli_args)
         argv.extend(planner_extra_args)
         runs.append(
             {
@@ -228,6 +265,7 @@ def _build_batch_plan(
                 "diagnostic_profile": diagnostic_profile,
                 "top_k": top_k,
                 "sample_quality_profile": sample_quality_profile,
+                "optional_cli_args": optional_cli_args,
                 "planner_extra_args": planner_extra_args,
                 "output_root": run_output_root,
                 "argv": argv,
@@ -271,6 +309,31 @@ def _optional_string_list(value: Any, label: str) -> list[str]:
     if any(not isinstance(item, str) or item == "" for item in value):
         raise MatrixError(f"{label} must contain only non-empty strings")
     return list(value)
+
+
+def _optional_cli_args(merged: dict[str, Any], *, index: int) -> list[str]:
+    args: list[str] = []
+    for field, cli_arg in OPTIONAL_BOOL_ARGS.items():
+        if field not in merged:
+            continue
+        value = merged[field]
+        if not isinstance(value, bool):
+            raise MatrixError(f"runs[{index}].{field} must be a boolean when present")
+        if value:
+            args.append(cli_arg)
+    for field, cli_arg in OPTIONAL_VALUE_ARGS.items():
+        if field not in merged:
+            continue
+        value = merged[field]
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise MatrixError(f"runs[{index}].{field} must be a string or number when present")
+        text = str(value)
+        if not text:
+            raise MatrixError(f"runs[{index}].{field} must not be empty")
+        args.extend([cli_arg, text])
+    return args
 
 
 def _execute_run(run: dict[str, Any], *, repo_root: Path, git_snapshot: dict[str, Any]) -> dict[str, Any]:

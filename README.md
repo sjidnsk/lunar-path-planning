@@ -902,6 +902,34 @@ rollout, publish or replace a policy, alter network/action space/default A*,
 relax the distance contract, claim Ackermann-feasible trajectory, treat
 IRIS/GCS diagnostics as training release evidence, or claim performance.
 
+**Policy-Gated Canary Rollout v1** is the next shadow-only gate after raw
+generalization. Raw generalization proves the candidate no longer repeats the
+known raw-policy regressions on unseen TEST contexts; canary rollout asks a
+different question: when a safe alternative exists, can the raw policy choose a
+different candidate and still pass every existing gate?
+
+The canary batch uses `configs/path_feedback_batch_policy_gated_canary_rollout_v1.json`
+and writes `outputs/path_feedback_batch_policy_gated_canary_rollout_v1/`. The
+evaluator is `scripts/run_policy_gated_canary_rollout.py` with
+`configs/policy_gated_canary_rollout_v1.json`; it writes
+`policy-gated-canary-rollout-summary.json`,
+`policy-gated-canary-decisions.jsonl`,
+`policy-gated-canary-rejection-report.json`, and
+`policy-gated-canary-opportunity-summary.json`.
+
+Canary success requires `policy_decision_count>0`,
+`canary_opportunity_context_count>0`, `policy_changed_decision_count>0`,
+`canary_accepted_policy_choice_count>0`, and controlled invalid-mask,
+fallback/open-grid, safety, contract, path/risk, and source-selection
+regression all equal to 0. A source-aligned-only run is not enough; it only
+shows the policy copied the teacher. A changed-but-rejected run shows the policy
+tried to take over but the gate correctly refused it.
+
+Readiness may advance to `policy_gated_canary_rollout_evaluated` only when the
+canary summary passes and candidate/checkpoint provenance matches the current
+source state. This remains a gated test drive, not formal PPO rollout or policy
+release.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

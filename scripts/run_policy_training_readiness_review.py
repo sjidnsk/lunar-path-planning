@@ -37,6 +37,7 @@ SCENARIO_DISJOINT_ROLLOUT_SCHEMA_VERSION = (
 )
 RAW_POLICY_STRICT_ROLLOUT_SCHEMA_VERSION = "raw-policy-strict-rollout-evaluation-summary/v1"
 RAW_POLICY_GENERALIZATION_SCHEMA_VERSION = "raw-policy-generalization-evaluation-summary/v1"
+POLICY_GATED_CANARY_SCHEMA_VERSION = "policy-gated-canary-rollout-summary/v1"
 SUBMODULES = ("dev-platform-constraints", "model-explorer", "path-planner")
 READY_SMOKE_ACTION = "ready_for_policy_training_readiness_review"
 READY_DRY_RUN_ACTION = "ready_for_limited_policy_training_dry_run"
@@ -53,6 +54,7 @@ SCENARIO_DISJOINT_POLICY_ROLLOUT_EVALUATED_ACTION = (
 )
 RAW_POLICY_DECISION_ALIGNMENT_EVALUATED_ACTION = "raw_policy_decision_alignment_evaluated"
 RAW_POLICY_GENERALIZATION_EVALUATED_ACTION = "raw_policy_generalization_evaluated"
+POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION = "policy_gated_canary_rollout_evaluated"
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -150,6 +152,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional raw-policy-generalization-evaluation-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--policy-gated-canary-rollout-summary",
+        help="Optional policy-gated-canary-rollout-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -235,6 +241,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.raw_policy_generalization_evaluation_summary
         else batch_root / "raw-policy-generalization-evaluation-summary.json"
     )
+    policy_canary_path = (
+        _resolve_path(args.policy_gated_canary_rollout_summary, repo_root)
+        if args.policy_gated_canary_rollout_summary
+        else batch_root / "policy-gated-canary-rollout-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -264,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         scenario_rollout_path=scenario_rollout_path,
         raw_strict_rollout_path=raw_strict_rollout_path,
         raw_generalization_path=raw_generalization_path,
+        policy_canary_path=policy_canary_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -283,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         scenario_rollout_required=bool(args.scenario_disjoint_policy_rollout_evaluation_summary),
         raw_strict_rollout_required=bool(args.raw_policy_strict_rollout_evaluation_summary),
         raw_generalization_required=bool(args.raw_policy_generalization_evaluation_summary),
+        policy_canary_required=bool(args.policy_gated_canary_rollout_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -357,6 +370,11 @@ def main(argv: list[str] | None = None) -> int:
             or args.raw_policy_generalization_evaluation_summary
             else None
         ),
+        "policy_gated_canary_rollout_summary": (
+            _display_path(policy_canary_path, repo_root)
+            if policy_canary_path.is_file() or args.policy_gated_canary_rollout_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -419,6 +437,7 @@ def analyze_policy_training_readiness_review(
     scenario_rollout_path: Path,
     raw_strict_rollout_path: Path,
     raw_generalization_path: Path,
+    policy_canary_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -430,6 +449,7 @@ def analyze_policy_training_readiness_review(
     scenario_rollout_required: bool = False,
     raw_strict_rollout_required: bool = False,
     raw_generalization_required: bool = False,
+    policy_canary_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -607,6 +627,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=raw_generalization_required,
     )
+    policy_canary = _load_optional_source(
+        policy_canary_path,
+        label="policy_gated_canary_rollout_summary",
+        expected_schema=POLICY_GATED_CANARY_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=policy_canary_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -624,6 +653,7 @@ def analyze_policy_training_readiness_review(
             ("scenario_disjoint_policy_rollout_evaluation_summary", scenario_rollout),
             ("raw_policy_strict_rollout_evaluation_summary", raw_strict_rollout),
             ("raw_policy_generalization_evaluation_summary", raw_generalization),
+            ("policy_gated_canary_rollout_summary", policy_canary),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -749,6 +779,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if policy_canary:
+        source_git_matches.append(
+            _inspect_git(
+                policy_canary,
+                label="policy_gated_canary_rollout_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -766,6 +806,7 @@ def analyze_policy_training_readiness_review(
         scenario_rollout=scenario_rollout,
         raw_strict_rollout=raw_strict_rollout,
         raw_generalization=raw_generalization,
+        policy_canary=policy_canary,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -832,6 +873,11 @@ def analyze_policy_training_readiness_review(
             if raw_generalization
             else None
         ),
+        "policy_gated_canary_rollout_summary_path": (
+            _display_path(policy_canary_path, repo_root)
+            if policy_canary
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -857,6 +903,7 @@ def analyze_policy_training_readiness_review(
             "scenario_disjoint_policy_rollout_evaluation": _public_git(scenario_rollout),
             "raw_policy_strict_rollout_evaluation": _public_git(raw_strict_rollout),
             "raw_policy_generalization_evaluation": _public_git(raw_generalization),
+            "policy_gated_canary_rollout": _public_git(policy_canary),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -895,6 +942,7 @@ def _review_metrics(
     scenario_rollout: dict[str, Any],
     raw_strict_rollout: dict[str, Any],
     raw_generalization: dict[str, Any],
+    policy_canary: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -979,6 +1027,7 @@ def _review_metrics(
             "scenario_disjoint_policy_rollout_evaluation": scenario_rollout,
             "raw_policy_strict_rollout_evaluation": raw_strict_rollout,
             "raw_policy_generalization_evaluation": raw_generalization,
+            "policy_gated_canary_rollout": policy_canary,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -993,6 +1042,7 @@ def _review_metrics(
     scenario_rollout_readiness = _scenario_disjoint_policy_rollout_readiness(scenario_rollout)
     raw_strict_rollout_readiness = _raw_policy_strict_rollout_readiness(raw_strict_rollout)
     raw_generalization_readiness = _raw_policy_generalization_readiness(raw_generalization)
+    policy_canary_readiness = _policy_gated_canary_rollout_readiness(policy_canary)
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
         holdout=controlled_holdout,
@@ -1044,6 +1094,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in raw_generalization_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in policy_canary_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -1052,6 +1104,9 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif policy_canary_readiness["present"] and policy_canary_readiness["completed"]:
+        training_readiness_status = POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION
+        recommended_next_action = POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION
     elif raw_generalization_readiness["present"] and raw_generalization_readiness["completed"]:
         training_readiness_status = RAW_POLICY_GENERALIZATION_EVALUATED_ACTION
         recommended_next_action = RAW_POLICY_GENERALIZATION_EVALUATED_ACTION
@@ -1105,6 +1160,7 @@ def _review_metrics(
         "scenario_disjoint_policy_rollout_readiness": scenario_rollout_readiness,
         "raw_policy_strict_rollout_readiness": raw_strict_rollout_readiness,
         "raw_policy_generalization_readiness": raw_generalization_readiness,
+        "policy_gated_canary_rollout_readiness": policy_canary_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1155,7 +1211,8 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
-            raw_strict_rollout_readiness.get("next_required_change")
+            policy_canary_readiness.get("next_required_change")
+            or raw_strict_rollout_readiness.get("next_required_change")
             or raw_generalization_readiness.get("next_required_change")
             or fresh_holdout_readiness.get("next_required_change")
             or scenario_rollout_readiness.get("next_required_change")
@@ -1184,6 +1241,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION:
+        return "policy_gated_canary_rollout_evaluation_only"
     if recommended_next_action == RAW_POLICY_GENERALIZATION_EVALUATED_ACTION:
         return "raw_policy_generalization_evaluation_only"
     if recommended_next_action == RAW_POLICY_DECISION_ALIGNMENT_EVALUATED_ACTION:
@@ -2334,6 +2393,139 @@ def _raw_policy_generalization_readiness(summary: dict[str, Any]) -> dict[str, A
         ),
         "test_source_selection_regression_count": _int_value_or_default(
             summary.get("test_source_selection_regression_count"),
+            0,
+        ),
+    }
+
+
+def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "formal_training_ready_claimed": False,
+        "performance_claimed": False,
+        "policy_decision_count": 0,
+        "canary_opportunity_context_count": 0,
+        "policy_changed_decision_count": 0,
+        "canary_accepted_policy_choice_count": 0,
+        "canary_rejected_policy_choice_count": 0,
+        "controlled_regression_count": 0,
+        "raw_policy_regression_count": 0,
+        "invalid_action_mask_count": 0,
+        "fallback_or_open_grid_count": 0,
+        "safety_regression_count": 0,
+        "contract_violation_count": 0,
+        "path_cost_regression_count": 0,
+        "risk_regression_count": 0,
+        "source_selection_regression_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "policy_gated_canary_rollout_not_passed")
+    if _int_value_or_default(summary.get("policy_decision_count"), 0) <= 0:
+        _append_reason(blockers, "policy_gated_canary_decision_count_zero")
+    if _int_value_or_default(summary.get("canary_opportunity_context_count"), 0) <= 0:
+        _append_reason(blockers, "policy_gated_canary_opportunity_count_zero")
+    if _int_value_or_default(summary.get("policy_changed_decision_count"), 0) <= 0:
+        _append_reason(blockers, "policy_gated_canary_changed_decision_count_zero")
+    if _int_value_or_default(summary.get("canary_accepted_policy_choice_count"), 0) <= 0:
+        _append_reason(blockers, "policy_gated_canary_accepted_choice_count_zero")
+
+    for field, reason in (
+        ("controlled_regression_count", "policy_gated_canary_controlled_regression"),
+        ("invalid_action_mask_count", "policy_gated_canary_invalid_action_mask"),
+        ("fallback_or_open_grid_count", "policy_gated_canary_fallback_or_open_grid"),
+        ("safety_regression_count", "policy_gated_canary_safety_regression"),
+        ("contract_violation_count", "policy_gated_canary_contract_violation"),
+        ("path_cost_regression_count", "policy_gated_canary_path_cost_regression"),
+        ("risk_regression_count", "policy_gated_canary_risk_regression"),
+        ("source_selection_regression_count", "policy_gated_canary_source_selection_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "policy_gated_canary_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "policy_gated_canary_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "policy_gated_canary_policy_performance_claimed")
+    if summary.get("candidate_git_current_matches_sources") is False:
+        _append_reason(blockers, "policy_gated_canary_candidate_git_current_mismatch")
+    if summary.get("checkpoint_metadata_git_current_matches_sources") is False:
+        _append_reason(blockers, "policy_gated_canary_checkpoint_metadata_git_current_mismatch")
+
+    formal_training_ready_claimed = bool(
+        summary.get("formal_training_ready_claimed")
+        or summary.get("policy_training_ready")
+        or summary.get("performance_claimed")
+    )
+    if formal_training_ready_claimed:
+        _append_reason(blockers, "policy_gated_canary_formal_training_ready_claimed")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "formal_training_ready_claimed": formal_training_ready_claimed,
+        "performance_claimed": bool(summary.get("performance_claimed")),
+        "policy_decision_count": _int_value_or_default(summary.get("policy_decision_count"), 0),
+        "canary_opportunity_context_count": _int_value_or_default(
+            summary.get("canary_opportunity_context_count"),
+            0,
+        ),
+        "policy_changed_decision_count": _int_value_or_default(
+            summary.get("policy_changed_decision_count"),
+            0,
+        ),
+        "canary_accepted_policy_choice_count": _int_value_or_default(
+            summary.get("canary_accepted_policy_choice_count"),
+            0,
+        ),
+        "canary_rejected_policy_choice_count": _int_value_or_default(
+            summary.get("canary_rejected_policy_choice_count"),
+            0,
+        ),
+        "controlled_regression_count": _int_value_or_default(
+            summary.get("controlled_regression_count"),
+            0,
+        ),
+        "raw_policy_regression_count": _int_value_or_default(
+            summary.get("raw_policy_regression_count"),
+            0,
+        ),
+        "invalid_action_mask_count": _int_value_or_default(
+            summary.get("invalid_action_mask_count"),
+            0,
+        ),
+        "fallback_or_open_grid_count": _int_value_or_default(
+            summary.get("fallback_or_open_grid_count"),
+            0,
+        ),
+        "safety_regression_count": _int_value_or_default(
+            summary.get("safety_regression_count"),
+            0,
+        ),
+        "contract_violation_count": _int_value_or_default(
+            summary.get("contract_violation_count"),
+            0,
+        ),
+        "path_cost_regression_count": _int_value_or_default(
+            summary.get("path_cost_regression_count"),
+            0,
+        ),
+        "risk_regression_count": _int_value_or_default(
+            summary.get("risk_regression_count"),
+            0,
+        ),
+        "source_selection_regression_count": _int_value_or_default(
+            summary.get("source_selection_regression_count"),
             0,
         ),
     }

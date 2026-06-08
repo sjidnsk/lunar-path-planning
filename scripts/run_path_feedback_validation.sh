@@ -43,7 +43,8 @@ Options:
                         Default: outputs/path_feedback_validation
   --top-k N            Number of candidate goals per scenario to evaluate. Default: 3
   --scenario-set NAME   Validation scenario set: smoke, stress, holdout,
-                        raw_align_train, raw_align_val, raw_align_test, or all.
+                        raw_align_train, raw_align_val, raw_align_test,
+                        policy_canary, or all.
                         Default: smoke
   --diagnostic-profile NAME
                         Diagnostic profile: baseline, execution, iris, or all.
@@ -319,10 +320,10 @@ PY
 fi
 
 case "$SCENARIO_SET" in
-  smoke|stress|holdout|raw_align_train|raw_align_val|raw_align_test|all)
+  smoke|stress|holdout|raw_align_train|raw_align_val|raw_align_test|policy_canary|all)
     ;;
   *)
-    echo "--scenario-set must be one of: smoke, stress, holdout, raw_align_train, raw_align_val, raw_align_test, all" >&2
+    echo "--scenario-set must be one of: smoke, stress, holdout, raw_align_train, raw_align_val, raw_align_test, policy_canary, all" >&2
     exit 2
     ;;
 esac

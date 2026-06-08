@@ -1,0 +1,51 @@
+{
+  "schema_version": "policy-gated-canary-rollout-config/v1",
+  "description": "Policy-gated canary rollout for a raw-policy generalization experimental candidate.",
+  "input_files": {
+    "source_batch_summary": "batch-evaluation-summary.json",
+    "holdout_batch_summary": "batch-evaluation-summary.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "decisions": "policy-gated-canary-decisions.jsonl",
+    "rejection_report": "policy-gated-canary-rejection-report.json",
+    "opportunity_summary": "policy-gated-canary-opportunity-summary.json",
+    "summary": "policy-gated-canary-rollout-summary.json"
+  },
+  "evaluation": {
+    "shadow_mode": true,
+    "hidden_size": 16,
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0
+  },
+  "validation": {
+    "min_policy_decision_count": 1,
+    "min_canary_opportunity_context_count": 1,
+    "min_policy_changed_decision_count": 1,
+    "min_canary_accepted_policy_choice_count": 1,
+    "require_context_id": true,
+    "require_candidate_git_current_match": true,
+    "allow_dirty_current_git_match": true,
+    "max_controlled_regression_count": 0,
+    "max_invalid_action_mask_count": 0,
+    "max_fallback_or_open_grid_count": 0,
+    "max_safety_regression_count": 0,
+    "max_contract_violation_count": 0,
+    "max_path_cost_regression_count": 0,
+    "max_risk_regression_count": 0,
+    "max_source_selection_regression_count": 0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_production_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

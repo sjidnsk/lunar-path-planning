@@ -72,8 +72,11 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                     --channel-aware-neighborhood-radius-cells|--channel-aware-center-weight|--channel-aware-neighborhood-mean-weight|--channel-aware-neighborhood-max-weight|--channel-aware-high-cost-exposure-weight|--channel-aware-blocked-nearby-weight|--channel-aware-clearance-weight|--channel-aware-smoothness-weight|--channel-aware-high-cost-threshold)
                       shift 2
                       ;;
-                    --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate)
+                    --simulate-tracking|--optimize-trajectory|--drake-iris-regions|--gcs-trajectory-smoke|--gcs-geometric-candidate|--gcs-motion-feasibility|--gcs-curvature-constrained-candidate|--anchor-projection-candidate-generation|--anchor-projection-contract-aware-trainable-target-generation|--anchor-projection-prefer-contract-safe-trainable-targets|--anchor-projection-planner-validated-trainable-target-mining|--anchor-projection-allow-planner-validated-distance-exception)
                       shift
+                      ;;
+                    --anchor-projection-selection-path-cost-bonus|--anchor-projection-max-selection-path-cost-regression|--anchor-projection-max-selection-risk-regression|--anchor-projection-max-trainable-distance-cells|--anchor-projection-max-trainable-distance-m|--anchor-projection-max-planner-validated-distance-cells|--anchor-projection-max-planner-validated-distance-m)
+                      shift 2
                       ;;
                     --gcs-control-point-candidate)
                       control_point_requested=1
@@ -976,6 +979,9 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
                 "schema_version": "path-feedback-batch-matrix/v1",
                 "output_root": str(output_root),
                 "defaults": {
+                    "anchor_projection_candidate_generation": True,
+                    "anchor_projection_contract_aware_trainable_target_generation": True,
+                    "anchor_projection_selection_path_cost_bonus": 6.0,
                     "planner_extra_args": [
                         "--planning-backend",
                         "channel_aware_astar",
@@ -1006,6 +1012,9 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertEqual(dry_run.returncode, 0, dry_run.stdout + dry_run.stderr)
         self.assertIn("[DRY RUN]", dry_run.stdout)
         self.assertIn("smoke-baseline-k1", dry_run.stdout)
+        self.assertIn("--anchor-projection-candidate-generation", dry_run.stdout)
+        self.assertIn("--anchor-projection-contract-aware-trainable-target-generation", dry_run.stdout)
+        self.assertIn("--anchor-projection-selection-path-cost-bonus 6.0", dry_run.stdout)
         self.assertIn("--planning-backend channel_aware_astar", dry_run.stdout)
         self.assertIn("--channel-aware-neighborhood-mean-weight 3.0", dry_run.stdout)
         self.assertFalse(output_root.exists())
