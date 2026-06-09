@@ -12,6 +12,7 @@ fi
 
 SRC="${SRC:-outputs/path_feedback_batch_ppo_collector_clean_src_v1}"
 BASE="${BASE:-outputs/path_feedback_batch_ppo_collector_candidate_v1}"
+RAW_BASE="${RAW_BASE:-outputs/path_feedback_batch_sequential_multi_step_opportunity_baseline_candidate_v1}"
 COLLECTOR="${COLLECTOR:-outputs/path_feedback_batch_ppo_rollout_collector_dry_run_v1}"
 UPDATE="${UPDATE:-outputs/path_feedback_batch_limited_ppo_update_smoke_v1}"
 SEQ="${SEQ:-outputs/path_feedback_batch_limited_ppo_update_sequential_v1}"
@@ -38,7 +39,7 @@ PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_raw_policy_generalization_evaluation.
   --dev-root "$DEV" \
   --val-root "$VAL" \
   --test-root "$TEST" \
-  --baseline-candidate-root "$BASE" \
+  --baseline-candidate-root "$RAW_BASE" \
   --candidate-root "$UPDATE" \
   --config "$REPO_ROOT/configs/raw_policy_generalization_evaluation_v1.json"
 
