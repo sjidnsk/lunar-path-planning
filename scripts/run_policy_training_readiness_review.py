@@ -71,6 +71,9 @@ POLICY_GATED_CANARY_VALUE_STABILITY_EVALUATED_ACTION = (
 POLICY_GATED_SEQUENTIAL_CANARY_ROLLOUT_EVALUATED_ACTION = (
     "policy_gated_sequential_canary_rollout_evaluated"
 )
+POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION = (
+    "policy_gated_sequential_safe_choice_calibrated"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -1174,8 +1177,12 @@ def _review_metrics(
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
     elif sequential_canary_readiness["present"] and sequential_canary_readiness["completed"]:
-        training_readiness_status = POLICY_GATED_SEQUENTIAL_CANARY_ROLLOUT_EVALUATED_ACTION
-        recommended_next_action = POLICY_GATED_SEQUENTIAL_CANARY_ROLLOUT_EVALUATED_ACTION
+        if sequential_canary_readiness.get("sequential_safe_choice_calibrated"):
+            training_readiness_status = POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION
+            recommended_next_action = POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION
+        else:
+            training_readiness_status = POLICY_GATED_SEQUENTIAL_CANARY_ROLLOUT_EVALUATED_ACTION
+            recommended_next_action = POLICY_GATED_SEQUENTIAL_CANARY_ROLLOUT_EVALUATED_ACTION
     elif policy_canary_readiness["present"] and policy_canary_readiness["completed"]:
         if policy_canary_readiness.get("canary_value_stability_passed"):
             training_readiness_status = POLICY_GATED_CANARY_VALUE_STABILITY_EVALUATED_ACTION
@@ -1332,6 +1339,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION:
+        return "policy_gated_sequential_safe_choice_calibration_only"
     if recommended_next_action == POLICY_GATED_SEQUENTIAL_CANARY_ROLLOUT_EVALUATED_ACTION:
         return "policy_gated_sequential_canary_rollout_evaluation_only"
     if recommended_next_action == POLICY_GATED_CANARY_VALUE_STABILITY_EVALUATED_ACTION:
@@ -2512,6 +2521,7 @@ def _policy_gated_sequential_canary_rollout_readiness(summary: dict[str, Any]) -
         "multi_step_accepted_episode_count": 0,
         "family_with_multi_step_accepted_episode_count": 0,
         "accepted_takeover_family_count": 0,
+        "sequential_safe_choice_calibrated": False,
     }
     if not summary:
         return empty
@@ -2588,7 +2598,19 @@ def _policy_gated_sequential_canary_rollout_readiness(summary: dict[str, Any]) -
             summary.get("accepted_takeover_family_count"),
             0,
         ),
+        "sequential_safe_choice_calibrated": _sequential_safe_choice_calibrated(summary),
     }
+
+
+def _sequential_safe_choice_calibrated(summary: dict[str, Any]) -> bool:
+    stage = str(summary.get("calibration_stage") or summary.get("evaluation_stage") or "")
+    batch_root = str(summary.get("batch_root") or "")
+    source_root = str(summary.get("source_root") or "")
+    return (
+        stage == "sequential_safe_choice_calibration"
+        or "sequential_safe_choice" in batch_root
+        or "sequential_safe_choice" in source_root
+    )
 
 
 def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str, Any]:

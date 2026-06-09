@@ -1108,6 +1108,38 @@ publication or default policy replacement, no network/action-space/default-A*
 change, no distance-contract relaxation, no Ackermann-feasible trajectory claim,
 and no performance claim.
 
+**Sequential Safe-Choice Calibration and Hard-Negative Refinement v1** uses the
+failed sequential canary root as training evidence instead of weakening the
+gate. The current sequential runner proved state continuity, but exposed 2
+rejected policy choices and cumulative path/risk regressions. This stage mines
+those rejected steps into sequence-aware hard-negative pairwise preferences:
+source/controlled-safe choice should score above the policy choice that caused
+path or risk regression.
+
+New artifacts are
+`configs/sequential_canary_failure_mining_v1.json`,
+`configs/sequential_safe_choice_calibration_candidate_v1.json`,
+`scripts/run_sequential_canary_failure_mining.py/.sh`,
+`scripts/run_sequential_safe_choice_calibration_candidate.py/.sh`, and
+`scripts/run_sequential_safe_choice_calibration_closure.sh`. The failed
+baseline remains
+`outputs/path_feedback_batch_policy_gated_sequential_canary_rollout_v1/`.
+The calibrated closure writes
+`outputs/path_feedback_batch_sequential_safe_choice_clean_src_v1/`,
+`outputs/path_feedback_batch_sequential_safe_choice_candidate_v1/`, and
+`outputs/path_feedback_batch_policy_gated_sequential_safe_choice_rollout_v1/`.
+
+Acceptance requires the mining step to produce at least 2 sequential
+hard-negative preference pairs with `hard_positive_added_count=0`, the
+candidate to remain experimental only, and the rerun sequential canary to pass
+the same 36 episode / 108 step gate with 0 rejected choices and 0 cumulative
+path/risk regression. Passing readiness can advance only to
+`policy_gated_sequential_safe_choice_calibrated`. This is still calibration and
+canary evidence only: no formal PPO rollout, no PPO parameter update, no
+checkpoint publication or default policy replacement, no network/action-space
+or default-A* change, no distance-contract relaxation, no Ackermann-feasible
+trajectory claim, and no policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

@@ -1,0 +1,42 @@
+{
+  "schema_version": "sequential-canary-failure-mining-config/v1",
+  "description": "Mine rejected policy-gated sequential canary choices into sequence-aware hard-negative preference samples.",
+  "input_files": {
+    "summary": "policy-gated-sequential-canary-rollout-summary.json",
+    "episodes": "policy-gated-sequential-canary-episodes.jsonl",
+    "steps": "policy-gated-sequential-canary-steps.jsonl",
+    "rejection_report": "policy-gated-sequential-canary-rejection-report.json"
+  },
+  "output_files": {
+    "summary": "sequential-canary-failure-mining-summary.json",
+    "samples": "sequential-canary-hard-negative-preference-samples.jsonl",
+    "diagnostics": "sequential-canary-failure-diagnostics.jsonl",
+    "exclusion_report": "sequential-canary-failure-exclusion-report.json"
+  },
+  "sample": {
+    "supported_reason_codes": ["path_cost_regression", "risk_regression"],
+    "sample_weight": 1.0,
+    "sequential_hard_negative_loss_weight": 2.0,
+    "path_cost_regression_negative_weight": 2.0,
+    "risk_regression_negative_weight": 2.5
+  },
+  "validation": {
+    "require_failed_sequential_summary": true,
+    "min_sequential_hard_negative_preference_pair_count": 1,
+    "max_exclusion_count": 0,
+    "max_hard_positive_added_count": 0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_ppo_parameter_update",
+    "no_hard_positive_added",
+    "no_production_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}
