@@ -33,6 +33,7 @@ SCENARIO_SETS = {
     "raw_align_val",
     "raw_align_test",
     "policy_canary",
+    "policy_canary_diversity",
     "all",
 }
 DIAGNOSTIC_PROFILES = {"baseline", "execution", "iris", "all"}

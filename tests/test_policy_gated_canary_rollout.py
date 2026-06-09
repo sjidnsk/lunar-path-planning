@@ -111,13 +111,33 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
         raw_selects_alternative: bool = True,
         alternative_quality_regression: bool = False,
         missing_context_id: bool = False,
+        scenario_groups: tuple[str, ...] = ("policy_canary_unit",),
     ) -> None:
         self._write_source_preconditions()
         self._write_candidate_artifacts(raw_selects_alternative=raw_selects_alternative)
         self._write_canary_batch(
             alternative_quality_regression=alternative_quality_regression,
             missing_context_id=missing_context_id,
+            scenario_groups=scenario_groups,
         )
+
+    def _write_canary_config(
+        self,
+        *,
+        validation_overrides: dict | None = None,
+        output_filename_prefix: str = "policy-gated-canary",
+    ) -> Path:
+        payload = json.loads(self.config.read_text(encoding="utf-8"))
+        payload["validation"].update(validation_overrides or {})
+        payload["output_files"] = {
+            "decisions": f"{output_filename_prefix}-decisions.jsonl",
+            "rejection_report": f"{output_filename_prefix}-rejection-report.json",
+            "opportunity_summary": f"{output_filename_prefix}-opportunity-summary.json",
+            "summary": f"{output_filename_prefix}-rollout-summary.json",
+        }
+        path = self.temp_dir / f"{output_filename_prefix}-config.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
 
     def _write_source_preconditions(self) -> None:
         common = {
@@ -300,19 +320,45 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
         *,
         alternative_quality_regression: bool,
         missing_context_id: bool,
+        scenario_groups: tuple[str, ...],
     ) -> None:
         run_root = self.canary_root / "canary-run"
         run_root.mkdir(parents=True, exist_ok=True)
-        candidates = [
-            self._candidate(0, "ctx-source", source_selected=True, missing_context_id=missing_context_id),
-            self._candidate(
-                1,
-                "ctx-alt",
-                source_selected=False,
-                missing_context_id=missing_context_id,
-                quality_regression=alternative_quality_regression,
-            ),
-        ]
+        scenarios = []
+        for index, scenario_group in enumerate(scenario_groups):
+            candidates = [
+                self._candidate(
+                    0,
+                    f"ctx-{index}-source",
+                    source_selected=True,
+                    missing_context_id=missing_context_id,
+                ),
+                self._candidate(
+                    1,
+                    f"ctx-{index}-alt",
+                    source_selected=False,
+                    missing_context_id=missing_context_id,
+                    quality_regression=alternative_quality_regression,
+                ),
+            ]
+            scenarios.append(
+                {
+                    "scenario_id": f"npz_policy_canary_unit_{index}",
+                    "scenario_group": scenario_group,
+                    "scenario_seed": 9701 + index,
+                    "scenario_variant_id": f"npz_policy_canary_unit_{index}-seed-{9701 + index}",
+                    "open_grid_fallback_used": False,
+                    "tracking_safety_violation_count": 0,
+                    "path_feedback": {
+                        "candidate_count": 2,
+                        "reachable_count": 2,
+                        "failure_count": 0,
+                        "replan_count": 0,
+                        "best_by_path_cost": candidates[0],
+                        "candidates": candidates,
+                    },
+                }
+            )
         (run_root / "path-feedback-summary.json").write_text(
             json.dumps(
                 {
@@ -326,24 +372,7 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
                     "safety_regression_count": 0,
                     "candidate_contract_alignment_gap_count": 0,
                     "planner_extra_args": ["--planning-backend", "astar"],
-                    "scenarios": [
-                        {
-                            "scenario_id": "npz_policy_canary_unit",
-                            "scenario_group": "policy_canary_unit",
-                            "scenario_seed": 9701,
-                            "scenario_variant_id": "npz_policy_canary_unit-seed-9701",
-                            "open_grid_fallback_used": False,
-                            "tracking_safety_violation_count": 0,
-                            "path_feedback": {
-                                "candidate_count": 2,
-                                "reachable_count": 2,
-                                "failure_count": 0,
-                                "replan_count": 0,
-                                "best_by_path_cost": candidates[0],
-                                "candidates": candidates,
-                            },
-                        }
-                    ],
+                    "scenarios": scenarios,
                     "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
                 },
                 indent=2,
@@ -482,6 +511,92 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
             )
         )
         self.assertEqual(summary["training_readiness_status"], "policy_gated_canary_rollout_evaluated")
+        self.assertEqual(summary["training_blockers"], [])
+
+    def test_canary_diversity_summary_reports_family_coverage(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 2,
+                "min_canary_opportunity_context_count": 2,
+                "min_policy_changed_decision_count": 2,
+                "min_canary_accepted_policy_choice_count": 2,
+                "min_accepted_scenario_family_count": 2,
+            },
+            output_filename_prefix="policy-gated-canary-diversity",
+        )
+        self._write_artifacts(scenario_groups=("canary_family_a", "canary_family_b"))
+
+        completed = self._run_canary()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.canary_root / "policy-gated-canary-diversity-rollout-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(summary["canary_diversity_passed"])
+        self.assertEqual(summary["accepted_scenario_family_count"], 2)
+        self.assertEqual(
+            summary["accepted_decision_family_distribution"],
+            {"canary_family_a": 1, "canary_family_b": 1},
+        )
+        self.assertEqual(
+            summary["scenario_family_summary"]["canary_family_a"]["canary_accepted_policy_choice_count"],
+            1,
+        )
+
+    def test_canary_diversity_rejects_single_family_acceptance(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 2,
+                "min_canary_opportunity_context_count": 2,
+                "min_policy_changed_decision_count": 2,
+                "min_canary_accepted_policy_choice_count": 2,
+                "min_accepted_scenario_family_count": 2,
+            },
+            output_filename_prefix="policy-gated-canary-diversity",
+        )
+        self._write_artifacts(scenario_groups=("canary_family_a", "canary_family_a"))
+
+        completed = self._run_canary()
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.canary_root / "policy-gated-canary-diversity-rollout-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("accepted_scenario_family_count_below_threshold", summary["reason_codes"])
+        self.assertEqual(summary["accepted_scenario_family_count"], 1)
+        self.assertFalse(summary["canary_diversity_passed"])
+        self.assertEqual(summary["next_required_change"], "scenario_family_coverage_insufficient")
+
+    def test_readiness_advances_after_canary_diversity_passes(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 2,
+                "min_canary_opportunity_context_count": 2,
+                "min_policy_changed_decision_count": 2,
+                "min_canary_accepted_policy_choice_count": 2,
+                "min_accepted_scenario_family_count": 2,
+            },
+        )
+        self._write_artifacts(scenario_groups=("canary_family_a", "canary_family_b"))
+        self.assertEqual(self._run_canary().returncode, 0)
+
+        completed = self._run_readiness()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.source_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "policy_gated_canary_diversity_evaluated",
+        )
         self.assertEqual(summary["training_blockers"], [])
 
 

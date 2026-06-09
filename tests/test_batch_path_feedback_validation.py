@@ -1040,6 +1040,27 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
         self.assertIn("top_k must be a positive integer", completed.stderr)
         self.assertFalse(self.fake_single_run_log.exists())
 
+    def test_policy_canary_diversity_matrix_is_accepted(self) -> None:
+        matrix = self._write_matrix(
+            {
+                "schema_version": "path-feedback-batch-matrix/v1",
+                "runs": [
+                    {
+                        "run_id": "policy-canary-diversity-k3",
+                        "scenario_set": "policy_canary_diversity",
+                        "diagnostic_profile": "execution",
+                        "top_k": 3,
+                    }
+                ],
+            }
+        )
+
+        completed = self._run_batch("--matrix", str(matrix), "--validate-only")
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("matrix validated", completed.stdout)
+        self.assertFalse(self.fake_single_run_log.exists())
+
     def test_batch_calls_single_script_with_independent_output_roots_and_writes_index(self) -> None:
         output_root = self.temp_dir / "batch"
         matrix = self._write_matrix(
@@ -1598,6 +1619,21 @@ class PathFeedbackSingleRunCompatibilityTests(unittest.TestCase):
         self.assertIn("Top-K: 3", completed.stdout)
         self.assertIn("Scenario set: smoke", completed.stdout)
         self.assertIn("Diagnostic profile: baseline", completed.stdout)
+
+    def test_single_run_accepts_policy_canary_diversity_scenario_set(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+
+        completed = subprocess.run(
+            ["bash", str(script), "--dry-run", "--scenario-set", "policy_canary_diversity"],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Scenario set: policy_canary_diversity", completed.stdout)
 
 
 if __name__ == "__main__":

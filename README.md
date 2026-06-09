@@ -930,6 +930,31 @@ canary summary passes and candidate/checkpoint provenance matches the current
 source state. This remains a gated test drive, not formal PPO rollout or policy
 release.
 
+**Canary Diversity and Safe-Takeover Robustness v1** extends that canary from a
+single `npz_mixed_stress_detour` exercise into a multi-family closed-course
+test. It adds `policy_canary_diversity`, the matrix
+`configs/path_feedback_batch_policy_gated_canary_diversity_v1.json`, the
+evaluator config `configs/policy_gated_canary_diversity_v1.json`, and the
+closure script `scripts/run_canary_diversity_safe_takeover_closure.sh`.
+
+The diversity gate refreshes clean-HEAD SRC and candidate evidence, then writes
+`outputs/path_feedback_batch_policy_gated_canary_diversity_v1/`. The summary now
+reports per-family opportunity/changed/aligned/accepted/rejected counts,
+`accepted_scenario_family_count`,
+`accepted_decision_family_distribution`, and `canary_diversity_passed`.
+Acceptance requires at least 12 opportunities, at least 5 scenario families,
+accepted choices in at least 3 families, at least 4 accepted policy choices,
+and all controlled safety/contract/path/risk/source-selection regression gates
+at 0. Passing readiness advances only to
+`policy_gated_canary_diversity_evaluated`; it is still shadow/canary evidence,
+not PPO rollout, policy release, or a performance claim.
+
+Current evidence passes those gates: 12 canary opportunities, 6 changed policy
+decisions, 6 accepted policy choices, accepted choices across 3 scenario
+families, no rejected choices, no invalid action masks, no fallback/open-grid,
+no safety/contract/path/risk/source-selection regression, provenance current,
+and readiness `training_readiness_status=policy_gated_canary_diversity_evaluated`.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

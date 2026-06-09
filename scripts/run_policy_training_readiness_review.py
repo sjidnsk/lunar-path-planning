@@ -55,6 +55,7 @@ SCENARIO_DISJOINT_POLICY_ROLLOUT_EVALUATED_ACTION = (
 RAW_POLICY_DECISION_ALIGNMENT_EVALUATED_ACTION = "raw_policy_decision_alignment_evaluated"
 RAW_POLICY_GENERALIZATION_EVALUATED_ACTION = "raw_policy_generalization_evaluated"
 POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION = "policy_gated_canary_rollout_evaluated"
+POLICY_GATED_CANARY_DIVERSITY_EVALUATED_ACTION = "policy_gated_canary_diversity_evaluated"
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -1105,8 +1106,12 @@ def _review_metrics(
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
     elif policy_canary_readiness["present"] and policy_canary_readiness["completed"]:
-        training_readiness_status = POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION
-        recommended_next_action = POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION
+        if policy_canary_readiness.get("canary_diversity_passed"):
+            training_readiness_status = POLICY_GATED_CANARY_DIVERSITY_EVALUATED_ACTION
+            recommended_next_action = POLICY_GATED_CANARY_DIVERSITY_EVALUATED_ACTION
+        else:
+            training_readiness_status = POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION
+            recommended_next_action = POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION
     elif raw_generalization_readiness["present"] and raw_generalization_readiness["completed"]:
         training_readiness_status = RAW_POLICY_GENERALIZATION_EVALUATED_ACTION
         recommended_next_action = RAW_POLICY_GENERALIZATION_EVALUATED_ACTION
@@ -1241,6 +1246,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == POLICY_GATED_CANARY_DIVERSITY_EVALUATED_ACTION:
+        return "policy_gated_canary_diversity_evaluation_only"
     if recommended_next_action == POLICY_GATED_CANARY_ROLLOUT_EVALUATED_ACTION:
         return "policy_gated_canary_rollout_evaluation_only"
     if recommended_next_action == RAW_POLICY_GENERALIZATION_EVALUATED_ACTION:
@@ -2207,6 +2214,9 @@ def _raw_policy_strict_rollout_readiness(summary: dict[str, Any]) -> dict[str, A
         "path_cost_regression_count": 0,
         "risk_regression_count": 0,
         "source_selection_regression_count": 0,
+        "scenario_family_count": 0,
+        "accepted_scenario_family_count": 0,
+        "canary_diversity_passed": False,
     }
     if not summary:
         return empty
@@ -2288,6 +2298,12 @@ def _raw_policy_strict_rollout_readiness(summary: dict[str, Any]) -> dict[str, A
             summary.get("source_selection_regression_count"),
             0,
         ),
+        "scenario_family_count": _int_value_or_default(summary.get("scenario_family_count"), 0),
+        "accepted_scenario_family_count": _int_value_or_default(
+            summary.get("accepted_scenario_family_count"),
+            0,
+        ),
+        "canary_diversity_passed": bool(summary.get("canary_diversity_passed")),
     }
 
 
@@ -2420,6 +2436,9 @@ def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str,
         "path_cost_regression_count": 0,
         "risk_regression_count": 0,
         "source_selection_regression_count": 0,
+        "scenario_family_count": 0,
+        "accepted_scenario_family_count": 0,
+        "canary_diversity_passed": False,
     }
     if not summary:
         return empty
@@ -2528,6 +2547,15 @@ def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str,
             summary.get("source_selection_regression_count"),
             0,
         ),
+        "scenario_family_count": _int_value_or_default(
+            summary.get("scenario_family_count"),
+            0,
+        ),
+        "accepted_scenario_family_count": _int_value_or_default(
+            summary.get("accepted_scenario_family_count"),
+            0,
+        ),
+        "canary_diversity_passed": bool(summary.get("canary_diversity_passed")),
     }
 
 
