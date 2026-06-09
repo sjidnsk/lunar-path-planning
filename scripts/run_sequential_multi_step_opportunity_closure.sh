@@ -18,6 +18,7 @@ VAL="${VAL:-outputs/path_feedback_batch_sequential_multi_step_opportunity_val_v1
 TEST="${TEST:-outputs/path_feedback_batch_sequential_multi_step_opportunity_test_v1}"
 CAND="${CAND:-outputs/path_feedback_batch_sequential_multi_step_opportunity_candidate_v1}"
 WARMUP_SEQ="${WARMUP_SEQ:-outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_warmup_v1}"
+PREFLIGHT_SEQ="${PREFLIGHT_SEQ:-outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_preflight_v1}"
 SEQ="${SEQ:-outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1}"
 STATIC="${STATIC:-outputs/path_feedback_batch_sequential_multi_step_opportunity_v1}"
 FAILED_SEQUENTIAL="${FAILED_SEQUENTIAL:-outputs/path_feedback_batch_policy_gated_sequential_canary_rollout_v1}"
@@ -47,27 +48,29 @@ if [[ ! -f "$CAND/experimental-hybrid-policy-candidate.pt" ]]; then
 fi
 
 run_multi_step_rollout() {
+  local batch_root="$1"
   PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_policy_gated_sequential_canary_rollout.sh" \
     --source-root "$SRC" \
     --candidate-root "$CAND" \
-    --batch-root "$SEQ" \
+    --batch-root "$batch_root" \
     --config "$REPO_ROOT/configs/policy_gated_sequential_multi_step_opportunity_rollout_v1.json"
 }
 
 run_diagnosis() {
+  local batch_root="$1"
   PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_sequential_multi_step_opportunity_diagnosis.sh" \
-    --batch-root "$SEQ" \
+    --batch-root "$batch_root" \
     --config "$REPO_ROOT/configs/sequential_multi_step_opportunity_diagnosis_v1.json"
 }
 
 set +e
-run_multi_step_rollout
-SEQUENTIAL_STATUS=$?
-run_diagnosis
+run_multi_step_rollout "$PREFLIGHT_SEQ"
+PREFLIGHT_SEQUENTIAL_STATUS=$?
+run_diagnosis "$PREFLIGHT_SEQ"
 DIAGNOSIS_STATUS=$?
 set -e
 
-MISSED_COUNT="$("$PYTHON_BIN" - "$SEQ/sequential-multi-step-opportunity-diagnosis-summary.json" <<'PY'
+MISSED_COUNT="$("$PYTHON_BIN" - "$PREFLIGHT_SEQ/sequential-multi-step-opportunity-diagnosis-summary.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -78,7 +81,7 @@ else:
     print(int(json.loads(path.read_text()).get("policy_missed_existing_opportunity_count", 0)))
 PY
 )"
-DIAGNOSIS_PASSED="$("$PYTHON_BIN" - "$SEQ/sequential-multi-step-opportunity-diagnosis-summary.json" <<'PY'
+DIAGNOSIS_PASSED="$("$PYTHON_BIN" - "$PREFLIGHT_SEQ/sequential-multi-step-opportunity-diagnosis-summary.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -90,16 +93,16 @@ else:
 PY
 )"
 
-if [[ "$SEQUENTIAL_STATUS" -ne 0 && "$DIAGNOSIS_PASSED" == "true" && "$MISSED_COUNT" -gt 0 ]]; then
+if [[ "$PREFLIGHT_SEQUENTIAL_STATUS" -ne 0 && "$DIAGNOSIS_PASSED" == "true" && "$MISSED_COUNT" -gt 0 ]]; then
   PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_sequential_canary_failure_mining.sh" \
-    --batch-root "$SEQ" \
+    --batch-root "$PREFLIGHT_SEQ" \
     --config "$REPO_ROOT/configs/sequential_canary_failure_mining_v1.json"
 
   PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_sequential_safe_choice_calibration_candidate.sh" \
     --source-root "$SRC" \
     --train-mining-root "$TRAIN" \
     --dev-mining-root "$DEV" \
-    --sequential-mining-root "$SEQ" \
+    --sequential-mining-root "$PREFLIGHT_SEQ" \
     --val-diagnostic-root "$VAL" \
     --test-diagnostic-root "$TEST" \
     --output-root "$CAND" \
@@ -115,11 +118,13 @@ if [[ "$SEQUENTIAL_STATUS" -ne 0 && "$DIAGNOSIS_PASSED" == "true" && "$MISSED_CO
     --config "$REPO_ROOT/configs/raw_policy_generalization_evaluation_v1.json"
 
   set +e
-  run_multi_step_rollout
+  run_multi_step_rollout "$SEQ"
   SEQUENTIAL_STATUS=$?
-  run_diagnosis
-  DIAGNOSIS_STATUS=$?
   set -e
+else
+  rm -rf "$SEQ"
+  cp -a "$PREFLIGHT_SEQ" "$SEQ"
+  SEQUENTIAL_STATUS=$PREFLIGHT_SEQUENTIAL_STATUS
 fi
 
 set +e

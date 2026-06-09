@@ -1165,8 +1165,9 @@ New artifacts are
 set is `policy_canary_sequential_multi_step_opportunity`: 6 families x 6
 variants, with `npz_canary_sequential_multi_step_opportunity_*` template IDs.
 The sequential runner now reads `template_scenario_id_prefix` and
-`scenario_set` from config, so value/stability and multi-step opportunity roots
-do not share hard-coded templates.
+`scenario_set` from config, and supports per-episode initial start cells so
+family-specific sequential opportunities can be tested without hard-coded
+value/stability templates.
 
 The diagnosis writes
 `sequential-multi-step-opportunity-diagnosis-summary.json`,
@@ -1180,28 +1181,32 @@ counts. It separates `opportunity_missing` from
 be fixed, while the latter means objective/sample weighting should be refined.
 
 Acceptance requires 36 episodes / 108 steps, at least 12 episodes with
-multi-step opportunities, all 6 families with multi-step opportunities, at
-least 24 safe-better opportunity steps, 0 opportunity exclusions, and final
-sequential rollout with at least 24 accepted takeover steps, at least 12
-multi-step accepted episodes, all 6 families covered, 0 rejected choices, 0
-state-continuity violations, 0 episode fallbacks, and all cumulative
-regression gates at 0. Passing readiness can advance only to
+step0+step1 multi-step opportunities, all 6 families with multi-step
+opportunities, at least 2 such episodes per family, at least 24 safe-better
+opportunity steps, 0 opportunity exclusions, and final sequential rollout with
+at least 24 accepted takeover steps, at least 12 multi-step accepted episodes,
+all 6 families covered, 0 rejected choices, 0 state-continuity violations, 0
+episode fallbacks, and all cumulative regression gates at 0. Passing readiness
+can advance only to
 `policy_gated_sequential_multi_step_opportunity_evaluated`. It remains
 canary/shadow evidence: no formal PPO rollout, no PPO parameter update, no
 checkpoint publication or default replacement, no network/action-space/default
 A* change, no distance-contract relaxation, no Ackermann-feasible trajectory
 claim, and no performance claim.
 
-Current implementation evidence does not pass this stage yet. The first
-multi-step opportunity rollout produced 36 episodes / 108 steps and 26
-safe-better opportunity steps, but only 6 multi-step opportunity episodes across
-3 families. Final rollout also had 4 rejected policy choices and 4 cumulative
-path-cost regressions. The diagnosis root therefore points to
-`sequential_multi_step_opportunity_generation_gap`; the rollout summary points
-to sequential policy refinement after opportunity generation is fixed. Because
-tracked files changed after the evidence was generated, readiness also reports
-current git provenance mismatch. The next clean run must first improve
-scenario/geometry opportunity coverage, then refresh evidence from clean HEAD.
+Current closure passes after scenario repair and sequence-aware calibration.
+Preflight opportunity evidence is rooted at
+`outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_preflight_v1/`
+and reports 36 episodes / 108 steps, 54 safe-better opportunity steps, 15
+step0+step1 multi-step opportunity episodes, all 6 families covered, and at
+least 2 multi-step opportunity episodes per family. The final calibrated
+rollout root
+`outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1/`
+reports 37 policy takeover steps, 37 accepted better steps, 12 multi-step
+accepted episodes, 6 accepted families, 0 rejected choices, 0 invalid action
+mask, and 0 cumulative path/risk regression. Readiness currently reaches
+`policy_gated_sequential_multi_step_opportunity_evaluated` with
+`training_blockers=[]` when the closure is run from the current committed HEAD.
 
 ## Core Algorithm Development Chain
 

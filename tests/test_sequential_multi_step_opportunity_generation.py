@@ -137,6 +137,58 @@ class SequentialMultiStepOpportunityGenerationTests(unittest.TestCase):
         self.assertEqual(summary["multi_step_opportunity_episode_count"], 1)
         self.assertEqual(summary["family_with_multi_step_opportunity_count"], 1)
 
+    def test_diagnosis_requires_min_multi_step_opportunity_episode_count_per_family(self) -> None:
+        from scripts.run_sequential_multi_step_opportunity_diagnosis import (
+            run_sequential_multi_step_opportunity_diagnosis,
+        )
+
+        batch_root = Path(tempfile.mkdtemp(prefix="seq-multi-step-opportunity-family-min-"))
+        steps = [
+            self._step("ep-channel-a", 0, "npz_seq_canary_channel_a_step00", "channel_contrast", "source_aligned"),
+            self._step("ep-channel-a", 1, "npz_seq_canary_channel_a_step01", "channel_contrast", "source_aligned"),
+            self._step("ep-channel-b", 0, "npz_seq_canary_channel_b_step00", "channel_contrast", "source_aligned"),
+            self._step("ep-channel-b", 1, "npz_seq_canary_channel_b_step01", "channel_contrast", "source_aligned"),
+        ]
+        self._write_rollout_files(batch_root, steps=steps)
+        for step in steps:
+            candidates = [
+                self._candidate(f"source-{step['episode_id']}-{step['step_index']}", 0, [4, 6], 10.0, 0.20, 1.0, True)
+            ]
+            if step["episode_id"] == "ep-channel-a":
+                candidates.append(
+                    self._candidate(f"alt-{step['step_index']}", 1, [5, 6], 9.5, 0.18, 1.02)
+                )
+            self._write_path_feedback(
+                batch_root,
+                step["scenario_id"],
+                step["scenario_group"],
+                candidates,
+            )
+
+        summary, _, _ = run_sequential_multi_step_opportunity_diagnosis(
+            batch_root=batch_root,
+            config=self._config(
+                min_episode_count=2,
+                min_step_count=4,
+                min_multi_step_opportunity_episode_count=1,
+                min_family_with_multi_step_opportunity_count=1,
+                min_safe_better_alternative_step_count=2,
+                min_multi_step_opportunity_episode_count_per_family=2,
+            ),
+            repo_root=Path(__file__).resolve().parents[1],
+        )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["multi_step_opportunity_episode_count_by_family"]["channel_contrast"], 1)
+        self.assertEqual(
+            summary["families_below_min_multi_step_opportunity_episode_count"],
+            ["channel_contrast"],
+        )
+        self.assertIn(
+            "multi_step_opportunity_episode_count_per_family_below_threshold",
+            summary["reason_codes"],
+        )
+
     def _write_rollout_files(self, batch_root: Path, *, steps: list[dict]) -> None:
         batch_root.mkdir(parents=True, exist_ok=True)
         (batch_root / "policy-gated-sequential-canary-rollout-summary.json").write_text(

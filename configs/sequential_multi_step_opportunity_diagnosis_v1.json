@@ -23,6 +23,7 @@
     "min_episode_count": 36,
     "min_step_count": 108,
     "min_multi_step_opportunity_episode_count": 12,
+    "min_multi_step_opportunity_episode_count_per_family": 2,
     "min_family_with_multi_step_opportunity_count": 6,
     "min_safe_better_alternative_step_count": 24,
     "max_opportunity_exclusion_count": 0

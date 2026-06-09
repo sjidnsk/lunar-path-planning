@@ -150,6 +150,27 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
         self.assertEqual(payload["scenario_set"], "policy_canary_sequential_multi_step_opportunity")
         self.assertEqual(payload["scenarios"][0]["start_cell"], [3, 6])
 
+    def test_episode_templates_use_per_episode_initial_start_cell_override(self) -> None:
+        from scripts.run_policy_gated_sequential_canary_rollout import _episode_templates
+
+        config = {
+            "generation": {
+                "families": ["channel_contrast", "dense_choke_safe_bypass"],
+                "variant_suffixes": ["a", "b"],
+                "initial_start_cell": [1, 6],
+                "initial_start_cells_by_episode": {
+                    "seq-channel_contrast-a": [1, 9],
+                    "seq-dense_choke_safe_bypass-b": [1, 8],
+                },
+            }
+        }
+
+        episodes = {episode["episode_id"]: episode for episode in _episode_templates(config)}
+
+        self.assertEqual(episodes["seq-channel_contrast-a"]["initial_start_cell"], [1, 9])
+        self.assertEqual(episodes["seq-dense_choke_safe_bypass-b"]["initial_start_cell"], [1, 8])
+        self.assertEqual(episodes["seq-channel_contrast-b"]["initial_start_cell"], [1, 6])
+
     def test_summary_attributes_safe_single_step_coverage_gap_to_opportunity_distribution(self) -> None:
         from scripts.run_policy_gated_sequential_canary_rollout import summarize_sequential_steps
 

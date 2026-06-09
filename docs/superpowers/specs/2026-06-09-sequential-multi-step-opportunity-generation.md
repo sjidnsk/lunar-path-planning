@@ -49,6 +49,7 @@ whether the policy accepts those opportunities under the unchanged strict gate.
 
 - `outputs/path_feedback_batch_sequential_multi_step_opportunity_clean_src_v1/`
 - `outputs/path_feedback_batch_sequential_multi_step_opportunity_candidate_v1/`
+- `outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_preflight_v1/`
 - `outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1/`
 - `sequential-multi-step-opportunity-diagnosis-summary.json`
 - `sequential-multi-step-opportunity-diagnostics.jsonl`
@@ -60,7 +61,8 @@ Opportunity diagnosis:
 
 - `episode_count=36`
 - `step_count=108`
-- `multi_step_opportunity_episode_count>=12`
+- `multi_step_opportunity_episode_count>=12` using required step indexes `[0, 1]`
+- `min_multi_step_opportunity_episode_count_per_family>=2`
 - `family_with_multi_step_opportunity_count=6`
 - `safe_better_alternative_step_count>=24`
 - `opportunity_exclusion_count=0`
@@ -92,25 +94,45 @@ calibration and rerun the same gate.
 
 ## Current Result
 
-Implementation and tests are in place, but the first closure attempt did not
-meet acceptance:
+The repaired closure now passes when run from the committed repair. The closure
+was split into a preflight opportunity root and a final calibrated rollout root
+so that scenario opportunity measurement is not invalidated by the policy
+changing later episode states.
 
-- `episode_count=36`
-- `step_count=108`
-- `safe_better_alternative_step_count=26`
-- `multi_step_opportunity_episode_count=6`
-- `family_with_multi_step_opportunity_count=3`
-- final rollout `canary_rejected_policy_choice_count=4`
-- final rollout `cumulative_path_cost_regression_count=4`
+Preflight diagnosis:
 
-The diagnosis result is
-`next_required_change=sequential_multi_step_opportunity_generation_gap`.
-`channel_contrast` currently has no safe-better alternative in the new
-sequential set, while several other families have only single-step
-opportunities. Because tracked files changed after evidence generation,
-readiness also reports current git provenance mismatch. The next clean run must
-first improve scenario/geometry opportunity coverage, then rerun closure from a
-clean HEAD.
+- root:
+  `outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_preflight_v1/`
+- `status=passed`, `reason_codes=[]`
+- `episode_count=36`, `step_count=108`
+- `safe_better_alternative_step_count=54`
+- `multi_step_opportunity_episode_count=15`
+- `family_with_multi_step_opportunity_count=6`
+- per-family multi-step opportunity episodes:
+  `channel_contrast=3`, `dense_choke_safe_bypass=2`,
+  `high_risk_tradeoff=3`, `mixed_stress_detour=3`,
+  `near_blocked_safe_alt=2`, `path_complexity_benefit=2`
+
+Final calibrated sequential rollout:
+
+- root:
+  `outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1/`
+- `status=passed`, `reason_codes=[]`
+- `episode_count=36`, `step_count=108`
+- `policy_takeover_step_count=37`
+- `accepted_takeover_step_count=37`
+- `accepted_better_step_count=37`
+- `accepted_takeover_family_count=6`
+- `multi_step_accepted_episode_count=12`
+- `family_with_multi_step_accepted_episode_count=6`
+- `canary_rejected_policy_choice_count=0`
+- `invalid_action_mask_count=0`
+- cumulative path/risk regression counts are `0`
+
+Readiness reaches
+`training_readiness_status=policy_gated_sequential_multi_step_opportunity_evaluated`
+with `training_blockers=[]` when the closure is refreshed from the current
+committed HEAD.
 
 ## Validation
 

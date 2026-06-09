@@ -140,6 +140,7 @@ def run_sequential_canary_failure_mining(
     missed_safe_choice_samples: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
+    source_aligned_skipped_reason_counts: Counter[str] = Counter()
     seen: set[str] = set()
 
     for step in rejected_steps:
@@ -184,7 +185,10 @@ def run_sequential_canary_failure_mining(
         if sample_or_reason is None:
             continue
         if isinstance(sample_or_reason, str):
-            exclusions.append(_exclusion(step, sample_or_reason))
+            if bool(config.get("sample", {}).get("record_source_aligned_exclusions", False)):
+                exclusions.append(_exclusion(step, sample_or_reason))
+            else:
+                source_aligned_skipped_reason_counts.update([sample_or_reason])
             continue
         missed_safe_choice_samples.append(sample_or_reason)
 
@@ -241,6 +245,9 @@ def run_sequential_canary_failure_mining(
         "sequential_failure_diagnostic_count": len(diagnostics),
         "exclusion_count": len(exclusions),
         "exclusion_reason_counts": exclusion_report["exclusion_reason_counts"],
+        "source_aligned_skipped_reason_counts": dict(
+            sorted(source_aligned_skipped_reason_counts.items())
+        ),
         "hard_positive_added_count": hard_positive_added_count,
         "canary_rejection_reason_counts": dict(
             sorted(

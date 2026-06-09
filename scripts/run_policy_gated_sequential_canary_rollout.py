@@ -482,18 +482,23 @@ def _episode_templates(config: dict[str, Any]) -> list[dict[str, Any]]:
     families = generation.get("families") or list(FAMILIES)
     variants = generation.get("variant_suffixes") or list(VARIANT_SUFFIXES)
     initial_start_cell = generation.get("initial_start_cell", [1, 6])
+    initial_start_cells_by_episode = generation.get("initial_start_cells_by_episode")
+    if not isinstance(initial_start_cells_by_episode, dict):
+        initial_start_cells_by_episode = {}
     template_prefix = str(generation.get("template_scenario_id_prefix", "npz_canary_value_stability"))
     episodes: list[dict[str, Any]] = []
     for family in families:
         for suffix in variants:
+            episode_id = f"seq-{family}-{suffix}"
+            start_cell = initial_start_cells_by_episode.get(episode_id, initial_start_cell)
             episodes.append(
                 {
                     "schema_version": EPISODE_SCHEMA_VERSION,
-                    "episode_id": f"seq-{family}-{suffix}",
+                    "episode_id": episode_id,
                     "scenario_group": str(family),
                     "variant_suffix": str(suffix),
                     "template_scenario_id": f"{template_prefix}_{family}_{suffix}",
-                    "initial_start_cell": list(initial_start_cell),
+                    "initial_start_cell": list(start_cell),
                 }
             )
     return episodes

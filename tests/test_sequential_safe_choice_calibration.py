@@ -272,6 +272,73 @@ class SequentialSafeChoiceCalibrationTests(unittest.TestCase):
         self.assertEqual(missed[0]["raw_policy_regression_reason_codes"], ["missed_safe_better_choice"])
         self.assertEqual(missed[0]["hard_positive_added_count"], 0)
 
+    def test_mining_skips_optional_source_aligned_exclusions_without_failing(self) -> None:
+        self._write_sequential_failure_artifacts()
+        source = self._candidate("ctx-source-invalid-mask", 0, 10.0, 0.20)
+        source["reachable"] = False
+        path_feedback_path = self.batch_root / "invalid-source-step" / "path-feedback-summary.json"
+        path_feedback_path.parent.mkdir(parents=True, exist_ok=True)
+        path_feedback_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "path-feedback-summary/v1",
+                    "diagnostic_profile": "execution",
+                    "planner_extra_args": [],
+                    "scenarios": [
+                        {
+                            "scenario_id": "npz_seq_canary_near_invalid_source_step00",
+                            "scenario_group": "near_blocked_safe_alt",
+                            "scenario_seed": 902,
+                            "scenario_variant_id": "invalid-source-mask",
+                            "path_feedback": {"candidates": [source]},
+                        }
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        step = {
+            "schema_version": "policy-gated-sequential-canary-step/v1",
+            "episode_id": "seq-near-invalid-source",
+            "scenario_group": "near_blocked_safe_alt",
+            "scenario_id": "npz_seq_canary_near_invalid_source_step00",
+            "run_id": "invalid-source-step",
+            "source_path": str(path_feedback_path),
+            "step_index": 0,
+            "decision_class": "source_aligned",
+            "controlled_choice_source": "source",
+            "canary_rejection_reason_codes": [],
+            "source_selected_context_id": "ctx-source-invalid-mask",
+            "raw_policy_selected_context_id": "ctx-source-invalid-mask",
+            "policy_selected_context_id": "ctx-source-invalid-mask",
+            "source_selected_action_index": 0,
+            "raw_policy_selected_action_index": 0,
+            "policy_selected_action_index": 0,
+            "source_execution_goal_cell": [8, 8],
+            "policy_execution_goal_cell": [8, 8],
+            "controlled_execution_goal_cell": [8, 8],
+        }
+        with (self.batch_root / "policy-gated-sequential-canary-steps.jsonl").open(
+            "a",
+            encoding="utf-8",
+        ) as handle:
+            handle.write(json.dumps(step, ensure_ascii=False) + "\n")
+
+        completed = self._run_mining()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "sequential-canary-failure-mining-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["exclusion_count"], 0)
+        self.assertEqual(
+            summary["source_aligned_skipped_reason_counts"],
+            {"source_action_mask_invalid": 1},
+        )
+
     def test_mining_allows_missed_safe_choice_only_when_no_rejected_steps(self) -> None:
         self._write_sequential_coverage_failure_artifacts()
         self._append_source_aligned_missed_safe_choice_artifacts()

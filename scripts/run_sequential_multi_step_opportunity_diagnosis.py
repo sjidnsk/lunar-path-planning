@@ -161,20 +161,50 @@ def run_sequential_multi_step_opportunity_diagnosis(
     for row in steps_with_safe_better:
         by_episode[str(row.get("episode_id"))].append(row)
         by_family[str(row.get("scenario_group") or "unknown")].append(row)
+    validation = config.get("validation", {})
 
+    safe_better_step_indexes_by_episode = {
+        episode_id: sorted(
+            int(row.get("step_index", -1))
+            for row in rows
+            if row.get("step_index") is not None
+        )
+        for episode_id, rows in by_episode.items()
+    }
     multi_step_opportunity_episode_ids = sorted(
-        episode_id for episode_id, rows in by_episode.items() if len(rows) >= 2
+        episode_id
+        for episode_id, step_indexes in safe_better_step_indexes_by_episode.items()
+        if {0, 1}.issubset(set(step_indexes))
     )
-    family_with_multi_step_opportunity = sorted(
-        str(row.get("scenario_group") or "unknown")
+    multi_step_opportunity_episode_family = {
+        episode_id: str(by_episode[episode_id][0].get("scenario_group") or "unknown")
         for episode_id in multi_step_opportunity_episode_ids
-        for row in by_episode[episode_id][:1]
+    }
+    multi_step_opportunity_episode_count_by_family = {
+        family: 0 for family in sorted(family_set)
+    }
+    for family in multi_step_opportunity_episode_family.values():
+        multi_step_opportunity_episode_count_by_family[family] = (
+            multi_step_opportunity_episode_count_by_family.get(family, 0) + 1
+        )
+    family_with_multi_step_opportunity = sorted(
+        multi_step_opportunity_episode_family.values()
     )
     family_with_multi_step_opportunity = sorted(set(family_with_multi_step_opportunity))
+    min_multi_step_episode_per_family = _int_value(
+        validation.get("min_multi_step_opportunity_episode_count_per_family")
+    )
+    families_below_min_multi_step_opportunity_episode_count: list[str] = []
+    if min_multi_step_episode_per_family > 0:
+        families_below_min_multi_step_opportunity_episode_count = [
+            family
+            for family in sorted(family_set)
+            if multi_step_opportunity_episode_count_by_family.get(family, 0)
+            < min_multi_step_episode_per_family
+        ]
     opportunity_class_counts = Counter(str(row.get("opportunity_class")) for row in diagnostics)
     funnel_totals = _funnel_totals(diagnostics)
 
-    validation = config.get("validation", {})
     if episode_count < _int_value(validation.get("min_episode_count")):
         _append_reason(reason_codes, "episode_count_below_threshold")
     if step_count < _int_value(validation.get("min_step_count")):
@@ -187,6 +217,11 @@ def run_sequential_multi_step_opportunity_diagnosis(
         validation.get("min_family_with_multi_step_opportunity_count")
     ):
         _append_reason(reason_codes, "family_with_multi_step_opportunity_count_below_threshold")
+    if families_below_min_multi_step_opportunity_episode_count:
+        _append_reason(
+            reason_codes,
+            "multi_step_opportunity_episode_count_per_family_below_threshold",
+        )
     if len(steps_with_safe_better) < _int_value(
         validation.get("min_safe_better_alternative_step_count")
     ):
@@ -224,6 +259,14 @@ def run_sequential_multi_step_opportunity_diagnosis(
         ),
         "multi_step_opportunity_episode_count": len(multi_step_opportunity_episode_ids),
         "multi_step_opportunity_episode_ids": multi_step_opportunity_episode_ids,
+        "multi_step_opportunity_required_step_indexes": [0, 1],
+        "safe_better_step_indexes_by_episode": safe_better_step_indexes_by_episode,
+        "multi_step_opportunity_episode_count_by_family": dict(
+            sorted(multi_step_opportunity_episode_count_by_family.items())
+        ),
+        "families_below_min_multi_step_opportunity_episode_count": (
+            families_below_min_multi_step_opportunity_episode_count
+        ),
         "family_with_multi_step_opportunity_count": len(family_with_multi_step_opportunity),
         "family_with_multi_step_opportunity": family_with_multi_step_opportunity,
         "opportunity_missing_count": opportunity_class_counts.get("opportunity_missing", 0),
@@ -399,6 +442,7 @@ def _next_required_change(
         "episode_count_below_threshold",
         "step_count_below_threshold",
         "multi_step_opportunity_episode_count_below_threshold",
+        "multi_step_opportunity_episode_count_per_family_below_threshold",
         "family_with_multi_step_opportunity_count_below_threshold",
         "safe_better_alternative_step_count_below_threshold",
         "opportunity_exclusion_count_above_threshold",
