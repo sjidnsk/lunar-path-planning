@@ -1241,6 +1241,45 @@ replace the default policy, change network/action space/default A*, relax the
 distance contract, claim Ackermann-feasible trajectories, or treat IRIS/GCS
 diagnostics as training release evidence.
 
+## Limited PPO Update Smoke
+
+After `ppo_rollout_collector_dry_run_evaluated`, the next boundary is a tiny
+optimizer smoke, not a formal PPO rollout. The new smoke runner loads the same
+experimental checkpoint that produced the collector transitions, verifies the
+stored `log_prob` and `value` against that checkpoint, filters to
+`ppo_trainable=true` policy-controlled transitions, and performs a single
+full-batch PPO update with a small learning rate.
+
+New artifacts:
+
+- `configs/limited_ppo_update_smoke_v1.json`
+- `scripts/run_limited_ppo_update_smoke.py/.sh`
+- `scripts/run_limited_ppo_update_smoke_closure.sh`
+- `outputs/path_feedback_batch_limited_ppo_update_smoke_v1/`
+
+The runner writes `limited-ppo-update-smoke-summary.json`,
+`limited-ppo-update-training-curves.json`,
+`limited-ppo-update-diagnostics.json`,
+`experimental-hybrid-policy-candidate.pt`,
+`experimental-hybrid-policy-candidate-metadata.json`, and
+`raw-policy-generalization-candidate-summary.json`. The updated checkpoint
+remains experimental: it is not published, does not replace the default policy,
+and does not claim performance.
+
+Acceptance requires the smoke to train only the collector policy's on-policy
+transitions, keep source-fallback transitions out of the optimizer, keep
+old-log-prob/value reconstruction error below `1e-4`, produce a non-zero but
+small parameter delta, keep loss/grad/reward/return/advantage finite, and keep
+`approx_kl<=0.25` with clipped gradient norm at or below 1.0. Post-update
+raw-policy generalization, sequential canary, collector, and readiness gates
+must still pass before readiness may advance to
+`limited_ppo_update_smoke_evaluated`.
+
+This remains a local smoke test only: no formal PPO rollout, no released
+checkpoint, no default-policy replacement, no network/action-space/default-A*
+change, no distance-contract relaxation, no Ackermann-feasible trajectory claim,
+and no policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
