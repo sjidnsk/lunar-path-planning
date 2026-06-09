@@ -955,6 +955,44 @@ families, no rejected choices, no invalid action masks, no fallback/open-grid,
 no safety/contract/path/risk/source-selection regression, provenance current,
 and readiness `training_readiness_status=policy_gated_canary_diversity_evaluated`.
 
+**Canary Opportunity Quality and Multi-Family Safe Choice Expansion v1** asks a
+more precise question: for each scenario family, does the candidate set actually
+contain a safe acceptable alternative, and if it does, does the raw policy take
+that opportunity or simply stay source-aligned? This separates a scenario/candidate
+generation gap from a policy-calibration gap.
+
+This stage adds `policy_canary_opportunity_quality`, the matrix
+`configs/path_feedback_batch_policy_gated_canary_opportunity_quality_v1.json`,
+the evaluator config `configs/policy_gated_canary_opportunity_quality_v1.json`,
+the missed-opportunity preference config
+`configs/canary_missed_opportunity_preference_v1.json`, and
+`scripts/run_canary_opportunity_quality_closure.sh`. Its canary summary reports
+`family_with_acceptable_alternative_count`,
+`missing_acceptable_alternative_families`,
+`source_aligned_with_acceptable_alternative_count`,
+`canary_missed_opportunity_preference_pair_count`,
+`missed_safe_choice_family_count`, and `hard_positive_added_count=0`.
+
+Acceptance requires at least 24 canary opportunity contexts, at least 6 scenario
+families, at least 5 families with acceptable alternatives, accepted policy
+choices in at least 5 families, at least 8 accepted policy choices, no rejected
+choice without reason codes, and all controlled/raw invalid-mask, fallback,
+safety, contract, path/risk, and source-selection regression gates at 0. Passing
+readiness advances only to `policy_gated_canary_opportunity_quality_evaluated`.
+It remains an experimental gated canary; it does not start PPO rollout, publish
+or replace a policy, alter network/action space/default A*, relax the distance
+contract, claim Ackermann-feasible trajectory, or claim performance.
+
+Current evidence passes: 24 canary opportunities across 6 families, 10 changed
+policy decisions, 10 accepted choices, 0 rejected choices, 5 accepted families,
+5 families with acceptable alternatives, no missed safe-choice preference pairs,
+no hard positives added, no controlled/raw regressions, current candidate
+provenance match, and readiness
+`training_readiness_status=policy_gated_canary_opportunity_quality_evaluated`.
+`dense_choke_safe_bypass` remains the only family without an acceptable
+alternative and is a scenario/candidate opportunity-generation issue, not a
+policy gate regression.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

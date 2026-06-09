@@ -42,6 +42,8 @@ NEXT_OPPORTUNITY_INSUFFICIENT = "canary_opportunity_insufficient"
 NEXT_ACCEPTANCE_INSUFFICIENT = "policy_safe_alternative_acceptance_insufficient"
 NEXT_FAMILY_COVERAGE_INSUFFICIENT = "scenario_family_coverage_insufficient"
 NEXT_POLICY_GATE_REGRESSION = "policy_gate_regression_detected"
+NEXT_OPPORTUNITY_GENERATION_GAP = "canary_opportunity_generation_gap"
+NEXT_SAFE_CHOICE_ALIGNMENT = "policy_safe_choice_alignment_insufficient"
 
 
 class ConfigError(ValueError):
@@ -233,6 +235,41 @@ def run_policy_gated_canary_rollout(
     }
     scenario_family_count = len(scenario_family_summary)
     accepted_scenario_family_count = len(accepted_decision_family_distribution)
+    families_with_acceptable_alternative = sorted(
+        family
+        for family, metrics in scenario_family_summary.items()
+        if metrics["acceptable_alternative_count"] > 0
+    )
+    missing_acceptable_alternative_families = sorted(
+        family
+        for family, metrics in scenario_family_summary.items()
+        if metrics["canary_opportunity_context_count"] > 0
+        and metrics["acceptable_alternative_count"] <= 0
+    )
+    opportunity_by_scenario = {
+        (opportunity.get("run_id"), opportunity.get("scenario_id")): opportunity
+        for opportunity in opportunities
+    }
+    source_aligned_with_acceptable = [
+        decision
+        for decision in decisions
+        if decision.get("decision_class") == "source_aligned"
+        and int(
+            opportunity_by_scenario.get(
+                (decision.get("run_id"), decision.get("scenario_id")),
+                {},
+            ).get("acceptable_alternative_count", 0)
+        )
+        > 0
+    ]
+    source_aligned_with_acceptable_alternative_count = len(source_aligned_with_acceptable)
+    missed_safe_choice_families = sorted(
+        {
+            str(decision.get("scenario_group") or "unknown")
+            for decision in source_aligned_with_acceptable
+        }
+    )
+    missed_safe_choice_family_count = len(missed_safe_choice_families)
 
     controlled_regression_count = sum(
         1 for decision in decisions if decision.get("controlled_decision_class") == "regression"
@@ -306,6 +343,14 @@ def run_policy_gated_canary_rollout(
         _append_reason(reason_codes, "scenario_family_count_below_threshold")
     if accepted_scenario_family_count < min_accepted_scenario_family_count:
         _append_reason(reason_codes, "accepted_scenario_family_count_below_threshold")
+    min_family_with_acceptable_alternative_count = _int_value(
+        validation.get("min_family_with_acceptable_alternative_count")
+    )
+    if (
+        len(families_with_acceptable_alternative)
+        < min_family_with_acceptable_alternative_count
+    ):
+        _append_reason(reason_codes, "family_with_acceptable_alternative_count_below_threshold")
     if controlled_regression_count > _int_value(validation.get("max_controlled_regression_count")):
         _append_reason(reason_codes, "controlled_regression")
     if invalid_action_mask_count > _int_value(validation.get("max_invalid_action_mask_count")):
@@ -327,11 +372,18 @@ def run_policy_gated_canary_rollout(
 
     status = "failed" if reason_codes else "passed"
     diversity_requested = min_scenario_family_count > 0 or min_accepted_scenario_family_count > 0
+    opportunity_quality_requested = min_family_with_acceptable_alternative_count > 0
     canary_diversity_passed = (
         status == "passed"
         and diversity_requested
         and scenario_family_count >= min_scenario_family_count
         and accepted_scenario_family_count >= min_accepted_scenario_family_count
+    )
+    canary_opportunity_quality_passed = (
+        canary_diversity_passed
+        and opportunity_quality_requested
+        and len(families_with_acceptable_alternative)
+        >= min_family_with_acceptable_alternative_count
     )
     next_required_change = _next_required_change(
         reason_codes=reason_codes,
@@ -341,6 +393,8 @@ def run_policy_gated_canary_rollout(
         accepted_count=class_counts.get("canary_accepted_policy_choice", 0),
         rejected_count=class_counts.get("canary_rejected_policy_choice", 0),
         controlled_regression_count=controlled_regression_count,
+        family_with_acceptable_alternative_count=len(families_with_acceptable_alternative),
+        missed_safe_choice_count=source_aligned_with_acceptable_alternative_count,
     )
     summary = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
@@ -374,8 +428,26 @@ def run_policy_gated_canary_rollout(
         "accepted_decision_family_distribution": dict(
             sorted(accepted_decision_family_distribution.items())
         ),
+        "family_with_acceptable_alternative_count": len(
+            families_with_acceptable_alternative
+        ),
+        "families_with_acceptable_alternative": families_with_acceptable_alternative,
+        "missing_acceptable_alternative_family_count": len(
+            missing_acceptable_alternative_families
+        ),
+        "missing_acceptable_alternative_families": missing_acceptable_alternative_families,
+        "source_aligned_with_acceptable_alternative_count": (
+            source_aligned_with_acceptable_alternative_count
+        ),
+        "canary_missed_opportunity_preference_pair_count": (
+            source_aligned_with_acceptable_alternative_count
+        ),
+        "missed_safe_choice_family_count": missed_safe_choice_family_count,
+        "missed_safe_choice_families": missed_safe_choice_families,
+        "hard_positive_added_count": 0,
         "scenario_family_summary": scenario_family_summary,
         "canary_diversity_passed": canary_diversity_passed,
+        "canary_opportunity_quality_passed": canary_opportunity_quality_passed,
         "controlled_regression_count": controlled_regression_count,
         "raw_policy_regression_count": raw_policy_regression_count,
         "invalid_action_mask_count": invalid_action_mask_count,
@@ -417,6 +489,18 @@ def run_policy_gated_canary_rollout(
         "canary_opportunity_context_count": len(opportunities),
         "opportunities": opportunities[:50],
         "scenario_family_summary": scenario_family_summary,
+        "family_with_acceptable_alternative_count": len(
+            families_with_acceptable_alternative
+        ),
+        "missing_acceptable_alternative_families": missing_acceptable_alternative_families,
+        "source_aligned_with_acceptable_alternative_count": (
+            source_aligned_with_acceptable_alternative_count
+        ),
+        "canary_missed_opportunity_preference_pair_count": (
+            source_aligned_with_acceptable_alternative_count
+        ),
+        "missed_safe_choice_families": missed_safe_choice_families,
+        "hard_positive_added_count": 0,
         "next_required_change": NEXT_NO_OPPORTUNITY if not opportunities else None,
     }
     return summary, decisions, rejection_report, opportunity_summary
@@ -504,11 +588,21 @@ def _next_required_change(
     accepted_count: int,
     rejected_count: int,
     controlled_regression_count: int,
+    family_with_acceptable_alternative_count: int = 0,
+    missed_safe_choice_count: int = 0,
 ) -> str | None:
     if not reason_codes:
         return None
     if set(reason_codes) <= {"candidate_git_current_mismatch", "checkpoint_metadata_git_current_mismatch"}:
         return NEXT_PROVENANCE_REFRESH
+    if "family_with_acceptable_alternative_count_below_threshold" in reason_codes:
+        return NEXT_OPPORTUNITY_GENERATION_GAP
+    if missed_safe_choice_count > 0 and (
+        "policy_changed_decision_count_below_threshold" in reason_codes
+        or "canary_accepted_policy_choice_count_below_threshold" in reason_codes
+        or "accepted_scenario_family_count_below_threshold" in reason_codes
+    ):
+        return NEXT_SAFE_CHOICE_ALIGNMENT
     if "scenario_family_count_below_threshold" in reason_codes or (
         "accepted_scenario_family_count_below_threshold" in reason_codes
         and accepted_count > 0
@@ -551,6 +645,9 @@ def _scenario_family_summary(
                 "canary_accepted_policy_choice_count": 0,
                 "canary_rejected_policy_choice_count": 0,
                 "canary_rejection_reason_counts": Counter(),
+                "acceptable_alternative_count": 0,
+                "alternative_count": 0,
+                "alternative_rejection_reason_counts": Counter(),
                 "scenario_ids": set(),
             }
         return families[key]
@@ -558,6 +655,18 @@ def _scenario_family_summary(
     for opportunity in opportunities:
         metrics = metrics_for(opportunity.get("scenario_group"))
         metrics["canary_opportunity_context_count"] += 1
+        metrics["alternative_count"] += int(opportunity.get("alternative_count", 0))
+        metrics["acceptable_alternative_count"] += int(
+            opportunity.get("acceptable_alternative_count", 0)
+        )
+        for alternative in opportunity.get("alternatives", []):
+            if not isinstance(alternative, dict):
+                continue
+            if alternative.get("canary_gate_acceptable") is True:
+                continue
+            metrics["alternative_rejection_reason_counts"].update(
+                alternative.get("canary_gate_rejection_reason_codes", [])
+            )
         scenario_id = opportunity.get("scenario_id")
         if scenario_id:
             metrics["scenario_ids"].add(str(scenario_id))
@@ -596,6 +705,11 @@ def _scenario_family_summary(
             ],
             "canary_rejection_reason_counts": dict(
                 sorted(metrics["canary_rejection_reason_counts"].items())
+            ),
+            "alternative_count": metrics["alternative_count"],
+            "acceptable_alternative_count": metrics["acceptable_alternative_count"],
+            "alternative_rejection_reason_counts": dict(
+                sorted(metrics["alternative_rejection_reason_counts"].items())
             ),
             "scenario_ids": sorted(metrics["scenario_ids"]),
         }

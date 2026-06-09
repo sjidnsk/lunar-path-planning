@@ -1,0 +1,29 @@
+{
+  "schema_version": "canary-missed-opportunity-preference-config/v1",
+  "description": "Opt-in preference mining config for canary contexts where a safe alternative exists but the raw policy remains source-aligned.",
+  "input_files": {
+    "canary_summary": "policy-gated-canary-rollout-summary.json",
+    "canary_decisions": "policy-gated-canary-decisions.jsonl",
+    "canary_opportunity_summary": "policy-gated-canary-opportunity-summary.json"
+  },
+  "output_files": {
+    "samples": "canary-missed-opportunity-preference-samples.jsonl",
+    "summary": "canary-missed-opportunity-preference-summary.json",
+    "exclusion_report": "canary-missed-opportunity-preference-exclusion-report.json"
+  },
+  "selection": {
+    "include_decision_classes": [
+      "source_aligned"
+    ],
+    "require_acceptable_alternative": true,
+    "hard_positive_added_count": 0
+  },
+  "non_goals": [
+    "no_rollout_episode_hard_positive",
+    "no_formal_ppo_rollout",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim"
+  ]
+}

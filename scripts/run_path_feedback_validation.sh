@@ -44,7 +44,8 @@ Options:
   --top-k N            Number of candidate goals per scenario to evaluate. Default: 3
   --scenario-set NAME   Validation scenario set: smoke, stress, holdout,
                         raw_align_train, raw_align_val, raw_align_test,
-                        policy_canary, policy_canary_diversity, or all.
+                        policy_canary, policy_canary_diversity,
+                        policy_canary_opportunity_quality, or all.
                         Default: smoke
   --diagnostic-profile NAME
                         Diagnostic profile: baseline, execution, iris, or all.
@@ -320,10 +321,10 @@ PY
 fi
 
 case "$SCENARIO_SET" in
-  smoke|stress|holdout|raw_align_train|raw_align_val|raw_align_test|policy_canary|policy_canary_diversity|all)
+  smoke|stress|holdout|raw_align_train|raw_align_val|raw_align_test|policy_canary|policy_canary_diversity|policy_canary_opportunity_quality|all)
     ;;
   *)
-    echo "--scenario-set must be one of: smoke, stress, holdout, raw_align_train, raw_align_val, raw_align_test, policy_canary, policy_canary_diversity, all" >&2
+    echo "--scenario-set must be one of: smoke, stress, holdout, raw_align_train, raw_align_val, raw_align_test, policy_canary, policy_canary_diversity, policy_canary_opportunity_quality, all" >&2
     exit 2
     ;;
 esac

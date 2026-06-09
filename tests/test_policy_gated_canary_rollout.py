@@ -599,6 +599,102 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
         )
         self.assertEqual(summary["training_blockers"], [])
 
+    def test_opportunity_quality_reports_missing_acceptable_alternative_family(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 2,
+                "min_canary_opportunity_context_count": 2,
+                "min_policy_changed_decision_count": 1,
+                "min_canary_accepted_policy_choice_count": 1,
+                "min_scenario_family_count": 2,
+                "min_family_with_acceptable_alternative_count": 2,
+                "min_accepted_scenario_family_count": 1,
+            },
+            output_filename_prefix="policy-gated-canary-opportunity-quality",
+        )
+        self._write_artifacts(
+            scenario_groups=("canary_family_has_safe_alt", "canary_family_missing_safe_alt"),
+        )
+        summary_path = self.canary_root / "canary-run" / "path-feedback-summary.json"
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        payload["scenarios"][1]["path_feedback"]["candidates"][1]["candidate_generation"][
+            "source_selection_quality_regression"
+        ] = True
+        summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_canary()
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.canary_root / "policy-gated-canary-opportunity-quality-rollout-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["family_with_acceptable_alternative_count"], 1)
+        self.assertEqual(
+            summary["missing_acceptable_alternative_families"],
+            ["canary_family_missing_safe_alt"],
+        )
+        self.assertIn("family_with_acceptable_alternative_count_below_threshold", summary["reason_codes"])
+        self.assertEqual(summary["next_required_change"], "canary_opportunity_generation_gap")
+
+    def test_opportunity_quality_reports_source_aligned_missed_safe_choice(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 1,
+                "min_canary_opportunity_context_count": 1,
+                "min_policy_changed_decision_count": 1,
+                "min_canary_accepted_policy_choice_count": 1,
+                "min_family_with_acceptable_alternative_count": 1,
+                "min_accepted_scenario_family_count": 1,
+            },
+            output_filename_prefix="policy-gated-canary-opportunity-quality",
+        )
+        self._write_artifacts(raw_selects_alternative=False)
+
+        completed = self._run_canary()
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.canary_root / "policy-gated-canary-opportunity-quality-rollout-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["family_with_acceptable_alternative_count"], 1)
+        self.assertEqual(summary["source_aligned_with_acceptable_alternative_count"], 1)
+        self.assertEqual(summary["missed_safe_choice_family_count"], 1)
+        self.assertEqual(summary["canary_missed_opportunity_preference_pair_count"], 1)
+        self.assertEqual(summary["hard_positive_added_count"], 0)
+        self.assertEqual(summary["next_required_change"], "policy_safe_choice_alignment_insufficient")
+
+    def test_readiness_advances_after_canary_opportunity_quality_passes(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 2,
+                "min_canary_opportunity_context_count": 2,
+                "min_policy_changed_decision_count": 2,
+                "min_canary_accepted_policy_choice_count": 2,
+                "min_family_with_acceptable_alternative_count": 2,
+                "min_accepted_scenario_family_count": 2,
+            },
+        )
+        self._write_artifacts(scenario_groups=("canary_family_a", "canary_family_b"))
+        self.assertEqual(self._run_canary().returncode, 0)
+
+        completed = self._run_readiness()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.source_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "policy_gated_canary_opportunity_quality_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
