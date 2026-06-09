@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
+    _install_model_explorer_path(repo_root)
     source_root = _resolve_path(args.source_root, repo_root)
     sequential_roots = [_resolve_path(value, repo_root) for value in args.sequential_mining_root]
     train_roots = [_resolve_path(value, repo_root) for value in args.train_mining_root]
@@ -465,6 +466,12 @@ def _int_value(value: Any) -> int:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _install_model_explorer_path(repo_root: Path) -> None:
+    source = repo_root / "model-explorer" / "src"
+    if str(source) not in sys.path:
+        sys.path.insert(0, str(source))
 
 
 if __name__ == "__main__":
