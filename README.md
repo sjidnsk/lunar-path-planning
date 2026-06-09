@@ -1078,6 +1078,36 @@ publication or default replacement, no network/action-space/default-A* change,
 no distance-contract relaxation, no Ackermann-feasible trajectory claim, no
 IRIS/GCS/path-planner diagnostic-as-training release, and no performance claim.
 
+**Policy-Gated Sequential Canary Rollout v1** is the next gate toward formal
+PPO rollout. Value/stability canary is still a set of independent one-step
+questions; sequential canary turns it into short cell-level episodes. Each
+episode step must start from the previous step's controlled execution goal. If
+the policy choice passes all gates, the next step starts from the policy
+execution goal; if it fails, the runner falls back to the source-selected goal
+and records the rejection.
+
+This stage adds explicit scenario-spec input for generated NPZ validation maps,
+`configs/policy_gated_sequential_canary_rollout_v1.json`,
+`scripts/run_policy_gated_sequential_canary_rollout.py/.sh`, and
+`scripts/run_policy_gated_sequential_canary_closure.sh`. It writes
+`outputs/path_feedback_batch_policy_gated_sequential_canary_rollout_v1/` with
+`policy-gated-sequential-canary-episodes.jsonl`,
+`policy-gated-sequential-canary-steps.jsonl`,
+`policy-gated-sequential-canary-rejection-report.json`, and
+`policy-gated-sequential-canary-rollout-summary.json`.
+
+Acceptance requires 36 episodes, 108 steps, at least 30 completed episodes, at
+least 24 accepted takeover steps, accepted takeover in all 6 families, at least
+12 multi-step accepted episodes, 0 state-continuity violations, 0 episode
+fallbacks, 0 rejected policy choices, and cumulative invalid-mask, fallback,
+safety, contract, path/risk, and source-selection regression all at 0. Passing
+readiness can advance only to
+`policy_gated_sequential_canary_rollout_evaluated`. It remains canary/shadow
+evidence: no formal PPO rollout, no PPO parameter update, no checkpoint
+publication or default policy replacement, no network/action-space/default-A*
+change, no distance-contract relaxation, no Ackermann-feasible trajectory claim,
+and no performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

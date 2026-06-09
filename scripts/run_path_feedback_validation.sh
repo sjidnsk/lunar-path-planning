@@ -5,6 +5,7 @@ DRY_RUN=0
 OUTPUT_ROOT="outputs/path_feedback_validation"
 TOP_K=3
 SCENARIO_SET="smoke"
+SCENARIO_SPEC_JSON=""
 DIAGNOSTIC_PROFILE="baseline"
 ANCHOR_PROJECTION_CANDIDATE_GENERATION=0
 ANCHOR_PROJECTION_SELECTION_PATH_COST_BONUS="0.0"
@@ -49,6 +50,9 @@ Options:
                         policy_canary_dense_choke_opportunity,
                         policy_canary_value_stability, or all.
                         Default: smoke
+  --scenario-spec-json PATH
+                        Opt-in explicit scenario spec JSON used by sequential
+                        canary runs to override scenario identity and start_cell.
   --diagnostic-profile NAME
                         Diagnostic profile: baseline, execution, iris, or all.
                         Default: baseline
@@ -163,6 +167,11 @@ while [[ $# -gt 0 ]]; do
     --scenario-set)
       require_value "$1" "${2:-}"
       SCENARIO_SET="$2"
+      shift 2
+      ;;
+    --scenario-spec-json)
+      require_value "$1" "${2:-}"
+      SCENARIO_SPEC_JSON="$2"
       shift 2
       ;;
     --diagnostic-profile)
@@ -891,6 +900,7 @@ Python executable: $PYTHON_BIN
 Acceptance gate: $ACCEPTANCE_GATE
 Top-K: $TOP_K
 Scenario set: $SCENARIO_SET
+Scenario spec JSON: ${SCENARIO_SPEC_JSON:-"(none)"}
 Diagnostic profile: $DIAGNOSTIC_PROFILE
 Planner extra args: ${PLANNER_EXTRA_ARGS[*]:-(none)}
 Anchor projection candidate generation: $([[ "$ANCHOR_PROJECTION_CANDIDATE_GENERATION" -eq 1 ]] && echo enabled || echo disabled)
@@ -911,11 +921,17 @@ else
   mkdir -p "$OUTPUT_ROOT"
 fi
 
-run_cmd "$DEV_ROOT" \
-  "$PYTHON_BIN" scripts/generate_npz_validation_maps.py \
-  --scenario-set "$SCENARIO_SET" \
-  --output-dir "$MAP_DIR" \
+GENERATOR_ARGS=(
+  "$PYTHON_BIN" scripts/generate_npz_validation_maps.py
+  --scenario-set "$SCENARIO_SET"
+  --output-dir "$MAP_DIR"
   --scenario-config "$SCENARIO_CONFIG"
+)
+if [[ -n "$SCENARIO_SPEC_JSON" ]]; then
+  GENERATOR_ARGS+=(--scenario-spec-json "$SCENARIO_SPEC_JSON")
+fi
+
+run_cmd "$DEV_ROOT" "${GENERATOR_ARGS[@]}"
 
 run_pythonpath_cmd "$DEV_ROOT" \
   "$PYTHON_BIN" scripts/export_path_planner_sidecars.py \
