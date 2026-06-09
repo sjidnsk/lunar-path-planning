@@ -15,14 +15,23 @@
   },
   "sample": {
     "supported_reason_codes": ["path_cost_regression", "risk_regression"],
+    "mine_source_aligned_safe_alternatives": true,
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0,
+    "min_better_path_cost_delta": 0.25,
+    "min_better_risk_delta": 0.01,
+    "min_better_utility_delta": 0.005,
     "sample_weight": 1.0,
-    "sequential_hard_negative_loss_weight": 2.0,
-    "path_cost_regression_negative_weight": 2.0,
-    "risk_regression_negative_weight": 2.5
+    "missed_safe_choice_sample_weight": 1.0,
+    "sequential_hard_negative_loss_weight": 1.0,
+    "path_cost_regression_negative_weight": 1.0,
+    "risk_regression_negative_weight": 1.0
   },
   "validation": {
     "require_failed_sequential_summary": true,
+    "allow_missed_safe_choice_only_when_no_rejected_steps": true,
     "min_sequential_hard_negative_preference_pair_count": 1,
+    "min_sequential_preference_pair_count": 1,
     "max_exclusion_count": 0,
     "max_hard_positive_added_count": 0
   },

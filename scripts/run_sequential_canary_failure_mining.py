@@ -39,7 +39,9 @@ SAMPLE_SCHEMA_VERSION = "sequential-canary-hard-negative-preference-sample/v1"
 DIAGNOSTIC_SCHEMA_VERSION = "sequential-canary-failure-diagnostic/v1"
 EXCLUSION_SCHEMA_VERSION = "sequential-canary-failure-exclusion-report/v1"
 SAMPLE_TYPE = "raw_policy_regression_preference_pair"
-SEQUENTIAL_SAMPLE_TYPE = "sequential_hard_negative_preference_pair"
+SEQUENTIAL_HARD_NEGATIVE_SAMPLE_TYPE = "sequential_hard_negative_preference_pair"
+SEQUENTIAL_MISSED_SAFE_CHOICE_SAMPLE_TYPE = "sequential_missed_safe_choice_preference_pair"
+MISSED_SAFE_CHOICE_REASON = "missed_safe_better_choice"
 
 
 class ConfigError(ValueError):
@@ -91,6 +93,9 @@ def main(argv: list[str] | None = None) -> int:
                 "sequential_hard_negative_preference_pair_count": summary[
                     "sequential_hard_negative_preference_pair_count"
                 ],
+                "sequential_missed_safe_choice_preference_pair_count": summary[
+                    "sequential_missed_safe_choice_preference_pair_count"
+                ],
                 "summary": _display_path(outputs["summary"], repo_root),
             },
             ensure_ascii=False,
@@ -125,7 +130,14 @@ def run_sequential_canary_failure_mining(
         if step.get("decision_class") == "canary_rejected_policy_choice"
         or _allowed_reason_codes(step, config)
     ]
-    samples: list[dict[str, Any]] = []
+    source_aligned_steps = [
+        step
+        for step in steps
+        if step.get("decision_class") == "source_aligned"
+        and bool(config.get("sample", {}).get("mine_source_aligned_safe_alternatives", True))
+    ]
+    hard_negative_samples: list[dict[str, Any]] = []
+    missed_safe_choice_samples: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -149,13 +161,53 @@ def run_sequential_canary_failure_mining(
         if exclusion:
             exclusions.append(_exclusion(step, exclusion))
             continue
-        samples.append(_sample(step, group, preferred, alternative, reasons, config=config))
+        hard_negative_samples.append(
+            _sample(
+                step,
+                group,
+                preferred,
+                alternative,
+                reasons,
+                config=config,
+                sequential_sample_type=SEQUENTIAL_HARD_NEGATIVE_SAMPLE_TYPE,
+            )
+        )
+
+    missed_seen: set[str] = set()
+    for step in source_aligned_steps:
+        key = _step_key(step)
+        if key in missed_seen:
+            exclusions.append(_exclusion(step, "duplicate_source_aligned_step"))
+            continue
+        missed_seen.add(key)
+        sample_or_reason = _missed_safe_choice_sample(step, group_index, config=config)
+        if sample_or_reason is None:
+            continue
+        if isinstance(sample_or_reason, str):
+            exclusions.append(_exclusion(step, sample_or_reason))
+            continue
+        missed_safe_choice_samples.append(sample_or_reason)
+
+    samples = hard_negative_samples + missed_safe_choice_samples
 
     hard_positive_added_count = 0
     if hard_positive_added_count > _int_value(validation.get("max_hard_positive_added_count")):
         _append_reason(reason_codes, "hard_positive_added_count_nonzero")
-    if len(samples) < _int_value(validation.get("min_sequential_hard_negative_preference_pair_count")):
+    min_total_preferences = _int_value(validation.get("min_sequential_preference_pair_count"))
+    missed_only_allowed = (
+        not rejected_steps
+        and bool(validation.get("allow_missed_safe_choice_only_when_no_rejected_steps", True))
+        and len(missed_safe_choice_samples) > 0
+        and len(samples) >= min_total_preferences
+    )
+    if (
+        len(hard_negative_samples)
+        < _int_value(validation.get("min_sequential_hard_negative_preference_pair_count"))
+        and not missed_only_allowed
+    ):
         _append_reason(reason_codes, "sequential_hard_negative_preference_pair_count_below_threshold")
+    if min_total_preferences and len(samples) < min_total_preferences:
+        _append_reason(reason_codes, "sequential_preference_pair_count_below_threshold")
     if len(exclusions) > _int_value(validation.get("max_exclusion_count")):
         _append_reason(reason_codes, "sequential_failure_exclusion_count_above_threshold")
 
@@ -182,7 +234,10 @@ def run_sequential_canary_failure_mining(
         "sequential_summary_status": rollout_summary.get("status"),
         "sequential_rejected_step_count": len(rejected_steps),
         "unique_sequential_rejected_step_count": len(seen),
-        "sequential_hard_negative_preference_pair_count": len(samples),
+        "source_aligned_step_count": len(source_aligned_steps),
+        "sequential_hard_negative_preference_pair_count": len(hard_negative_samples),
+        "sequential_missed_safe_choice_preference_pair_count": len(missed_safe_choice_samples),
+        "sequential_preference_pair_count": len(samples),
         "sequential_failure_diagnostic_count": len(diagnostics),
         "exclusion_count": len(exclusions),
         "exclusion_reason_counts": exclusion_report["exclusion_reason_counts"],
@@ -247,12 +302,13 @@ def _sample(
     reasons: list[str],
     *,
     config: dict[str, Any],
+    sequential_sample_type: str,
 ) -> dict[str, Any]:
     sample_weight = _sample_weight(reasons, config)
     return {
         "schema_version": SAMPLE_SCHEMA_VERSION,
         "sample_type": SAMPLE_TYPE,
-        "sequential_sample_type": SEQUENTIAL_SAMPLE_TYPE,
+        "sequential_sample_type": sequential_sample_type,
         "context_id": preferred.get("context_id"),
         "alternative_context_id": alternative.get("context_id"),
         "episode_id": step.get("episode_id"),
@@ -276,6 +332,7 @@ def _sample(
         "utility_delta": _delta(alternative.get("utility"), preferred.get("utility")),
         "raw_policy_regression_reason_codes": reasons,
         "sequential_regression_reason_codes": reasons,
+        "missed_safe_choice": sequential_sample_type == SEQUENTIAL_MISSED_SAFE_CHOICE_SAMPLE_TYPE,
         "preferred": _sample_side(preferred),
         "alternative": _sample_side(alternative),
         "selected": _sample_side(preferred),
@@ -310,6 +367,161 @@ def _sample_side(candidate: dict[str, Any]) -> dict[str, Any]:
         "source_selection_status": candidate.get("source_selection_status"),
         "candidate_features": _candidate_features(candidate),
     }
+
+
+def _missed_safe_choice_sample(
+    step: dict[str, Any],
+    group_index: dict[tuple[str | None, str | None, str | None], dict[str, Any]],
+    *,
+    config: dict[str, Any],
+) -> dict[str, Any] | str | None:
+    group = _match_group(step, group_index)
+    if group is None:
+        return "path_feedback_group_missing"
+    source = _find_candidate(
+        group,
+        step.get("source_selected_context_id") or step.get("context_id"),
+        action_index=step.get("source_selected_action_index"),
+        execution_goal_cell=step.get("source_selected_execution_goal_cell")
+        or step.get("source_execution_goal_cell"),
+    )
+    if source is None:
+        source = _source_selected_candidate(group)
+    if source is None:
+        return "source_candidate_missing"
+    exclusion = _sample_exclusion_reason(source, source)
+    if exclusion:
+        return exclusion.replace("preferred_", "source_")
+    alternative = _best_safe_better_alternative(group, source, config=config)
+    if alternative is None:
+        return None
+    exclusion = _sample_exclusion_reason(alternative, source)
+    if exclusion:
+        return exclusion
+    sample = _sample(
+        step,
+        group,
+        alternative,
+        source,
+        [MISSED_SAFE_CHOICE_REASON],
+        config=config,
+        sequential_sample_type=SEQUENTIAL_MISSED_SAFE_CHOICE_SAMPLE_TYPE,
+    )
+    sample["source_selected_context_id"] = source.get("context_id")
+    sample["missed_safe_choice_context_id"] = alternative.get("context_id")
+    sample["missed_safe_choice_execution_goal_cell"] = alternative.get("execution_goal_cell")
+    sample["missed_safe_choice_reason_codes"] = [MISSED_SAFE_CHOICE_REASON]
+    return sample
+
+
+def _source_selected_candidate(group: dict[str, Any]) -> dict[str, Any] | None:
+    for candidate in group.get("candidates", []):
+        if candidate.get("source_selection_status") == "source_selected":
+            return candidate
+    candidates = [candidate for candidate in group.get("candidates", []) if _candidate_action_mask_valid(candidate)]
+    if candidates:
+        return min(candidates, key=lambda candidate: _float_or_none(candidate.get("path_cost")) or 0.0)
+    return None
+
+
+def _best_safe_better_alternative(
+    group: dict[str, Any],
+    source: dict[str, Any],
+    *,
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    alternatives: list[dict[str, Any]] = []
+    for candidate in group.get("candidates", []):
+        if _same_candidate(candidate, source):
+            continue
+        if _candidate_regression_reasons(candidate, source, config=config):
+            continue
+        if not _candidate_is_better(candidate, source, config=config):
+            continue
+        alternatives.append(candidate)
+    if not alternatives:
+        return None
+    return min(
+        alternatives,
+        key=lambda candidate: (
+            _float_or_none(_delta(candidate.get("path_cost"), source.get("path_cost"))) or 0.0,
+            _float_or_none(_delta(candidate.get("risk"), source.get("risk"))) or 0.0,
+            -(_float_or_none(_delta(candidate.get("utility"), source.get("utility"))) or 0.0),
+        ),
+    )
+
+
+def _candidate_regression_reasons(
+    candidate: dict[str, Any] | None,
+    source: dict[str, Any] | None,
+    *,
+    config: dict[str, Any],
+) -> list[str]:
+    sample = config.get("sample", {})
+    if candidate is None:
+        return ["candidate_missing"]
+    reasons: list[str] = []
+    candidate_changed = not _same_candidate(candidate, source)
+    if not _candidate_action_mask_valid(candidate):
+        reasons.append("invalid_action_mask")
+    if candidate.get("open_grid_fallback_used"):
+        reasons.append("fallback_or_open_grid")
+    if _int_value(candidate.get("tracking_safety_violation_count")):
+        reasons.append("safety_regression")
+    if candidate_changed and candidate.get("contract_safe") is False:
+        reasons.append("contract_violation")
+    if source is not None:
+        path_delta = _delta(candidate.get("path_cost"), source.get("path_cost"))
+        risk_delta = _delta(candidate.get("risk"), source.get("risk"))
+        max_path = float(sample.get("max_path_cost_regression", 0.0))
+        max_risk = float(sample.get("max_risk_regression", 0.0))
+        if path_delta is None:
+            reasons.append("path_cost_missing")
+        elif path_delta > max_path:
+            reasons.append("path_cost_regression")
+        if risk_delta is None:
+            reasons.append("risk_missing")
+        elif risk_delta > max_risk:
+            reasons.append("risk_regression")
+    if candidate_changed and candidate.get("source_selection_quality_regression"):
+        reasons.append("source_selection_regression")
+    return reasons
+
+
+def _candidate_is_better(
+    candidate: dict[str, Any],
+    source: dict[str, Any],
+    *,
+    config: dict[str, Any],
+) -> bool:
+    sample = config.get("sample", {})
+    path_threshold = float(sample.get("min_better_path_cost_delta", 0.25))
+    risk_threshold = float(sample.get("min_better_risk_delta", 0.01))
+    utility_threshold = float(sample.get("min_better_utility_delta", 0.005))
+    path_delta = _delta(candidate.get("path_cost"), source.get("path_cost"))
+    risk_delta = _delta(candidate.get("risk"), source.get("risk"))
+    utility_delta = _delta(candidate.get("utility"), source.get("utility"))
+    return bool(
+        (path_delta is not None and path_delta <= -path_threshold)
+        or (risk_delta is not None and risk_delta <= -risk_threshold)
+        or (utility_delta is not None and utility_delta >= utility_threshold)
+    )
+
+
+def _same_candidate(candidate: dict[str, Any] | None, source: dict[str, Any] | None) -> bool:
+    if not candidate or not source:
+        return False
+    candidate_context = candidate.get("context_id")
+    source_context = source.get("context_id")
+    if candidate_context and source_context:
+        return candidate_context == source_context
+    return (
+        _optional_int(candidate.get("source_action_index", candidate.get("action_index")))
+        == _optional_int(source.get("source_action_index", source.get("action_index")))
+        and _cell(candidate.get("policy_target_cell")) == _cell(source.get("policy_target_cell"))
+        and _cell(candidate.get("execution_goal_cell")) == _cell(source.get("execution_goal_cell"))
+        and candidate.get("target_binding_mode") == source.get("target_binding_mode")
+    )
 
 
 def _sample_exclusion_reason(
@@ -384,6 +596,8 @@ def _allowed_reason_codes(step: dict[str, Any], config: dict[str, Any]) -> list[
 
 def _sample_weight(reasons: list[str], config: dict[str, Any]) -> float:
     sample = config.get("sample", {})
+    if MISSED_SAFE_CHOICE_REASON in reasons:
+        return float(sample.get("missed_safe_choice_sample_weight", sample.get("sample_weight", 1.0)))
     weight = float(sample.get("sequential_hard_negative_loss_weight", sample.get("sample_weight", 1.0)))
     if "path_cost_regression" in reasons:
         weight *= float(sample.get("path_cost_regression_negative_weight", 1.0))

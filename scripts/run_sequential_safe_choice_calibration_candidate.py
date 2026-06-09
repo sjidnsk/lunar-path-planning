@@ -28,6 +28,12 @@ SUMMARY_SCHEMA_VERSION = "sequential-safe-choice-calibration-candidate-summary/v
 SEQUENTIAL_MINING_SCHEMA_VERSION = "sequential-canary-failure-mining-summary/v1"
 RAW_MINING_SCHEMA_VERSION = "raw-policy-regression-mining-summary/v1"
 NEXT_REQUIRED_CHANGE = "sequence_objective_weight_refinement_required"
+SEQUENTIAL_HARD_NEGATIVE_SAMPLE_TYPE = "sequential_hard_negative_preference_pair"
+SEQUENTIAL_MISSED_SAFE_CHOICE_SAMPLE_TYPE = "sequential_missed_safe_choice_preference_pair"
+SEQUENTIAL_SAMPLE_TYPES = {
+    SEQUENTIAL_HARD_NEGATIVE_SAMPLE_TYPE,
+    SEQUENTIAL_MISSED_SAFE_CHOICE_SAMPLE_TYPE,
+}
 
 
 class ConfigError(ValueError):
@@ -117,6 +123,11 @@ def run_sequential_safe_choice_calibration_candidate(
         config=config,
         reason_codes=reason_codes,
     )
+    sequential_hard_negative_input_count = sum(
+        1
+        for sample in sequential_samples
+        if sample.get("sequential_sample_type") == SEQUENTIAL_HARD_NEGATIVE_SAMPLE_TYPE
+    )
     raw_samples, raw_summaries = _collect_raw_samples(train_roots + dev_roots, reason_codes=reason_codes)
     sequential_context_ids = _sample_context_ids(sequential_samples)
     eval_context_ids = set()
@@ -130,7 +141,7 @@ def run_sequential_safe_choice_calibration_candidate(
     validation = config["validation"]
     if len(leaked_context_ids) > _int_value(validation.get("max_leaked_context_id_count")):
         _append_reason(reason_codes, "leaked_context_id_count_above_threshold")
-    if len(sequential_samples) < _int_value(
+    if sequential_hard_negative_input_count < _int_value(
         validation.get("min_sequential_hard_negative_preference_pair_count")
     ):
         _append_reason(reason_codes, "sequential_hard_negative_signal_insufficient")
@@ -141,6 +152,16 @@ def run_sequential_safe_choice_calibration_candidate(
         _append_reason(reason_codes, "hard_positive_added_count_nonzero")
 
     weighted_sequential = [_weighted_sequential_sample(sample, config=config) for sample in sequential_samples]
+    hard_negative_count = sum(
+        1
+        for sample in weighted_sequential
+        if sample.get("sequential_sample_type") == SEQUENTIAL_HARD_NEGATIVE_SAMPLE_TYPE
+    )
+    missed_safe_choice_count = sum(
+        1
+        for sample in weighted_sequential
+        if sample.get("sequential_sample_type") == SEQUENTIAL_MISSED_SAFE_CHOICE_SAMPLE_TYPE
+    )
     combined_samples = raw_samples + weighted_sequential
     combined_root = output_root / config["output_files"]["combined_mining_root"]
     _write_combined_raw_mining(
@@ -201,12 +222,15 @@ def run_sequential_safe_choice_calibration_candidate(
         "combined_mining_root": _display_path(combined_root, repo_root),
         "train_pair_count": len(combined_samples),
         "existing_raw_policy_regression_preference_pair_count": len(raw_samples),
-        "sequential_hard_negative_preference_pair_count": len(weighted_sequential),
+        "sequential_hard_negative_preference_pair_count": hard_negative_count,
+        "sequential_missed_safe_choice_preference_pair_count": missed_safe_choice_count,
+        "sequential_preference_pair_count": len(weighted_sequential),
         "sequential_hard_negative_context_id_count": len(sequential_context_ids),
         "leaked_context_id_count": len(leaked_context_ids),
         "leaked_context_ids": leaked_context_ids[:25],
         "hard_positive_added_count": hard_positive_added_count,
         "sequential_hard_negative_loss_weight": float(training.get("sequential_hard_negative_loss_weight", 1.0)),
+        "missed_safe_choice_sample_weight": float(training.get("missed_safe_choice_sample_weight", 1.0)),
         "path_cost_regression_negative_weight": float(training.get("path_cost_regression_negative_weight", 1.0)),
         "risk_regression_negative_weight": float(training.get("risk_regression_negative_weight", 1.0)),
         "best_seed": (raw_summary or {}).get("best_seed"),
@@ -248,7 +272,7 @@ def _collect_sequential_samples(
             label="sequential_hard_negative_samples",
             reason_codes=reason_codes,
         ):
-            if sample.get("sequential_sample_type") == "sequential_hard_negative_preference_pair":
+            if sample.get("sequential_sample_type") in SEQUENTIAL_SAMPLE_TYPES:
                 samples.append(sample)
     return samples, summaries
 
@@ -283,12 +307,16 @@ def _collect_raw_samples(
 def _weighted_sequential_sample(sample: dict[str, Any], *, config: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(sample)
     training = config["training"]
-    weight = float(training.get("sequential_hard_negative_loss_weight", 1.0))
-    reasons = _string_list(result.get("raw_policy_regression_reason_codes"))
-    if "path_cost_regression" in reasons:
-        weight *= float(training.get("path_cost_regression_negative_weight", 1.0))
-    if "risk_regression" in reasons:
-        weight *= float(training.get("risk_regression_negative_weight", 1.0))
+    sample_type = result.get("sequential_sample_type")
+    if sample_type == SEQUENTIAL_MISSED_SAFE_CHOICE_SAMPLE_TYPE:
+        weight = float(training.get("missed_safe_choice_sample_weight", 1.0))
+    else:
+        weight = float(training.get("sequential_hard_negative_loss_weight", 1.0))
+        reasons = _string_list(result.get("raw_policy_regression_reason_codes"))
+        if "path_cost_regression" in reasons:
+            weight *= float(training.get("path_cost_regression_negative_weight", 1.0))
+        if "risk_regression" in reasons:
+            weight *= float(training.get("risk_regression_negative_weight", 1.0))
     result["sample_weight"] = weight
     result["calibration_stage"] = "sequential_safe_choice_calibration"
     return result
@@ -326,6 +354,14 @@ def _write_combined_raw_mining(
         "raw_policy_regression_preference_pair_count": len(samples),
         "sequential_hard_negative_preference_pair_count": sum(
             _int_value(item.get("sequential_hard_negative_preference_pair_count"))
+            for item in sequential_summaries
+        ),
+        "sequential_missed_safe_choice_preference_pair_count": sum(
+            _int_value(item.get("sequential_missed_safe_choice_preference_pair_count"))
+            for item in sequential_summaries
+        ),
+        "sequential_preference_pair_count": sum(
+            _int_value(item.get("sequential_preference_pair_count"))
             for item in sequential_summaries
         ),
         "hard_positive_added_count": 0,

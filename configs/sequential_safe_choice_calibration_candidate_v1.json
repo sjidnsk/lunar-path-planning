@@ -25,9 +25,10 @@
     "action_label_loss_weight": 1.0,
     "preference_loss_weight": 1.0,
     "residual_negative_loss_weight": 1.0,
-    "sequential_hard_negative_loss_weight": 2.0,
-    "path_cost_regression_negative_weight": 2.0,
-    "risk_regression_negative_weight": 2.5,
+    "sequential_hard_negative_loss_weight": 1.0,
+    "missed_safe_choice_sample_weight": 1.0,
+    "path_cost_regression_negative_weight": 1.0,
+    "risk_regression_negative_weight": 1.0,
     "val_metric": "raw_policy_regression_count"
   },
   "raw_policy_generalization_config": {

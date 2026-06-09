@@ -1110,11 +1110,13 @@ and no performance claim.
 
 **Sequential Safe-Choice Calibration and Hard-Negative Refinement v1** uses the
 failed sequential canary root as training evidence instead of weakening the
-gate. The current sequential runner proved state continuity, but exposed 2
-rejected policy choices and cumulative path/risk regressions. This stage mines
-those rejected steps into sequence-aware hard-negative pairwise preferences:
-source/controlled-safe choice should score above the policy choice that caused
-path or risk regression.
+gate. The sequential runner proved state continuity, but exposed 2 rejected
+policy choices and cumulative path/risk regressions. The implemented mining now
+uses two non-action-label signals: hard-negative preferences for rejected
+path/risk-regressive choices, and missed-safe-choice preferences when a
+source-aligned step still has a gate-safe, better alternative. Source or
+controlled-safe choices remain preferred over unsafe alternatives; safe-better
+alternatives are preferred over overly conservative source-aligned choices.
 
 New artifacts are
 `configs/sequential_canary_failure_mining_v1.json`,
@@ -1129,16 +1131,24 @@ The calibrated closure writes
 `outputs/path_feedback_batch_sequential_safe_choice_candidate_v1/`, and
 `outputs/path_feedback_batch_policy_gated_sequential_safe_choice_rollout_v1/`.
 
-Acceptance requires the mining step to produce at least 2 sequential
-hard-negative preference pairs with `hard_positive_added_count=0`, the
-candidate to remain experimental only, and the rerun sequential canary to pass
-the same 36 episode / 108 step gate with 0 rejected choices and 0 cumulative
-path/risk regression. Passing readiness can advance only to
-`policy_gated_sequential_safe_choice_calibrated`. This is still calibration and
-canary evidence only: no formal PPO rollout, no PPO parameter update, no
-checkpoint publication or default policy replacement, no network/action-space
-or default-A* change, no distance-contract relaxation, no Ackermann-feasible
-trajectory claim, and no policy performance claim.
+Current evidence is useful but not a readiness pass. Mining from
+`outputs/path_feedback_batch_policy_gated_sequential_canary_rollout_v1/`
+produces 2 hard-negative pairs and 6 missed-safe-choice pairs with
+`hard_positive_added_count=0`; the balanced candidate remains experimental and
+removes the sequential safety failure. The rerun sequential canary reports
+36 episode / 108 step, 28 accepted-better takeover steps, all 6 families
+accepted, 0 rejected choices, 0 state-continuity violations, 0 episode
+fallbacks, and invalid-mask/fallback/safety/contract/path/risk/source-selection
+regression all at 0. It still fails the original multi-step coverage gate:
+`multi_step_accepted_episode_count=6` and
+`family_with_multi_step_accepted_episode_count=2`, with
+`next_required_change=sequential_opportunity_distribution_gap_requires_more_episodes`.
+Readiness must therefore remain blocked; the next stage should generate
+stronger sequential multi-step opportunity coverage rather than enter PPO. This
+is still calibration and canary evidence only: no formal PPO rollout, no PPO
+parameter update, no checkpoint publication or default policy replacement, no
+network/action-space or default-A* change, no distance-contract relaxation, no
+Ackermann-feasible trajectory claim, and no policy performance claim.
 
 ## Core Algorithm Development Chain
 

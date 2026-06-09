@@ -53,6 +53,7 @@ REJECTION_REPORT_SCHEMA_VERSION = "policy-gated-sequential-canary-rejection-repo
 
 NEXT_STATE_CONTINUITY = "sequential_canary_state_continuity_required"
 NEXT_OPPORTUNITY_GAP = "sequential_canary_opportunity_generation_gap"
+NEXT_OPPORTUNITY_DISTRIBUTION_GAP = "sequential_opportunity_distribution_gap_requires_more_episodes"
 NEXT_SAFE_ALIGNMENT = "policy_sequential_safe_choice_alignment_insufficient"
 NEXT_CUMULATIVE_REGRESSION = "sequential_canary_cumulative_regression_requires_policy_refinement"
 NEXT_PROVENANCE_REFRESH = "clean_head_evidence_refresh_required"
@@ -580,6 +581,18 @@ def _next_required_change(summary: dict[str, Any]) -> str | None:
         return NEXT_OPPORTUNITY_GAP
     if any(reason.startswith("cumulative_") or reason in {"invalid_action_mask_count_above_threshold", "fallback_or_open_grid_count_above_threshold"} for reason in reasons):
         return NEXT_CUMULATIVE_REGRESSION
+    multi_step_reasons = {
+        "multi_step_accepted_episode_count_below_threshold",
+        "family_with_multi_step_accepted_episode_count_below_threshold",
+    }
+    if (
+        reasons <= multi_step_reasons
+        and int(summary.get("canary_rejected_policy_choice_count", 0)) == 0
+        and int(summary.get("cumulative_path_cost_regression_count", 0)) == 0
+        and int(summary.get("cumulative_risk_regression_count", 0)) == 0
+        and int(summary.get("accepted_takeover_family_count", 0)) >= 1
+    ):
+        return NEXT_OPPORTUNITY_DISTRIBUTION_GAP
     if {
         "policy_takeover_step_count_below_threshold",
         "accepted_takeover_step_count_below_threshold",

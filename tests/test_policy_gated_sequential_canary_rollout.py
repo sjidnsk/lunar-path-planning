@@ -118,6 +118,58 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
         self.assertEqual(summary["cumulative_path_cost_regression_count"], 1)
         self.assertEqual(summary["cumulative_risk_regression_count"], 1)
 
+    def test_summary_attributes_safe_single_step_coverage_gap_to_opportunity_distribution(self) -> None:
+        from scripts.run_policy_gated_sequential_canary_rollout import summarize_sequential_steps
+
+        steps = []
+        for family_index, family in enumerate(
+            (
+                "mixed_stress_detour",
+                "near_blocked_safe_alt",
+                "high_risk_tradeoff",
+                "dense_choke_safe_bypass",
+                "channel_contrast",
+                "path_complexity_benefit",
+            )
+        ):
+            x = family_index * 3
+            source_step_1 = self._step(f"ep-{family_index}", 1, family, [x + 1, 1], [x + 2, 1], "source")
+            source_step_2 = self._step(f"ep-{family_index}", 2, family, [x + 2, 1], [x + 3, 1], "source")
+            source_step_1["decision_class"] = "source_aligned"
+            source_step_1["accepted_choice_value_class"] = None
+            source_step_2["decision_class"] = "source_aligned"
+            source_step_2["accepted_choice_value_class"] = None
+            steps.extend(
+                [
+                    self._step(f"ep-{family_index}", 0, family, [x, 1], [x + 1, 1], "policy"),
+                    source_step_1,
+                    source_step_2,
+                ]
+            )
+
+        summary, _ = summarize_sequential_steps(
+            steps,
+            config=self._config(
+                min_episode_count=6,
+                min_step_count=18,
+                min_completed_episode_count=6,
+                min_policy_takeover_step_count=6,
+                min_accepted_takeover_step_count=6,
+                min_accepted_better_step_count=6,
+                min_accepted_takeover_family_count=6,
+                min_multi_step_accepted_episode_count=6,
+                min_family_with_multi_step_accepted_episode_count=6,
+            ),
+        )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["canary_rejected_policy_choice_count"], 0)
+        self.assertEqual(summary["cumulative_path_cost_regression_count"], 0)
+        self.assertEqual(
+            summary["next_required_change"],
+            "sequential_opportunity_distribution_gap_requires_more_episodes",
+        )
+
     def test_readiness_advances_after_sequential_canary_passes(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         root = Path(tempfile.mkdtemp(prefix="sequential-readiness-"))
