@@ -118,6 +118,38 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
         self.assertEqual(summary["cumulative_path_cost_regression_count"], 1)
         self.assertEqual(summary["cumulative_risk_regression_count"], 1)
 
+    def test_episode_templates_and_step_spec_use_configured_scenario_set(self) -> None:
+        from scripts.run_policy_gated_sequential_canary_rollout import (
+            _episode_templates,
+            _write_step_scenario_spec,
+        )
+
+        config = {
+            "generation": {
+                "scenario_set": "policy_canary_sequential_multi_step_opportunity",
+                "template_scenario_id_prefix": "npz_canary_sequential_multi_step_opportunity",
+                "families": ["dense_choke_safe_bypass"],
+                "variant_suffixes": ["a"],
+                "initial_start_cell": [1, 6],
+            }
+        }
+        episodes = _episode_templates(config)
+        self.assertEqual(
+            episodes[0]["template_scenario_id"],
+            "npz_canary_sequential_multi_step_opportunity_dense_choke_safe_bypass_a",
+        )
+        spec_path = Path(tempfile.mkdtemp(prefix="seq-spec-")) / "spec.json"
+        _write_step_scenario_spec(
+            spec_path,
+            episodes,
+            {episodes[0]["episode_id"]: [3, 6]},
+            step_index=1,
+            scenario_set="policy_canary_sequential_multi_step_opportunity",
+        )
+        payload = json.loads(spec_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["scenario_set"], "policy_canary_sequential_multi_step_opportunity")
+        self.assertEqual(payload["scenarios"][0]["start_cell"], [3, 6])
+
     def test_summary_attributes_safe_single_step_coverage_gap_to_opportunity_distribution(self) -> None:
         from scripts.run_policy_gated_sequential_canary_rollout import summarize_sequential_steps
 
@@ -319,6 +351,86 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         summary = json.loads((source_root / "policy-training-readiness-review-summary.json").read_text())
         self.assertEqual(summary["training_readiness_status"], "policy_gated_sequential_safe_choice_calibrated")
+        self.assertEqual(summary["training_blockers"], [])
+
+    def test_readiness_advances_after_sequential_multi_step_opportunity_passes(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        root = Path(tempfile.mkdtemp(prefix="sequential-multi-step-readiness-"))
+        source_root = root / "source"
+        candidate_root = root / "candidate"
+        sequential_root = root / "sequential_multi_step_opportunity"
+        source_root.mkdir()
+        candidate_root.mkdir()
+        sequential_root.mkdir()
+        self._write_minimal_source_root(source_root)
+        self._write_raw_generalization_summary(candidate_root)
+        git_provenance = {"current": self._current_git_snapshot(repo_root), "current_matches_sources": True}
+        (sequential_root / "policy-gated-sequential-canary-rollout-summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "policy-gated-sequential-canary-rollout-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "evaluation_stage": "sequential_multi_step_opportunity",
+                    "batch_root": "outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1",
+                    "episode_count": 36,
+                    "step_count": 108,
+                    "completed_episode_count": 36,
+                    "policy_takeover_step_count": 48,
+                    "accepted_takeover_step_count": 48,
+                    "accepted_better_step_count": 48,
+                    "multi_step_accepted_episode_count": 18,
+                    "family_with_multi_step_accepted_episode_count": 6,
+                    "accepted_takeover_family_count": 6,
+                    "source_fallback_step_count": 0,
+                    "state_continuity_violation_count": 0,
+                    "episode_fallback_count": 0,
+                    "canary_rejected_policy_choice_count": 0,
+                    "cumulative_safety_regression_count": 0,
+                    "cumulative_contract_violation_count": 0,
+                    "cumulative_path_cost_regression_count": 0,
+                    "cumulative_risk_regression_count": 0,
+                    "cumulative_source_selection_regression_count": 0,
+                    "invalid_action_mask_count": 0,
+                    "fallback_or_open_grid_count": 0,
+                    "candidate_git_current_matches_sources": True,
+                    "checkpoint_metadata_git_current_matches_sources": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": git_provenance,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = subprocess.run(
+            [
+                "bash",
+                str(repo_root / "scripts" / "run_policy_training_readiness_review.sh"),
+                "--batch-root",
+                str(source_root),
+                "--config",
+                str(repo_root / "configs" / "policy_training_readiness_review_v1.json"),
+                "--raw-policy-generalization-evaluation-summary",
+                str(candidate_root / "raw-policy-generalization-evaluation-summary.json"),
+                "--policy-gated-sequential-canary-rollout-summary",
+                str(sequential_root / "policy-gated-sequential-canary-rollout-summary.json"),
+            ],
+            cwd=repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads((source_root / "policy-training-readiness-review-summary.json").read_text())
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "policy_gated_sequential_multi_step_opportunity_evaluated",
+        )
         self.assertEqual(summary["training_blockers"], [])
 
     def _step(

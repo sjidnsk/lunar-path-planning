@@ -1,0 +1,29 @@
+{
+  "schema_version": "path-feedback-batch-matrix/v1",
+  "description": "Static batch smoke for policy_canary_sequential_multi_step_opportunity templates before dynamic sequential rollout.",
+  "output_root": "outputs/path_feedback_batch_sequential_multi_step_opportunity_v1",
+  "defaults": {
+    "scenario_set": "policy_canary_sequential_multi_step_opportunity",
+    "diagnostic_profile": "execution",
+    "top_k": 3,
+    "anchor_projection_candidate_generation": true,
+    "anchor_projection_contract_aware_trainable_target_generation": true,
+    "anchor_projection_prefer_contract_safe_trainable_targets": true,
+    "anchor_projection_planner_validated_trainable_target_mining": true,
+    "anchor_projection_allow_planner_validated_distance_exception": true,
+    "anchor_projection_selection_path_cost_bonus": 6.0,
+    "anchor_projection_max_selection_path_cost_regression": 6.0,
+    "anchor_projection_max_selection_risk_regression": 0.5
+  },
+  "runs": [
+    {
+      "run_id": "sequential-multi-step-opportunity-k3-astar",
+      "planner_extra_args": [
+        "--planning-backend",
+        "astar",
+        "--simulate-tracking",
+        "--optimize-trajectory"
+      ]
+    }
+  ]
+}

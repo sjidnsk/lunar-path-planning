@@ -1150,6 +1150,59 @@ parameter update, no checkpoint publication or default policy replacement, no
 network/action-space or default-A* change, no distance-contract relaxation, no
 Ackermann-feasible trajectory claim, and no policy performance claim.
 
+**Sequential Multi-Step Opportunity Generation v1** addresses that remaining
+coverage gap. The point is not to make the policy more aggressive or weaken the
+gate. It first asks whether each family actually offers enough consecutive
+gate-safe and better alternatives, then reuses the same strict sequential gate
+to see whether the policy takes those opportunities.
+
+New artifacts are
+`configs/sequential_multi_step_opportunity_diagnosis_v1.json`,
+`configs/policy_gated_sequential_multi_step_opportunity_rollout_v1.json`,
+`configs/path_feedback_batch_sequential_multi_step_opportunity_v1.json`,
+`scripts/run_sequential_multi_step_opportunity_diagnosis.py/.sh`, and
+`scripts/run_sequential_multi_step_opportunity_closure.sh`. The new scenario
+set is `policy_canary_sequential_multi_step_opportunity`: 6 families x 6
+variants, with `npz_canary_sequential_multi_step_opportunity_*` template IDs.
+The sequential runner now reads `template_scenario_id_prefix` and
+`scenario_set` from config, so value/stability and multi-step opportunity roots
+do not share hard-coded templates.
+
+The diagnosis writes
+`sequential-multi-step-opportunity-diagnosis-summary.json`,
+`sequential-multi-step-opportunity-diagnostics.jsonl`, and
+`sequential-multi-step-opportunity-exclusion-report.json`. It reports the
+opportunity funnel per episode/step: alternative count, action-mask-valid,
+reachable, no-replan, no-fallback/open-grid, contract-safe, path/risk
+non-regressive, source-selection non-regressive, and safe-better alternative
+counts. It separates `opportunity_missing` from
+`policy_missed_existing_opportunity`; the former means scenario generation must
+be fixed, while the latter means objective/sample weighting should be refined.
+
+Acceptance requires 36 episodes / 108 steps, at least 12 episodes with
+multi-step opportunities, all 6 families with multi-step opportunities, at
+least 24 safe-better opportunity steps, 0 opportunity exclusions, and final
+sequential rollout with at least 24 accepted takeover steps, at least 12
+multi-step accepted episodes, all 6 families covered, 0 rejected choices, 0
+state-continuity violations, 0 episode fallbacks, and all cumulative
+regression gates at 0. Passing readiness can advance only to
+`policy_gated_sequential_multi_step_opportunity_evaluated`. It remains
+canary/shadow evidence: no formal PPO rollout, no PPO parameter update, no
+checkpoint publication or default replacement, no network/action-space/default
+A* change, no distance-contract relaxation, no Ackermann-feasible trajectory
+claim, and no performance claim.
+
+Current implementation evidence does not pass this stage yet. The first
+multi-step opportunity rollout produced 36 episodes / 108 steps and 26
+safe-better opportunity steps, but only 6 multi-step opportunity episodes across
+3 families. Final rollout also had 4 rejected policy choices and 4 cumulative
+path-cost regressions. The diagnosis root therefore points to
+`sequential_multi_step_opportunity_generation_gap`; the rollout summary points
+to sequential policy refinement after opportunity generation is fixed. Because
+tracked files changed after the evidence was generated, readiness also reports
+current git provenance mismatch. The next clean run must first improve
+scenario/geometry opportunity coverage, then refresh evidence from clean HEAD.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

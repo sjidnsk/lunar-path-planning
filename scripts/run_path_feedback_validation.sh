@@ -48,7 +48,8 @@ Options:
                         policy_canary, policy_canary_diversity,
                         policy_canary_opportunity_quality,
                         policy_canary_dense_choke_opportunity,
-                        policy_canary_value_stability, or all.
+                        policy_canary_value_stability,
+                        policy_canary_sequential_multi_step_opportunity, or all.
                         Default: smoke
   --scenario-spec-json PATH
                         Opt-in explicit scenario spec JSON used by sequential
@@ -332,10 +333,10 @@ PY
 fi
 
 case "$SCENARIO_SET" in
-  smoke|stress|holdout|raw_align_train|raw_align_val|raw_align_test|policy_canary|policy_canary_diversity|policy_canary_opportunity_quality|policy_canary_dense_choke_opportunity|policy_canary_value_stability|all)
+  smoke|stress|holdout|raw_align_train|raw_align_val|raw_align_test|policy_canary|policy_canary_diversity|policy_canary_opportunity_quality|policy_canary_dense_choke_opportunity|policy_canary_value_stability|policy_canary_sequential_multi_step_opportunity|all)
     ;;
   *)
-    echo "--scenario-set must be one of: smoke, stress, holdout, raw_align_train, raw_align_val, raw_align_test, policy_canary, policy_canary_diversity, policy_canary_opportunity_quality, policy_canary_dense_choke_opportunity, policy_canary_value_stability, all" >&2
+    echo "--scenario-set must be one of: smoke, stress, holdout, raw_align_train, raw_align_val, raw_align_test, policy_canary, policy_canary_diversity, policy_canary_opportunity_quality, policy_canary_dense_choke_opportunity, policy_canary_value_stability, policy_canary_sequential_multi_step_opportunity, all" >&2
     exit 2
     ;;
 esac

@@ -1,0 +1,42 @@
+{
+  "schema_version": "sequential-multi-step-opportunity-diagnosis-config/v1",
+  "description": "Diagnose whether each sequential canary step has gate-safe and better alternatives before policy scoring.",
+  "input_files": {
+    "summary": "policy-gated-sequential-canary-rollout-summary.json",
+    "episodes": "policy-gated-sequential-canary-episodes.jsonl",
+    "steps": "policy-gated-sequential-canary-steps.jsonl",
+    "rejection_report": "policy-gated-sequential-canary-rejection-report.json"
+  },
+  "output_files": {
+    "summary": "sequential-multi-step-opportunity-diagnosis-summary.json",
+    "diagnostics": "sequential-multi-step-opportunity-diagnostics.jsonl",
+    "exclusion_report": "sequential-multi-step-opportunity-exclusion-report.json"
+  },
+  "evaluation": {
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0,
+    "min_better_path_cost_delta": 0.25,
+    "min_better_risk_delta": 0.01,
+    "min_better_utility_delta": 0.005
+  },
+  "validation": {
+    "min_episode_count": 36,
+    "min_step_count": 108,
+    "min_multi_step_opportunity_episode_count": 12,
+    "min_family_with_multi_step_opportunity_count": 6,
+    "min_safe_better_alternative_step_count": 24,
+    "max_opportunity_exclusion_count": 0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_ppo_parameter_update",
+    "no_production_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

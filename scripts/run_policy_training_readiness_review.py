@@ -74,6 +74,9 @@ POLICY_GATED_SEQUENTIAL_CANARY_ROLLOUT_EVALUATED_ACTION = (
 POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION = (
     "policy_gated_sequential_safe_choice_calibrated"
 )
+POLICY_GATED_SEQUENTIAL_MULTI_STEP_OPPORTUNITY_EVALUATED_ACTION = (
+    "policy_gated_sequential_multi_step_opportunity_evaluated"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -1177,7 +1180,14 @@ def _review_metrics(
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
     elif sequential_canary_readiness["present"] and sequential_canary_readiness["completed"]:
-        if sequential_canary_readiness.get("sequential_safe_choice_calibrated"):
+        if sequential_canary_readiness.get("sequential_multi_step_opportunity_evaluated"):
+            training_readiness_status = (
+                POLICY_GATED_SEQUENTIAL_MULTI_STEP_OPPORTUNITY_EVALUATED_ACTION
+            )
+            recommended_next_action = (
+                POLICY_GATED_SEQUENTIAL_MULTI_STEP_OPPORTUNITY_EVALUATED_ACTION
+            )
+        elif sequential_canary_readiness.get("sequential_safe_choice_calibrated"):
             training_readiness_status = POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION
             recommended_next_action = POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION
         else:
@@ -2522,6 +2532,7 @@ def _policy_gated_sequential_canary_rollout_readiness(summary: dict[str, Any]) -
         "family_with_multi_step_accepted_episode_count": 0,
         "accepted_takeover_family_count": 0,
         "sequential_safe_choice_calibrated": False,
+        "sequential_multi_step_opportunity_evaluated": False,
     }
     if not summary:
         return empty
@@ -2599,6 +2610,7 @@ def _policy_gated_sequential_canary_rollout_readiness(summary: dict[str, Any]) -
             0,
         ),
         "sequential_safe_choice_calibrated": _sequential_safe_choice_calibrated(summary),
+        "sequential_multi_step_opportunity_evaluated": _sequential_multi_step_opportunity_evaluated(summary),
     }
 
 
@@ -2610,6 +2622,17 @@ def _sequential_safe_choice_calibrated(summary: dict[str, Any]) -> bool:
         stage == "sequential_safe_choice_calibration"
         or "sequential_safe_choice" in batch_root
         or "sequential_safe_choice" in source_root
+    )
+
+
+def _sequential_multi_step_opportunity_evaluated(summary: dict[str, Any]) -> bool:
+    stage = str(summary.get("calibration_stage") or summary.get("evaluation_stage") or "")
+    batch_root = str(summary.get("batch_root") or "")
+    source_root = str(summary.get("source_root") or "")
+    return (
+        stage == "sequential_multi_step_opportunity"
+        or "sequential_multi_step_opportunity" in batch_root
+        or "sequential_multi_step_opportunity" in source_root
     )
 
 

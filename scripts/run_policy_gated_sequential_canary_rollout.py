@@ -191,7 +191,13 @@ def run_policy_gated_sequential_canary_rollout(
         for step_index in range(horizon):
             step_root = batch_root / f"sequential-step-{step_index:02d}"
             spec_path = batch_root / "scenario-specs" / f"sequential-step-{step_index:02d}.json"
-            _write_step_scenario_spec(spec_path, episodes, starts, step_index=step_index)
+            _write_step_scenario_spec(
+                spec_path,
+                episodes,
+                starts,
+                step_index=step_index,
+                scenario_set=str(config["generation"].get("scenario_set", "policy_canary_value_stability")),
+            )
             completed = _run_step_path_feedback(
                 spec_path=spec_path,
                 step_root=step_root,
@@ -258,6 +264,7 @@ def run_policy_gated_sequential_canary_rollout(
             "source_root": _display_path(source_root, repo_root),
             "candidate_root": _display_path(candidate_root, repo_root),
             "batch_root": _display_path(batch_root, repo_root),
+            "evaluation_stage": config.get("evaluation_stage"),
             "candidate_git_current_matches_sources": candidate_git_current_matches_sources,
             "checkpoint_metadata_git_current_matches_sources": checkpoint_metadata_git_current_matches_sources,
             "experimental_checkpoint": True,
@@ -475,6 +482,7 @@ def _episode_templates(config: dict[str, Any]) -> list[dict[str, Any]]:
     families = generation.get("families") or list(FAMILIES)
     variants = generation.get("variant_suffixes") or list(VARIANT_SUFFIXES)
     initial_start_cell = generation.get("initial_start_cell", [1, 6])
+    template_prefix = str(generation.get("template_scenario_id_prefix", "npz_canary_value_stability"))
     episodes: list[dict[str, Any]] = []
     for family in families:
         for suffix in variants:
@@ -484,7 +492,7 @@ def _episode_templates(config: dict[str, Any]) -> list[dict[str, Any]]:
                     "episode_id": f"seq-{family}-{suffix}",
                     "scenario_group": str(family),
                     "variant_suffix": str(suffix),
-                    "template_scenario_id": f"npz_canary_value_stability_{family}_{suffix}",
+                    "template_scenario_id": f"{template_prefix}_{family}_{suffix}",
                     "initial_start_cell": list(initial_start_cell),
                 }
             )
@@ -497,6 +505,7 @@ def _write_step_scenario_spec(
     starts: dict[str, list[int]],
     *,
     step_index: int,
+    scenario_set: str = "policy_canary_value_stability",
 ) -> None:
     scenarios = []
     seed_base = 14000 + step_index * 1000
@@ -517,7 +526,7 @@ def _write_step_scenario_spec(
         json.dumps(
             {
                 "schema_version": "npz-validation-explicit-scenario-spec/v1",
-                "scenario_set": "policy_canary_value_stability",
+                "scenario_set": scenario_set,
                 "scenarios": scenarios,
             },
             indent=2,

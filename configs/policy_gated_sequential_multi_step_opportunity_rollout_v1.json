@@ -1,0 +1,85 @@
+{
+  "schema_version": "policy-gated-sequential-canary-rollout-config/v1",
+  "description": "Policy-gated sequential canary rollout over multi-step opportunity scenarios.",
+  "evaluation_stage": "sequential_multi_step_opportunity",
+  "input_files": {
+    "source_batch_summary": "batch-evaluation-summary.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "episodes": "policy-gated-sequential-canary-episodes.jsonl",
+    "steps": "policy-gated-sequential-canary-steps.jsonl",
+    "rejection_report": "policy-gated-sequential-canary-rejection-report.json",
+    "summary": "policy-gated-sequential-canary-rollout-summary.json"
+  },
+  "generation": {
+    "scenario_set": "policy_canary_sequential_multi_step_opportunity",
+    "template_scenario_id_prefix": "npz_canary_sequential_multi_step_opportunity",
+    "diagnostic_profile": "execution",
+    "top_k": 3,
+    "episode_horizon": 3,
+    "initial_start_cell": [1, 6],
+    "families": [
+      "mixed_stress_detour",
+      "near_blocked_safe_alt",
+      "high_risk_tradeoff",
+      "dense_choke_safe_bypass",
+      "channel_contrast",
+      "path_complexity_benefit"
+    ],
+    "variant_suffixes": ["a", "b", "c", "d", "e", "f"],
+    "planner_extra_args": [
+      "--planning-backend",
+      "astar",
+      "--simulate-tracking",
+      "--optimize-trajectory"
+    ]
+  },
+  "evaluation": {
+    "shadow_mode": true,
+    "hidden_size": 16,
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0,
+    "value_stability_evaluation": true,
+    "min_better_path_cost_delta": 0.25,
+    "min_better_risk_delta": 0.01,
+    "min_better_utility_delta": 0.005
+  },
+  "validation": {
+    "min_episode_count": 36,
+    "min_step_count": 108,
+    "min_completed_episode_count": 36,
+    "min_policy_takeover_step_count": 24,
+    "min_accepted_takeover_step_count": 24,
+    "min_accepted_better_step_count": 12,
+    "min_accepted_takeover_family_count": 6,
+    "min_multi_step_accepted_episode_count": 12,
+    "min_family_with_multi_step_accepted_episode_count": 6,
+    "max_state_continuity_violation_count": 0,
+    "max_episode_fallback_count": 0,
+    "max_canary_rejected_policy_choice_count": 0,
+    "max_invalid_action_mask_count": 0,
+    "max_fallback_or_open_grid_count": 0,
+    "max_cumulative_safety_regression_count": 0,
+    "max_cumulative_contract_violation_count": 0,
+    "max_cumulative_path_cost_regression_count": 0,
+    "max_cumulative_risk_regression_count": 0,
+    "max_cumulative_source_selection_regression_count": 0,
+    "require_candidate_git_current_match": true,
+    "allow_dirty_current_git_match": true
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_ppo_parameter_update",
+    "no_production_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_default_distance_contract_relaxation",
+    "no_policy_performance_claim",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

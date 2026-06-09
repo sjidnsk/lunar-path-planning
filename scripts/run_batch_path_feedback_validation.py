@@ -37,6 +37,7 @@ SCENARIO_SETS = {
     "policy_canary_opportunity_quality",
     "policy_canary_dense_choke_opportunity",
     "policy_canary_value_stability",
+    "policy_canary_sequential_multi_step_opportunity",
     "all",
 }
 DIAGNOSTIC_PROFILES = {"baseline", "execution", "iris", "all"}
