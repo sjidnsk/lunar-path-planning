@@ -1023,6 +1023,19 @@ publication or default replacement, no network/action-space/default-A* change,
 no distance-contract relaxation, no Ackermann-feasible trajectory claim, and no
 performance claim.
 
+Current clean-HEAD closure passes those gates. The full-family root
+`outputs/path_feedback_batch_policy_gated_canary_full_family_opportunity_v1/`
+reports `policy_decision_count=32`, `canary_opportunity_context_count=32`,
+`policy_changed_decision_count=18`, `canary_accepted_policy_choice_count=18`,
+`canary_rejected_policy_choice_count=0`, `scenario_family_count=6`,
+`family_with_acceptable_alternative_count=6`, `accepted_scenario_family_count=6`,
+`dense_choke_acceptable_alternative_count=8`, and
+`dense_choke_accepted_policy_choice_count=8`. Candidate/checkpoint provenance
+matches the current source, all regression gates remain 0, and readiness under
+`outputs/path_feedback_batch_dense_choke_opportunity_clean_src_v1/` is
+`training_readiness_status=policy_gated_canary_full_family_opportunity_evaluated`
+with `training_blockers=[]`.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

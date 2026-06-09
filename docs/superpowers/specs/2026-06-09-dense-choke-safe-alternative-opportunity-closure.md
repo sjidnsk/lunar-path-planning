@@ -36,6 +36,27 @@ action-mask 可消费、path/risk 不回退的 safe bypass alternative。
 - CAND: `outputs/path_feedback_batch_dense_choke_opportunity_candidate_v1/`
 - CANARY: `outputs/path_feedback_batch_policy_gated_canary_full_family_opportunity_v1/`
 
+## Clean Result
+
+Clean-HEAD closure passed:
+
+- Batch `failed_count=0`, fallback/open-grid=0.
+- Canary `status=passed`, `reason_codes=[]`.
+- `policy_decision_count=32`.
+- `canary_opportunity_context_count=32`.
+- `policy_changed_decision_count=18`.
+- `canary_accepted_policy_choice_count=18`.
+- `canary_rejected_policy_choice_count=0`.
+- `scenario_family_count=6`.
+- `family_with_acceptable_alternative_count=6`.
+- `accepted_scenario_family_count=6`.
+- `dense_choke_acceptable_alternative_count=8`.
+- `dense_choke_accepted_policy_choice_count=8`.
+- `canary_full_family_opportunity_passed=true`.
+- Candidate/checkpoint provenance matches current source.
+- controlled/raw regression and all invalid-mask/fallback/safety/contract/path/risk/source-selection gates are 0.
+- Readiness `training_readiness_status=policy_gated_canary_full_family_opportunity_evaluated`, `training_blockers=[]`.
+
 ## Acceptance
 
 - Batch `failed_count=0`; fallback/open-grid=0; safety regression=0.
