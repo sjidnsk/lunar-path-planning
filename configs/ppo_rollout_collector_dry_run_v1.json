@@ -1,0 +1,47 @@
+{
+  "schema_version": "ppo-rollout-collector-dry-run-config/v1",
+  "description": "Materialize policy-gated sequential canary policy takeovers as PPO dry-run RolloutEpisode input.",
+  "input_files": {
+    "steps": "policy-gated-sequential-canary-steps.jsonl",
+    "sequential_summary": "policy-gated-sequential-canary-rollout-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt"
+  },
+  "output_files": {
+    "episodes": "ppo-rollout-episodes.jsonl",
+    "transitions": "ppo-rollout-transitions.jsonl",
+    "summary": "ppo-rollout-collector-summary.json",
+    "rejection_report": "ppo-rollout-rejection-report.json",
+    "reward_audit": "ppo-rollout-reward-audit.json"
+  },
+  "evaluation": {
+    "hidden_size": 16
+  },
+  "reward": {
+    "better_choice_bonus": 1.0,
+    "path_improvement_weight": 1.0,
+    "risk_improvement_weight": 10.0,
+    "utility_improvement_weight": 1.0,
+    "gate_regression_penalty": 1.0
+  },
+  "validation": {
+    "min_ppo_trainable_transition_count": 24,
+    "max_source_fallback_trainable_count": 0,
+    "max_invalid_action_mask_count": 0,
+    "max_empty_action_mask_count": 0,
+    "max_missing_log_prob_count": 0,
+    "max_missing_value_count": 0,
+    "max_non_finite_reward_count": 0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_ppo_parameter_update",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_distance_contract_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_policy_performance_claim"
+  ]
+}

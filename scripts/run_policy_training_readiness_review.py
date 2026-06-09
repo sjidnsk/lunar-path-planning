@@ -77,6 +77,8 @@ POLICY_GATED_SEQUENTIAL_SAFE_CHOICE_CALIBRATED_ACTION = (
 POLICY_GATED_SEQUENTIAL_MULTI_STEP_OPPORTUNITY_EVALUATED_ACTION = (
     "policy_gated_sequential_multi_step_opportunity_evaluated"
 )
+PPO_ROLLOUT_COLLECTOR_DRY_RUN_EVALUATED_ACTION = "ppo_rollout_collector_dry_run_evaluated"
+PPO_ROLLOUT_COLLECTOR_SCHEMA_VERSION = "ppo-rollout-collector-summary/v1"
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -182,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional policy-gated-sequential-canary-rollout-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--ppo-rollout-collector-summary",
+        help="Optional ppo-rollout-collector-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -277,6 +283,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.policy_gated_sequential_canary_rollout_summary
         else batch_root / "policy-gated-sequential-canary-rollout-summary.json"
     )
+    ppo_collector_path = (
+        _resolve_path(args.ppo_rollout_collector_summary, repo_root)
+        if args.ppo_rollout_collector_summary
+        else batch_root / "ppo-rollout-collector-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -308,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         raw_generalization_path=raw_generalization_path,
         policy_canary_path=policy_canary_path,
         sequential_canary_path=sequential_canary_path,
+        ppo_collector_path=ppo_collector_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -414,6 +426,11 @@ def main(argv: list[str] | None = None) -> int:
             or args.policy_gated_sequential_canary_rollout_summary
             else None
         ),
+        "ppo_rollout_collector_summary": (
+            _display_path(ppo_collector_path, repo_root)
+            if ppo_collector_path.is_file() or args.ppo_rollout_collector_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -478,6 +495,7 @@ def analyze_policy_training_readiness_review(
     raw_generalization_path: Path,
     policy_canary_path: Path,
     sequential_canary_path: Path,
+    ppo_collector_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -491,6 +509,7 @@ def analyze_policy_training_readiness_review(
     raw_generalization_required: bool = False,
     policy_canary_required: bool = False,
     sequential_canary_required: bool = False,
+    ppo_collector_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -686,6 +705,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=sequential_canary_required,
     )
+    ppo_collector = _load_optional_source(
+        ppo_collector_path,
+        label="ppo_rollout_collector_summary",
+        expected_schema=PPO_ROLLOUT_COLLECTOR_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=ppo_collector_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -705,6 +733,7 @@ def analyze_policy_training_readiness_review(
             ("raw_policy_generalization_evaluation_summary", raw_generalization),
             ("policy_gated_canary_rollout_summary", policy_canary),
             ("policy_gated_sequential_canary_rollout_summary", sequential_canary),
+            ("ppo_rollout_collector_summary", ppo_collector),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -850,6 +879,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if ppo_collector:
+        source_git_matches.append(
+            _inspect_git(
+                ppo_collector,
+                label="ppo_rollout_collector_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -869,6 +908,7 @@ def analyze_policy_training_readiness_review(
         raw_generalization=raw_generalization,
         policy_canary=policy_canary,
         sequential_canary=sequential_canary,
+        ppo_collector=ppo_collector,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -945,6 +985,11 @@ def analyze_policy_training_readiness_review(
             if sequential_canary
             else None
         ),
+        "ppo_rollout_collector_summary_path": (
+            _display_path(ppo_collector_path, repo_root)
+            if ppo_collector
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -972,6 +1017,7 @@ def analyze_policy_training_readiness_review(
             "raw_policy_generalization_evaluation": _public_git(raw_generalization),
             "policy_gated_canary_rollout": _public_git(policy_canary),
             "policy_gated_sequential_canary_rollout": _public_git(sequential_canary),
+            "ppo_rollout_collector": _public_git(ppo_collector),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -1012,6 +1058,7 @@ def _review_metrics(
     raw_generalization: dict[str, Any],
     policy_canary: dict[str, Any],
     sequential_canary: dict[str, Any],
+    ppo_collector: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -1098,6 +1145,7 @@ def _review_metrics(
             "raw_policy_generalization_evaluation": raw_generalization,
             "policy_gated_canary_rollout": policy_canary,
             "policy_gated_sequential_canary_rollout": sequential_canary,
+            "ppo_rollout_collector": ppo_collector,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -1116,6 +1164,7 @@ def _review_metrics(
     sequential_canary_readiness = _policy_gated_sequential_canary_rollout_readiness(
         sequential_canary
     )
+    ppo_collector_readiness = _ppo_rollout_collector_readiness(ppo_collector)
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
         holdout=controlled_holdout,
@@ -1171,6 +1220,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in sequential_canary_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in ppo_collector_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -1179,6 +1230,9 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif ppo_collector_readiness["present"] and ppo_collector_readiness["completed"]:
+        training_readiness_status = PPO_ROLLOUT_COLLECTOR_DRY_RUN_EVALUATED_ACTION
+        recommended_next_action = PPO_ROLLOUT_COLLECTOR_DRY_RUN_EVALUATED_ACTION
     elif sequential_canary_readiness["present"] and sequential_canary_readiness["completed"]:
         if sequential_canary_readiness.get("sequential_multi_step_opportunity_evaluated"):
             training_readiness_status = (
@@ -1268,6 +1322,7 @@ def _review_metrics(
         "raw_policy_generalization_readiness": raw_generalization_readiness,
         "policy_gated_canary_rollout_readiness": policy_canary_readiness,
         "policy_gated_sequential_canary_rollout_readiness": sequential_canary_readiness,
+        "ppo_rollout_collector_readiness": ppo_collector_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -2634,6 +2689,72 @@ def _sequential_multi_step_opportunity_evaluated(summary: dict[str, Any]) -> boo
         or "sequential_multi_step_opportunity" in batch_root
         or "sequential_multi_step_opportunity" in source_root
     )
+
+
+def _ppo_rollout_collector_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "ppo_trainable_transition_count": 0,
+        "episode_count": 0,
+        "step_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "ppo_rollout_collector_not_passed")
+    for field, reason in (
+        ("episode_count", "ppo_rollout_collector_episode_count_zero"),
+        ("step_count", "ppo_rollout_collector_step_count_zero"),
+        ("ppo_trainable_transition_count", "ppo_trainable_transition_count_insufficient"),
+    ):
+        if _int_value_or_default(summary.get(field), 0) <= 0:
+            _append_reason(blockers, reason)
+    for field, reason in (
+        ("source_fallback_trainable_count", "ppo_rollout_collector_source_fallback_trainable"),
+        ("invalid_action_mask_count", "ppo_rollout_collector_invalid_action_mask"),
+        ("empty_action_mask_count", "ppo_rollout_collector_empty_action_mask"),
+        ("missing_log_prob_count", "ppo_logprob_value_missing"),
+        ("missing_value_count", "ppo_logprob_value_missing"),
+        ("non_finite_reward_count", "ppo_reward_contract_invalid"),
+        ("state_continuity_violation_count", "ppo_rollout_collector_state_continuity_violation"),
+        ("fallback_or_open_grid_count", "ppo_rollout_collector_fallback_or_open_grid"),
+        ("safety_regression_count", "ppo_rollout_collector_safety_regression"),
+        ("contract_violation_count", "ppo_rollout_collector_contract_violation"),
+        ("path_cost_regression_count", "ppo_rollout_collector_path_cost_regression"),
+        ("risk_regression_count", "ppo_rollout_collector_risk_regression"),
+        ("source_selection_regression_count", "ppo_rollout_collector_source_selection_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "ppo_rollout_collector_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "ppo_rollout_collector_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "ppo_rollout_collector_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "ppo_rollout_collector_formal_training_ready_claimed")
+    if summary.get("candidate_git_current_matches_sources") is False:
+        _append_reason(blockers, "ppo_rollout_collector_candidate_git_current_mismatch")
+    if summary.get("checkpoint_metadata_git_current_matches_sources") is False:
+        _append_reason(blockers, "ppo_rollout_collector_checkpoint_metadata_git_current_mismatch")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "ppo_trainable_transition_count": _int_value_or_default(
+            summary.get("ppo_trainable_transition_count"),
+            0,
+        ),
+        "episode_count": _int_value_or_default(summary.get("episode_count"), 0),
+        "step_count": _int_value_or_default(summary.get("step_count"), 0),
+    }
 
 
 def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str, Any]:

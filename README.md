@@ -1208,6 +1208,36 @@ mask, and 0 cumulative path/risk regression. Readiness currently reaches
 `policy_gated_sequential_multi_step_opportunity_evaluated` with
 `training_blockers=[]` when the closure is run from the current committed HEAD.
 
+## PPO Rollout Collector Dry-Run
+
+The next policy-training boundary is now **PPO rollout collection**, not PPO
+parameter update. The repository adds an opt-in dry-run collector that turns
+policy-controlled sequential canary takeover steps into existing
+`RolloutEpisode/RolloutTransition` records while keeping source-fallback steps
+diagnostic-only.
+
+New artifacts:
+
+- `configs/sequential_evidence_consistency_v1.json`
+- `configs/ppo_rollout_collector_dry_run_v1.json`
+- `scripts/run_sequential_evidence_consistency_check.py/.sh`
+- `scripts/run_ppo_rollout_collector_dry_run.py/.sh`
+- `scripts/run_ppo_rollout_collector_closure.sh`
+- `outputs/path_feedback_batch_ppo_rollout_collector_dry_run_v1/`
+
+Current dry-run evidence materializes 37 PPO-trainable transitions from the
+sequential multi-step canary root, with invalid/empty action mask counts,
+missing log-prob/value counts, non-finite reward count, and source-fallback
+trainable count all at 0. `ppo-rollout-episodes.jsonl` is readable through the
+existing rollout IO path and is validated with `validate_rollout_dataset`.
+
+This stage still does not execute PPO optimizer updates, publish checkpoints,
+replace the default policy, change network/action space/default A*, relax the
+distance contract, claim Ackermann-feasible trajectories, or treat IRIS/GCS
+diagnostics as training release evidence. Because collector code changes alter
+tracked files, final readiness must be refreshed from a clean committed HEAD
+before treating `ppo_rollout_collector_dry_run_evaluated` as current evidence.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

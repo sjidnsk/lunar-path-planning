@@ -1,0 +1,20 @@
+{
+  "schema_version": "sequential-evidence-consistency-config/v1",
+  "description": "Check that sequential final rollout and readiness evidence are consistent before PPO collector dry-run.",
+  "diagnosis_role": "preflight_only",
+  "input_files": {
+    "rollout_summary": "policy-gated-sequential-canary-rollout-summary.json",
+    "diagnosis_summary": "sequential-multi-step-opportunity-diagnosis-summary.json"
+  },
+  "validation": {
+    "require_readiness_status": "policy_gated_sequential_multi_step_opportunity_evaluated",
+    "require_diagnosis_summary": true
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_ppo_parameter_update",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_policy_performance_claim"
+  ]
+}
