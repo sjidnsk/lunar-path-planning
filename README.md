@@ -1230,13 +1230,16 @@ sequential multi-step canary root, with invalid/empty action mask counts,
 missing log-prob/value counts, non-finite reward count, and source-fallback
 trainable count all at 0. `ppo-rollout-episodes.jsonl` is readable through the
 existing rollout IO path and is validated with `validate_rollout_dataset`.
+The clean-HEAD closure also refreshes the upstream sequential SRC/CAND/SEQ roots
+before collector materialization, so readiness validate-only can consume
+matching provenance and reach
+`training_readiness_status=ppo_rollout_collector_dry_run_evaluated` with
+`training_blockers=[]`.
 
 This stage still does not execute PPO optimizer updates, publish checkpoints,
 replace the default policy, change network/action space/default A*, relax the
 distance contract, claim Ackermann-feasible trajectories, or treat IRIS/GCS
-diagnostics as training release evidence. Because collector code changes alter
-tracked files, final readiness must be refreshed from a clean committed HEAD
-before treating `ppo_rollout_collector_dry_run_evaluated` as current evidence.
+diagnostics as training release evidence.
 
 ## Core Algorithm Development Chain
 
