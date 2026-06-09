@@ -1,0 +1,95 @@
+{
+  "schema_version": "path-feedback-batch-matrix/v1",
+  "description": "Policy-gated canary full-family opportunity batch with dense-choke safe bypass variants.",
+  "output_root": "outputs/path_feedback_batch_policy_gated_canary_full_family_opportunity_v1",
+  "defaults": {
+    "diagnostic_profile": "execution",
+    "top_k": 3,
+    "anchor_projection_candidate_generation": true,
+    "anchor_projection_contract_aware_trainable_target_generation": true,
+    "anchor_projection_prefer_contract_safe_trainable_targets": true,
+    "anchor_projection_planner_validated_trainable_target_mining": true,
+    "anchor_projection_allow_planner_validated_distance_exception": true,
+    "anchor_projection_selection_path_cost_bonus": 6.0,
+    "anchor_projection_max_selection_path_cost_regression": 6.0,
+    "anchor_projection_max_selection_risk_regression": 0.5
+  },
+  "runs": [
+    {
+      "run_id": "policy-canary-full-family-opportunity-k3-astar",
+      "scenario_set": "policy_canary_opportunity_quality",
+      "planner_extra_args": [
+        "--planning-backend",
+        "astar",
+        "--simulate-tracking",
+        "--optimize-trajectory"
+      ]
+    },
+    {
+      "run_id": "policy-canary-full-family-opportunity-k3-channel-aware",
+      "scenario_set": "policy_canary_opportunity_quality",
+      "planner_extra_args": [
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0",
+        "--simulate-tracking",
+        "--optimize-trajectory"
+      ]
+    },
+    {
+      "run_id": "policy-canary-dense-choke-opportunity-k3-astar",
+      "scenario_set": "policy_canary_dense_choke_opportunity",
+      "planner_extra_args": [
+        "--planning-backend",
+        "astar",
+        "--simulate-tracking",
+        "--optimize-trajectory"
+      ]
+    },
+    {
+      "run_id": "policy-canary-dense-choke-opportunity-k3-channel-aware",
+      "scenario_set": "policy_canary_dense_choke_opportunity",
+      "planner_extra_args": [
+        "--planning-backend",
+        "channel_aware_astar",
+        "--channel-aware-neighborhood-radius-cells",
+        "1",
+        "--channel-aware-center-weight",
+        "1.0",
+        "--channel-aware-neighborhood-mean-weight",
+        "0.25",
+        "--channel-aware-neighborhood-max-weight",
+        "0.1",
+        "--channel-aware-high-cost-exposure-weight",
+        "0.5",
+        "--channel-aware-blocked-nearby-weight",
+        "0.5",
+        "--channel-aware-clearance-weight",
+        "0.25",
+        "--channel-aware-smoothness-weight",
+        "0.05",
+        "--channel-aware-high-cost-threshold",
+        "4.0",
+        "--simulate-tracking",
+        "--optimize-trajectory"
+      ]
+    }
+  ]
+}

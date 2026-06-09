@@ -993,6 +993,36 @@ provenance match, and readiness
 alternative and is a scenario/candidate opportunity-generation issue, not a
 policy gate regression.
 
+**Dense-Choke Safe Alternative Opportunity Closure v1** closes that last
+opportunity gap without relaxing the canary gate. It adds the dedicated
+`policy_canary_dense_choke_opportunity` scenario set, the full-family matrix
+`configs/path_feedback_batch_policy_gated_canary_full_family_opportunity_v1.json`,
+the evaluator config `configs/policy_gated_canary_full_family_opportunity_v1.json`,
+`scripts/run_dense_choke_safe_alternative_diagnosis.py/.sh`, and
+`scripts/run_dense_choke_safe_alternative_opportunity_closure.sh`.
+
+The dense-choke diagnosis writes
+`dense-choke-safe-alternative-diagnosis-summary.json`,
+`dense-choke-safe-alternative-diagnosis.md`, and
+`outputs/dense_choke_safe_alternative_visual_diagnostics_v1/index.html`. It
+reports candidate cell/action/source-action, path/risk delta, action-mask
+validity, source binding, and rejection reason counts. If dense choke still has
+no acceptable alternative, canary summary now returns
+`next_required_change=dense_choke_opportunity_generation_gap`; if it has a safe
+alternative but the policy remains source-aligned, the next change is policy
+alignment/calibration, not hard-positive expansion.
+
+Full-family acceptance requires 6 scenario families, 6 families with acceptable
+alternatives, 6 accepted families, `dense_choke_safe_bypass` acceptable and
+accepted counts above 0, at least 12 accepted policy choices, 0 rejected policy
+choices, and all controlled/raw invalid-mask, fallback, safety, contract,
+path/risk, and source-selection regression gates at 0. Passing readiness can
+advance only to `policy_gated_canary_full_family_opportunity_evaluated`. This
+is still controlled canary evidence: no formal PPO rollout, no checkpoint
+publication or default replacement, no network/action-space/default-A* change,
+no distance-contract relaxation, no Ackermann-feasible trajectory claim, and no
+performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

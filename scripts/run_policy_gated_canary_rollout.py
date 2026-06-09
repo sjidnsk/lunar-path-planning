@@ -43,7 +43,9 @@ NEXT_ACCEPTANCE_INSUFFICIENT = "policy_safe_alternative_acceptance_insufficient"
 NEXT_FAMILY_COVERAGE_INSUFFICIENT = "scenario_family_coverage_insufficient"
 NEXT_POLICY_GATE_REGRESSION = "policy_gate_regression_detected"
 NEXT_OPPORTUNITY_GENERATION_GAP = "canary_opportunity_generation_gap"
+NEXT_DENSE_CHOKE_OPPORTUNITY_GAP = "dense_choke_opportunity_generation_gap"
 NEXT_SAFE_CHOICE_ALIGNMENT = "policy_safe_choice_alignment_insufficient"
+DENSE_CHOKE_FAMILY = "dense_choke_safe_bypass"
 
 
 class ConfigError(ValueError):
@@ -270,6 +272,13 @@ def run_policy_gated_canary_rollout(
         }
     )
     missed_safe_choice_family_count = len(missed_safe_choice_families)
+    dense_choke_family_metrics = scenario_family_summary.get(DENSE_CHOKE_FAMILY, {})
+    dense_choke_acceptable_alternative_count = int(
+        dense_choke_family_metrics.get("acceptable_alternative_count", 0)
+    )
+    dense_choke_accepted_policy_choice_count = int(
+        dense_choke_family_metrics.get("canary_accepted_policy_choice_count", 0)
+    )
 
     controlled_regression_count = sum(
         1 for decision in decisions if decision.get("controlled_decision_class") == "regression"
@@ -385,6 +394,17 @@ def run_policy_gated_canary_rollout(
         and len(families_with_acceptable_alternative)
         >= min_family_with_acceptable_alternative_count
     )
+    full_family_opportunity_requested = (
+        min_scenario_family_count >= 6
+        and min_family_with_acceptable_alternative_count >= 6
+        and min_accepted_scenario_family_count >= 6
+    )
+    canary_full_family_opportunity_passed = (
+        canary_opportunity_quality_passed
+        and full_family_opportunity_requested
+        and dense_choke_acceptable_alternative_count > 0
+        and dense_choke_accepted_policy_choice_count > 0
+    )
     next_required_change = _next_required_change(
         reason_codes=reason_codes,
         opportunity_count=len(opportunities),
@@ -394,6 +414,7 @@ def run_policy_gated_canary_rollout(
         rejected_count=class_counts.get("canary_rejected_policy_choice", 0),
         controlled_regression_count=controlled_regression_count,
         family_with_acceptable_alternative_count=len(families_with_acceptable_alternative),
+        missing_acceptable_alternative_families=missing_acceptable_alternative_families,
         missed_safe_choice_count=source_aligned_with_acceptable_alternative_count,
     )
     summary = {
@@ -432,6 +453,8 @@ def run_policy_gated_canary_rollout(
             families_with_acceptable_alternative
         ),
         "families_with_acceptable_alternative": families_with_acceptable_alternative,
+        "dense_choke_acceptable_alternative_count": dense_choke_acceptable_alternative_count,
+        "dense_choke_accepted_policy_choice_count": dense_choke_accepted_policy_choice_count,
         "missing_acceptable_alternative_family_count": len(
             missing_acceptable_alternative_families
         ),
@@ -448,6 +471,7 @@ def run_policy_gated_canary_rollout(
         "scenario_family_summary": scenario_family_summary,
         "canary_diversity_passed": canary_diversity_passed,
         "canary_opportunity_quality_passed": canary_opportunity_quality_passed,
+        "canary_full_family_opportunity_passed": canary_full_family_opportunity_passed,
         "controlled_regression_count": controlled_regression_count,
         "raw_policy_regression_count": raw_policy_regression_count,
         "invalid_action_mask_count": invalid_action_mask_count,
@@ -492,6 +516,8 @@ def run_policy_gated_canary_rollout(
         "family_with_acceptable_alternative_count": len(
             families_with_acceptable_alternative
         ),
+        "dense_choke_acceptable_alternative_count": dense_choke_acceptable_alternative_count,
+        "dense_choke_accepted_policy_choice_count": dense_choke_accepted_policy_choice_count,
         "missing_acceptable_alternative_families": missing_acceptable_alternative_families,
         "source_aligned_with_acceptable_alternative_count": (
             source_aligned_with_acceptable_alternative_count
@@ -589,6 +615,7 @@ def _next_required_change(
     rejected_count: int,
     controlled_regression_count: int,
     family_with_acceptable_alternative_count: int = 0,
+    missing_acceptable_alternative_families: list[str] | None = None,
     missed_safe_choice_count: int = 0,
 ) -> str | None:
     if not reason_codes:
@@ -596,6 +623,8 @@ def _next_required_change(
     if set(reason_codes) <= {"candidate_git_current_mismatch", "checkpoint_metadata_git_current_mismatch"}:
         return NEXT_PROVENANCE_REFRESH
     if "family_with_acceptable_alternative_count_below_threshold" in reason_codes:
+        if DENSE_CHOKE_FAMILY in set(missing_acceptable_alternative_families or []):
+            return NEXT_DENSE_CHOKE_OPPORTUNITY_GAP
         return NEXT_OPPORTUNITY_GENERATION_GAP
     if missed_safe_choice_count > 0 and (
         "policy_changed_decision_count_below_threshold" in reason_codes

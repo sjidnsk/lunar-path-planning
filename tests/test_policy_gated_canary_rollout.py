@@ -695,6 +695,78 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
         )
         self.assertEqual(summary["training_blockers"], [])
 
+    def test_dense_choke_missing_acceptable_alternative_gets_specific_next_change(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 2,
+                "min_canary_opportunity_context_count": 2,
+                "min_policy_changed_decision_count": 1,
+                "min_canary_accepted_policy_choice_count": 1,
+                "min_scenario_family_count": 2,
+                "min_family_with_acceptable_alternative_count": 2,
+                "min_accepted_scenario_family_count": 1,
+            },
+            output_filename_prefix="policy-gated-canary-full-family",
+        )
+        self._write_artifacts(
+            scenario_groups=("near_blocked_safe_alt", "dense_choke_safe_bypass"),
+        )
+        summary_path = self.canary_root / "canary-run" / "path-feedback-summary.json"
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        payload["scenarios"][1]["path_feedback"]["candidates"][1]["candidate_generation"][
+            "source_selection_quality_regression"
+        ] = True
+        summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_canary()
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.canary_root / "policy-gated-canary-full-family-rollout-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["missing_acceptable_alternative_families"], ["dense_choke_safe_bypass"])
+        self.assertEqual(summary["next_required_change"], "dense_choke_opportunity_generation_gap")
+
+    def test_readiness_advances_after_full_family_opportunity_passes(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 6,
+                "min_canary_opportunity_context_count": 6,
+                "min_policy_changed_decision_count": 6,
+                "min_canary_accepted_policy_choice_count": 6,
+                "min_scenario_family_count": 6,
+                "min_family_with_acceptable_alternative_count": 6,
+                "min_accepted_scenario_family_count": 6,
+            },
+        )
+        self._write_artifacts(
+            scenario_groups=(
+                "mixed_stress_detour",
+                "near_blocked_safe_alt",
+                "channel_contrast",
+                "high_risk_tradeoff",
+                "dense_choke_safe_bypass",
+                "path_complexity_benefit",
+            )
+        )
+        self.assertEqual(self._run_canary().returncode, 0)
+
+        completed = self._run_readiness()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.source_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "policy_gated_canary_full_family_opportunity_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
