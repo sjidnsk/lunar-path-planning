@@ -406,6 +406,9 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
         missing_context_id: bool,
         replan_required: bool = False,
         quality_regression: bool = False,
+        path_cost: float | None = None,
+        risk: float | None = None,
+        utility: float | None = None,
     ) -> dict:
         candidate = {
             "action_index": action_index,
@@ -417,9 +420,9 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
             "reachable": True,
             "replan_required": replan_required,
             "open_grid_fallback_used": False,
-            "path_cost": 10.0 - action_index,
-            "risk": 0.1,
-            "utility": 0.5 + action_index,
+            "path_cost": 10.0 - action_index if path_cost is None else path_cost,
+            "risk": 0.1 if risk is None else risk,
+            "utility": 0.5 + action_index if utility is None else utility,
             "platform_goal_feasibility": {"contract_reachable": True},
             "candidate_generation": {
                 "source_selection_status": "source_selected" if source_selected else "not_source_selected",
@@ -764,6 +767,150 @@ class PolicyGatedCanaryRolloutTests(unittest.TestCase):
         self.assertEqual(
             summary["training_readiness_status"],
             "policy_gated_canary_full_family_opportunity_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+
+    def test_value_stability_reports_equal_and_better_accepted_choices(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 2,
+                "min_canary_opportunity_context_count": 2,
+                "min_policy_changed_decision_count": 2,
+                "min_canary_accepted_policy_choice_count": 2,
+                "min_scenario_family_count": 2,
+                "min_family_with_acceptable_alternative_count": 2,
+                "min_accepted_scenario_family_count": 2,
+                "min_accepted_better_choice_count": 1,
+                "min_accepted_better_family_count": 1,
+            },
+            output_filename_prefix="policy-gated-canary-value-stability",
+        )
+        payload = json.loads(self.config.read_text(encoding="utf-8"))
+        payload["evaluation"].update(
+            {
+                "value_stability_evaluation": True,
+                "min_better_path_cost_delta": 0.25,
+                "min_better_risk_delta": 0.01,
+                "min_better_utility_delta": 0.005,
+            }
+        )
+        self.config.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._write_artifacts(scenario_groups=("value_family_a", "value_family_b"))
+        summary_path = self.canary_root / "canary-run" / "path-feedback-summary.json"
+        batch = json.loads(summary_path.read_text(encoding="utf-8"))
+        first = batch["scenarios"][0]["path_feedback"]["candidates"]
+        first[0].update({"path_cost": 10.0, "risk": 0.1, "utility": 0.50})
+        first[1].update({"path_cost": 9.5, "risk": 0.1, "utility": 0.50})
+        second = batch["scenarios"][1]["path_feedback"]["candidates"]
+        second[0].update({"path_cost": 10.0, "risk": 0.1, "utility": 0.50})
+        second[1].update({"path_cost": 9.9, "risk": 0.1, "utility": 0.502})
+        summary_path.write_text(json.dumps(batch, indent=2), encoding="utf-8")
+
+        completed = self._run_canary()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.canary_root / "policy-gated-canary-value-stability-rollout-summary.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertTrue(summary["canary_value_stability_passed"])
+        self.assertEqual(summary["accepted_better_choice_count"], 1)
+        self.assertEqual(summary["accepted_equal_choice_count"], 1)
+        self.assertEqual(summary["accepted_better_family_count"], 1)
+        self.assertEqual(summary["accepted_value_delta_summary"]["path_cost_delta"]["min"], -0.5)
+        decisions = [
+            json.loads(line)
+            for line in (self.canary_root / "policy-gated-canary-value-stability-decisions.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            [item["accepted_choice_value_class"] for item in decisions],
+            ["accepted_better", "accepted_equal"],
+        )
+
+    def test_value_stability_insufficient_better_choices_gets_specific_next_change(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 1,
+                "min_canary_opportunity_context_count": 1,
+                "min_policy_changed_decision_count": 1,
+                "min_canary_accepted_policy_choice_count": 1,
+                "min_family_with_acceptable_alternative_count": 1,
+                "min_accepted_scenario_family_count": 1,
+                "min_accepted_better_choice_count": 1,
+                "min_accepted_better_family_count": 1,
+            },
+            output_filename_prefix="policy-gated-canary-value-stability",
+        )
+        payload = json.loads(self.config.read_text(encoding="utf-8"))
+        payload["evaluation"].update({"value_stability_evaluation": True})
+        self.config.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._write_artifacts()
+        summary_path = self.canary_root / "canary-run" / "path-feedback-summary.json"
+        batch = json.loads(summary_path.read_text(encoding="utf-8"))
+        batch["scenarios"][0]["path_feedback"]["candidates"][0].update(
+            {"path_cost": 10.0, "risk": 0.1, "utility": 0.50}
+        )
+        batch["scenarios"][0]["path_feedback"]["candidates"][1].update(
+            {"path_cost": 9.9, "risk": 0.1, "utility": 0.502}
+        )
+        summary_path.write_text(json.dumps(batch, indent=2), encoding="utf-8")
+
+        completed = self._run_canary()
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.canary_root / "policy-gated-canary-value-stability-rollout-summary.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn("accepted_better_choice_count_below_threshold", summary["reason_codes"])
+        self.assertEqual(
+            summary["next_required_change"],
+            "policy_value_alignment_or_objective_refinement_required",
+        )
+
+    def test_readiness_advances_after_value_stability_passes(self) -> None:
+        self.config = self._write_canary_config(
+            validation_overrides={
+                "min_policy_decision_count": 6,
+                "min_canary_opportunity_context_count": 6,
+                "min_policy_changed_decision_count": 6,
+                "min_canary_accepted_policy_choice_count": 6,
+                "min_scenario_family_count": 6,
+                "min_family_with_acceptable_alternative_count": 6,
+                "min_accepted_scenario_family_count": 6,
+                "min_accepted_better_choice_count": 6,
+                "min_accepted_better_family_count": 6,
+            },
+        )
+        payload = json.loads(self.config.read_text(encoding="utf-8"))
+        payload["evaluation"].update({"value_stability_evaluation": True})
+        self.config.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._write_artifacts(
+            scenario_groups=(
+                "mixed_stress_detour",
+                "near_blocked_safe_alt",
+                "channel_contrast",
+                "high_risk_tradeoff",
+                "dense_choke_safe_bypass",
+                "path_complexity_benefit",
+            )
+        )
+        self.assertEqual(self._run_canary().returncode, 0)
+
+        completed = self._run_readiness()
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.source_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "policy_gated_canary_value_stability_evaluated",
         )
         self.assertEqual(summary["training_blockers"], [])
 

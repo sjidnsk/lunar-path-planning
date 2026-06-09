@@ -1036,6 +1036,48 @@ matches the current source, all regression gates remain 0, and readiness under
 `training_readiness_status=policy_gated_canary_full_family_opportunity_evaluated`
 with `training_blockers=[]`.
 
+**Current-HEAD Evidence Refresh + Canary Value/Stability Evaluation v1** moves
+the canary question from “can the policy safely choose a different candidate?”
+to “does that safe change appear often enough, across families, and does it
+carry measurable path/risk/utility value?” It first requires the current HEAD
+full-family canary evidence to be refreshed so provenance no longer reports
+`current_git_provenance_mismatch`; only then does it run the new value/stability
+closure.
+
+This stage adds the `policy_canary_value_stability` scenario set: 6 scenario
+families, 6 geometry variants per family, and two planning backends in the
+matrix for 72 canary opportunity contexts. The new artifacts are
+`configs/path_feedback_batch_policy_gated_canary_value_stability_v1.json`,
+`configs/policy_gated_canary_value_stability_v1.json`, and
+`scripts/run_canary_value_stability_closure.sh`. The closure writes SRC,
+candidate, and canary roots under
+`outputs/path_feedback_batch_value_stability_clean_src_v1/`,
+`outputs/path_feedback_batch_value_stability_candidate_v1/`, and
+`outputs/path_feedback_batch_policy_gated_canary_value_stability_v1/`.
+
+The canary summary now reports `accepted_equal_choice_count`,
+`accepted_better_choice_count`, `accepted_better_family_count`,
+`policy_change_rate`, `accepted_choice_rate`, `accepted_value_delta_summary`,
+`family_value_stability_summary`, and `canary_value_stability_passed`.
+`accepted_better` is stricter than “accepted”: it must first pass all canary
+gates and then improve path cost by at least 0.25, risk by at least 0.01, or
+utility by at least 0.005. If safe alternatives are missing, the next change is
+`canary_value_opportunity_generation_gap`; if safe accepted choices exist but
+better choices are insufficient, the next change is
+`policy_value_alignment_or_objective_refinement_required`.
+
+Acceptance requires 6 families, at least 72 opportunity contexts, 6 families
+with acceptable alternatives, accepted choices in all 6 families, at least 24
+accepted choices, at least 8 better choices across at least 3 families, dense
+choke accepted count above 0, 0 rejected choices, and controlled/raw
+regression, invalid action mask, fallback/open-grid, safety, contract,
+path/risk, and source-selection regression all at 0. Passing readiness can
+advance only to `policy_gated_canary_value_stability_evaluated`. This remains
+experimental canary evidence only: no formal PPO rollout, no checkpoint
+publication or default replacement, no network/action-space/default-A* change,
+no distance-contract relaxation, no Ackermann-feasible trajectory claim, no
+IRIS/GCS/path-planner diagnostic-as-training release, and no performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

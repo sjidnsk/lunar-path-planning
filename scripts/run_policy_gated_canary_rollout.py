@@ -17,6 +17,7 @@ from run_scenario_disjoint_policy_rollout_evaluation import (
     _collect_holdout_scenarios,
     _display_path,
     _fallback_or_open_grid_count,
+    _float_or_none,
     _int_value,
     _regression_reasons,
     _score_scenarios,
@@ -45,6 +46,8 @@ NEXT_POLICY_GATE_REGRESSION = "policy_gate_regression_detected"
 NEXT_OPPORTUNITY_GENERATION_GAP = "canary_opportunity_generation_gap"
 NEXT_DENSE_CHOKE_OPPORTUNITY_GAP = "dense_choke_opportunity_generation_gap"
 NEXT_SAFE_CHOICE_ALIGNMENT = "policy_safe_choice_alignment_insufficient"
+NEXT_VALUE_OPPORTUNITY_GAP = "canary_value_opportunity_generation_gap"
+NEXT_VALUE_ALIGNMENT = "policy_value_alignment_or_objective_refinement_required"
 DENSE_CHOKE_FAMILY = "dense_choke_safe_bypass"
 
 
@@ -223,8 +226,13 @@ def run_policy_gated_canary_rollout(
             _append_reason(reason_codes, "policy_canary_scoring_failed")
             scoring_error = str(exc)
 
-    decisions = [_canary_decision_record(decision) for decision in raw_decisions]
+    decisions = [_canary_decision_record(decision, config=base_config) for decision in raw_decisions]
     class_counts = Counter(decision["decision_class"] for decision in decisions)
+    value_class_counts = Counter(
+        decision.get("accepted_choice_value_class")
+        for decision in decisions
+        if decision.get("decision_class") == "canary_accepted_policy_choice"
+    )
     rejection_reason_counts: Counter[str] = Counter()
     for decision in decisions:
         if decision["decision_class"] == "canary_rejected_policy_choice":
@@ -278,6 +286,18 @@ def run_policy_gated_canary_rollout(
     )
     dense_choke_accepted_policy_choice_count = int(
         dense_choke_family_metrics.get("canary_accepted_policy_choice_count", 0)
+    )
+    accepted_better_family_count = sum(
+        1
+        for metrics in scenario_family_summary.values()
+        if int(metrics.get("accepted_better_choice_count", 0)) > 0
+    )
+    accepted_value_delta_summary = _value_delta_summary(
+        [
+            decision
+            for decision in decisions
+            if decision.get("decision_class") == "canary_accepted_policy_choice"
+        ]
     )
 
     controlled_regression_count = sum(
@@ -378,6 +398,21 @@ def run_policy_gated_canary_rollout(
         validation.get("max_source_selection_regression_count")
     ):
         _append_reason(reason_codes, "source_selection_regression")
+    if (
+        "max_raw_policy_regression_count" in validation
+        and raw_policy_regression_count > _int_value(validation.get("max_raw_policy_regression_count"))
+    ):
+        _append_reason(reason_codes, "raw_policy_regression")
+    min_accepted_better_choice_count = _int_value(
+        validation.get("min_accepted_better_choice_count")
+    )
+    min_accepted_better_family_count = _int_value(
+        validation.get("min_accepted_better_family_count")
+    )
+    if value_class_counts.get("accepted_better", 0) < min_accepted_better_choice_count:
+        _append_reason(reason_codes, "accepted_better_choice_count_below_threshold")
+    if accepted_better_family_count < min_accepted_better_family_count:
+        _append_reason(reason_codes, "accepted_better_family_count_below_threshold")
 
     status = "failed" if reason_codes else "passed"
     diversity_requested = min_scenario_family_count > 0 or min_accepted_scenario_family_count > 0
@@ -405,6 +440,16 @@ def run_policy_gated_canary_rollout(
         and dense_choke_acceptable_alternative_count > 0
         and dense_choke_accepted_policy_choice_count > 0
     )
+    value_stability_requested = bool(config["evaluation"].get("value_stability_evaluation")) or (
+        min_accepted_better_choice_count > 0 or min_accepted_better_family_count > 0
+    )
+    canary_value_stability_passed = (
+        status == "passed"
+        and value_stability_requested
+        and canary_opportunity_quality_passed
+        and value_class_counts.get("accepted_better", 0) >= min_accepted_better_choice_count
+        and accepted_better_family_count >= min_accepted_better_family_count
+    )
     next_required_change = _next_required_change(
         reason_codes=reason_codes,
         opportunity_count=len(opportunities),
@@ -416,7 +461,13 @@ def run_policy_gated_canary_rollout(
         family_with_acceptable_alternative_count=len(families_with_acceptable_alternative),
         missing_acceptable_alternative_families=missing_acceptable_alternative_families,
         missed_safe_choice_count=source_aligned_with_acceptable_alternative_count,
+        value_stability_requested=value_stability_requested,
     )
+    policy_changed_decision_count = class_counts.get("canary_accepted_policy_choice", 0) + class_counts.get(
+        "canary_rejected_policy_choice",
+        0,
+    )
+    accepted_count = class_counts.get("canary_accepted_policy_choice", 0)
     summary = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "generated_at": _utc_now(),
@@ -432,17 +483,42 @@ def run_policy_gated_canary_rollout(
         "opportunity_summary_path": _display_path(output_paths["opportunity_summary"], repo_root),
         "policy_decision_count": len(decisions),
         "canary_opportunity_context_count": len(opportunities),
-        "policy_changed_decision_count": class_counts.get("canary_accepted_policy_choice", 0)
-        + class_counts.get("canary_rejected_policy_choice", 0),
+        "policy_changed_decision_count": policy_changed_decision_count,
+        "policy_change_rate": (
+            policy_changed_decision_count / len(decisions) if decisions else 0.0
+        ),
         "source_aligned_count": class_counts.get("source_aligned", 0),
         "canary_accepted_policy_choice_count": class_counts.get(
             "canary_accepted_policy_choice",
             0,
         ),
+        "accepted_choice_rate": accepted_count / len(decisions) if decisions else 0.0,
         "canary_rejected_policy_choice_count": class_counts.get(
             "canary_rejected_policy_choice",
             0,
         ),
+        "accepted_equal_choice_count": value_class_counts.get("accepted_equal", 0),
+        "accepted_better_choice_count": value_class_counts.get("accepted_better", 0),
+        "accepted_better_family_count": accepted_better_family_count,
+        "accepted_value_delta_summary": accepted_value_delta_summary,
+        "family_value_stability_summary": {
+            family: {
+                "accepted_equal_choice_count": metrics["accepted_equal_choice_count"],
+                "accepted_better_choice_count": metrics["accepted_better_choice_count"],
+                "policy_change_rate": (
+                    metrics["policy_changed_decision_count"] / metrics["policy_decision_count"]
+                    if metrics["policy_decision_count"]
+                    else 0.0
+                ),
+                "accepted_choice_rate": (
+                    metrics["canary_accepted_policy_choice_count"]
+                    / metrics["policy_decision_count"]
+                    if metrics["policy_decision_count"]
+                    else 0.0
+                ),
+            }
+            for family, metrics in scenario_family_summary.items()
+        },
         "canary_rejection_reason_counts": dict(sorted(rejection_reason_counts.items())),
         "scenario_family_count": scenario_family_count,
         "accepted_scenario_family_count": accepted_scenario_family_count,
@@ -472,6 +548,7 @@ def run_policy_gated_canary_rollout(
         "canary_diversity_passed": canary_diversity_passed,
         "canary_opportunity_quality_passed": canary_opportunity_quality_passed,
         "canary_full_family_opportunity_passed": canary_full_family_opportunity_passed,
+        "canary_value_stability_passed": canary_value_stability_passed,
         "controlled_regression_count": controlled_regression_count,
         "raw_policy_regression_count": raw_policy_regression_count,
         "invalid_action_mask_count": invalid_action_mask_count,
@@ -555,6 +632,7 @@ def _canary_opportunities(
                     "policy_target_cell": candidate.get("policy_target_cell"),
                     "path_cost_delta": _delta(candidate.get("path_cost"), source.get("path_cost")),
                     "risk_delta": _delta(candidate.get("risk"), source.get("risk")),
+                    "utility_delta": _delta(candidate.get("utility"), source.get("utility")),
                     "canary_gate_acceptable": not regression_reasons,
                     "canary_gate_rejection_reason_codes": list(regression_reasons),
                 }
@@ -576,7 +654,11 @@ def _canary_opportunities(
     return opportunities
 
 
-def _canary_decision_record(decision: dict[str, Any]) -> dict[str, Any]:
+def _canary_decision_record(
+    decision: dict[str, Any],
+    *,
+    config: dict[str, Any],
+) -> dict[str, Any]:
     raw_reasons = list(decision.get("raw_policy_regression_reason_codes", []))
     raw_changed = (
         decision.get("raw_policy_selected_context_id") != decision.get("source_selected_context_id")
@@ -600,10 +682,41 @@ def _canary_decision_record(decision: dict[str, Any]) -> dict[str, Any]:
     record["decision_class"] = decision_class
     record["canary_rejection_reason_codes"] = rejection_reasons
     record["canary_gate_passed"] = decision_class == "canary_accepted_policy_choice"
+    record["accepted_choice_value_class"] = _accepted_choice_value_class(
+        record,
+        config=config,
+    )
     record["publishes_checkpoint"] = False
     record["replaces_default_policy"] = False
     record["performance_claimed"] = False
     return record
+
+
+def _accepted_choice_value_class(
+    decision: dict[str, Any],
+    *,
+    config: dict[str, Any],
+) -> str | None:
+    if decision.get("decision_class") != "canary_accepted_policy_choice":
+        return None
+    blocked_reasons = set(decision.get("controlled_regression_reason_codes", [])) | set(
+        decision.get("canary_rejection_reason_codes", [])
+    )
+    if blocked_reasons:
+        return None
+    evaluation = config.get("evaluation", {})
+    path_threshold = float(evaluation.get("min_better_path_cost_delta", 0.25))
+    risk_threshold = float(evaluation.get("min_better_risk_delta", 0.01))
+    utility_threshold = float(evaluation.get("min_better_utility_delta", 0.005))
+    path_delta = _float_or_none(decision.get("policy_selected_path_cost_delta"))
+    risk_delta = _float_or_none(decision.get("policy_selected_risk_delta"))
+    utility_delta = _float_or_none(decision.get("policy_selected_utility_delta"))
+    better = (
+        (path_delta is not None and path_delta <= -path_threshold)
+        or (risk_delta is not None and risk_delta <= -risk_threshold)
+        or (utility_delta is not None and utility_delta >= utility_threshold)
+    )
+    return "accepted_better" if better else "accepted_equal"
 
 
 def _next_required_change(
@@ -617,11 +730,19 @@ def _next_required_change(
     family_with_acceptable_alternative_count: int = 0,
     missing_acceptable_alternative_families: list[str] | None = None,
     missed_safe_choice_count: int = 0,
+    value_stability_requested: bool = False,
 ) -> str | None:
     if not reason_codes:
         return None
     if set(reason_codes) <= {"candidate_git_current_mismatch", "checkpoint_metadata_git_current_mismatch"}:
         return NEXT_PROVENANCE_REFRESH
+    if value_stability_requested and "family_with_acceptable_alternative_count_below_threshold" in reason_codes:
+        return NEXT_VALUE_OPPORTUNITY_GAP
+    if value_stability_requested and (
+        "accepted_better_choice_count_below_threshold" in reason_codes
+        or "accepted_better_family_count_below_threshold" in reason_codes
+    ):
+        return NEXT_VALUE_ALIGNMENT
     if "family_with_acceptable_alternative_count_below_threshold" in reason_codes:
         if DENSE_CHOKE_FAMILY in set(missing_acceptable_alternative_families or []):
             return NEXT_DENSE_CHOKE_OPPORTUNITY_GAP
@@ -673,6 +794,8 @@ def _scenario_family_summary(
                 "source_aligned_count": 0,
                 "canary_accepted_policy_choice_count": 0,
                 "canary_rejected_policy_choice_count": 0,
+                "accepted_equal_choice_count": 0,
+                "accepted_better_choice_count": 0,
                 "canary_rejection_reason_counts": Counter(),
                 "acceptable_alternative_count": 0,
                 "alternative_count": 0,
@@ -710,6 +833,10 @@ def _scenario_family_summary(
             metrics["source_aligned_count"] += 1
         elif decision_class == "canary_accepted_policy_choice":
             metrics["canary_accepted_policy_choice_count"] += 1
+            if decision.get("accepted_choice_value_class") == "accepted_better":
+                metrics["accepted_better_choice_count"] += 1
+            elif decision.get("accepted_choice_value_class") == "accepted_equal":
+                metrics["accepted_equal_choice_count"] += 1
         elif decision_class == "canary_rejected_policy_choice":
             metrics["canary_rejected_policy_choice_count"] += 1
             metrics["canary_rejection_reason_counts"].update(
@@ -732,6 +859,8 @@ def _scenario_family_summary(
             "canary_rejected_policy_choice_count": metrics[
                 "canary_rejected_policy_choice_count"
             ],
+            "accepted_equal_choice_count": metrics["accepted_equal_choice_count"],
+            "accepted_better_choice_count": metrics["accepted_better_choice_count"],
             "canary_rejection_reason_counts": dict(
                 sorted(metrics["canary_rejection_reason_counts"].items())
             ),
@@ -743,6 +872,35 @@ def _scenario_family_summary(
             "scenario_ids": sorted(metrics["scenario_ids"]),
         }
     return normalized
+
+
+def _value_delta_summary(decisions: list[dict[str, Any]]) -> dict[str, dict[str, float | None]]:
+    return {
+        "path_cost_delta": _numeric_summary(
+            decision.get("policy_selected_path_cost_delta") for decision in decisions
+        ),
+        "risk_delta": _numeric_summary(
+            decision.get("policy_selected_risk_delta") for decision in decisions
+        ),
+        "utility_delta": _numeric_summary(
+            decision.get("policy_selected_utility_delta") for decision in decisions
+        ),
+    }
+
+
+def _numeric_summary(values: Any) -> dict[str, float | None]:
+    numeric = [
+        value
+        for value in (_float_or_none(item) for item in values)
+        if value is not None
+    ]
+    if not numeric:
+        return {"min": None, "max": None, "mean": None}
+    return {
+        "min": min(numeric),
+        "max": max(numeric),
+        "mean": sum(numeric) / len(numeric),
+    }
 
 
 def _input_paths(source_root: Path, candidate_root: Path, batch_root: Path, config: dict[str, Any]) -> dict[str, Path]:

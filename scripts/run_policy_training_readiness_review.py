@@ -62,6 +62,9 @@ POLICY_GATED_CANARY_OPPORTUNITY_QUALITY_EVALUATED_ACTION = (
 POLICY_GATED_CANARY_FULL_FAMILY_OPPORTUNITY_EVALUATED_ACTION = (
     "policy_gated_canary_full_family_opportunity_evaluated"
 )
+POLICY_GATED_CANARY_VALUE_STABILITY_EVALUATED_ACTION = (
+    "policy_gated_canary_value_stability_evaluated"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -1112,7 +1115,10 @@ def _review_metrics(
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
     elif policy_canary_readiness["present"] and policy_canary_readiness["completed"]:
-        if policy_canary_readiness.get("canary_full_family_opportunity_passed"):
+        if policy_canary_readiness.get("canary_value_stability_passed"):
+            training_readiness_status = POLICY_GATED_CANARY_VALUE_STABILITY_EVALUATED_ACTION
+            recommended_next_action = POLICY_GATED_CANARY_VALUE_STABILITY_EVALUATED_ACTION
+        elif policy_canary_readiness.get("canary_full_family_opportunity_passed"):
             training_readiness_status = (
                 POLICY_GATED_CANARY_FULL_FAMILY_OPPORTUNITY_EVALUATED_ACTION
             )
@@ -1262,6 +1268,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == POLICY_GATED_CANARY_VALUE_STABILITY_EVALUATED_ACTION:
+        return "policy_gated_canary_value_stability_evaluation_only"
     if recommended_next_action == POLICY_GATED_CANARY_FULL_FAMILY_OPPORTUNITY_EVALUATED_ACTION:
         return "policy_gated_canary_full_family_opportunity_evaluation_only"
     if recommended_next_action == POLICY_GATED_CANARY_OPPORTUNITY_QUALITY_EVALUATED_ACTION:
@@ -2459,6 +2467,12 @@ def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str,
         "dense_choke_accepted_policy_choice_count": 0,
         "canary_full_family_opportunity_passed": False,
         "canary_opportunity_quality_passed": False,
+        "accepted_equal_choice_count": 0,
+        "accepted_better_choice_count": 0,
+        "accepted_better_family_count": 0,
+        "policy_change_rate": 0.0,
+        "accepted_choice_rate": 0.0,
+        "canary_value_stability_passed": False,
     }
     if not summary:
         return empty
@@ -2530,6 +2544,26 @@ def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str,
         "canary_rejected_policy_choice_count": _int_value_or_default(
             summary.get("canary_rejected_policy_choice_count"),
             0,
+        ),
+        "accepted_equal_choice_count": _int_value_or_default(
+            summary.get("accepted_equal_choice_count"),
+            0,
+        ),
+        "accepted_better_choice_count": _int_value_or_default(
+            summary.get("accepted_better_choice_count"),
+            0,
+        ),
+        "accepted_better_family_count": _int_value_or_default(
+            summary.get("accepted_better_family_count"),
+            0,
+        ),
+        "policy_change_rate": _float_value_or_default(
+            summary.get("policy_change_rate"),
+            0.0,
+        ),
+        "accepted_choice_rate": _float_value_or_default(
+            summary.get("accepted_choice_rate"),
+            0.0,
         ),
         "controlled_regression_count": _int_value_or_default(
             summary.get("controlled_regression_count"),
@@ -2609,6 +2643,9 @@ def _policy_gated_canary_rollout_readiness(summary: dict[str, Any]) -> dict[str,
         ),
         "canary_opportunity_quality_passed": bool(
             summary.get("canary_opportunity_quality_passed")
+        ),
+        "canary_value_stability_passed": bool(
+            summary.get("canary_value_stability_passed")
         ),
     }
 
