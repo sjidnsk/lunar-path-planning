@@ -204,6 +204,13 @@ def run_sequential_multi_step_opportunity_diagnosis(
         ]
     opportunity_class_counts = Counter(str(row.get("opportunity_class")) for row in diagnostics)
     funnel_totals = _funnel_totals(diagnostics)
+    family_opportunity_summary = _family_opportunity_summary(
+        diagnostics=diagnostics,
+        steps=steps,
+        families=family_set,
+        multi_step_opportunity_episode_count_by_family=multi_step_opportunity_episode_count_by_family,
+        min_multi_step_episode_per_family=min_multi_step_episode_per_family,
+    )
 
     if episode_count < _int_value(validation.get("min_episode_count")):
         _append_reason(reason_codes, "episode_count_below_threshold")
@@ -264,6 +271,7 @@ def run_sequential_multi_step_opportunity_diagnosis(
         "multi_step_opportunity_episode_count_by_family": dict(
             sorted(multi_step_opportunity_episode_count_by_family.items())
         ),
+        "family_opportunity_summary": family_opportunity_summary,
         "families_below_min_multi_step_opportunity_episode_count": (
             families_below_min_multi_step_opportunity_episode_count
         ),
@@ -430,6 +438,91 @@ def _funnel_totals(diagnostics: list[dict[str, Any]]) -> dict[str, int]:
         field: sum(int(row.get(field, 0)) for row in diagnostics)
         for field in fields
     }
+
+
+def _family_opportunity_summary(
+    *,
+    diagnostics: list[dict[str, Any]],
+    steps: list[dict[str, Any]],
+    families: set[str],
+    multi_step_opportunity_episode_count_by_family: dict[str, int],
+    min_multi_step_episode_per_family: int,
+) -> dict[str, dict[str, Any]]:
+    diagnostic_rows_by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    step_rows_by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in diagnostics:
+        diagnostic_rows_by_family[str(row.get("scenario_group") or "unknown")].append(row)
+    for step in steps:
+        step_rows_by_family[str(step.get("scenario_group") or "unknown")].append(step)
+
+    summary: dict[str, dict[str, Any]] = {}
+    for family in sorted(families):
+        family_diagnostics = diagnostic_rows_by_family.get(family, [])
+        family_steps = step_rows_by_family.get(family, [])
+        episode_ids = {
+            str(row.get("episode_id"))
+            for row in family_steps
+            if row.get("episode_id") is not None
+        }
+        accepted_by_episode: dict[str, int] = defaultdict(int)
+        for step in family_steps:
+            if step.get("decision_class") == "canary_accepted_policy_choice":
+                accepted_by_episode[str(step.get("episode_id"))] += 1
+        multi_step_accepted_episode_count = sum(
+            1 for accepted_count in accepted_by_episode.values() if accepted_count >= 2
+        )
+        opportunity_count = multi_step_opportunity_episode_count_by_family.get(family, 0)
+        gap_reason = None
+        if min_multi_step_episode_per_family > 0 and opportunity_count < min_multi_step_episode_per_family:
+            gap_reason = "multi_step_opportunity_episode_count_below_family_min"
+        elif opportunity_count <= 0:
+            gap_reason = "opportunity_missing"
+        elif any(
+            row.get("opportunity_class") == "policy_missed_existing_opportunity"
+            for row in family_diagnostics
+        ):
+            gap_reason = "policy_missed_existing_opportunity"
+        summary[family] = {
+            "episode_count": len(episode_ids),
+            "step_count": len(family_steps),
+            "safe_better_alternative_step_count": sum(
+                1
+                for row in family_diagnostics
+                if int(row.get("safe_better_alternative_count", 0)) > 0
+            ),
+            "multi_step_opportunity_episode_count": opportunity_count,
+            "policy_used_existing_opportunity_count": sum(
+                1
+                for row in family_diagnostics
+                if row.get("opportunity_class") == "policy_used_existing_opportunity"
+            ),
+            "policy_missed_existing_opportunity_count": sum(
+                1
+                for row in family_diagnostics
+                if row.get("opportunity_class") == "policy_missed_existing_opportunity"
+            ),
+            "policy_rejected_existing_opportunity_count": sum(
+                1
+                for row in family_diagnostics
+                if row.get("opportunity_class") == "policy_rejected_existing_opportunity"
+            ),
+            "opportunity_missing_count": sum(
+                1
+                for row in family_diagnostics
+                if row.get("opportunity_class") == "opportunity_missing"
+            ),
+            "accepted_takeover_step_count": sum(
+                1
+                for step in family_steps
+                if step.get("decision_class") == "canary_accepted_policy_choice"
+            ),
+            "source_aligned_step_count": sum(
+                1 for step in family_steps if step.get("decision_class") == "source_aligned"
+            ),
+            "multi_step_accepted_episode_count": multi_step_accepted_episode_count,
+            "gap_reason": gap_reason,
+        }
+    return summary
 
 
 def _next_required_change(

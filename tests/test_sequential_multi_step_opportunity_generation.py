@@ -136,6 +136,23 @@ class SequentialMultiStepOpportunityGenerationTests(unittest.TestCase):
         self.assertEqual(summary["safe_better_alternative_step_count"], 3)
         self.assertEqual(summary["multi_step_opportunity_episode_count"], 1)
         self.assertEqual(summary["family_with_multi_step_opportunity_count"], 1)
+        self.assertEqual(
+            summary["family_opportunity_summary"]["channel_contrast"],
+            {
+                "episode_count": 1,
+                "step_count": 3,
+                "safe_better_alternative_step_count": 3,
+                "multi_step_opportunity_episode_count": 1,
+                "policy_used_existing_opportunity_count": 0,
+                "policy_missed_existing_opportunity_count": 3,
+                "policy_rejected_existing_opportunity_count": 0,
+                "opportunity_missing_count": 0,
+                "accepted_takeover_step_count": 0,
+                "source_aligned_step_count": 3,
+                "multi_step_accepted_episode_count": 0,
+                "gap_reason": "policy_missed_existing_opportunity",
+            },
+        )
 
     def test_diagnosis_requires_min_multi_step_opportunity_episode_count_per_family(self) -> None:
         from scripts.run_sequential_multi_step_opportunity_diagnosis import (
@@ -183,6 +200,10 @@ class SequentialMultiStepOpportunityGenerationTests(unittest.TestCase):
         self.assertEqual(
             summary["families_below_min_multi_step_opportunity_episode_count"],
             ["channel_contrast"],
+        )
+        self.assertEqual(
+            summary["family_opportunity_summary"]["channel_contrast"]["gap_reason"],
+            "multi_step_opportunity_episode_count_below_family_min",
         )
         self.assertIn(
             "multi_step_opportunity_episode_count_per_family_below_threshold",

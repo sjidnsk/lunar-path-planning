@@ -22,6 +22,7 @@
     "episode_horizon": 3,
     "initial_start_cell": [1, 6],
     "initial_start_cells_by_episode": {
+      "seq-mixed_stress_detour-b": [8, 9],
       "seq-channel_contrast-d": [4, 10],
       "seq-channel_contrast-e": [7, 12],
       "seq-channel_contrast-f": [7, 12],
@@ -36,6 +37,7 @@
       "seq-near_blocked_safe_alt-b": [10, 13],
       "seq-near_blocked_safe_alt-d": [10, 13],
       "seq-near_blocked_safe_alt-e": [7, 12],
+      "seq-path_complexity_benefit-b": [8, 9],
       "seq-path_complexity_benefit-c": [7, 12],
       "seq-path_complexity_benefit-f": [4, 8]
     },

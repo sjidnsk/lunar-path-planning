@@ -1508,6 +1508,34 @@ network/action-space/default-A* change, no distance/path-risk/source-selection
 contract relaxation, no Ackermann-feasible trajectory claim, and no policy
 performance claim.
 
+## Current-HEAD Sequential/Guarded Evidence Re-closure
+
+The quasi-real mixed-risk alignment closure is functionally passed, but formal
+readiness depends on the upstream generated sequential/guarded evidence being
+refreshed under the same HEAD. The current re-closure stage fixes that upstream
+evidence boundary instead of adding new quasi-real training samples.
+
+The immediate blocker was sequential opportunity distribution: current-HEAD
+probes showed enough single-step safe-better choices, but too few episodes with
+two consecutive safe takeovers. The rollout config now pins two additional
+episode starts that were verified by focused sequential probes:
+
+- `seq-mixed_stress_detour-b` starts at `[8, 9]`.
+- `seq-path_complexity_benefit-b` starts at `[8, 9]`.
+
+The sequential diagnosis summary now includes a per-family opportunity report
+covering safe-better steps, policy-used opportunities, policy-missed
+opportunities, missing opportunities, accepted takeover steps, multi-step
+accepted episodes, and a family-level gap reason. This is intended to prevent
+future failures from being misread as a training problem when the actual issue
+is missing sequential opportunity geometry.
+
+The re-closure remains evidence hygiene and generated-scenario canary work. It
+does not start formal PPO rollout, does not take over on quasi-real maps, does
+not publish or replace a checkpoint, does not change network/action-space/default
+A*, does not relax distance/path-risk/source-selection contracts, and does not
+claim Ackermann-feasible trajectory or policy performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
