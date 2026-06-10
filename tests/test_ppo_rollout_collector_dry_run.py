@@ -64,6 +64,110 @@ class PpoRolloutCollectorDryRunTests(unittest.TestCase):
         self.assertIn("sequential_diagnosis_final_gate_failed", summary["reason_codes"])
         self.assertEqual(summary["next_required_change"], "sequential_evidence_consistency_required")
 
+    def test_consistency_check_accepts_passed_preflight_diagnosis_outside_final_root(self) -> None:
+        from scripts.run_sequential_evidence_consistency_check import (
+            run_sequential_evidence_consistency_check,
+        )
+
+        root = Path(tempfile.mkdtemp(prefix="seq-consistency-final-"))
+        preflight_root = Path(tempfile.mkdtemp(prefix="seq-consistency-preflight-"))
+        self._write_json(
+            root / "policy-gated-sequential-canary-rollout-summary.json",
+            {
+                "schema_version": "policy-gated-sequential-canary-rollout-summary/v1",
+                "status": "passed",
+                "reason_codes": [],
+                "episode_count": 36,
+                "step_count": 108,
+            },
+        )
+        self._write_json(
+            preflight_root / "sequential-multi-step-opportunity-diagnosis-summary.json",
+            {
+                "schema_version": "sequential-multi-step-opportunity-diagnosis-summary/v1",
+                "status": "passed",
+                "reason_codes": [],
+                "episode_count": 36,
+                "step_count": 108,
+                "multi_step_opportunity_episode_count": 12,
+                "family_with_multi_step_opportunity_count": 6,
+            },
+        )
+        readiness = root / "policy-training-readiness-review-summary.json"
+        self._write_json(
+            readiness,
+            {
+                "schema_version": "policy-training-readiness-review-summary/v1",
+                "status": "passed",
+                "training_readiness_status": "policy_gated_sequential_multi_step_opportunity_evaluated",
+                "training_blockers": [],
+                "reason_codes": [],
+            },
+        )
+
+        summary = run_sequential_evidence_consistency_check(
+            batch_root=root,
+            readiness_summary_path=readiness,
+            config={
+                "schema_version": "sequential-evidence-consistency-config/v1",
+                "diagnosis_role": "preflight_only",
+                "validation": {
+                    "require_readiness_status": "policy_gated_sequential_multi_step_opportunity_evaluated",
+                    "require_diagnosis_summary": True,
+                },
+            },
+            repo_root=self.repo_root,
+            diagnosis_root=preflight_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(summary["diagnosis_summary"]["preflight_only"])
+        self.assertEqual(summary["diagnosis_summary"]["root"], str(preflight_root))
+
+    def test_consistency_check_still_requires_diagnosis_without_preflight_root(self) -> None:
+        from scripts.run_sequential_evidence_consistency_check import (
+            run_sequential_evidence_consistency_check,
+        )
+
+        root = Path(tempfile.mkdtemp(prefix="seq-consistency-missing-diagnosis-"))
+        self._write_json(
+            root / "policy-gated-sequential-canary-rollout-summary.json",
+            {
+                "schema_version": "policy-gated-sequential-canary-rollout-summary/v1",
+                "status": "passed",
+                "reason_codes": [],
+            },
+        )
+        readiness = root / "policy-training-readiness-review-summary.json"
+        self._write_json(
+            readiness,
+            {
+                "schema_version": "policy-training-readiness-review-summary/v1",
+                "status": "passed",
+                "training_readiness_status": "policy_gated_sequential_multi_step_opportunity_evaluated",
+                "training_blockers": [],
+                "reason_codes": [],
+            },
+        )
+
+        summary = run_sequential_evidence_consistency_check(
+            batch_root=root,
+            readiness_summary_path=readiness,
+            config={
+                "schema_version": "sequential-evidence-consistency-config/v1",
+                "diagnosis_role": "preflight_only",
+                "validation": {
+                    "require_readiness_status": "policy_gated_sequential_multi_step_opportunity_evaluated",
+                    "require_diagnosis_summary": True,
+                },
+            },
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertIn("sequential_diagnosis_summary_missing", summary["reason_codes"])
+
     def test_collector_materializes_only_policy_controlled_steps_as_ppo_trainable(self) -> None:
         from model_explorer.policy.rollout_io import read_rollout_episodes
         from scripts.run_ppo_rollout_collector_dry_run import run_ppo_rollout_collector_dry_run

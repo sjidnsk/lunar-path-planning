@@ -13,6 +13,7 @@ fi
 SOURCE_SRC="${SOURCE_SRC:-outputs/path_feedback_batch_sequential_multi_step_opportunity_clean_src_v1}"
 SOURCE_CAND="${SOURCE_CAND:-outputs/path_feedback_batch_sequential_multi_step_opportunity_candidate_v1}"
 SOURCE_SEQ="${SOURCE_SEQ:-outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1}"
+SOURCE_PREFLIGHT_SEQ="${SOURCE_PREFLIGHT_SEQ:-outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_preflight_v1}"
 
 SRC="${SRC:-outputs/path_feedback_batch_ppo_collector_clean_src_v1}"
 CAND="${CAND:-outputs/path_feedback_batch_ppo_collector_candidate_v1}"
@@ -26,6 +27,7 @@ cp -a "$SOURCE_SEQ" "$SEQ"
 
 PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_sequential_evidence_consistency_check.sh" \
   --batch-root "$SEQ" \
+  --diagnosis-root "$SOURCE_PREFLIGHT_SEQ" \
   --readiness-summary "$SRC/policy-training-readiness-review-summary.json" \
   --config "$REPO_ROOT/configs/sequential_evidence_consistency_v1.json"
 

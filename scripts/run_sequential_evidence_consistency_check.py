@@ -25,6 +25,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-root", required=True)
     parser.add_argument("--readiness-summary", required=True)
     parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--diagnosis-root",
+        default=None,
+        help="Optional root containing preflight diagnosis evidence. Defaults to --batch-root.",
+    )
     parser.add_argument("--output", default=None)
     args = parser.parse_args(argv)
 
@@ -38,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         readiness_summary_path=readiness_path,
         config=config,
         repo_root=repo_root,
+        diagnosis_root=_resolve_path(args.diagnosis_root, repo_root) if args.diagnosis_root else None,
     )
     output_path = (
         _resolve_path(args.output, repo_root)
@@ -65,12 +71,14 @@ def run_sequential_evidence_consistency_check(
     readiness_summary_path: Path,
     config: dict[str, Any],
     repo_root: Path,
+    diagnosis_root: Path | None = None,
 ) -> dict[str, Any]:
     reason_codes: list[str] = []
     rollout_path = batch_root / config.get("input_files", {}).get(
         "rollout_summary", "policy-gated-sequential-canary-rollout-summary.json"
     )
-    diagnosis_path = batch_root / config.get("input_files", {}).get(
+    diagnosis_base = diagnosis_root if diagnosis_root is not None else batch_root
+    diagnosis_path = diagnosis_base / config.get("input_files", {}).get(
         "diagnosis_summary", "sequential-multi-step-opportunity-diagnosis-summary.json"
     )
     rollout = _load_json_if_exists(rollout_path)
@@ -107,6 +115,8 @@ def run_sequential_evidence_consistency_check(
         _append_reason(reason_codes, "sequential_diagnosis_final_gate_failed")
     if config.get("validation", {}).get("require_diagnosis_summary", True) and not diagnosis:
         _append_reason(reason_codes, "sequential_diagnosis_summary_missing")
+    elif diagnosis_preflight_only and diagnosis.get("status") != "passed":
+        _append_reason(reason_codes, "sequential_preflight_diagnosis_not_passed")
 
     current_git = _git_snapshot(repo_root)
     status = "failed" if reason_codes else "passed"
@@ -122,6 +132,7 @@ def run_sequential_evidence_consistency_check(
             "status": rollout.get("status"),
         },
         "diagnosis_summary": {
+            "root": _display_path(diagnosis_base, repo_root),
             "path": _display_path(diagnosis_path, repo_root),
             "exists": diagnosis_path.is_file(),
             "status": diagnosis.get("status"),
