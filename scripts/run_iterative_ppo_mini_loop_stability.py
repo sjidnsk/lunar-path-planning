@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -109,6 +110,12 @@ def build_round_plan(
     return plan
 
 
+def subprocess_env(*, python_bin: str, base_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(os.environ if base_env is None else base_env)
+    env["PYTHON"] = python_bin
+    return env
+
+
 def run_iterative_ppo_mini_loop_stability(
     *,
     source_root: Path,
@@ -130,7 +137,7 @@ def run_iterative_ppo_mini_loop_stability(
     )
     round_records: list[dict[str, Any]] = []
     python_bin = sys.executable
-    env = dict(**__import__("os").environ, PYTHON=python_bin)
+    env = subprocess_env(python_bin=python_bin)
 
     for step in plan:
         round_index = int(step["round_index"])

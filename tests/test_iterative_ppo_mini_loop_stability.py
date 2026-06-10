@@ -108,6 +108,13 @@ class IterativePpoMiniLoopStabilityTests(unittest.TestCase):
         self.assertEqual(readiness["training_blockers"], [])
         self.assertEqual(readiness["round_count"], 3)
 
+    def test_subprocess_env_overrides_existing_python_variable(self) -> None:
+        from scripts.run_iterative_ppo_mini_loop_stability import subprocess_env
+
+        env = subprocess_env(python_bin="/tmp/current-python", base_env={"PYTHON": "/tmp/old-python"})
+
+        self.assertEqual(env["PYTHON"], "/tmp/current-python")
+
     def _round_record(self, index: int) -> dict:
         return {
             "round_index": index,
