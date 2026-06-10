@@ -3,7 +3,7 @@
 ## Background
 
 The project has reached `policy_gated_sequential_multi_step_opportunity_evaluated`.
-The policy-gated sequential canary completes 36 episodes / 108 steps with 37
+The policy-gated sequential canary completes 36 episodes / 108 steps with 36
 accepted better takeovers, 6-family coverage, no rejected policy choice, no
 state-continuity violation, and zero cumulative safety/contract/path/risk/source
 selection regression.
@@ -62,7 +62,7 @@ Current clean-HEAD closure result:
 - `episode_count=36`
 - `step_count=108`
 - `materialized_episode_count=19`
-- `ppo_trainable_transition_count=37`
+- `ppo_trainable_transition_count=36`
 - `diagnostic_transition_count=71`
 - `source_fallback_trainable_count=0`
 - `invalid_action_mask_count=0`

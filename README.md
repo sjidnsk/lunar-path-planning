@@ -1197,12 +1197,12 @@ claim, and no performance claim.
 Current closure passes after scenario repair and sequence-aware calibration.
 Preflight opportunity evidence is rooted at
 `outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_preflight_v1/`
-and reports 36 episodes / 108 steps, 54 safe-better opportunity steps, 15
+and reports 36 episodes / 108 steps, 57 safe-better opportunity steps, 16
 step0+step1 multi-step opportunity episodes, all 6 families covered, and at
 least 2 multi-step opportunity episodes per family. The final calibrated
 rollout root
 `outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1/`
-reports 37 policy takeover steps, 37 accepted better steps, 12 multi-step
+reports 36 policy takeover steps, 36 accepted better steps, 12 multi-step
 accepted episodes, 6 accepted families, 0 rejected choices, 0 invalid action
 mask, and 0 cumulative path/risk regression. Readiness currently reaches
 `policy_gated_sequential_multi_step_opportunity_evaluated` with
@@ -1225,7 +1225,7 @@ New artifacts:
 - `scripts/run_ppo_rollout_collector_closure.sh`
 - `outputs/path_feedback_batch_ppo_rollout_collector_dry_run_v1/`
 
-Current dry-run evidence materializes 37 PPO-trainable transitions from the
+Current dry-run evidence materializes 36 PPO-trainable transitions from the
 sequential multi-step canary root, with invalid/empty action mask counts,
 missing log-prob/value counts, non-finite reward count, and source-fallback
 trainable count all at 0. `ppo-rollout-episodes.jsonl` is readable through the

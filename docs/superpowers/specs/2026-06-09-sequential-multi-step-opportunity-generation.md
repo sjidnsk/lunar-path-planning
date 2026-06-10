@@ -106,7 +106,7 @@ Preflight diagnosis:
 - `status=passed`, `reason_codes=[]`
 - `episode_count=36`, `step_count=108`
 - `safe_better_alternative_step_count=54`
-- `multi_step_opportunity_episode_count=15`
+- `multi_step_opportunity_episode_count=16`
 - `family_with_multi_step_opportunity_count=6`
 - per-family multi-step opportunity episodes:
   `channel_contrast=3`, `dense_choke_safe_bypass=2`,
@@ -119,9 +119,9 @@ Final calibrated sequential rollout:
   `outputs/path_feedback_batch_policy_gated_sequential_multi_step_opportunity_rollout_v1/`
 - `status=passed`, `reason_codes=[]`
 - `episode_count=36`, `step_count=108`
-- `policy_takeover_step_count=37`
-- `accepted_takeover_step_count=37`
-- `accepted_better_step_count=37`
+- `policy_takeover_step_count=36`
+- `accepted_takeover_step_count=36`
+- `accepted_better_step_count=36`
 - `accepted_takeover_family_count=6`
 - `multi_step_accepted_episode_count=12`
 - `family_with_multi_step_accepted_episode_count=6`

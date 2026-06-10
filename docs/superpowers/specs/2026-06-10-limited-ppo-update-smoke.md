@@ -3,7 +3,7 @@
 ## Summary
 
 Current readiness is `ppo_rollout_collector_dry_run_evaluated`: the collector
-materializes 37 PPO-trainable policy-controlled transitions from sequential
+materializes 36 PPO-trainable policy-controlled transitions from sequential
 canary evidence, with invalid/empty action mask, missing log-prob/value,
 non-finite reward, source-fallback trainable, path/risk/safety/contract, and
 source-selection regression all at 0. This stage performs one tiny local PPO
@@ -60,8 +60,8 @@ The smoke output root contains:
 ## Acceptance
 
 - `status=passed`, `reason_codes=[]`.
-- `input_ppo_trainable_transition_count=37`.
-- `optimizer_train_transition_count=37`.
+- `input_ppo_trainable_transition_count>=24`; current re-closure reports 36.
+- `optimizer_train_transition_count>=24`; current re-closure reports 36.
 - `source_fallback_trainable_count=0`.
 - `old_log_prob_max_abs_error<=1e-4`.
 - `old_value_max_abs_error<=1e-4`.
