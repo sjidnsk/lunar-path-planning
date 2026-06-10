@@ -1,0 +1,55 @@
+{
+  "schema_version": "quasi-real-shadow-alignment-candidate-config/v1",
+  "input_files": {
+    "taxonomy_summary": "quasi-real-shadow-failure-taxonomy-summary.json",
+    "split_summary": "quasi-real-shadow-alignment-split-summary.json",
+    "preference_summary": "quasi-real-shadow-alignment-preference-summary.json",
+    "preference_samples": "quasi-real-shadow-alignment-preference-samples.jsonl",
+    "alignment_slices": "quasi-real-shadow-alignment-slices.jsonl",
+    "alignment_path_feedback_summary": "quasi-real-shadow-alignment-path-feedback-summary.json",
+    "quasi_real_slices": "quasi-real-map-slices.jsonl",
+    "quasi_real_path_feedback_summary": "quasi-real-map-path-feedback-summary.json"
+  },
+  "base_candidate_files": {
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "summary": "quasi-real-shadow-alignment-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+    "alignment_decisions": "quasi-real-shadow-alignment-decisions.jsonl",
+    "original_shadow_decisions": "quasi-real-shadow-alignment-original-roi-decisions.jsonl"
+  },
+  "validation": {
+    "min_taxonomy_failure_count": 1,
+    "min_quasi_real_hard_negative_preference_count": 1,
+    "max_context_id_overlap_count": 0,
+    "max_scenario_id_overlap_count": 0,
+    "max_slice_id_overlap_count": 0,
+    "max_hard_positive_added_count": 0,
+    "max_ppo_transition_added_count": 0
+  },
+  "evaluation": {
+    "hidden_size": 16,
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0
+  },
+  "training": {
+    "seed": 0,
+    "epochs": 40,
+    "learning_rate": 0.0005,
+    "hidden_size": 16,
+    "margin": 0.1,
+    "preference_loss_weight": 1.0,
+    "quasi_real_hard_negative_loss_weight": 2.5
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_policy_takeover",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_performance_claim"
+  ]
+}

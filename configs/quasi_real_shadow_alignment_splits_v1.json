@@ -1,0 +1,17 @@
+{
+  "schema_version": "quasi-real-shadow-alignment-splits-config/v1",
+  "input_files": {
+    "taxonomy_summary": "quasi-real-shadow-failure-taxonomy-summary.json",
+    "taxonomy": "quasi-real-shadow-failure-taxonomy.jsonl"
+  },
+  "output_files": {
+    "slices": "quasi-real-shadow-alignment-slices.jsonl",
+    "path_feedback_summary": "quasi-real-shadow-alignment-path-feedback-summary.json",
+    "split_summary": "quasi-real-shadow-alignment-split-summary.json"
+  },
+  "variants": {
+    "train": 3,
+    "val": 3,
+    "holdout": 3
+  }
+}

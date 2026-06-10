@@ -1,0 +1,19 @@
+{
+  "schema_version": "quasi-real-shadow-failure-taxonomy-config/v1",
+  "input_files": {
+    "shadow_decisions": "quasi-real-shadow-policy-decisions.jsonl",
+    "shadow_rejection_report": "quasi-real-shadow-policy-rejection-report.json",
+    "quasi_real_slices": "quasi-real-map-slices.jsonl",
+    "quasi_real_path_feedback_summary": "quasi-real-map-path-feedback-summary.json"
+  },
+  "output_files": {
+    "summary": "quasi-real-shadow-failure-taxonomy-summary.json",
+    "taxonomy": "quasi-real-shadow-failure-taxonomy.jsonl",
+    "feature_audit": "quasi-real-shadow-feature-audit.jsonl",
+    "report": "quasi-real-shadow-failure-report.md"
+  },
+  "validation": {
+    "max_bridge_or_feedback_gap_count": 0,
+    "max_action_mask_or_contract_gap_count": 0
+  }
+}

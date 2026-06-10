@@ -1455,6 +1455,59 @@ no checkpoint release, no default-policy replacement, no network/action-space
 or default-A* change, no distance/path-risk/source-selection relaxation, no
 Ackermann-feasible trajectory claim, and no policy performance claim.
 
+## Quasi-Real Shadow Failure Taxonomy and Anti-Overfit Alignment
+
+The first quasi-real shadow audit exposed one real alignment failure rather than
+a planner/bridge failure: `lola_qreal_mixed_risk_test_011` was scored with
+source action `1`, while the raw policy preferred action `2`; that alternative
+triggered both `path_cost_regression` and `risk_regression`. The correct
+response is not to turn that single context into a hard positive or to loosen
+the gate. It is treated as a failure seed for a small anti-overfit calibration
+loop.
+
+New artifacts:
+
+- `configs/quasi_real_shadow_failure_taxonomy_v1.json`
+- `configs/quasi_real_shadow_alignment_splits_v1.json`
+- `configs/quasi_real_shadow_alignment_preference_v1.json`
+- `configs/quasi_real_shadow_alignment_candidate_v1.json`
+- `scripts/run_quasi_real_shadow_failure_taxonomy.py/.sh`
+- `scripts/run_quasi_real_shadow_alignment_dataset.py/.sh`
+- `scripts/run_quasi_real_shadow_alignment_preference_mining.py/.sh`
+- `scripts/run_quasi_real_shadow_alignment_candidate.py/.sh`
+- `scripts/run_quasi_real_shadow_alignment_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_shadow_failure_taxonomy_v1/`
+- `outputs/path_feedback_batch_quasi_real_shadow_alignment_dataset_v1/`
+- `outputs/path_feedback_batch_quasi_real_shadow_alignment_preference_v1/`
+- `outputs/path_feedback_batch_quasi_real_shadow_alignment_candidate_v1/`
+
+The taxonomy classifies the baseline failure as
+`path_risk_joint_regression` and verifies that there is no action-mask,
+contract, bridge, or path-feedback gap. The alignment dataset derives disjoint
+train/val/holdout quasi-real variants around the failure seed. Preference
+mining creates only rule-shaped hard-negative pairwise samples:
+source-selected should outrank the raw policy alternative when the alternative
+is worse on both path cost and risk. It adds no hard positives and no PPO
+transitions.
+
+The alignment candidate starts from the current guarded experimental checkpoint,
+performs a small pairwise calibration on the train split, and then shadows the
+train/val/holdout variants plus the original 12 ROI contexts. The current
+functional closure reports 1 taxonomy failure, 3 quasi-real hard-negative
+preference samples, zero split leakage, zero hard positives, zero PPO
+transitions, and zero holdout/original ROI path-risk regressions after
+calibration. Formal readiness still requires a clean-HEAD evidence refresh
+because tracked code and docs changed after the upstream guarded/CUDA/domain-gap
+roots were produced.
+
+Readiness may advance only to `quasi_real_shadow_alignment_evaluated` after
+clean-HEAD provenance matches every consumed summary. This remains
+quasi-real shadow alignment evidence only: no quasi-real policy takeover, no
+formal PPO rollout, no checkpoint publication or default-policy replacement, no
+network/action-space/default-A* change, no distance/path-risk/source-selection
+contract relaxation, no Ackermann-feasible trajectory claim, and no policy
+performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

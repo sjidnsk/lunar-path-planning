@@ -1,0 +1,19 @@
+{
+  "schema_version": "quasi-real-shadow-alignment-preference-config/v1",
+  "input_files": {
+    "taxonomy_summary": "quasi-real-shadow-failure-taxonomy-summary.json",
+    "taxonomy": "quasi-real-shadow-failure-taxonomy.jsonl",
+    "alignment_slices": "quasi-real-shadow-alignment-slices.jsonl",
+    "alignment_split_summary": "quasi-real-shadow-alignment-split-summary.json"
+  },
+  "output_files": {
+    "samples": "quasi-real-shadow-alignment-preference-samples.jsonl",
+    "summary": "quasi-real-shadow-alignment-preference-summary.json",
+    "exclusion_report": "quasi-real-shadow-alignment-exclusion-report.json"
+  },
+  "validation": {
+    "min_quasi_real_hard_negative_preference_count": 1,
+    "max_hard_positive_added_count": 0,
+    "max_ppo_transition_added_count": 0
+  }
+}
