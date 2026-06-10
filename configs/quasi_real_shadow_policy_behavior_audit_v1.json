@@ -1,0 +1,41 @@
+{
+  "schema_version": "quasi-real-shadow-policy-behavior-audit-config/v1",
+  "input_files": {
+    "source_batch_summary": "batch-evaluation-summary.json",
+    "quasi_real_path_feedback_summary": "quasi-real-map-path-feedback-summary.json",
+    "quasi_real_slices": "quasi-real-map-slices.jsonl",
+    "quasi_real_domain_gap_summary": "quasi-real-map-domain-gap-summary.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "decisions": "quasi-real-shadow-policy-decisions.jsonl",
+    "summary": "quasi-real-shadow-policy-behavior-summary.json",
+    "rejection_report": "quasi-real-shadow-policy-rejection-report.json",
+    "group_report": "quasi-real-shadow-policy-group-report.md"
+  },
+  "validation": {
+    "min_shadow_context_count": 12,
+    "min_roi_group_count": 4,
+    "max_invalid_action_mask_count": 0,
+    "max_fallback_or_open_grid_count": 0,
+    "max_safety_regression_count": 0,
+    "max_contract_violation_count": 0,
+    "max_path_cost_regression_count": 0,
+    "max_risk_regression_count": 0,
+    "max_source_selection_regression_count": 0
+  },
+  "evaluation": {
+    "hidden_size": 64,
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0
+  },
+  "non_goals": [
+    "no_ppo_update",
+    "no_policy_takeover",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_performance_claim"
+  ]
+}

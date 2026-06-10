@@ -1423,6 +1423,38 @@ default-policy replacement, no network/action-space/default-A* change, no
 distance-contract relaxation, no Ackermann-feasible trajectory claim, and no
 policy performance claim.
 
+## Quasi-Real Shadow Policy Behavior Audit
+
+After `quasi_real_map_domain_gap_evaluated`, the next boundary is not real-map
+takeover or training. It is a shadow behavior audit on the accepted LOLA ROI
+slices: the experimental policy scores each quasi-real context, but source
+selection still owns the route and no controlled choice is executed.
+
+New artifacts:
+
+- `configs/quasi_real_shadow_policy_behavior_audit_v1.json`
+- `scripts/run_quasi_real_shadow_policy_behavior_audit.py/.sh`
+- `scripts/run_quasi_real_shadow_policy_behavior_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_shadow_policy_behavior_v1/`
+
+The audit writes one shadow decision per quasi-real context:
+`source_aligned`, `policy_changed_gate_passed`,
+`policy_changed_gate_rejected`, or `not_scored`. Each record keeps
+`context_id`, ROI metadata, source/raw policy actions, logit margin,
+action-mask validity, path/risk deltas, and gate reason codes. It never writes
+PPO transitions, never lets the policy take control, and never runs an
+optimizer update.
+
+Readiness may advance only to `quasi_real_shadow_policy_behavior_audited` when
+all quasi-real contexts are scored, at least four ROI groups are covered,
+context IDs are complete, action-mask and regression gates remain at 0, and
+`behavior_verdict=acceptable_for_quasi_real_guarded_pilot`.
+
+This stage is still an audit: no quasi-real guarded pilot yet, no PPO update,
+no checkpoint release, no default-policy replacement, no network/action-space
+or default-A* change, no distance/path-risk/source-selection relaxation, no
+Ackermann-feasible trajectory claim, and no policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

@@ -97,6 +97,12 @@ POLICY_TRAINING_CUDA_DEVICE_SUPPORT_SCHEMA_VERSION = (
 )
 QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION = "quasi_real_map_domain_gap_evaluated"
 QUASI_REAL_MAP_DOMAIN_GAP_SCHEMA_VERSION = "quasi-real-map-domain-gap-summary/v1"
+QUASI_REAL_SHADOW_POLICY_BEHAVIOR_AUDITED_ACTION = (
+    "quasi_real_shadow_policy_behavior_audited"
+)
+QUASI_REAL_SHADOW_POLICY_BEHAVIOR_SCHEMA_VERSION = (
+    "quasi-real-shadow-policy-behavior-summary/v1"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -226,6 +232,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional quasi-real-map-domain-gap-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--quasi-real-shadow-policy-behavior-summary",
+        help="Optional quasi-real-shadow-policy-behavior-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -351,6 +361,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.quasi_real_map_domain_gap_summary
         else batch_root / "quasi-real-map-domain-gap-summary.json"
     )
+    quasi_real_shadow_policy_behavior_path = (
+        _resolve_path(args.quasi_real_shadow_policy_behavior_summary, repo_root)
+        if args.quasi_real_shadow_policy_behavior_summary
+        else batch_root / "quasi-real-shadow-policy-behavior-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -388,6 +403,7 @@ def main(argv: list[str] | None = None) -> int:
         guarded_ppo_rollout_pilot_path=guarded_ppo_rollout_pilot_path,
         policy_training_cuda_device_support_path=policy_training_cuda_device_support_path,
         quasi_real_map_domain_gap_path=quasi_real_map_domain_gap_path,
+        quasi_real_shadow_policy_behavior_path=quasi_real_shadow_policy_behavior_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -417,6 +433,9 @@ def main(argv: list[str] | None = None) -> int:
             args.policy_training_cuda_device_support_summary
         ),
         quasi_real_map_domain_gap_required=bool(args.quasi_real_map_domain_gap_summary),
+        quasi_real_shadow_policy_behavior_required=bool(
+            args.quasi_real_shadow_policy_behavior_summary
+        ),
         config=config,
         repo_root=repo_root,
     )
@@ -533,6 +552,12 @@ def main(argv: list[str] | None = None) -> int:
             if quasi_real_map_domain_gap_path.is_file() or args.quasi_real_map_domain_gap_summary
             else None
         ),
+        "quasi_real_shadow_policy_behavior_summary": (
+            _display_path(quasi_real_shadow_policy_behavior_path, repo_root)
+            if quasi_real_shadow_policy_behavior_path.is_file()
+            or args.quasi_real_shadow_policy_behavior_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -603,6 +628,7 @@ def analyze_policy_training_readiness_review(
     guarded_ppo_rollout_pilot_path: Path,
     policy_training_cuda_device_support_path: Path,
     quasi_real_map_domain_gap_path: Path,
+    quasi_real_shadow_policy_behavior_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -622,6 +648,7 @@ def analyze_policy_training_readiness_review(
     guarded_ppo_rollout_pilot_required: bool = False,
     policy_training_cuda_device_support_required: bool = False,
     quasi_real_map_domain_gap_required: bool = False,
+    quasi_real_shadow_policy_behavior_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -871,6 +898,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=quasi_real_map_domain_gap_required,
     )
+    quasi_real_shadow_policy_behavior = _load_optional_source(
+        quasi_real_shadow_policy_behavior_path,
+        label="quasi_real_shadow_policy_behavior_summary",
+        expected_schema=QUASI_REAL_SHADOW_POLICY_BEHAVIOR_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_shadow_policy_behavior_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -896,6 +932,7 @@ def analyze_policy_training_readiness_review(
             ("guarded_ppo_rollout_pilot_summary", guarded_ppo_rollout_pilot),
             ("policy_training_cuda_device_support_summary", policy_training_cuda_device_support),
             ("quasi_real_map_domain_gap_summary", quasi_real_map_domain_gap),
+            ("quasi_real_shadow_policy_behavior_summary", quasi_real_shadow_policy_behavior),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -1101,6 +1138,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if quasi_real_shadow_policy_behavior:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_shadow_policy_behavior,
+                label="quasi_real_shadow_policy_behavior_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -1126,6 +1173,7 @@ def analyze_policy_training_readiness_review(
         guarded_ppo_rollout_pilot=guarded_ppo_rollout_pilot,
         policy_training_cuda_device_support=policy_training_cuda_device_support,
         quasi_real_map_domain_gap=quasi_real_map_domain_gap,
+        quasi_real_shadow_policy_behavior=quasi_real_shadow_policy_behavior,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -1232,6 +1280,11 @@ def analyze_policy_training_readiness_review(
             if quasi_real_map_domain_gap
             else None
         ),
+        "quasi_real_shadow_policy_behavior_summary_path": (
+            _display_path(quasi_real_shadow_policy_behavior_path, repo_root)
+            if quasi_real_shadow_policy_behavior
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -1267,6 +1320,9 @@ def analyze_policy_training_readiness_review(
                 policy_training_cuda_device_support
             ),
             "quasi_real_map_domain_gap": _public_git(quasi_real_map_domain_gap),
+            "quasi_real_shadow_policy_behavior": _public_git(
+                quasi_real_shadow_policy_behavior
+            ),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -1313,6 +1369,7 @@ def _review_metrics(
     guarded_ppo_rollout_pilot: dict[str, Any],
     policy_training_cuda_device_support: dict[str, Any],
     quasi_real_map_domain_gap: dict[str, Any],
+    quasi_real_shadow_policy_behavior: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -1405,6 +1462,7 @@ def _review_metrics(
             "guarded_ppo_rollout_pilot": guarded_ppo_rollout_pilot,
             "policy_training_cuda_device_support": policy_training_cuda_device_support,
             "quasi_real_map_domain_gap": quasi_real_map_domain_gap,
+            "quasi_real_shadow_policy_behavior": quasi_real_shadow_policy_behavior,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -1438,6 +1496,9 @@ def _review_metrics(
     )
     quasi_real_map_domain_gap_readiness = _quasi_real_map_domain_gap_readiness(
         quasi_real_map_domain_gap
+    )
+    quasi_real_shadow_policy_behavior_readiness = (
+        _quasi_real_shadow_policy_behavior_readiness(quasi_real_shadow_policy_behavior)
     )
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
@@ -1506,6 +1567,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in quasi_real_map_domain_gap_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in quasi_real_shadow_policy_behavior_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -1514,6 +1577,12 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif (
+        quasi_real_shadow_policy_behavior_readiness["present"]
+        and quasi_real_shadow_policy_behavior_readiness["completed"]
+    ):
+        training_readiness_status = QUASI_REAL_SHADOW_POLICY_BEHAVIOR_AUDITED_ACTION
+        recommended_next_action = QUASI_REAL_SHADOW_POLICY_BEHAVIOR_AUDITED_ACTION
     elif (
         quasi_real_map_domain_gap_readiness["present"]
         and quasi_real_map_domain_gap_readiness["completed"]
@@ -1642,6 +1711,7 @@ def _review_metrics(
         "guarded_ppo_rollout_pilot_readiness": guarded_ppo_rollout_pilot_readiness,
         "policy_training_cuda_device_support_readiness": policy_training_cuda_device_support_readiness,
         "quasi_real_map_domain_gap_readiness": quasi_real_map_domain_gap_readiness,
+        "quasi_real_shadow_policy_behavior_readiness": quasi_real_shadow_policy_behavior_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1692,7 +1762,8 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
-            quasi_real_map_domain_gap_readiness.get("next_required_change")
+            quasi_real_shadow_policy_behavior_readiness.get("next_required_change")
+            or quasi_real_map_domain_gap_readiness.get("next_required_change")
             or policy_training_cuda_device_support_readiness.get("next_required_change")
             or
             guarded_ppo_rollout_pilot_readiness.get("next_required_change")
@@ -1730,6 +1801,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == QUASI_REAL_SHADOW_POLICY_BEHAVIOR_AUDITED_ACTION:
+        return "quasi_real_shadow_policy_behavior_audit_only"
     if recommended_next_action == QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION:
         return "quasi_real_map_domain_gap_evaluation_only"
     if recommended_next_action == POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION:
@@ -3359,6 +3432,91 @@ def _quasi_real_map_domain_gap_readiness(summary: dict[str, Any]) -> dict[str, A
         "next_required_change": summary.get("next_required_change") if blockers else None,
         "domain_gap_verdict": verdict,
         "slice_count": _int_value_or_default(summary.get("slice_count"), 0),
+    }
+
+
+def _quasi_real_shadow_policy_behavior_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "behavior_verdict": None,
+        "shadow_context_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_shadow_policy_scoring_failed")
+    verdict = str(summary.get("behavior_verdict", ""))
+    allowed_verdicts = {
+        "acceptable_for_quasi_real_guarded_pilot",
+        "policy_real_map_alignment_refinement_required",
+        "real_map_action_mask_contract_gap",
+        "real_map_bridge_or_feedback_gap",
+        "scenario_expansion_required",
+    }
+    if verdict not in allowed_verdicts:
+        _append_reason(blockers, "quasi_real_shadow_policy_scoring_failed")
+    elif verdict != "acceptable_for_quasi_real_guarded_pilot":
+        if verdict == "policy_real_map_alignment_refinement_required":
+            _append_reason(blockers, "quasi_real_shadow_policy_alignment_refinement_required")
+        elif verdict == "real_map_action_mask_contract_gap":
+            _append_reason(blockers, "quasi_real_shadow_action_mask_contract_gap")
+        elif verdict == "real_map_bridge_or_feedback_gap":
+            _append_reason(blockers, "quasi_real_shadow_policy_scoring_failed")
+        elif verdict == "scenario_expansion_required":
+            _append_reason(blockers, "quasi_real_shadow_context_count_below_threshold")
+
+    shadow_context_count = _int_value_or_default(summary.get("shadow_context_count"), 0)
+    policy_decision_count = _int_value_or_default(summary.get("policy_decision_count"), 0)
+    if shadow_context_count < 12:
+        _append_reason(blockers, "quasi_real_shadow_context_count_below_threshold")
+    if policy_decision_count != shadow_context_count:
+        _append_reason(blockers, "quasi_real_shadow_policy_scoring_failed")
+    if _int_value_or_default(summary.get("roi_group_count"), 0) < 4:
+        _append_reason(blockers, "quasi_real_shadow_roi_group_count_below_threshold")
+    if _int_value_or_default(summary.get("context_id_missing_count"), 0):
+        _append_reason(blockers, "quasi_real_shadow_context_id_missing")
+    for field, reason in (
+        ("invalid_action_mask_count", "quasi_real_shadow_action_mask_contract_gap"),
+        ("fallback_or_open_grid_count", "quasi_real_shadow_gate_regression"),
+        ("open_grid_fallback_count", "quasi_real_shadow_gate_regression"),
+        ("safety_regression_count", "quasi_real_shadow_gate_regression"),
+        ("contract_violation_count", "quasi_real_shadow_gate_regression"),
+        ("contract_regression_count", "quasi_real_shadow_gate_regression"),
+        ("path_cost_regression_count", "quasi_real_shadow_gate_regression"),
+        ("risk_regression_count", "quasi_real_shadow_gate_regression"),
+        ("source_selection_regression_count", "quasi_real_shadow_gate_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    rejected_count = _int_value_or_default(summary.get("policy_changed_gate_rejected_count"), 0)
+    if rejected_count:
+        _append_reason(blockers, "quasi_real_shadow_gate_regression")
+    if summary.get("runs_ppo_update") is True:
+        _append_reason(blockers, "quasi_real_shadow_unexpected_ppo_update")
+    if summary.get("policy_takes_control") is True:
+        _append_reason(blockers, "quasi_real_shadow_policy_takeover_detected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "quasi_real_shadow_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "quasi_real_shadow_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "quasi_real_shadow_policy_performance_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "behavior_verdict": verdict,
+        "shadow_context_count": shadow_context_count,
+        "policy_decision_count": policy_decision_count,
     }
 
 
