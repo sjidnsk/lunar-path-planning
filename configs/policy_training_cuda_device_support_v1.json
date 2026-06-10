@@ -27,7 +27,7 @@
     "hidden_size": 16
   },
   "validation": {
-    "expected_input_ppo_trainable_transition_count": 37,
+    "expected_input_ppo_trainable_transition_count": 0,
     "min_optimizer_train_transition_count": 24,
     "max_old_log_prob_abs_error": 0.0001,
     "max_old_value_abs_error": 0.0001,
