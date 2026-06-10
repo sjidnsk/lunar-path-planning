@@ -349,6 +349,17 @@ def summarize_iterative_rounds(
     drift_path = output_root / config["output_files"]["drift_report"]
     rejection_path = output_root / config["output_files"]["rejection_report"]
     final_record = round_records[-1] if round_records else {}
+    update_device_records = [
+        {
+            "round_index": _int_value(record.get("round_index")),
+            "requested_device": (record.get("update_summary") or {}).get("requested_device"),
+            "resolved_device": (record.get("update_summary") or {}).get("resolved_device"),
+            "cuda_available": (record.get("update_summary") or {}).get("cuda_available"),
+            "cuda_device_name": (record.get("update_summary") or {}).get("cuda_device_name"),
+            "fallback_to_cpu": (record.get("update_summary") or {}).get("fallback_to_cpu"),
+        }
+        for record in round_records
+    ]
     summary = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "generated_at": _utc_now(),
@@ -383,6 +394,12 @@ def summarize_iterative_rounds(
         "collector_regression_count": _collector_regression_count(
             final_record.get("post_update_collector_summary") or {}
         ),
+        "update_device_records": update_device_records,
+        "final_update_requested_device": (final_record.get("update_summary") or {}).get("requested_device"),
+        "final_update_resolved_device": (final_record.get("update_summary") or {}).get("resolved_device"),
+        "final_update_cuda_available": (final_record.get("update_summary") or {}).get("cuda_available"),
+        "final_update_cuda_device_name": (final_record.get("update_summary") or {}).get("cuda_device_name"),
+        "final_update_fallback_to_cpu": (final_record.get("update_summary") or {}).get("fallback_to_cpu"),
         "final_candidate_root": final_record.get("update_root"),
         "final_raw_policy_generalization_summary_path": "final/raw-policy-generalization-evaluation-summary.json",
         "final_sequential_summary_path": "final/sequential/policy-gated-sequential-canary-rollout-summary.json",

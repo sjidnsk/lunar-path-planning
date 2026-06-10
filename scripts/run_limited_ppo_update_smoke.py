@@ -26,6 +26,9 @@ NEXT_INPUT_INVALID = "limited_ppo_update_input_contract_invalid"
 NEXT_NOT_ON_POLICY = "ppo_update_not_on_collector_policy"
 NEXT_NON_FINITE = "ppo_update_loss_non_finite"
 NEXT_UPDATE_TOO_LARGE = "ppo_update_too_large"
+NEXT_CUDA_UNAVAILABLE = "cuda_requested_but_unavailable"
+NEXT_DEVICE_CONTRACT_INVALID = "training_device_contract_invalid"
+NEXT_DEVICE_TENSOR_MISMATCH = "device_tensor_mismatch"
 
 
 class ConfigError(ValueError):
@@ -91,6 +94,7 @@ def run_limited_ppo_update_smoke(
     import torch
     from model_explorer.policy.architectures import build_policy_network_from_metadata
     from model_explorer.policy.dataset import validate_rollout_dataset
+    from model_explorer.policy.device import resolve_training_device
     from model_explorer.policy.ppo import compute_masked_ppo_loss
     from model_explorer.policy.rollout import RolloutTransition
     from model_explorer.policy.rollout_io import read_rollout_episodes
@@ -106,6 +110,11 @@ def run_limited_ppo_update_smoke(
     output_root.mkdir(parents=True, exist_ok=True)
     reason_codes: list[str] = []
     diagnostics: dict[str, Any] = {}
+    device_resolution = resolve_training_device(config["training"].get("device"), torch_module=torch)
+    device_summary = device_resolution.to_summary()
+    for reason in device_resolution.reason_codes:
+        _append_reason(reason_codes, reason)
+    resolved_device = device_resolution.resolved_device
     collector_summary = _load_json(paths["collector_summary"], reason_codes=reason_codes, label="collector_summary")
     base_candidate_summary = _load_json(
         paths["base_candidate_summary"],
@@ -151,6 +160,7 @@ def run_limited_ppo_update_smoke(
     clip_fraction = math.inf
     grad_norm_before_clip = math.inf
     max_grad_norm_after_clip = math.inf
+    checkpoint_cpu_loadable = False
     training_curves: list[dict[str, Any]] = []
     training_result: dict[str, Any] | None = None
 
@@ -188,25 +198,31 @@ def run_limited_ppo_update_smoke(
             if not state:
                 raise ValueError("base checkpoint is missing model state")
             network.load_state_dict(state)
+            network.to(resolved_device)
             base_state = {key: value.detach().clone() for key, value in network.state_dict().items()}
             old_log_prob_max_abs_error, old_value_max_abs_error = _old_policy_errors(
                 network,
                 trainable_transitions,
                 torch=torch,
                 observation_to_tensors=observation_to_tensors,
+                device=resolved_device,
             )
         except Exception as exc:  # noqa: BLE001
             diagnostics["checkpoint_error"] = str(exc)
             _append_reason(reason_codes, NEXT_INPUT_INVALID)
-    if old_log_prob_max_abs_error > float(config["validation"].get("max_old_log_prob_abs_error", 1.0e-4)):
-        _append_reason(reason_codes, NEXT_NOT_ON_POLICY)
-    if old_value_max_abs_error > float(config["validation"].get("max_old_value_abs_error", 1.0e-4)):
-        _append_reason(reason_codes, NEXT_NOT_ON_POLICY)
+    if trainable_transitions and not reason_codes:
+        if old_log_prob_max_abs_error > float(config["validation"].get("max_old_log_prob_abs_error", 1.0e-4)):
+            _append_reason(reason_codes, NEXT_NOT_ON_POLICY)
+        if old_value_max_abs_error > float(config["validation"].get("max_old_value_abs_error", 1.0e-4)):
+            _append_reason(reason_codes, NEXT_NOT_ON_POLICY)
 
     if network is not None and base_state is not None and not reason_codes:
         try:
             torch.manual_seed(_int_value(config["training"].get("seed")))
-            batch = _ppo_batch(trainable_transitions, config=config, torch=torch)
+            batch = _ppo_batch(trainable_transitions, config=config, torch=torch, device=resolved_device)
+            if _batch_device_mismatch(batch, resolved_device=resolved_device):
+                _append_reason(reason_codes, NEXT_DEVICE_TENSOR_MISMATCH)
+                raise ValueError("PPO batch tensors are not on the resolved training device")
             non_finite_return_count = _non_finite_tensor_count(batch["returns"], torch=torch)
             non_finite_advantage_count = _non_finite_tensor_count(batch["advantages"], torch=torch)
             if non_finite_return_count or non_finite_advantage_count:
@@ -252,10 +268,10 @@ def run_limited_ppo_update_smoke(
                 training_curves.append(
                     {
                         "epoch": epoch_index + 1,
-                        "total_loss": float(losses.total_loss.detach()),
-                        "policy_loss": float(losses.policy_loss.detach()),
-                        "value_loss": float(losses.value_loss.detach()),
-                        "entropy": float(losses.entropy.detach()),
+                        "total_loss": _tensor_float(losses.total_loss),
+                        "policy_loss": _tensor_float(losses.policy_loss),
+                        "value_loss": _tensor_float(losses.value_loss),
+                        "entropy": _tensor_float(losses.entropy),
                         "approx_kl": approx_kl,
                         "clip_fraction": clip_fraction,
                         "grad_norm_before_clip": grad_norm_before_clip,
@@ -282,6 +298,7 @@ def run_limited_ppo_update_smoke(
                     "final_policy_loss": training_curves[-1]["policy_loss"],
                     "final_value_loss": training_curves[-1]["value_loss"],
                     "final_entropy": training_curves[-1]["entropy"],
+                    "device": device_summary,
                 }
                 _write_checkpoint_outputs(
                     network=network,
@@ -296,7 +313,11 @@ def run_limited_ppo_update_smoke(
                     repo_root=repo_root,
                     sample_count=len(trainable_transitions),
                     training_result=training_result,
+                    device_summary=device_summary,
                 )
+                checkpoint_cpu_loadable = _checkpoint_cpu_loadable(paths["checkpoint"], torch=torch)
+                if not checkpoint_cpu_loadable:
+                    _append_reason(reason_codes, NEXT_INPUT_INVALID)
         except Exception as exc:  # noqa: BLE001
             diagnostics["training_error"] = str(exc)
             _append_reason(reason_codes, NEXT_NON_FINITE)
@@ -313,6 +334,12 @@ def run_limited_ppo_update_smoke(
         "base_candidate_root": _display_path(base_candidate_root, repo_root),
         "collector_root": _display_path(collector_root, repo_root),
         "output_root": _display_path(output_root, repo_root),
+        "requested_device": device_summary["requested_device"],
+        "resolved_device": device_summary["resolved_device"],
+        "cuda_available": device_summary["cuda_available"],
+        "cuda_device_name": device_summary["cuda_device_name"],
+        "fallback_to_cpu": device_summary["fallback_to_cpu"],
+        "device_reason_codes": list(device_resolution.reason_codes),
         "input_ppo_trainable_transition_count": len(trainable_transitions),
         "optimizer_train_transition_count": len(trainable_transitions) if training_result else 0,
         "collector_ppo_trainable_transition_count": _int_value(collector_summary.get("ppo_trainable_transition_count")),
@@ -330,6 +357,7 @@ def run_limited_ppo_update_smoke(
         "clip_fraction": _finite_or_inf(clip_fraction),
         "grad_norm_before_clip": _finite_or_inf(grad_norm_before_clip),
         "max_grad_norm_after_clip": _finite_or_inf(max_grad_norm_after_clip),
+        "checkpoint_cpu_loadable": checkpoint_cpu_loadable,
         "training_result": training_result,
         "dataset_summary": dataset_summary,
         "summary": _display_path(paths["summary"], repo_root),
@@ -361,16 +389,16 @@ def _is_policy_ppo_trainable_transition(transition) -> bool:
     )
 
 
-def _old_policy_errors(network, transitions, *, torch, observation_to_tensors) -> tuple[float, float]:
+def _old_policy_errors(network, transitions, *, torch, observation_to_tensors, device: str) -> tuple[float, float]:
     log_errors: list[float] = []
     value_errors: list[float] = []
     network.eval()
     with torch.no_grad():
         for transition in transitions:
-            tensors = observation_to_tensors(transition.observation)
+            tensors = observation_to_tensors(transition.observation, device=device)
             output = network(**tensors)
             distribution = torch.distributions.Categorical(logits=output.masked_logits)
-            action = torch.tensor([transition.action_index], dtype=torch.long)
+            action = torch.tensor([transition.action_index], dtype=torch.long, device=device)
             log_prob = float(distribution.log_prob(action).item())
             value = float(output.value[0].item())
             log_errors.append(abs(log_prob - float(transition.log_prob)))
@@ -378,7 +406,7 @@ def _old_policy_errors(network, transitions, *, torch, observation_to_tensors) -
     return max(log_errors) if log_errors else math.inf, max(value_errors) if value_errors else math.inf
 
 
-def _ppo_batch(transitions, *, config: dict[str, Any], torch) -> dict[str, Any]:
+def _ppo_batch(transitions, *, config: dict[str, Any], torch, device: str | None = None) -> dict[str, Any]:
     action_count = max(len(transition.observation.action_mask) for transition in transitions)
     rewards = [float(transition.reward) for transition in transitions]
     dones = [bool(transition.done) for transition in transitions]
@@ -389,23 +417,31 @@ def _ppo_batch(transitions, *, config: dict[str, Any], torch) -> dict[str, Any]:
         "candidate_features": torch.tensor(
             [_padded_candidate_features(transition.observation, action_count) for transition in transitions],
             dtype=torch.float32,
+            device=device,
         ),
         "global_features": torch.tensor(
             [transition.observation.global_features for transition in transitions],
             dtype=torch.float32,
+            device=device,
         ),
         "action_mask": torch.tensor(
             [_padded_action_mask(transition.observation, action_count) for transition in transitions],
             dtype=torch.bool,
+            device=device,
         ),
         "candidate_missing_indicators": torch.tensor(
             [_padded_missing_indicators(transition.observation, action_count) for transition in transitions],
             dtype=torch.float32,
+            device=device,
         ),
-        "actions": torch.tensor([transition.action_index for transition in transitions], dtype=torch.long),
-        "old_log_probs": torch.tensor([float(transition.log_prob) for transition in transitions], dtype=torch.float32),
-        "returns": torch.tensor(returns, dtype=torch.float32),
-        "advantages": torch.tensor(advantages, dtype=torch.float32),
+        "actions": torch.tensor([transition.action_index for transition in transitions], dtype=torch.long, device=device),
+        "old_log_probs": torch.tensor(
+            [float(transition.log_prob) for transition in transitions],
+            dtype=torch.float32,
+            device=device,
+        ),
+        "returns": torch.tensor(returns, dtype=torch.float32, device=device),
+        "advantages": torch.tensor(advantages, dtype=torch.float32, device=device),
     }
 
 
@@ -456,7 +492,7 @@ def _ppo_diagnostics(network, batch: dict[str, Any], *, torch, clip_ratio: float
         ratios = torch.exp(diff)
         approx_kl = torch.mean(batch["old_log_probs"] - new_log_probs)
         clip_fraction = torch.mean((torch.abs(ratios - 1.0) > clip_ratio).to(torch.float32))
-    return float(approx_kl.detach()), float(clip_fraction.detach())
+    return _tensor_float(approx_kl), _tensor_float(clip_fraction)
 
 
 def _grad_norm(network, *, torch) -> tuple[float, int]:
@@ -482,6 +518,31 @@ def _parameter_l2_delta(state: dict[str, Any], base_state: dict[str, Any], *, to
     return total_sq ** 0.5
 
 
+def _cpu_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value.detach().cpu() if hasattr(value, "detach") else value
+        for key, value in state_dict.items()
+    }
+
+
+def _batch_device_mismatch(batch: dict[str, Any], *, resolved_device: str) -> bool:
+    for value in batch.values():
+        if hasattr(value, "device") and value.device.type != resolved_device:
+            return True
+    return False
+
+
+def _checkpoint_cpu_loadable(path: Path, *, torch) -> bool:
+    try:
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception:  # noqa: BLE001 - caller records contract failure.
+        return False
+    state = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+    if not isinstance(state, dict):
+        return False
+    return all(not hasattr(value, "device") or value.device.type == "cpu" for value in state.values())
+
+
 def _write_checkpoint_outputs(
     *,
     network,
@@ -496,22 +557,27 @@ def _write_checkpoint_outputs(
     repo_root: Path,
     sample_count: int,
     training_result: dict[str, Any],
+    device_summary: dict[str, Any],
 ) -> None:
     import torch
 
     git_provenance = {"current": _git_snapshot(repo_root), "current_matches_sources": True}
     training = dict(config["training"])
+    training["device"] = device_summary.get("requested_device", training.get("device", "cpu"))
+    training["device_resolution"] = device_summary
     updated_checkpoint = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "experimental": True,
         "architecture": network.architecture_name,
-        "model_state_dict": network.state_dict(),
+        "model_state_dict": _cpu_state_dict(network.state_dict()),
         "training": training,
+        "device": device_summary,
         "source_root": _display_path(source_root, repo_root),
         "base_candidate_root": _display_path(base_candidate_root, repo_root),
         "collector_root": _display_path(collector_root, repo_root),
         "output_root": _display_path(output_root, repo_root),
         "git_provenance": git_provenance,
+        "device": device_summary,
     }
     torch.save(updated_checkpoint, paths["checkpoint"])
     metadata = {
@@ -527,6 +593,7 @@ def _write_checkpoint_outputs(
         "hidden_size": _checkpoint_hidden_size(checkpoint, base_metadata, config),
         "learning_rate": float(training.get("learning_rate", 1.0e-5)),
         "clip_ratio": float(training.get("clip_ratio", 0.2)),
+        "device": device_summary,
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
         "performance_claimed": False,
@@ -549,6 +616,7 @@ def _write_checkpoint_outputs(
         "train_pair_count": int(sample_count),
         "leaked_context_id_count": 0,
         "git_provenance": git_provenance,
+        "device": device_summary,
         "non_goals": list(config.get("non_goals", [])),
     }
     _write_json(paths["candidate_summary"], candidate_summary)
@@ -638,7 +706,15 @@ def _append_reason(reasons: list[str], reason: str) -> None:
 def _next_required_change(reason_codes: list[str]) -> str | None:
     if not reason_codes:
         return None
-    for reason in (NEXT_INPUT_INVALID, NEXT_NOT_ON_POLICY, NEXT_NON_FINITE, NEXT_UPDATE_TOO_LARGE):
+    for reason in (
+        NEXT_CUDA_UNAVAILABLE,
+        NEXT_DEVICE_CONTRACT_INVALID,
+        NEXT_DEVICE_TENSOR_MISMATCH,
+        NEXT_INPUT_INVALID,
+        NEXT_NOT_ON_POLICY,
+        NEXT_NON_FINITE,
+        NEXT_UPDATE_TOO_LARGE,
+    ):
         if reason in reason_codes:
             return reason
     return reason_codes[0]
@@ -653,6 +729,10 @@ def _int_value(value: Any, default: int = 0) -> int:
 
 def _finite_or_inf(value: float) -> float:
     return float(value) if math.isfinite(float(value)) else float("inf")
+
+
+def _tensor_float(value) -> float:
+    return float(value.detach().cpu())
 
 
 def _non_finite_tensor_count(value, *, torch) -> int:

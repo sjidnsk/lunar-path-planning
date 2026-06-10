@@ -1356,6 +1356,41 @@ replacement, no network/action-space/default-A* change, no distance-contract
 relaxation, no Ackermann-feasible trajectory claim, no IRIS/GCS diagnostic as
 training release evidence, and no policy performance claim.
 
+## Policy Training CUDA Device Support
+
+After `guarded_ppo_rollout_pilot_evaluated`, the next boundary is not a larger
+rollout or real-map training. It is an opt-in training-device contract so later
+larger PPO runs can use GPU compute without changing existing CPU evidence.
+
+New artifacts:
+
+- `configs/policy_training_cuda_device_support_v1.json`
+- `scripts/run_policy_training_cuda_device_support_smoke.py/.sh`
+- `outputs/path_feedback_batch_policy_training_cuda_device_support_v1/`
+
+Training configs now support `training.device` with `cpu`, `cuda`, or `auto`.
+The default remains CPU. `auto` uses CUDA when available and records
+`fallback_to_cpu=true` if it must fall back. Explicit `cuda` fails when CUDA is
+unavailable with `cuda_requested_but_unavailable`. Summaries report
+`requested_device`, `resolved_device`, `cuda_available`, `cuda_device_name`,
+and `fallback_to_cpu`.
+
+The limited PPO update path now moves the network and PPO tensors to the
+resolved device, recomputes old log-prob/value on that device, and serializes
+checkpoint state dicts back to CPU so artifacts remain portable. Guarded and
+iterative summaries preserve update-device provenance from their update step.
+
+Passing the smoke requires at least 24 optimizer transitions, no source-fallback
+trainable samples, old log-prob/value max abs error `<=1e-4`, finite
+loss/grad/reward/return/advantage, `parameter_l2_delta>0`,
+`abs(approx_kl)<=0.25`, `max_grad_norm_after_clip<=1.0`, and a checkpoint that
+can be loaded on CPU. Readiness may record
+`policy_training_cuda_device_support_evaluated`.
+
+This only accelerates policy training tensor computation. It does not speed up
+path planner or evidence generation, does not add real-map data, does not
+publish or replace any checkpoint, and does not claim policy performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
