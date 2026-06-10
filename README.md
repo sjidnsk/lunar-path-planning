@@ -1280,6 +1280,43 @@ checkpoint, no default-policy replacement, no network/action-space/default-A*
 change, no distance-contract relaxation, no Ackermann-feasible trajectory claim,
 and no policy performance claim.
 
+## Iterative PPO Mini-Loop Stability
+
+After `limited_ppo_update_smoke_evaluated`, the next boundary is not a larger
+PPO rollout. It is a three-round stability loop that repeats the smallest safe
+cycle: collect policy-controlled sequential canary transitions, run one limited
+PPO update from the same on-policy checkpoint, then re-run raw generalization,
+sequential canary, and collector gates before the updated checkpoint becomes
+the next round's base.
+
+New artifacts:
+
+- `configs/iterative_ppo_mini_loop_stability_v1.json`
+- `configs/iterative_ppo_update_step_v1.json`
+- `scripts/run_iterative_ppo_mini_loop_stability.py/.sh`
+- `scripts/run_iterative_ppo_mini_loop_stability_closure.sh`
+- `outputs/path_feedback_batch_iterative_ppo_mini_loop_stability_v1/`
+
+The summary files are `iterative-ppo-mini-loop-stability-summary.json`,
+`iterative-ppo-mini-loop-rounds.jsonl`,
+`iterative-ppo-mini-loop-drift-report.json`, and
+`iterative-ppo-mini-loop-rejection-report.json`. Each round must prove the
+collector is on-policy for that round's base checkpoint, keep source-fallback
+steps out of the optimizer, keep loss/grad/reward/return/advantage finite, keep
+`abs(approx_kl)<=0.25`, and keep the cumulative parameter L2 delta within
+`0.05`.
+
+Post-update gates remain strict: raw TEST regression stays at 0, sequential
+canary still covers 36 episode / 108 step with 6 families and no rejected
+choice, and the collector still materializes at least 24 valid PPO-trainable
+transitions. Passing readiness may advance only to
+`iterative_ppo_mini_loop_stability_evaluated`.
+
+This remains a mini-loop stability check only: no formal PPO rollout, no
+checkpoint publication, no default-policy replacement, no network/action-space
+or default-A* change, no distance-contract relaxation, no Ackermann-feasible
+trajectory claim, and no policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

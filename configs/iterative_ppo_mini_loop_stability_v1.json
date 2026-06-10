@@ -1,0 +1,41 @@
+{
+  "schema_version": "iterative-ppo-mini-loop-stability-config/v1",
+  "description": "Three-round collect-update-evaluate mini-loop stability check for experimental PPO candidates.",
+  "config_paths": {
+    "sequential_canary_config": "configs/policy_gated_sequential_multi_step_opportunity_rollout_v1.json",
+    "collector_config": "configs/ppo_rollout_collector_dry_run_v1.json",
+    "update_step_config": "configs/iterative_ppo_update_step_v1.json",
+    "raw_generalization_config": "configs/raw_policy_generalization_evaluation_v1.json"
+  },
+  "output_files": {
+    "summary": "iterative-ppo-mini-loop-stability-summary.json",
+    "rounds": "iterative-ppo-mini-loop-rounds.jsonl",
+    "drift_report": "iterative-ppo-mini-loop-drift-report.json",
+    "rejection_report": "iterative-ppo-mini-loop-rejection-report.json"
+  },
+  "validation": {
+    "round_count": 3,
+    "min_optimizer_train_transition_count": 24,
+    "min_ppo_trainable_transition_count": 24,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_abs_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0,
+    "max_cumulative_parameter_l2_delta": 0.05,
+    "max_raw_test_regression_count": 0,
+    "min_sequential_episode_count": 36,
+    "min_sequential_step_count": 108,
+    "min_accepted_takeover_family_count": 6,
+    "min_multi_step_accepted_episode_count": 12,
+    "max_canary_rejected_policy_choice_count": 0
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_claim_policy_performance_improvement",
+    "does_not_modify_network_action_space_or_default_astar",
+    "does_not_relax_distance_or_path_risk_contract",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

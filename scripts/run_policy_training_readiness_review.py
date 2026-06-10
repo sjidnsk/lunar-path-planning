@@ -81,6 +81,12 @@ PPO_ROLLOUT_COLLECTOR_DRY_RUN_EVALUATED_ACTION = "ppo_rollout_collector_dry_run_
 PPO_ROLLOUT_COLLECTOR_SCHEMA_VERSION = "ppo-rollout-collector-summary/v1"
 LIMITED_PPO_UPDATE_SMOKE_EVALUATED_ACTION = "limited_ppo_update_smoke_evaluated"
 LIMITED_PPO_UPDATE_SMOKE_SCHEMA_VERSION = "limited-ppo-update-smoke-summary/v1"
+ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION = (
+    "iterative_ppo_mini_loop_stability_evaluated"
+)
+ITERATIVE_PPO_MINI_LOOP_STABILITY_SCHEMA_VERSION = (
+    "iterative-ppo-mini-loop-stability-summary/v1"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -194,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional limited-ppo-update-smoke-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--iterative-ppo-mini-loop-stability-summary",
+        help="Optional iterative-ppo-mini-loop-stability-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -299,6 +309,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.limited_ppo_update_smoke_summary
         else batch_root / "limited-ppo-update-smoke-summary.json"
     )
+    iterative_ppo_mini_loop_path = (
+        _resolve_path(args.iterative_ppo_mini_loop_stability_summary, repo_root)
+        if args.iterative_ppo_mini_loop_stability_summary
+        else batch_root / "iterative-ppo-mini-loop-stability-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -332,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         sequential_canary_path=sequential_canary_path,
         ppo_collector_path=ppo_collector_path,
         limited_ppo_update_smoke_path=limited_ppo_update_smoke_path,
+        iterative_ppo_mini_loop_path=iterative_ppo_mini_loop_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -355,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         sequential_canary_required=bool(args.policy_gated_sequential_canary_rollout_summary),
         ppo_collector_required=bool(args.ppo_rollout_collector_summary),
         limited_ppo_update_smoke_required=bool(args.limited_ppo_update_smoke_summary),
+        iterative_ppo_mini_loop_required=bool(args.iterative_ppo_mini_loop_stability_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -450,6 +467,11 @@ def main(argv: list[str] | None = None) -> int:
             if limited_ppo_update_smoke_path.is_file() or args.limited_ppo_update_smoke_summary
             else None
         ),
+        "iterative_ppo_mini_loop_stability_summary": (
+            _display_path(iterative_ppo_mini_loop_path, repo_root)
+            if iterative_ppo_mini_loop_path.is_file() or args.iterative_ppo_mini_loop_stability_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -516,6 +538,7 @@ def analyze_policy_training_readiness_review(
     sequential_canary_path: Path,
     ppo_collector_path: Path,
     limited_ppo_update_smoke_path: Path,
+    iterative_ppo_mini_loop_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -531,6 +554,7 @@ def analyze_policy_training_readiness_review(
     sequential_canary_required: bool = False,
     ppo_collector_required: bool = False,
     limited_ppo_update_smoke_required: bool = False,
+    iterative_ppo_mini_loop_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -744,6 +768,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=limited_ppo_update_smoke_required,
     )
+    iterative_ppo_mini_loop = _load_optional_source(
+        iterative_ppo_mini_loop_path,
+        label="iterative_ppo_mini_loop_stability_summary",
+        expected_schema=ITERATIVE_PPO_MINI_LOOP_STABILITY_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=iterative_ppo_mini_loop_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -765,6 +798,7 @@ def analyze_policy_training_readiness_review(
             ("policy_gated_sequential_canary_rollout_summary", sequential_canary),
             ("ppo_rollout_collector_summary", ppo_collector),
             ("limited_ppo_update_smoke_summary", limited_ppo_update_smoke),
+            ("iterative_ppo_mini_loop_stability_summary", iterative_ppo_mini_loop),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -930,6 +964,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if iterative_ppo_mini_loop:
+        source_git_matches.append(
+            _inspect_git(
+                iterative_ppo_mini_loop,
+                label="iterative_ppo_mini_loop_stability_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -951,6 +995,7 @@ def analyze_policy_training_readiness_review(
         sequential_canary=sequential_canary,
         ppo_collector=ppo_collector,
         limited_ppo_update_smoke=limited_ppo_update_smoke,
+        iterative_ppo_mini_loop=iterative_ppo_mini_loop,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -1037,6 +1082,11 @@ def analyze_policy_training_readiness_review(
             if limited_ppo_update_smoke
             else None
         ),
+        "iterative_ppo_mini_loop_stability_summary_path": (
+            _display_path(iterative_ppo_mini_loop_path, repo_root)
+            if iterative_ppo_mini_loop
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -1066,6 +1116,7 @@ def analyze_policy_training_readiness_review(
             "policy_gated_sequential_canary_rollout": _public_git(sequential_canary),
             "ppo_rollout_collector": _public_git(ppo_collector),
             "limited_ppo_update_smoke": _public_git(limited_ppo_update_smoke),
+            "iterative_ppo_mini_loop_stability": _public_git(iterative_ppo_mini_loop),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -1108,6 +1159,7 @@ def _review_metrics(
     sequential_canary: dict[str, Any],
     ppo_collector: dict[str, Any],
     limited_ppo_update_smoke: dict[str, Any],
+    iterative_ppo_mini_loop: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -1196,6 +1248,7 @@ def _review_metrics(
             "policy_gated_sequential_canary_rollout": sequential_canary,
             "ppo_rollout_collector": ppo_collector,
             "limited_ppo_update_smoke": limited_ppo_update_smoke,
+            "iterative_ppo_mini_loop_stability": iterative_ppo_mini_loop,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -1217,6 +1270,9 @@ def _review_metrics(
     ppo_collector_readiness = _ppo_rollout_collector_readiness(ppo_collector)
     limited_ppo_update_smoke_readiness = _limited_ppo_update_smoke_readiness(
         limited_ppo_update_smoke
+    )
+    iterative_ppo_mini_loop_readiness = _iterative_ppo_mini_loop_stability_readiness(
+        iterative_ppo_mini_loop
     )
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
@@ -1277,6 +1333,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in limited_ppo_update_smoke_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in iterative_ppo_mini_loop_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -1285,6 +1343,12 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif (
+        iterative_ppo_mini_loop_readiness["present"]
+        and iterative_ppo_mini_loop_readiness["completed"]
+    ):
+        training_readiness_status = ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION
+        recommended_next_action = ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION
     elif (
         limited_ppo_update_smoke_readiness["present"]
         and limited_ppo_update_smoke_readiness["completed"]
@@ -1385,6 +1449,7 @@ def _review_metrics(
         "policy_gated_sequential_canary_rollout_readiness": sequential_canary_readiness,
         "ppo_rollout_collector_readiness": ppo_collector_readiness,
         "limited_ppo_update_smoke_readiness": limited_ppo_update_smoke_readiness,
+        "iterative_ppo_mini_loop_stability_readiness": iterative_ppo_mini_loop_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1435,8 +1500,10 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
-            sequential_canary_readiness.get("next_required_change")
+            iterative_ppo_mini_loop_readiness.get("next_required_change")
             or limited_ppo_update_smoke_readiness.get("next_required_change")
+            or ppo_collector_readiness.get("next_required_change")
+            or sequential_canary_readiness.get("next_required_change")
             or policy_canary_readiness.get("next_required_change")
             or raw_strict_rollout_readiness.get("next_required_change")
             or raw_generalization_readiness.get("next_required_change")
@@ -1467,6 +1534,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION:
+        return "iterative_ppo_mini_loop_stability_only"
     if recommended_next_action == LIMITED_PPO_UPDATE_SMOKE_EVALUATED_ACTION:
         return "limited_ppo_update_smoke_only"
     if recommended_next_action == PPO_ROLLOUT_COLLECTOR_DRY_RUN_EVALUATED_ACTION:
@@ -2890,6 +2959,70 @@ def _limited_ppo_update_smoke_readiness(summary: dict[str, Any]) -> dict[str, An
             summary.get("optimizer_train_transition_count"),
             0,
         ),
+    }
+
+
+def _iterative_ppo_mini_loop_stability_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "round_count": 0,
+        "failed_round_count": 0,
+        "stability_passed": False,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "iterative_ppo_mini_loop_stability_not_passed")
+    if summary.get("stability_passed") is not True:
+        _append_reason(blockers, "iterative_ppo_policy_drift_detected")
+    if _int_value_or_default(summary.get("round_count"), 0) < 3:
+        _append_reason(blockers, "iterative_ppo_round_count_insufficient")
+    if _int_value_or_default(summary.get("failed_round_count"), 0):
+        _append_reason(blockers, "iterative_ppo_post_update_gate_regression")
+    if (
+        "min_optimizer_train_transition_count" in summary
+        and _int_value_or_default(summary.get("min_optimizer_train_transition_count"), 0) < 24
+    ):
+        _append_reason(blockers, "iterative_ppo_trainable_transition_count_insufficient")
+    if (
+        "min_ppo_trainable_transition_count" in summary
+        and _int_value_or_default(summary.get("min_ppo_trainable_transition_count"), 0) < 24
+    ):
+        _append_reason(blockers, "iterative_ppo_trainable_transition_count_insufficient")
+    if _float_value_or_default(summary.get("max_abs_approx_kl"), float("inf")) > 0.25:
+        _append_reason(blockers, "iterative_ppo_policy_drift_detected")
+    cumulative_delta = _float_value_or_default(summary.get("cumulative_parameter_l2_delta"), 0.0)
+    if cumulative_delta <= 0.0 or cumulative_delta > 0.05:
+        _append_reason(blockers, "iterative_ppo_policy_drift_detected")
+    if _int_value_or_default(summary.get("raw_test_regression_count"), 0):
+        _append_reason(blockers, "iterative_ppo_post_update_gate_regression")
+    if _int_value_or_default(summary.get("sequential_rejected_count"), 0):
+        _append_reason(blockers, "iterative_ppo_post_update_gate_regression")
+    if _int_value_or_default(summary.get("collector_regression_count"), 0):
+        _append_reason(blockers, "iterative_ppo_post_update_gate_regression")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "iterative_ppo_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "iterative_ppo_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "iterative_ppo_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "iterative_ppo_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "round_count": _int_value_or_default(summary.get("round_count"), 0),
+        "failed_round_count": _int_value_or_default(summary.get("failed_round_count"), 0),
+        "stability_passed": summary.get("stability_passed") is True,
     }
 
 
