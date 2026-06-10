@@ -95,6 +95,8 @@ POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_SCHEMA_VERSION = (
     "policy-training-cuda-device-support-summary/v1"
 )
+QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION = "quasi_real_map_domain_gap_evaluated"
+QUASI_REAL_MAP_DOMAIN_GAP_SCHEMA_VERSION = "quasi-real-map-domain-gap-summary/v1"
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -220,6 +222,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional policy-training-cuda-device-support-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--quasi-real-map-domain-gap-summary",
+        help="Optional quasi-real-map-domain-gap-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -340,6 +346,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.policy_training_cuda_device_support_summary
         else batch_root / "policy-training-cuda-device-support-summary.json"
     )
+    quasi_real_map_domain_gap_path = (
+        _resolve_path(args.quasi_real_map_domain_gap_summary, repo_root)
+        if args.quasi_real_map_domain_gap_summary
+        else batch_root / "quasi-real-map-domain-gap-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -376,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
         iterative_ppo_mini_loop_path=iterative_ppo_mini_loop_path,
         guarded_ppo_rollout_pilot_path=guarded_ppo_rollout_pilot_path,
         policy_training_cuda_device_support_path=policy_training_cuda_device_support_path,
+        quasi_real_map_domain_gap_path=quasi_real_map_domain_gap_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -404,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         policy_training_cuda_device_support_required=bool(
             args.policy_training_cuda_device_support_summary
         ),
+        quasi_real_map_domain_gap_required=bool(args.quasi_real_map_domain_gap_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -515,6 +528,11 @@ def main(argv: list[str] | None = None) -> int:
             or args.policy_training_cuda_device_support_summary
             else None
         ),
+        "quasi_real_map_domain_gap_summary": (
+            _display_path(quasi_real_map_domain_gap_path, repo_root)
+            if quasi_real_map_domain_gap_path.is_file() or args.quasi_real_map_domain_gap_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -584,6 +602,7 @@ def analyze_policy_training_readiness_review(
     iterative_ppo_mini_loop_path: Path,
     guarded_ppo_rollout_pilot_path: Path,
     policy_training_cuda_device_support_path: Path,
+    quasi_real_map_domain_gap_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -602,6 +621,7 @@ def analyze_policy_training_readiness_review(
     iterative_ppo_mini_loop_required: bool = False,
     guarded_ppo_rollout_pilot_required: bool = False,
     policy_training_cuda_device_support_required: bool = False,
+    quasi_real_map_domain_gap_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -842,6 +862,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=policy_training_cuda_device_support_required,
     )
+    quasi_real_map_domain_gap = _load_optional_source(
+        quasi_real_map_domain_gap_path,
+        label="quasi_real_map_domain_gap_summary",
+        expected_schema=QUASI_REAL_MAP_DOMAIN_GAP_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_map_domain_gap_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -866,6 +895,7 @@ def analyze_policy_training_readiness_review(
             ("iterative_ppo_mini_loop_stability_summary", iterative_ppo_mini_loop),
             ("guarded_ppo_rollout_pilot_summary", guarded_ppo_rollout_pilot),
             ("policy_training_cuda_device_support_summary", policy_training_cuda_device_support),
+            ("quasi_real_map_domain_gap_summary", quasi_real_map_domain_gap),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -1061,6 +1091,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if quasi_real_map_domain_gap:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_map_domain_gap,
+                label="quasi_real_map_domain_gap_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -1085,6 +1125,7 @@ def analyze_policy_training_readiness_review(
         iterative_ppo_mini_loop=iterative_ppo_mini_loop,
         guarded_ppo_rollout_pilot=guarded_ppo_rollout_pilot,
         policy_training_cuda_device_support=policy_training_cuda_device_support,
+        quasi_real_map_domain_gap=quasi_real_map_domain_gap,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -1186,6 +1227,11 @@ def analyze_policy_training_readiness_review(
             if policy_training_cuda_device_support
             else None
         ),
+        "quasi_real_map_domain_gap_summary_path": (
+            _display_path(quasi_real_map_domain_gap_path, repo_root)
+            if quasi_real_map_domain_gap
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -1220,6 +1266,7 @@ def analyze_policy_training_readiness_review(
             "policy_training_cuda_device_support": _public_git(
                 policy_training_cuda_device_support
             ),
+            "quasi_real_map_domain_gap": _public_git(quasi_real_map_domain_gap),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -1265,6 +1312,7 @@ def _review_metrics(
     iterative_ppo_mini_loop: dict[str, Any],
     guarded_ppo_rollout_pilot: dict[str, Any],
     policy_training_cuda_device_support: dict[str, Any],
+    quasi_real_map_domain_gap: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -1356,6 +1404,7 @@ def _review_metrics(
             "iterative_ppo_mini_loop_stability": iterative_ppo_mini_loop,
             "guarded_ppo_rollout_pilot": guarded_ppo_rollout_pilot,
             "policy_training_cuda_device_support": policy_training_cuda_device_support,
+            "quasi_real_map_domain_gap": quasi_real_map_domain_gap,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -1386,6 +1435,9 @@ def _review_metrics(
     )
     policy_training_cuda_device_support_readiness = (
         _policy_training_cuda_device_support_readiness(policy_training_cuda_device_support)
+    )
+    quasi_real_map_domain_gap_readiness = _quasi_real_map_domain_gap_readiness(
+        quasi_real_map_domain_gap
     )
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
@@ -1452,6 +1504,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in policy_training_cuda_device_support_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in quasi_real_map_domain_gap_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -1460,6 +1514,12 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif (
+        quasi_real_map_domain_gap_readiness["present"]
+        and quasi_real_map_domain_gap_readiness["completed"]
+    ):
+        training_readiness_status = QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION
+        recommended_next_action = QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION
     elif (
         policy_training_cuda_device_support_readiness["present"]
         and policy_training_cuda_device_support_readiness["completed"]
@@ -1581,6 +1641,7 @@ def _review_metrics(
         "iterative_ppo_mini_loop_stability_readiness": iterative_ppo_mini_loop_readiness,
         "guarded_ppo_rollout_pilot_readiness": guarded_ppo_rollout_pilot_readiness,
         "policy_training_cuda_device_support_readiness": policy_training_cuda_device_support_readiness,
+        "quasi_real_map_domain_gap_readiness": quasi_real_map_domain_gap_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1631,7 +1692,8 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
-            policy_training_cuda_device_support_readiness.get("next_required_change")
+            quasi_real_map_domain_gap_readiness.get("next_required_change")
+            or policy_training_cuda_device_support_readiness.get("next_required_change")
             or
             guarded_ppo_rollout_pilot_readiness.get("next_required_change")
             or iterative_ppo_mini_loop_readiness.get("next_required_change")
@@ -1668,6 +1730,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION:
+        return "quasi_real_map_domain_gap_evaluation_only"
     if recommended_next_action == POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION:
         return "policy_training_cuda_device_support_only"
     if recommended_next_action == GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION:
@@ -3233,6 +3297,68 @@ def _policy_training_cuda_device_support_readiness(summary: dict[str, Any]) -> d
             summary.get("optimizer_train_transition_count"),
             0,
         ),
+    }
+
+
+def _quasi_real_map_domain_gap_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "domain_gap_verdict": None,
+        "slice_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "real_map_domain_gap_evaluation_failed")
+    verdict = str(summary.get("domain_gap_verdict", ""))
+    if verdict not in {"acceptable_for_next_pilot", "scenario_expansion_required", "planner_contract_gap"}:
+        _append_reason(blockers, "real_map_domain_gap_verdict_missing")
+    if verdict != "acceptable_for_next_pilot":
+        if verdict == "scenario_expansion_required":
+            _append_reason(blockers, "real_map_distribution_gap_requires_scenario_expansion")
+        elif verdict == "planner_contract_gap":
+            _append_reason(blockers, "real_map_path_feedback_regression")
+    if _int_value_or_default(summary.get("slice_count"), 0) < 12:
+        _append_reason(blockers, "real_map_slice_count_below_threshold")
+    if _int_value_or_default(summary.get("roi_group_count"), 0) < 4:
+        _append_reason(blockers, "real_map_roi_group_count_below_threshold")
+    if _int_value_or_default(summary.get("context_id_missing_count"), 0):
+        _append_reason(blockers, "real_map_context_id_missing")
+    if _int_value_or_default(summary.get("legacy_identity_fallback_count"), 0):
+        _append_reason(blockers, "real_map_context_id_missing")
+    for field, reason in (
+        ("invalid_action_mask_count", "real_map_action_mask_contract_gap"),
+        ("fallback_or_open_grid_count", "real_map_path_feedback_regression"),
+        ("safety_regression_count", "real_map_path_feedback_regression"),
+        ("contract_violation_count", "real_map_bridge_contract_invalid"),
+        ("path_cost_regression_count", "real_map_path_feedback_regression"),
+        ("risk_regression_count", "real_map_path_feedback_regression"),
+        ("source_selection_regression_count", "real_map_path_feedback_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if summary.get("runs_ppo_update") is True:
+        _append_reason(blockers, "quasi_real_domain_gap_unexpected_ppo_update")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "quasi_real_domain_gap_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "quasi_real_domain_gap_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "quasi_real_domain_gap_policy_performance_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "domain_gap_verdict": verdict,
+        "slice_count": _int_value_or_default(summary.get("slice_count"), 0),
     }
 
 

@@ -1391,6 +1391,38 @@ This only accelerates policy training tensor computation. It does not speed up
 path planner or evidence generation, does not add real-map data, does not
 publish or replace any checkpoint, and does not claim policy performance.
 
+## Quasi-Real Map Domain Gap Evaluation
+
+After `policy_training_cuda_device_support_evaluated`, the next boundary is not
+a larger PPO update. It is a quasi-real map domain-gap check: the generated
+canary training field must be compared against LOLA south-pole map slices before
+real-map data is allowed to influence training.
+
+New artifacts:
+
+- `configs/quasi_real_map_domain_gap_evaluation_v1.json`
+- `scripts/run_quasi_real_lola_data_prepare.py/.sh`
+- `scripts/run_quasi_real_map_path_feedback_bridge.py/.sh`
+- `scripts/run_quasi_real_map_domain_gap_evaluation.py/.sh`
+- `scripts/run_quasi_real_map_domain_gap_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_map_domain_gap_v1/`
+
+The data prepare step reads
+`model-explorer/data/manifests/lunar_south_pole_lro_lola_gdr_875s_20m.json`,
+downloads missing ignored raw files into `model-explorer/data/raw/...`, and
+validates bytes plus SHA-256. The bridge converts LOLA ROI windows from the
+existing quasi-real matrix manifests into path-feedback artifacts with
+`map_source.kind=lola_quasi_real_roi`, stable `context_id`, derived cost,
+passable mask, and terrain layers. The domain-gap evaluator compares quasi-real
+ROI feedback with current generated evidence and reports whether the next step
+is acceptable, scenario expansion, or planner/contract triage.
+
+Readiness may advance only to `quasi_real_map_domain_gap_evaluated`. This is
+shadow/domain-gap evidence only: no PPO update, no checkpoint release, no
+default-policy replacement, no network/action-space/default-A* change, no
+distance-contract relaxation, no Ackermann-feasible trajectory claim, and no
+policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
