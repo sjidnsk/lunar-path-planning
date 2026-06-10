@@ -1317,6 +1317,45 @@ checkpoint publication, no default-policy replacement, no network/action-space
 or default-A* change, no distance-contract relaxation, no Ackermann-feasible
 trajectory claim, and no policy performance claim.
 
+## Guarded PPO Rollout Pilot
+
+After `iterative_ppo_mini_loop_stability_evaluated`, the next boundary is a
+guarded PPO rollout pilot. It is the first stage that treats the rollout entry
+point itself as the object under test: the policy proposes each step, the
+existing safety/contract/path/risk/source-selection gate decides whether that
+choice may execute, and only policy-controlled accepted steps become
+PPO-trainable transitions.
+
+New artifacts:
+
+- `configs/guarded_ppo_rollout_pilot_v1.json`
+- `configs/guarded_ppo_rollout_update_v1.json`
+- `scripts/run_guarded_ppo_rollout_pilot.py/.sh`
+- `scripts/run_guarded_ppo_rollout_pilot_closure.sh`
+- `outputs/path_feedback_batch_guarded_ppo_rollout_pilot_v1/`
+
+The pilot reuses the same 36 episode / 108 step sequential multi-step
+opportunity set for comparability. It writes guarded root-level aliases for the
+pilot collector outputs: `guarded-ppo-rollout-episodes.jsonl`,
+`guarded-ppo-rollout-transitions.jsonl`,
+`guarded-ppo-rollout-reward-audit.json`,
+`guarded-ppo-rollout-update-summary.json`,
+`guarded-ppo-rollout-rejection-report.json`, and
+`guarded-ppo-rollout-pilot-summary.json`.
+
+Passing requires at least 24 PPO-trainable policy-controlled transitions, zero
+source-fallback trainable samples, valid action masks, finite log-prob/value and
+reward, state continuity, no fallback/open-grid, and zero safety, contract,
+path/risk, or source-selection regression. The pilot then performs one tiny
+on-policy PPO update from the same checkpoint and re-runs raw generalization,
+sequential canary, and collector gates. Readiness may advance only to
+`guarded_ppo_rollout_pilot_evaluated`.
+
+This is still a guarded pilot only: no released PPO policy, no default-policy
+replacement, no network/action-space/default-A* change, no distance-contract
+relaxation, no Ackermann-feasible trajectory claim, no IRIS/GCS diagnostic as
+training release evidence, and no policy performance claim.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

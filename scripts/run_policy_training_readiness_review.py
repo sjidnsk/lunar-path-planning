@@ -87,6 +87,8 @@ ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION = (
 ITERATIVE_PPO_MINI_LOOP_STABILITY_SCHEMA_VERSION = (
     "iterative-ppo-mini-loop-stability-summary/v1"
 )
+GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION = "guarded_ppo_rollout_pilot_evaluated"
+GUARDED_PPO_ROLLOUT_PILOT_SCHEMA_VERSION = "guarded-ppo-rollout-pilot-summary/v1"
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -204,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional iterative-ppo-mini-loop-stability-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--guarded-ppo-rollout-pilot-summary",
+        help="Optional guarded-ppo-rollout-pilot-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/policy_training_readiness_review_v1.json",
         help="Policy training readiness review config JSON. Defaults to configs/policy_training_readiness_review_v1.json.",
@@ -314,6 +320,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.iterative_ppo_mini_loop_stability_summary
         else batch_root / "iterative-ppo-mini-loop-stability-summary.json"
     )
+    guarded_ppo_rollout_pilot_path = (
+        _resolve_path(args.guarded_ppo_rollout_pilot_summary, repo_root)
+        if args.guarded_ppo_rollout_pilot_summary
+        else batch_root / "guarded-ppo-rollout-pilot-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -348,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         ppo_collector_path=ppo_collector_path,
         limited_ppo_update_smoke_path=limited_ppo_update_smoke_path,
         iterative_ppo_mini_loop_path=iterative_ppo_mini_loop_path,
+        guarded_ppo_rollout_pilot_path=guarded_ppo_rollout_pilot_path,
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -372,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         ppo_collector_required=bool(args.ppo_rollout_collector_summary),
         limited_ppo_update_smoke_required=bool(args.limited_ppo_update_smoke_summary),
         iterative_ppo_mini_loop_required=bool(args.iterative_ppo_mini_loop_stability_summary),
+        guarded_ppo_rollout_pilot_required=bool(args.guarded_ppo_rollout_pilot_summary),
         config=config,
         repo_root=repo_root,
     )
@@ -472,6 +485,11 @@ def main(argv: list[str] | None = None) -> int:
             if iterative_ppo_mini_loop_path.is_file() or args.iterative_ppo_mini_loop_stability_summary
             else None
         ),
+        "guarded_ppo_rollout_pilot_summary": (
+            _display_path(guarded_ppo_rollout_pilot_path, repo_root)
+            if guarded_ppo_rollout_pilot_path.is_file() or args.guarded_ppo_rollout_pilot_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -539,6 +557,7 @@ def analyze_policy_training_readiness_review(
     ppo_collector_path: Path,
     limited_ppo_update_smoke_path: Path,
     iterative_ppo_mini_loop_path: Path,
+    guarded_ppo_rollout_pilot_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -555,6 +574,7 @@ def analyze_policy_training_readiness_review(
     ppo_collector_required: bool = False,
     limited_ppo_update_smoke_required: bool = False,
     iterative_ppo_mini_loop_required: bool = False,
+    guarded_ppo_rollout_pilot_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -777,6 +797,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=iterative_ppo_mini_loop_required,
     )
+    guarded_ppo_rollout_pilot = _load_optional_source(
+        guarded_ppo_rollout_pilot_path,
+        label="guarded_ppo_rollout_pilot_summary",
+        expected_schema=GUARDED_PPO_ROLLOUT_PILOT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=guarded_ppo_rollout_pilot_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -799,6 +828,7 @@ def analyze_policy_training_readiness_review(
             ("ppo_rollout_collector_summary", ppo_collector),
             ("limited_ppo_update_smoke_summary", limited_ppo_update_smoke),
             ("iterative_ppo_mini_loop_stability_summary", iterative_ppo_mini_loop),
+            ("guarded_ppo_rollout_pilot_summary", guarded_ppo_rollout_pilot),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -974,6 +1004,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if guarded_ppo_rollout_pilot:
+        source_git_matches.append(
+            _inspect_git(
+                guarded_ppo_rollout_pilot,
+                label="guarded_ppo_rollout_pilot_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -996,6 +1036,7 @@ def analyze_policy_training_readiness_review(
         ppo_collector=ppo_collector,
         limited_ppo_update_smoke=limited_ppo_update_smoke,
         iterative_ppo_mini_loop=iterative_ppo_mini_loop,
+        guarded_ppo_rollout_pilot=guarded_ppo_rollout_pilot,
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -1087,6 +1128,11 @@ def analyze_policy_training_readiness_review(
             if iterative_ppo_mini_loop
             else None
         ),
+        "guarded_ppo_rollout_pilot_summary_path": (
+            _display_path(guarded_ppo_rollout_pilot_path, repo_root)
+            if guarded_ppo_rollout_pilot
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -1117,6 +1163,7 @@ def analyze_policy_training_readiness_review(
             "ppo_rollout_collector": _public_git(ppo_collector),
             "limited_ppo_update_smoke": _public_git(limited_ppo_update_smoke),
             "iterative_ppo_mini_loop_stability": _public_git(iterative_ppo_mini_loop),
+            "guarded_ppo_rollout_pilot": _public_git(guarded_ppo_rollout_pilot),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -1160,6 +1207,7 @@ def _review_metrics(
     ppo_collector: dict[str, Any],
     limited_ppo_update_smoke: dict[str, Any],
     iterative_ppo_mini_loop: dict[str, Any],
+    guarded_ppo_rollout_pilot: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -1249,6 +1297,7 @@ def _review_metrics(
             "ppo_rollout_collector": ppo_collector,
             "limited_ppo_update_smoke": limited_ppo_update_smoke,
             "iterative_ppo_mini_loop_stability": iterative_ppo_mini_loop,
+            "guarded_ppo_rollout_pilot": guarded_ppo_rollout_pilot,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -1273,6 +1322,9 @@ def _review_metrics(
     )
     iterative_ppo_mini_loop_readiness = _iterative_ppo_mini_loop_stability_readiness(
         iterative_ppo_mini_loop
+    )
+    guarded_ppo_rollout_pilot_readiness = _guarded_ppo_rollout_pilot_readiness(
+        guarded_ppo_rollout_pilot
     )
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
@@ -1335,6 +1387,8 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in iterative_ppo_mini_loop_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in guarded_ppo_rollout_pilot_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -1343,6 +1397,12 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif (
+        guarded_ppo_rollout_pilot_readiness["present"]
+        and guarded_ppo_rollout_pilot_readiness["completed"]
+    ):
+        training_readiness_status = GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION
+        recommended_next_action = GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION
     elif (
         iterative_ppo_mini_loop_readiness["present"]
         and iterative_ppo_mini_loop_readiness["completed"]
@@ -1450,6 +1510,7 @@ def _review_metrics(
         "ppo_rollout_collector_readiness": ppo_collector_readiness,
         "limited_ppo_update_smoke_readiness": limited_ppo_update_smoke_readiness,
         "iterative_ppo_mini_loop_stability_readiness": iterative_ppo_mini_loop_readiness,
+        "guarded_ppo_rollout_pilot_readiness": guarded_ppo_rollout_pilot_readiness,
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1500,7 +1561,8 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
-            iterative_ppo_mini_loop_readiness.get("next_required_change")
+            guarded_ppo_rollout_pilot_readiness.get("next_required_change")
+            or iterative_ppo_mini_loop_readiness.get("next_required_change")
             or limited_ppo_update_smoke_readiness.get("next_required_change")
             or ppo_collector_readiness.get("next_required_change")
             or sequential_canary_readiness.get("next_required_change")
@@ -1534,6 +1596,8 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION:
+        return "guarded_ppo_rollout_pilot_only"
     if recommended_next_action == ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION:
         return "iterative_ppo_mini_loop_stability_only"
     if recommended_next_action == LIMITED_PPO_UPDATE_SMOKE_EVALUATED_ACTION:
@@ -3023,6 +3087,87 @@ def _iterative_ppo_mini_loop_stability_readiness(summary: dict[str, Any]) -> dic
         "round_count": _int_value_or_default(summary.get("round_count"), 0),
         "failed_round_count": _int_value_or_default(summary.get("failed_round_count"), 0),
         "stability_passed": summary.get("stability_passed") is True,
+    }
+
+
+def _guarded_ppo_rollout_pilot_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "ppo_trainable_transition_count": 0,
+        "optimizer_train_transition_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "guarded_ppo_rollout_pilot_not_passed")
+    if summary.get("guarded_rollout_pilot_passed") is not True:
+        _append_reason(blockers, "guarded_ppo_rollout_contract_invalid")
+    for field, reason in (
+        ("episode_count", "guarded_ppo_rollout_contract_invalid"),
+        ("step_count", "guarded_ppo_rollout_contract_invalid"),
+        ("ppo_trainable_transition_count", "guarded_ppo_trainable_transition_count_insufficient"),
+        ("optimizer_train_transition_count", "guarded_ppo_trainable_transition_count_insufficient"),
+    ):
+        if _int_value_or_default(summary.get(field), 0) <= 0:
+            _append_reason(blockers, reason)
+    if _int_value_or_default(summary.get("ppo_trainable_transition_count"), 0) < 24:
+        _append_reason(blockers, "guarded_ppo_trainable_transition_count_insufficient")
+    if _int_value_or_default(summary.get("optimizer_train_transition_count"), 0) < 24:
+        _append_reason(blockers, "guarded_ppo_trainable_transition_count_insufficient")
+    for field, reason in (
+        ("source_fallback_trainable_count", "guarded_ppo_rollout_contract_invalid"),
+        ("state_continuity_violation_count", "guarded_ppo_rollout_contract_invalid"),
+        ("invalid_action_mask_count", "guarded_ppo_rollout_contract_invalid"),
+        ("empty_action_mask_count", "guarded_ppo_rollout_contract_invalid"),
+        ("missing_log_prob_count", "guarded_ppo_on_policy_contract_invalid"),
+        ("missing_value_count", "guarded_ppo_on_policy_contract_invalid"),
+        ("non_finite_reward_count", "guarded_ppo_update_loss_non_finite"),
+        ("post_update_raw_test_regression_count", "guarded_ppo_post_update_regression"),
+        ("post_update_sequential_rejected_count", "guarded_ppo_post_update_regression"),
+        ("post_update_collector_regression_count", "guarded_ppo_post_update_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if _float_value_or_default(summary.get("old_log_prob_max_abs_error"), float("inf")) > 1.0e-4:
+        _append_reason(blockers, "guarded_ppo_on_policy_contract_invalid")
+    if _float_value_or_default(summary.get("old_value_max_abs_error"), float("inf")) > 1.0e-4:
+        _append_reason(blockers, "guarded_ppo_on_policy_contract_invalid")
+    if _float_value_or_default(summary.get("parameter_l2_delta"), 0.0) <= 0.0:
+        _append_reason(blockers, "guarded_ppo_policy_drift_detected")
+    if abs(_float_value_or_default(summary.get("approx_kl"), float("inf"))) > 0.25:
+        _append_reason(blockers, "guarded_ppo_policy_drift_detected")
+    if _float_value_or_default(summary.get("max_grad_norm_after_clip"), float("inf")) > 1.0 + 1.0e-8:
+        _append_reason(blockers, "guarded_ppo_policy_drift_detected")
+    if summary.get("experimental_checkpoint") is not True:
+        _append_reason(blockers, "guarded_ppo_checkpoint_not_experimental")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "guarded_ppo_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "guarded_ppo_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "guarded_ppo_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "guarded_ppo_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "ppo_trainable_transition_count": _int_value_or_default(
+            summary.get("ppo_trainable_transition_count"),
+            0,
+        ),
+        "optimizer_train_transition_count": _int_value_or_default(
+            summary.get("optimizer_train_transition_count"),
+            0,
+        ),
     }
 
 

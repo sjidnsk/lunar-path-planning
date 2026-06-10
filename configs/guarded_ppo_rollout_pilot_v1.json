@@ -1,0 +1,42 @@
+{
+  "schema_version": "guarded-ppo-rollout-pilot-config/v1",
+  "description": "Guarded PPO Rollout Pilot v1. Run a guarded policy rollout pilot, collect on-policy transitions, perform one tiny PPO update, and re-run post-update gates.",
+  "config_paths": {
+    "sequential_canary_config": "configs/policy_gated_sequential_multi_step_opportunity_rollout_v1.json",
+    "collector_config": "configs/ppo_rollout_collector_dry_run_v1.json",
+    "update_config": "configs/guarded_ppo_rollout_update_v1.json",
+    "raw_generalization_config": "configs/raw_policy_generalization_evaluation_v1.json"
+  },
+  "output_files": {
+    "summary": "guarded-ppo-rollout-pilot-summary.json",
+    "episodes": "guarded-ppo-rollout-episodes.jsonl",
+    "transitions": "guarded-ppo-rollout-transitions.jsonl",
+    "update_summary": "guarded-ppo-rollout-update-summary.json",
+    "reward_audit": "guarded-ppo-rollout-reward-audit.json",
+    "rejection_report": "guarded-ppo-rollout-rejection-report.json"
+  },
+  "validation": {
+    "min_episode_count": 36,
+    "min_step_count": 108,
+    "min_ppo_trainable_transition_count": 24,
+    "min_optimizer_train_transition_count": 24,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_abs_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0,
+    "max_raw_test_regression_count": 0,
+    "min_accepted_takeover_family_count": 6,
+    "min_multi_step_accepted_episode_count": 12
+  },
+  "non_goals": [
+    "not_formal_ppo_rollout_release",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_distance_contract_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_policy_performance_claim"
+  ]
+}
