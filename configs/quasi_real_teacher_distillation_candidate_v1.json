@@ -1,0 +1,77 @@
+{
+  "schema_version": "quasi-real-teacher-distillation-candidate-config/v1",
+  "input_files": {
+    "taxonomy_summary": "quasi-real-teacher-distillation-taxonomy-summary.json",
+    "split_summary": "quasi-real-teacher-distillation-split-summary.json",
+    "preference_summary": "quasi-real-teacher-distillation-preference-summary.json",
+    "preference_samples": "quasi-real-teacher-distillation-preference-samples.jsonl"
+  },
+  "base_candidate_files": {
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "summary": "quasi-real-teacher-distillation-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+    "training_curves": "quasi-real-teacher-distillation-training-curves.json",
+    "overfit_report": "quasi-real-teacher-distillation-overfit-report.json",
+    "leakage_report": "quasi-real-teacher-distillation-leakage-report.json"
+  },
+  "validation": {
+    "min_teacher_distillation_preference_count": 216
+  },
+  "evaluation": {
+    "top_k": 3
+  },
+  "training": {
+    "seeds": [0, 1, 2],
+    "epochs": 1000,
+    "learning_rate": 0.0005,
+    "hidden_size": 16,
+    "margin": 0.2,
+    "preference_loss_weight": 1.0,
+    "teacher_distillation_loss_weights": [6.0]
+  },
+  "teacher_equivalent_validation": {
+    "schema_version": "quasi-real-teacher-equivalent-validation-config/v1",
+    "input_files": {
+      "source_batch_summary": "batch-evaluation-summary.json",
+      "quasi_real_path_feedback_summary": "quasi-real-map-path-feedback-summary.json",
+      "quasi_real_slices": "quasi-real-map-slices.jsonl",
+      "quasi_real_domain_gap_summary": "quasi-real-map-domain-gap-summary.json",
+      "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+      "checkpoint": "experimental-hybrid-policy-candidate.pt",
+      "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+    },
+    "output_files": {
+      "decisions": "quasi-real-teacher-equivalent-decisions.jsonl",
+      "summary": "quasi-real-teacher-equivalent-summary.json",
+      "disagreement_report": "quasi-real-teacher-equivalent-disagreement-report.json",
+      "group_report": "quasi-real-teacher-equivalent-group-report.md"
+    },
+    "evaluation": {
+      "top_k": 3
+    },
+    "validation": {
+      "min_teacher_equivalent_context_count": 108,
+      "min_roi_group_count": 4,
+      "min_teacher_agreement_rate": 0.9
+    },
+    "non_goals": [
+      "no_ppo_update",
+      "no_policy_takeover",
+      "no_checkpoint_publication",
+      "no_default_policy_replacement",
+      "no_performance_claim"
+    ]
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_policy_takeover",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_performance_claim"
+  ]
+}

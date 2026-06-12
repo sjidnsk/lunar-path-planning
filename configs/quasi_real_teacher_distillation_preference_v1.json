@@ -1,0 +1,24 @@
+{
+  "schema_version": "quasi-real-teacher-distillation-preference-config/v1",
+  "input_files": {
+    "taxonomy_summary": "quasi-real-teacher-distillation-taxonomy-summary.json",
+    "taxonomy": "quasi-real-teacher-distillation-taxonomy.jsonl",
+    "distillation_slices": "quasi-real-teacher-distillation-slices.jsonl",
+    "split_summary": "quasi-real-teacher-distillation-split-summary.json"
+  },
+  "output_files": {
+    "samples": "quasi-real-teacher-distillation-preference-samples.jsonl",
+    "summary": "quasi-real-teacher-distillation-preference-summary.json",
+    "exclusion_report": "quasi-real-teacher-distillation-exclusion-report.json"
+  },
+  "validation": {
+    "min_teacher_distillation_preference_count": 8,
+    "max_hard_positive_added_count": 0,
+    "max_ppo_transition_added_count": 0
+  },
+  "weights": {
+    "path_cost_only_regression": 1.5,
+    "path_risk_joint_regression": 2.5,
+    "risk_only_regression": 2.0
+  }
+}

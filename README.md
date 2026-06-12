@@ -1744,14 +1744,56 @@ network/action space/default A*, does not relax distance/path-risk/source
 selection contracts, and does not claim Ackermann-feasible trajectory or policy
 performance.
 
-Current execution note: the validation tooling is implemented, but the current
-default guarded candidate does not yet pass the 108-context expanded LOLA check.
-It reaches `teacher_agreement_rate=0.8333` with `unsafe_disagreement_count=18`;
-all unsafe disagreements are path-cost regressions, with 5 also carrying risk
-regression. A probe with the existing quasi-real shadow-alignment candidate
-improves agreement to `0.8796` and reduces unsafe disagreements to 13, but still
-misses the `0.90` agreement gate. This is now a teacher-distillation/alignment
-problem, not a safe-better opportunity blocker.
+Current execution note: the validation tooling exposed the expected blocker.
+The default guarded candidate reached `teacher_agreement_rate=0.8333` with
+`unsafe_disagreement_count=18`; all unsafe disagreements carried path-cost
+regression, with 5 also carrying risk regression. A shadow-alignment probe
+improved agreement to `0.8796` but still missed the teacher-equivalent gate.
+This was treated as a teacher-distillation/alignment problem, not as a
+safe-better opportunity blocker.
+
+## Quasi-Real Teacher Distillation Robustness
+
+`Quasi-Real Teacher Distillation Robustness v1` closes the teacher-equivalent
+alignment gap without PPO, takeover, checkpoint publication, or any gate
+relaxation. The stage classifies unsafe quasi-real disagreements, expands the
+training signal from "teacher > current raw unsafe choice" to "teacher > every
+gate-regressive alternative in the audited quasi-real top-k set", materializes
+train/validation/holdout distillation slices, and trains a new experimental
+candidate with pairwise preference loss only.
+
+New artifacts:
+
+- `configs/quasi_real_teacher_distillation_taxonomy_v1.json`
+- `configs/quasi_real_teacher_distillation_dataset_v1.json`
+- `configs/quasi_real_teacher_distillation_preference_v1.json`
+- `configs/quasi_real_teacher_distillation_candidate_v1.json`
+- `scripts/run_quasi_real_teacher_distillation_taxonomy.py/.sh`
+- `scripts/run_quasi_real_teacher_distillation_dataset.py/.sh`
+- `scripts/run_quasi_real_teacher_distillation_preference_mining.py/.sh`
+- `scripts/run_quasi_real_teacher_distillation_candidate.py/.sh`
+- `scripts/run_quasi_real_teacher_distillation_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_teacher_distillation_*_v1/`
+
+Current evidence is passed:
+
+- baseline unsafe disagreement classified: `18/18`
+- distillation candidate pairs: `216`
+- train preference samples: `648`
+- `hard_positive_added_count=0`
+- `ppo_transition_added_count=0`
+- `holdout_leakage_count=0`
+- post-distillation 108-context teacher validation:
+  `teacher_agreement_rate=1.0`, `unsafe_disagreement_count=0`
+- invalid mask, fallback/open-grid, safety, contract, path/risk, and
+  source-selection regression counters are all `0`
+
+Readiness accepts `--quasi-real-teacher-distillation-summary` and may advance
+to `quasi_real_teacher_distillation_robustness_evaluated` only when the
+distillation summary, post-distillation teacher-equivalent validation, leakage
+checks, non-goal flags, and git provenance all pass. This is still not formal
+PPO rollout, quasi-real policy takeover, checkpoint publication, or a policy
+performance claim.
 
 ## Core Algorithm Development Chain
 

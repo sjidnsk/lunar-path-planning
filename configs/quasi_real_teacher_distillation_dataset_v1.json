@@ -1,0 +1,17 @@
+{
+  "schema_version": "quasi-real-teacher-distillation-dataset-config/v1",
+  "input_files": {
+    "taxonomy_summary": "quasi-real-teacher-distillation-taxonomy-summary.json",
+    "taxonomy": "quasi-real-teacher-distillation-taxonomy.jsonl"
+  },
+  "output_files": {
+    "slices": "quasi-real-teacher-distillation-slices.jsonl",
+    "path_feedback_summary": "quasi-real-teacher-distillation-path-feedback-summary.json",
+    "split_summary": "quasi-real-teacher-distillation-split-summary.json"
+  },
+  "variants": {
+    "train": 3,
+    "validation": 2,
+    "holdout": 2
+  }
+}

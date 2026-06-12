@@ -1,0 +1,20 @@
+{
+  "schema_version": "quasi-real-teacher-distillation-taxonomy-config/v1",
+  "input_files": {
+    "teacher_equivalent_summary": "quasi-real-teacher-equivalent-summary.json",
+    "teacher_equivalent_decisions": "quasi-real-teacher-equivalent-decisions.jsonl",
+    "quasi_real_path_feedback_summary": "quasi-real-map-path-feedback-summary.json",
+    "quasi_real_slices": "quasi-real-map-slices.jsonl"
+  },
+  "output_files": {
+    "summary": "quasi-real-teacher-distillation-taxonomy-summary.json",
+    "taxonomy": "quasi-real-teacher-distillation-taxonomy.jsonl",
+    "feature_audit": "quasi-real-teacher-distillation-feature-audit.jsonl",
+    "report": "quasi-real-teacher-distillation-taxonomy-report.md"
+  },
+  "validation": {
+    "min_unsafe_disagreement_count": 13,
+    "max_bridge_or_feedback_gap_count": 0,
+    "max_action_mask_or_contract_gap_count": 0
+  }
+}
