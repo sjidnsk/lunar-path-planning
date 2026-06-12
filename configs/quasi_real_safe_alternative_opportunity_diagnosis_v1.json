@@ -1,0 +1,39 @@
+{
+  "schema_version": "quasi-real-safe-alternative-opportunity-diagnosis-config/v1",
+  "input_files": {
+    "quasi_real_path_feedback_summary": "quasi-real-map-path-feedback-summary.json",
+    "quasi_real_slices": "quasi-real-map-slices.jsonl",
+    "quasi_real_domain_gap_summary": "quasi-real-map-domain-gap-summary.json",
+    "guarded_pilot_summary": "quasi-real-guarded-policy-pilot-summary.json",
+    "guarded_decisions": "quasi-real-guarded-policy-decisions.jsonl",
+    "alignment_summary": "quasi-real-shadow-alignment-summary.json"
+  },
+  "output_files": {
+    "summary": "quasi-real-safe-alternative-opportunity-summary.json",
+    "diagnostics": "quasi-real-safe-alternative-opportunity-diagnostics.jsonl",
+    "exclusion_report": "quasi-real-safe-alternative-opportunity-exclusion-report.json",
+    "report": "quasi-real-safe-alternative-opportunity-report.md"
+  },
+  "thresholds": {
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0,
+    "better_path_cost_delta": -0.25,
+    "better_risk_delta": -0.01,
+    "better_utility_delta": 0.005
+  },
+  "validation": {
+    "min_quasi_real_context_count": 12,
+    "min_roi_group_count": 4,
+    "max_opportunity_exclusion_count": 0
+  },
+  "non_goals": [
+    "no_ppo_update",
+    "no_ppo_transition_materialization",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_or_action_space_change",
+    "no_gate_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_policy_performance_claim"
+  ]
+}

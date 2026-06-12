@@ -111,6 +111,12 @@ QUASI_REAL_GUARDED_POLICY_PILOT_EVALUATED_ACTION = (
 QUASI_REAL_GUARDED_POLICY_PILOT_SCHEMA_VERSION = (
     "quasi-real-guarded-policy-pilot-summary/v1"
 )
+QUASI_REAL_SAFE_ALTERNATIVE_OPPORTUNITY_DIAGNOSED_ACTION = (
+    "quasi_real_safe_alternative_opportunity_diagnosed"
+)
+QUASI_REAL_SAFE_ALTERNATIVE_OPPORTUNITY_SCHEMA_VERSION = (
+    "quasi-real-safe-alternative-opportunity-summary/v1"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -250,6 +256,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quasi-real-guarded-policy-pilot-summary",
         help="Optional quasi-real-guarded-policy-pilot-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-safe-alternative-opportunity-summary",
+        help="Optional quasi-real-safe-alternative-opportunity-summary/v1 JSON.",
     )
     parser.add_argument(
         "--config",
@@ -392,6 +402,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.quasi_real_guarded_policy_pilot_summary
         else batch_root / "quasi-real-guarded-policy-pilot-summary.json"
     )
+    quasi_real_safe_alternative_opportunity_path = (
+        _resolve_path(args.quasi_real_safe_alternative_opportunity_summary, repo_root)
+        if args.quasi_real_safe_alternative_opportunity_summary
+        else batch_root / "quasi-real-safe-alternative-opportunity-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -432,6 +447,9 @@ def main(argv: list[str] | None = None) -> int:
         quasi_real_shadow_policy_behavior_path=quasi_real_shadow_policy_behavior_path,
         quasi_real_shadow_alignment_path=quasi_real_shadow_alignment_path,
         quasi_real_guarded_policy_pilot_path=quasi_real_guarded_policy_pilot_path,
+        quasi_real_safe_alternative_opportunity_path=(
+            quasi_real_safe_alternative_opportunity_path
+        ),
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -467,6 +485,9 @@ def main(argv: list[str] | None = None) -> int:
         quasi_real_shadow_alignment_required=bool(args.quasi_real_shadow_alignment_summary),
         quasi_real_guarded_policy_pilot_required=bool(
             args.quasi_real_guarded_policy_pilot_summary
+        ),
+        quasi_real_safe_alternative_opportunity_required=bool(
+            args.quasi_real_safe_alternative_opportunity_summary
         ),
         config=config,
         repo_root=repo_root,
@@ -602,6 +623,12 @@ def main(argv: list[str] | None = None) -> int:
             or args.quasi_real_guarded_policy_pilot_summary
             else None
         ),
+        "quasi_real_safe_alternative_opportunity_summary": (
+            _display_path(quasi_real_safe_alternative_opportunity_path, repo_root)
+            if quasi_real_safe_alternative_opportunity_path.is_file()
+            or args.quasi_real_safe_alternative_opportunity_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -675,6 +702,7 @@ def analyze_policy_training_readiness_review(
     quasi_real_shadow_policy_behavior_path: Path,
     quasi_real_shadow_alignment_path: Path,
     quasi_real_guarded_policy_pilot_path: Path,
+    quasi_real_safe_alternative_opportunity_path: Path,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -697,6 +725,7 @@ def analyze_policy_training_readiness_review(
     quasi_real_shadow_policy_behavior_required: bool = False,
     quasi_real_shadow_alignment_required: bool = False,
     quasi_real_guarded_policy_pilot_required: bool = False,
+    quasi_real_safe_alternative_opportunity_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -973,6 +1002,15 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=quasi_real_guarded_policy_pilot_required,
     )
+    quasi_real_safe_alternative_opportunity = _load_optional_source(
+        quasi_real_safe_alternative_opportunity_path,
+        label="quasi_real_safe_alternative_opportunity_summary",
+        expected_schema=QUASI_REAL_SAFE_ALTERNATIVE_OPPORTUNITY_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_safe_alternative_opportunity_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -1005,7 +1043,16 @@ def analyze_policy_training_readiness_review(
                 else {},
             ),
             ("quasi_real_shadow_alignment_summary", quasi_real_shadow_alignment),
-            ("quasi_real_guarded_policy_pilot_summary", quasi_real_guarded_policy_pilot),
+            (
+                "quasi_real_guarded_policy_pilot_summary",
+                quasi_real_guarded_policy_pilot
+                if not quasi_real_safe_alternative_opportunity
+                else {},
+            ),
+            (
+                "quasi_real_safe_alternative_opportunity_summary",
+                quasi_real_safe_alternative_opportunity,
+            ),
         ):
             if payload.get("status") == "failed":
                 _append_reason(reason_codes, f"{label}_failed")
@@ -1241,6 +1288,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if quasi_real_safe_alternative_opportunity:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_safe_alternative_opportunity,
+                label="quasi_real_safe_alternative_opportunity_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -1269,6 +1326,9 @@ def analyze_policy_training_readiness_review(
         quasi_real_shadow_policy_behavior=quasi_real_shadow_policy_behavior,
         quasi_real_shadow_alignment=quasi_real_shadow_alignment,
         quasi_real_guarded_policy_pilot=quasi_real_guarded_policy_pilot,
+        quasi_real_safe_alternative_opportunity=(
+            quasi_real_safe_alternative_opportunity
+        ),
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
         config=config,
@@ -1390,6 +1450,11 @@ def analyze_policy_training_readiness_review(
             if quasi_real_guarded_policy_pilot
             else None
         ),
+        "quasi_real_safe_alternative_opportunity_summary_path": (
+            _display_path(quasi_real_safe_alternative_opportunity_path, repo_root)
+            if quasi_real_safe_alternative_opportunity
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -1430,6 +1495,9 @@ def analyze_policy_training_readiness_review(
             ),
             "quasi_real_shadow_alignment": _public_git(quasi_real_shadow_alignment),
             "quasi_real_guarded_policy_pilot": _public_git(quasi_real_guarded_policy_pilot),
+            "quasi_real_safe_alternative_opportunity": _public_git(
+                quasi_real_safe_alternative_opportunity
+            ),
             "current_matches_sources": all(source_git_matches),
         },
         **review,
@@ -1479,6 +1547,7 @@ def _review_metrics(
     quasi_real_shadow_policy_behavior: dict[str, Any],
     quasi_real_shadow_alignment: dict[str, Any],
     quasi_real_guarded_policy_pilot: dict[str, Any],
+    quasi_real_safe_alternative_opportunity: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -1573,6 +1642,8 @@ def _review_metrics(
             "quasi_real_map_domain_gap": quasi_real_map_domain_gap,
             "quasi_real_shadow_policy_behavior": quasi_real_shadow_policy_behavior,
             "quasi_real_shadow_alignment": quasi_real_shadow_alignment,
+            "quasi_real_guarded_policy_pilot": quasi_real_guarded_policy_pilot,
+            "quasi_real_safe_alternative_opportunity": quasi_real_safe_alternative_opportunity,
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -1615,6 +1686,11 @@ def _review_metrics(
     )
     quasi_real_guarded_policy_pilot_readiness = _quasi_real_guarded_policy_pilot_readiness(
         quasi_real_guarded_policy_pilot
+    )
+    quasi_real_safe_alternative_opportunity_readiness = (
+        _quasi_real_safe_alternative_opportunity_readiness(
+            quasi_real_safe_alternative_opportunity
+        )
     )
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
         candidate=controlled_candidate,
@@ -1689,6 +1765,9 @@ def _review_metrics(
     for reason in quasi_real_shadow_alignment_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
     for reason in quasi_real_guarded_policy_pilot_readiness["training_blockers"]:
+        if not quasi_real_safe_alternative_opportunity_readiness["present"]:
+            _append_reason(training_blockers, reason)
+    for reason in quasi_real_safe_alternative_opportunity_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
@@ -1698,6 +1777,16 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif (
+        quasi_real_safe_alternative_opportunity_readiness["present"]
+        and quasi_real_safe_alternative_opportunity_readiness["completed"]
+    ):
+        training_readiness_status = (
+            QUASI_REAL_SAFE_ALTERNATIVE_OPPORTUNITY_DIAGNOSED_ACTION
+        )
+        recommended_next_action = (
+            QUASI_REAL_SAFE_ALTERNATIVE_OPPORTUNITY_DIAGNOSED_ACTION
+        )
     elif (
         quasi_real_guarded_policy_pilot_readiness["present"]
         and quasi_real_guarded_policy_pilot_readiness["completed"]
@@ -1847,6 +1936,9 @@ def _review_metrics(
         "quasi_real_shadow_policy_behavior_readiness": quasi_real_shadow_policy_behavior_readiness,
         "quasi_real_shadow_alignment_readiness": quasi_real_shadow_alignment_readiness,
         "quasi_real_guarded_policy_pilot_readiness": quasi_real_guarded_policy_pilot_readiness,
+        "quasi_real_safe_alternative_opportunity_readiness": (
+            quasi_real_safe_alternative_opportunity_readiness
+        ),
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1897,6 +1989,8 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
+            quasi_real_safe_alternative_opportunity_readiness.get("next_required_change")
+            or
             quasi_real_guarded_policy_pilot_readiness.get("next_required_change")
             or
             quasi_real_shadow_alignment_readiness.get("next_required_change")
@@ -3722,6 +3816,85 @@ def _quasi_real_shadow_alignment_readiness(summary: dict[str, Any]) -> dict[str,
         "training_blockers": blockers,
         "next_required_change": summary.get("next_required_change") if blockers else None,
         "alignment_verdict": verdict,
+    }
+
+
+def _quasi_real_safe_alternative_opportunity_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "opportunity_verdict": None,
+        "safe_better_opportunity_context_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_safe_alternative_opportunity_diagnosis_failed")
+    verdict = str(summary.get("opportunity_verdict", ""))
+    allowed_verdicts = {
+        "quasi_real_safe_alternative_opportunity_gap",
+        "acceptable_for_quasi_real_safe_choice_calibration",
+        "real_map_bridge_or_feedback_gap",
+        "real_map_action_mask_contract_gap",
+    }
+    if verdict not in allowed_verdicts:
+        _append_reason(blockers, "quasi_real_safe_alternative_opportunity_diagnosis_failed")
+    elif verdict == "real_map_bridge_or_feedback_gap":
+        _append_reason(blockers, "real_map_bridge_or_feedback_gap")
+    elif verdict == "real_map_action_mask_contract_gap":
+        _append_reason(blockers, "real_map_action_mask_contract_gap")
+
+    if _int_value_or_default(summary.get("quasi_real_context_count"), 0) < 12:
+        _append_reason(blockers, "quasi_real_safe_alternative_context_count_below_threshold")
+    if _int_value_or_default(summary.get("policy_decision_count"), 0) != _int_value_or_default(
+        summary.get("quasi_real_context_count"),
+        0,
+    ):
+        _append_reason(blockers, "quasi_real_safe_alternative_opportunity_diagnosis_failed")
+    if _int_value_or_default(summary.get("roi_group_count"), 0) < 4:
+        _append_reason(blockers, "quasi_real_safe_alternative_roi_group_count_below_threshold")
+    if _int_value_or_default(summary.get("context_id_missing_count"), 0):
+        _append_reason(blockers, "quasi_real_shadow_context_id_missing")
+    if _int_value_or_default(summary.get("opportunity_exclusion_count"), 0):
+        _append_reason(blockers, "real_map_bridge_or_feedback_gap")
+    for field, reason in (
+        ("invalid_action_mask_count", "real_map_action_mask_contract_gap"),
+        ("fallback_or_open_grid_count", "quasi_real_safe_alternative_gate_regression"),
+        ("safety_regression_count", "quasi_real_safe_alternative_gate_regression"),
+        ("contract_violation_count", "real_map_action_mask_contract_gap"),
+        ("path_cost_regression_count", "quasi_real_safe_alternative_gate_regression"),
+        ("risk_regression_count", "quasi_real_safe_alternative_gate_regression"),
+        ("source_selection_regression_count", "quasi_real_safe_alternative_gate_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if summary.get("runs_ppo_update") is True:
+        _append_reason(blockers, "quasi_real_safe_alternative_unexpected_ppo_update")
+    if _int_value_or_default(summary.get("ppo_transition_added_count"), 0):
+        _append_reason(blockers, "quasi_real_safe_alternative_unexpected_ppo_transition")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "quasi_real_safe_alternative_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "quasi_real_safe_alternative_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "quasi_real_safe_alternative_policy_performance_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change"),
+        "opportunity_verdict": verdict,
+        "safe_better_opportunity_context_count": _int_value_or_default(
+            summary.get("safe_better_opportunity_context_count"),
+            0,
+        ),
     }
 
 

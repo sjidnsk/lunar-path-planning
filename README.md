@@ -1572,6 +1572,50 @@ network/action-space/default A*, does not relax distance/path-risk/source-
 selection contracts, and does not claim Ackermann-feasible trajectory or policy
 performance.
 
+## Quasi-Real Safe-Alternative Opportunity Diagnosis
+
+`Quasi-Real Guarded Policy Pilot v1` can now expose a useful blocker: the policy
+may stay source-aligned on all LOLA quasi-real contexts, with zero safety,
+contract, fallback, path/risk, or source-selection regression. That is safe, but
+it does not prove the policy can make valuable quasi-real choices. The next
+diagnostic asks a narrower question: do the quasi-real ROI contexts actually
+contain any top-k alternative that is gate-safe and better than the
+source-selected baseline?
+
+New artifacts:
+
+- `configs/quasi_real_safe_alternative_opportunity_diagnosis_v1.json`
+- `scripts/run_quasi_real_safe_alternative_opportunity_diagnosis.py/.sh`
+- `outputs/path_feedback_batch_quasi_real_safe_alternative_opportunity_diagnosis_v1/`
+
+The diagnosis reads the quasi-real domain-gap root, the failed guarded pilot
+root, and the quasi-real shadow alignment candidate root. For every context it
+uses the source-selected candidate as baseline and runs each top-k alternative
+through a funnel: candidate present, action mask valid, reachable, no replan, no
+fallback/open-grid, contract safe, path/risk/source-selection non-regressive,
+safe alternative, and safe-better alternative. `safe-better` keeps the existing
+canary value/stability rule: no gate regression and path cost improves by at
+least `0.25`, or risk improves by at least `0.01`, or utility improves by at
+least `0.005`.
+
+The summary classifies each context as `opportunity_missing`,
+`safe_alternative_exists_but_not_better`,
+`safe_better_opportunity_exists_policy_source_aligned`,
+`safe_better_opportunity_policy_selected`, `bridge_or_feedback_gap`, or
+`action_mask_or_contract_gap`. Its verdict is intentionally diagnostic:
+`quasi_real_safe_alternative_opportunity_gap` means the quasi-real ROI/start/goal
+selection needs expansion; `acceptable_for_quasi_real_safe_choice_calibration`
+means safe-better opportunities exist and a later calibration stage may use
+them; bridge or action-mask/contract gaps stop the pipeline.
+
+Readiness may advance only to
+`quasi_real_safe_alternative_opportunity_diagnosed`. This is not a quasi-real
+guarded pilot pass and not PPO readiness. The stage does not run a PPO optimizer
+update, does not write PPO transitions, does not publish or replace a checkpoint,
+does not change network/action-space/default A*, does not relax
+distance/path-risk/source-selection gates, and does not claim Ackermann-feasible
+trajectory or policy performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
