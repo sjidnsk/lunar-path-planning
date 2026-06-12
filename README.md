@@ -1795,6 +1795,44 @@ checks, non-goal flags, and git provenance all pass. This is still not formal
 PPO rollout, quasi-real policy takeover, checkpoint publication, or a policy
 performance claim.
 
+## Quasi-Real Guarded Teacher-Following Pilot
+
+`Quasi-Real Guarded Teacher-Following Pilot v1` is the next quasi-real mainline
+stage after teacher distillation. It moves from shadow-only teacher agreement to
+a guarded pilot where the policy participates in controlled quasi-real
+decisions, while the success definition remains teacher-following rather than
+safe-better improvement.
+
+This stage deliberately does not reuse the value-oriented
+`Quasi-Real Guarded Policy Pilot` requirement that
+`policy_changed_gate_passed_count > 0`. In the current LOLA top-k evidence,
+safe-better opportunities are absent, so a source-aligned policy decision is a
+valid teacher-following step:
+
+- `source_aligned` -> `controlled_choice_source=policy_teacher_aligned`
+- `policy_changed_gate_passed` -> `controlled_choice_source=policy_safe_disagreement`
+- `policy_changed_gate_rejected` -> `controlled_choice_source=teacher_fallback`
+
+New artifacts:
+
+- `configs/quasi_real_guarded_teacher_following_pilot_v1.json`
+- `scripts/run_quasi_real_guarded_teacher_following_pilot.py/.sh`
+- `scripts/run_quasi_real_guarded_teacher_following_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_guarded_teacher_following_pilot_v1/`
+
+The pilot passes only when the expanded quasi-real context coverage is intact,
+teacher agreement remains at least `0.90`, teacher-following steps are at least
+`90`, all unsafe disagreements are zero, and invalid mask, fallback/open-grid,
+safety, contract, path/risk, and source-selection regressions remain zero. It
+does not write PPO transitions, run PPO updates, publish checkpoints, replace
+the default policy, or claim policy performance.
+
+Readiness accepts `--quasi-real-guarded-teacher-following-pilot-summary` and may
+advance to `quasi_real_guarded_teacher_following_pilot_evaluated` only when the
+teacher-following summary and git provenance pass. Safe-better opportunity
+absence remains a value/augmentation branch issue, not a blocker for this
+teacher-following mainline.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
