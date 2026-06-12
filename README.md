@@ -1536,6 +1536,42 @@ not publish or replace a checkpoint, does not change network/action-space/defaul
 A*, does not relax distance/path-risk/source-selection contracts, and does not
 claim Ackermann-feasible trajectory or policy performance.
 
+## Quasi-Real Guarded Policy Pilot
+
+After `quasi_real_shadow_alignment_evaluated`, the next boundary is a guarded
+pilot on LOLA quasi-real ROI contexts. This is the first quasi-real stage where
+a policy-changed decision may be accepted as a controlled choice, but only if it
+passes the same action-mask, candidate-present, reachable, no-fallback,
+contract, path/risk, and source-selection gates. If the policy changes its mind
+and fails a gate, the pilot falls back to source-selected and records the exact
+reason. If the policy never changes when the gate requires at least one accepted
+change, the result is classified as over-conservative rather than success.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_policy_pilot_v1.json`
+- `scripts/run_quasi_real_guarded_policy_pilot.py/.sh`
+- `scripts/run_quasi_real_guarded_policy_pilot_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_guarded_policy_pilot_v1/`
+
+The pilot reuses the existing quasi-real shadow scoring and gate logic, then
+writes `quasi-real-guarded-policy-decision/v1` records with
+`controlled_choice_source=policy|source|source_fallback`. Its summary reports
+quasi-real context count, ROI group coverage, changed/pass/rejected counts,
+fallback count, all gate regression counters, and
+`guarded_pilot_verdict`. Readiness may advance only to
+`quasi_real_guarded_policy_pilot_evaluated` when the summary is passed,
+`policy_changed_gate_passed_count>0`, `policy_changed_gate_rejected_count=0`,
+all gate regressions are 0, and every consumed evidence root matches the
+current HEAD.
+
+This stage is still a guarded pilot, not a quasi-real PPO collector or policy
+release. It does not run a PPO optimizer update, does not write PPO
+transitions, does not publish or replace a checkpoint, does not change
+network/action-space/default A*, does not relax distance/path-risk/source-
+selection contracts, and does not claim Ackermann-feasible trajectory or policy
+performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
