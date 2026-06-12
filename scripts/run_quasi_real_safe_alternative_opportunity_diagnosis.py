@@ -159,6 +159,7 @@ def _diagnose_scenario(
         "split": slice_record.get("split"),
         "map_id": slice_record.get("map_id"),
         "slice_id": slice_record.get("slice_id") or scenario_id,
+        "start_cell": _normal_cell(slice_record.get("start_cell")),
         "source_action_index": source_action,
         "raw_policy_action_index": raw_policy_action,
         "candidate_count": len(candidates),
@@ -294,6 +295,11 @@ def _summary(
         "safe_alternative_context_count": sum(1 for row in diagnostics if row["safe_alternative_count"] > 0),
         "safe_better_opportunity_context_count": sum(1 for row in diagnostics if row["safe_better_alternative_count"] > 0),
         "safe_better_alternative_count": sum(int(row["safe_better_alternative_count"]) for row in diagnostics),
+        "roi_group_with_safe_better_opportunity_count": sum(
+            1
+            for row in _roi_group_summary(diagnostics).values()
+            if int(row.get("safe_better_opportunity_context_count", 0)) > 0
+        ),
         "policy_missed_safe_better_opportunity_count": counts.get(
             "safe_better_opportunity_exists_policy_source_aligned", 0
         ),
@@ -410,23 +416,30 @@ def _funnel_metric_counts(diagnostics: list[dict[str, Any]]) -> dict[str, int]:
     return {field: sum(int(row.get(field, 0)) for row in diagnostics) for field in fields}
 
 
-def _roi_group_summary(diagnostics: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
-    summary: dict[str, dict[str, int]] = defaultdict(lambda: {
+def _roi_group_summary(diagnostics: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = defaultdict(lambda: {
         "context_count": 0,
         "safe_alternative_context_count": 0,
         "safe_better_opportunity_context_count": 0,
         "policy_missed_safe_better_opportunity_count": 0,
         "policy_selected_safe_better_opportunity_count": 0,
         "opportunity_missing_count": 0,
+        "start_cells": [],
+        "safe_better_start_cells": [],
     })
     for row in diagnostics:
         group = str(row.get("roi_group") or "unknown")
         bucket = summary[group]
         bucket["context_count"] += 1
+        start_cell = _normal_cell(row.get("start_cell"))
+        if start_cell is not None and start_cell not in bucket["start_cells"]:
+            bucket["start_cells"].append(start_cell)
         if int(row.get("safe_alternative_count", 0)) > 0:
             bucket["safe_alternative_context_count"] += 1
         if int(row.get("safe_better_alternative_count", 0)) > 0:
             bucket["safe_better_opportunity_context_count"] += 1
+            if start_cell is not None and start_cell not in bucket["safe_better_start_cells"]:
+                bucket["safe_better_start_cells"].append(start_cell)
         cls = row.get("opportunity_class")
         if cls == "safe_better_opportunity_exists_policy_source_aligned":
             bucket["policy_missed_safe_better_opportunity_count"] += 1
@@ -499,12 +512,13 @@ def _report(summary: dict[str, Any]) -> str:
         f"- safe_better_opportunity_context_count: {summary['safe_better_opportunity_context_count']}",
         f"- policy_missed_safe_better_opportunity_count: {summary['policy_missed_safe_better_opportunity_count']}",
         "",
-        "| roi_group | contexts | safe-better contexts | missed safe-better |",
-        "|---|---:|---:|---:|",
+        "| roi_group | contexts | safe-better contexts | safe-better starts | missed safe-better |",
+        "|---|---:|---:|---|---:|",
     ]
     for group, row in summary["roi_group_opportunity_summary"].items():
         lines.append(
             f"| {group} | {row['context_count']} | {row['safe_better_opportunity_context_count']} | "
+            f"{row.get('safe_better_start_cells', [])} | "
             f"{row['policy_missed_safe_better_opportunity_count']} |"
         )
     lines.append("")
@@ -575,6 +589,15 @@ def _int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normal_cell(value: Any) -> list[int] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    try:
+        return [int(value[0]), int(value[1])]
+    except (TypeError, ValueError):
+        return None
 
 
 def _now_iso() -> str:

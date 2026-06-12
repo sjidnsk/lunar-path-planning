@@ -1544,8 +1544,10 @@ a policy-changed decision may be accepted as a controlled choice, but only if it
 passes the same action-mask, candidate-present, reachable, no-fallback,
 contract, path/risk, and source-selection gates. If the policy changes its mind
 and fails a gate, the pilot falls back to source-selected and records the exact
-reason. If the policy never changes when the gate requires at least one accepted
-change, the result is classified as over-conservative rather than success.
+reason. This v1 pilot was originally a value-oriented test that expected at
+least one accepted changed choice; the later teacher-equivalent roadmap
+reclassifies full source alignment as valid behavior when no safe-better
+alternative exists.
 
 New artifacts:
 
@@ -1560,10 +1562,12 @@ writes `quasi-real-guarded-policy-decision/v1` records with
 quasi-real context count, ROI group coverage, changed/pass/rejected counts,
 fallback count, all gate regression counters, and
 `guarded_pilot_verdict`. Readiness may advance only to
-`quasi_real_guarded_policy_pilot_evaluated` when the summary is passed,
-`policy_changed_gate_passed_count>0`, `policy_changed_gate_rejected_count=0`,
-all gate regressions are 0, and every consumed evidence root matches the
-current HEAD.
+`quasi_real_guarded_policy_pilot_evaluated` for the value-oriented pilot when
+the summary is passed, there is at least one gate-passed changed choice,
+`policy_changed_gate_rejected_count=0`, all gate regressions are 0, and every
+consumed evidence root matches the current HEAD. Teacher-equivalent validation
+uses a different success criterion: source-aligned decisions may be correct when
+the quasi-real candidate set contains no safe-better opportunity.
 
 This stage is still a guarded pilot, not a quasi-real PPO collector or policy
 release. It does not run a PPO optimizer update, does not write PPO
@@ -1615,6 +1619,139 @@ update, does not write PPO transitions, does not publish or replace a checkpoint
 does not change network/action-space/default A*, does not relax
 distance/path-risk/source-selection gates, and does not claim Ackermann-feasible
 trajectory or policy performance.
+
+## Quasi-Real Safe-Better Opportunity Expansion
+
+`Quasi-Real Safe-Alternative Opportunity Diagnosis v1` now gives a concrete
+blocker: the 12 LOLA quasi-real contexts cover 4 ROI groups and all system gates
+are clean, but no top-k candidate is both gate-safe and better than the
+source-selected baseline. In practical terms, the quasi-real road surface is
+connected and safe to inspect, but it does not yet contain enough real
+"safe lane-change" opportunities for the policy to choose.
+
+The expansion stage adds start-cell aware quasi-real ROI variants:
+
+- `model-explorer/src/model_explorer/data/evaluation_matrix.py` now lets each
+  ROI specify an optional `start_cell`, defaulting to `[0, 0]`.
+- `scripts/run_quasi_real_map_path_feedback_bridge.py` carries that start cell
+  into `LolaSouthPoleRoiConfig`, `current_cell`, slice metadata, and stable
+  context IDs.
+- `scripts/run_quasi_real_safe_better_opportunity_expansion.py/.sh` generates a
+  larger LOLA matrix from neighboring ROI windows and multiple passable starts.
+- `scripts/run_quasi_real_safe_better_opportunity_expansion_closure.sh` runs the
+  matrix generation, bridge, path-feedback, domain-gap check, opportunity
+  diagnosis, and final expansion summary.
+
+The generated matrix is
+`model-explorer/data/manifests/lunar_south_pole_lro_lola_safe_better_opportunity_matrix_v1.json`;
+the evidence root is
+`outputs/path_feedback_batch_quasi_real_safe_better_opportunity_expansion_v1/`.
+Final strict diagnosis stays at `top_k=3` and must find at least 8 safe
+alternative contexts, at least 4 safe-better contexts, and at least 2 ROI groups
+with safe-better opportunity before readiness may advance to
+`quasi_real_safe_better_opportunity_expanded`.
+
+This stage still does not train the policy, execute quasi-real takeover, write
+PPO transitions, publish or replace a checkpoint, change the network/action
+space/default A*, relax distance/path-risk/source-selection gates, or claim
+Ackermann-feasible trajectory or policy performance.
+
+## Quasi-Real Teacher-Equivalent Development Direction
+
+The safe-better expansion evidence changes the near-term roadmap. The current
+expanded LOLA root contains 108 quasi-real contexts across 4 ROI groups and 9
+start cells. The bridge, domain-gap, context-id, action-mask, fallback, safety,
+contract, path/risk, and source-selection gates are clean, but the strict
+`top_k=3` diagnosis still reports:
+
+```text
+safe_alternative_context_count=0
+safe_better_opportunity_context_count=0
+roi_group_with_safe_better_opportunity_count=0
+opportunity_missing_count=108
+```
+
+This should not be read as "the policy failed to learn." In quasi-real terrain,
+the source-selected teacher may already be the non-regressive choice in the
+candidate set. If there is no gate-safe and better alternative, source alignment
+is the correct behavior, not over-conservatism. Safe-better opportunity remains
+valuable, but it is now an **incremental value branch** for finding teacher blind
+spots, not the main prerequisite for proving the policy learned the teacher.
+
+The quasi-real mainline should therefore advance in this order:
+
+1. `Quasi-Real Teacher-Equivalent Validation`: prove the experimental policy
+   reproduces source-selected decisions on quasi-real ROI contexts with zero
+   gate regression. High source-aligned rate is acceptable and expected.
+2. `Quasi-Real Teacher Distillation Robustness`: expand quasi-real ROI
+   train/validation/holdout coverage and validate teacher agreement without
+   context or slice leakage.
+3. `Quasi-Real Guarded Teacher-Following Pilot`: let the policy propose actions
+   under the same gates, but treat teacher-aligned controlled steps as valid
+   behavior. Changed choices remain guarded and diagnostic.
+4. `Quasi-Real PPO Collector Dry-Run`: materialize only contract-valid
+   teacher-following or gate-passed policy transitions; source fallback and
+   rejected changes stay diagnostic.
+5. `Limited Quasi-Real PPO Update Smoke`: run a tiny local PPO update from the
+   experimental checkpoint and require generated plus quasi-real gates to remain
+   clean.
+6. `Broader Real/Quasi-Real Domain Evaluation`: increase ROI area, terrain
+   diversity, observation quality variation, and holdout coverage.
+
+The parallel value branches are `Safe-Better Opportunity Search`,
+`Source-Selection Blind Spot Mining`, and `Reward/Preference Calibration`.
+Finding safe-better choices can improve the policy beyond the teacher, but not
+finding them must not block teacher-equivalent validation.
+
+## Quasi-Real Teacher-Equivalent Validation
+
+`Quasi-Real Teacher-Equivalent Validation v1` implements the first mainline
+step after the roadmap shift above. It is a shadow-only check over the expanded
+LOLA quasi-real root: the policy scores each context, but the teacher/source
+selection remains the reference and the policy never takes control.
+
+The key semantic change is that `source_aligned` is treated as normal
+teacher-equivalent behavior. `policy_changed_gate_passed` is allowed as a safe
+disagreement, but it is not required. `policy_changed_gate_rejected` is an
+unsafe disagreement and fails the stage. This keeps the value-oriented
+`Quasi-Real Guarded Policy Pilot` intact while giving the quasi-real mainline a
+separate way to prove that the policy has learned the teacher when safe-better
+alternatives are objectively absent.
+
+New artifacts:
+
+- `configs/quasi_real_teacher_equivalent_validation_v1.json`
+- `scripts/run_quasi_real_teacher_equivalent_validation.py/.sh`
+- `scripts/run_quasi_real_teacher_equivalent_validation_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_teacher_equivalent_validation_v1/`
+
+The validation summary is
+`quasi-real-teacher-equivalent-summary.json`. It reports
+`teacher_equivalent_context_count`, `policy_decision_count`,
+`teacher_aligned_count`, `teacher_agreement_rate`,
+`safe_disagreement_count`, `unsafe_disagreement_count`,
+`policy_changed_gate_rejected_count`, ROI-group agreement breakdown, and all
+gate-regression counters. Readiness accepts
+`--quasi-real-teacher-equivalent-validation-summary` and may advance to
+`quasi_real_teacher_equivalent_validated` only when coverage is sufficient,
+teacher agreement is at least `0.90`, unsafe disagreement is `0`, all
+action-mask/fallback/safety/contract/path/risk/source-selection regression
+counters are `0`, and provenance matches the current HEAD.
+
+This stage does not run PPO, does not write PPO transitions, does not execute
+policy takeover, does not publish or replace a checkpoint, does not change the
+network/action space/default A*, does not relax distance/path-risk/source
+selection contracts, and does not claim Ackermann-feasible trajectory or policy
+performance.
+
+Current execution note: the validation tooling is implemented, but the current
+default guarded candidate does not yet pass the 108-context expanded LOLA check.
+It reaches `teacher_agreement_rate=0.8333` with `unsafe_disagreement_count=18`;
+all unsafe disagreements are path-cost regressions, with 5 also carrying risk
+regression. A probe with the existing quasi-real shadow-alignment candidate
+improves agreement to `0.8796` and reduces unsafe disagreements to 13, but still
+misses the `0.90` agreement gate. This is now a teacher-distillation/alignment
+problem, not a safe-better opportunity blocker.
 
 ## Core Algorithm Development Chain
 

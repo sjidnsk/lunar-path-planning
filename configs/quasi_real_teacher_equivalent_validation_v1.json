@@ -1,0 +1,34 @@
+{
+  "schema_version": "quasi-real-teacher-equivalent-validation-config/v1",
+  "input_files": {
+    "source_batch_summary": "batch-evaluation-summary.json",
+    "quasi_real_path_feedback_summary": "quasi-real-map-path-feedback-summary.json",
+    "quasi_real_slices": "quasi-real-map-slices.jsonl",
+    "quasi_real_domain_gap_summary": "quasi-real-map-domain-gap-summary.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "output_files": {
+    "decisions": "quasi-real-teacher-equivalent-decisions.jsonl",
+    "summary": "quasi-real-teacher-equivalent-summary.json",
+    "disagreement_report": "quasi-real-teacher-equivalent-disagreement-report.json",
+    "group_report": "quasi-real-teacher-equivalent-group-report.md"
+  },
+  "evaluation": {
+    "top_k": 3
+  },
+  "validation": {
+    "min_teacher_equivalent_context_count": 48,
+    "min_roi_group_count": 4,
+    "min_teacher_agreement_rate": 0.9
+  },
+  "non_goals": [
+    "no_ppo_update",
+    "no_ppo_transition_materialization",
+    "no_policy_takeover",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_performance_claim"
+  ]
+}

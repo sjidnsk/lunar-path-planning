@@ -6,6 +6,12 @@ The project has reached `quasi_real_shadow_alignment_evaluated`: LOLA quasi-real
 
 This stage adds a guarded quasi-real pilot. The policy may propose a different action on each quasi-real context, but it is accepted only if the existing gate stack passes. Rejected changes fall back to source-selected and are reported. This is not a PPO collector, not a checkpoint release, and not a performance claim.
 
+This spec is value-oriented: it asks whether the policy can safely make at least
+one changed choice on quasi-real ROI. The later teacher-equivalent roadmap
+separates that value question from the main imitation question. Full
+source-alignment can be valid for teacher-equivalent validation when the
+candidate set contains no safe-better opportunity.
+
 ## Artifacts
 
 - `configs/quasi_real_guarded_policy_pilot_v1.json`
@@ -49,7 +55,7 @@ Pass conditions:
 - `policy_decision_count==quasi_real_context_count`
 - `roi_group_count>=4`
 - `context_id_missing_count=0`
-- `policy_changed_gate_passed_count>0`
+- at least one changed policy choice is gate-passed for this value-oriented pilot
 - `policy_changed_gate_rejected_count=0`
 - invalid action mask, fallback/open-grid, safety, contract, path/risk, and source-selection regression counters are all 0
 - current git provenance matches consumed evidence
@@ -60,6 +66,10 @@ Failure routing:
 - rejected changed choice: `quasi_real_guarded_gate_regression`
 - action mask or contract break: `quasi_real_guarded_action_mask_contract_gap`
 - missing/scoring bridge issue: `quasi_real_guarded_policy_scoring_failed`
+
+For the teacher-equivalent mainline, no accepted changed policy choice should
+not be treated as a failure by itself. It should be evaluated together with the
+safe-better opportunity diagnosis.
 
 ## Verification
 

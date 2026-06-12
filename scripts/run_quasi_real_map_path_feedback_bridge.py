@@ -71,7 +71,8 @@ def run_quasi_real_map_path_feedback_bridge(
             height=roi.roi_height,
         )
         scenario_id = f"lola_qreal_{roi.name}_{roi.split}_{slice_index:03d}"
-        variant_id = f"{scenario_id}-seed-{roi.seed}"
+        start_cell = tuple(getattr(roi, "start_cell", (0, 0)))
+        variant_id = f"{scenario_id}-seed-{roi.seed}-start-{start_cell[0]}-{start_cell[1]}"
         scenario_paths = write_lola_south_pole_scenarios_json(
             scenario_root,
             dem_window.values,
@@ -88,7 +89,7 @@ def run_quasi_real_map_path_feedback_bridge(
                 candidate_count=roi.candidate_count,
                 episode_count=1,
                 seed=roi.seed,
-                start_cell=(0, 0),
+                start_cell=start_cell,
             ),
             source_config=LolaSouthPoleRoiConfig(
                 roi_x=roi.roi_x,
@@ -98,13 +99,14 @@ def run_quasi_real_map_path_feedback_bridge(
                 candidate_count=roi.candidate_count,
                 episode_count=1,
                 seed=roi.seed,
-                start_cell=(0, 0),
+                start_cell=start_cell,
             ),
             metadata_extra={
                 "scenario_id": scenario_id,
                 "scenario_group": roi.name,
                 "scenario_seed": roi.seed,
                 "scenario_variant_id": variant_id,
+                "start_cell": [start_cell[0], start_cell[1]],
                 "roi_name": roi.name,
                 "split": roi.split,
                 "map_source": {
@@ -143,6 +145,7 @@ def run_quasi_real_map_path_feedback_bridge(
             scenario_variant_id=variant_id,
             top_k=top_k,
             goal_cell=first_goal.get("cell") if first_goal else None,
+            start_cell=start_cell,
         )
         if context_id is None:
             context_id_missing_count += 1
@@ -163,6 +166,7 @@ def run_quasi_real_map_path_feedback_bridge(
             "context_id_schema_version": "policy-context-id/v1",
             "context_id_source": "stable_semantic_fields",
             "legacy_identity_fallback_used": False,
+            "start_cell": [start_cell[0], start_cell[1]],
             "contract": str(contract_path),
             "sidecar": str(sidecar_path),
             "passable_ratio": sidecar["metadata"]["passable_ratio"],
@@ -176,7 +180,7 @@ def run_quasi_real_map_path_feedback_bridge(
                 "scenario_variant_id": variant_id,
                 "contract": str(contract_path),
                 "sidecar": str(sidecar_path),
-                "current_cell": [0, 0],
+                "current_cell": [start_cell[0], start_cell[1]],
             }
         )
         if roi.name not in roi_groups:
@@ -332,6 +336,7 @@ def _slice_context_id(
     scenario_variant_id: str,
     top_k: int,
     goal_cell: Any,
+    start_cell: tuple[int, int],
 ) -> str | None:
     if not isinstance(goal_cell, list) or len(goal_cell) != 2:
         return None
@@ -343,6 +348,7 @@ def _slice_context_id(
         "diagnostic_profile": "execution",
         "planning_backend": "path_planner_route",
         "top_k": int(top_k),
+        "start_cell": [int(start_cell[0]), int(start_cell[1])],
         "sample_type": "quasi_real_map_slice",
         "candidate_role": "quasi_real_map_slice",
         "source_action_index": 0,

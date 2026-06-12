@@ -127,9 +127,14 @@ class QuasiRealSafeAlternativeOpportunityDiagnosisTests(unittest.TestCase):
 
         self.assertEqual(summary["opportunity_verdict"], "acceptable_for_quasi_real_safe_choice_calibration")
         self.assertEqual(summary["safe_better_opportunity_context_count"], 1)
+        self.assertEqual(summary["roi_group_with_safe_better_opportunity_count"], 1)
         self.assertEqual(summary["policy_missed_safe_better_opportunity_count"], 1)
         self.assertEqual(summary["policy_selected_safe_better_opportunity_count"], 0)
         self.assertEqual(summary["next_required_change"], "quasi_real_policy_safe_choice_alignment_insufficient")
+        self.assertEqual(
+            summary["roi_group_opportunity_summary"]["mixed_risk"]["safe_better_start_cells"],
+            [[8, 8]],
+        )
         rows = self._read_jsonl(self.output_root / "quasi-real-safe-alternative-opportunity-diagnostics.jsonl")
         self.assertEqual(rows[0]["opportunity_class"], "safe_better_opportunity_exists_policy_source_aligned")
 
@@ -300,6 +305,7 @@ class QuasiRealSafeAlternativeOpportunityDiagnosisTests(unittest.TestCase):
                 "map_id": "lola-test",
                 "slice_id": scenario["scenario_id"],
                 "context_id": f"{scenario['scenario_id']}-slice",
+                "start_cell": [8, 8],
             }
             for scenario in scenarios
         ]

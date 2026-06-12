@@ -117,6 +117,18 @@ QUASI_REAL_SAFE_ALTERNATIVE_OPPORTUNITY_DIAGNOSED_ACTION = (
 QUASI_REAL_SAFE_ALTERNATIVE_OPPORTUNITY_SCHEMA_VERSION = (
     "quasi-real-safe-alternative-opportunity-summary/v1"
 )
+QUASI_REAL_SAFE_BETTER_OPPORTUNITY_EXPANDED_ACTION = (
+    "quasi_real_safe_better_opportunity_expanded"
+)
+QUASI_REAL_SAFE_BETTER_OPPORTUNITY_EXPANSION_SCHEMA_VERSION = (
+    "quasi-real-safe-better-opportunity-expansion-summary/v1"
+)
+QUASI_REAL_TEACHER_EQUIVALENT_VALIDATED_ACTION = (
+    "quasi_real_teacher_equivalent_validated"
+)
+QUASI_REAL_TEACHER_EQUIVALENT_SCHEMA_VERSION = (
+    "quasi-real-teacher-equivalent-summary/v1"
+)
 CONTROLLED_HYBRID_NEXT_REQUIRED_CHANGE = (
     "training_objective_or_sample_weight_refinement_required"
 )
@@ -260,6 +272,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quasi-real-safe-alternative-opportunity-summary",
         help="Optional quasi-real-safe-alternative-opportunity-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-safe-better-opportunity-expansion-summary",
+        help="Optional quasi-real-safe-better-opportunity-expansion-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-teacher-equivalent-validation-summary",
+        help="Optional quasi-real-teacher-equivalent-summary/v1 JSON.",
     )
     parser.add_argument(
         "--config",
@@ -407,6 +427,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.quasi_real_safe_alternative_opportunity_summary
         else batch_root / "quasi-real-safe-alternative-opportunity-summary.json"
     )
+    quasi_real_safe_better_opportunity_expansion_path = (
+        _resolve_path(args.quasi_real_safe_better_opportunity_expansion_summary, repo_root)
+        if args.quasi_real_safe_better_opportunity_expansion_summary
+        else batch_root / "quasi-real-safe-better-opportunity-expansion-summary.json"
+    )
+    quasi_real_teacher_equivalent_validation_path = (
+        _resolve_path(args.quasi_real_teacher_equivalent_validation_summary, repo_root)
+        if args.quasi_real_teacher_equivalent_validation_summary
+        else batch_root / "quasi-real-teacher-equivalent-summary.json"
+    )
     anchor_only_defaults_available = (
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -450,6 +480,12 @@ def main(argv: list[str] | None = None) -> int:
         quasi_real_safe_alternative_opportunity_path=(
             quasi_real_safe_alternative_opportunity_path
         ),
+        quasi_real_safe_better_opportunity_expansion_path=(
+            quasi_real_safe_better_opportunity_expansion_path
+        ),
+        quasi_real_teacher_equivalent_validation_path=(
+            quasi_real_teacher_equivalent_validation_path
+        ),
         anchor_candidate_required=bool(args.anchor_projection_candidate_generation_summary)
         or anchor_only_defaults_available,
         anchor_contract_required=bool(args.anchor_projection_evidence_contract_summary)
@@ -488,6 +524,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
         quasi_real_safe_alternative_opportunity_required=bool(
             args.quasi_real_safe_alternative_opportunity_summary
+        ),
+        quasi_real_safe_better_opportunity_expansion_required=bool(
+            args.quasi_real_safe_better_opportunity_expansion_summary
+        ),
+        quasi_real_teacher_equivalent_validation_required=bool(
+            args.quasi_real_teacher_equivalent_validation_summary
         ),
         config=config,
         repo_root=repo_root,
@@ -629,6 +671,18 @@ def main(argv: list[str] | None = None) -> int:
             or args.quasi_real_safe_alternative_opportunity_summary
             else None
         ),
+        "quasi_real_safe_better_opportunity_expansion_summary": (
+            _display_path(quasi_real_safe_better_opportunity_expansion_path, repo_root)
+            if quasi_real_safe_better_opportunity_expansion_path.is_file()
+            or args.quasi_real_safe_better_opportunity_expansion_summary
+            else None
+        ),
+        "quasi_real_teacher_equivalent_validation_summary": (
+            _display_path(quasi_real_teacher_equivalent_validation_path, repo_root)
+            if quasi_real_teacher_equivalent_validation_path.is_file()
+            or args.quasi_real_teacher_equivalent_validation_summary
+            else None
+        ),
         "config": _display_path(config_path, repo_root),
         "reason_codes": summary["reason_codes"],
         "training_readiness_status": summary["training_readiness_status"],
@@ -703,6 +757,8 @@ def analyze_policy_training_readiness_review(
     quasi_real_shadow_alignment_path: Path,
     quasi_real_guarded_policy_pilot_path: Path,
     quasi_real_safe_alternative_opportunity_path: Path,
+    quasi_real_safe_better_opportunity_expansion_path: Path,
+    quasi_real_teacher_equivalent_validation_path: Path | None = None,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -726,11 +782,17 @@ def analyze_policy_training_readiness_review(
     quasi_real_shadow_alignment_required: bool = False,
     quasi_real_guarded_policy_pilot_required: bool = False,
     quasi_real_safe_alternative_opportunity_required: bool = False,
+    quasi_real_safe_better_opportunity_expansion_required: bool = False,
+    quasi_real_teacher_equivalent_validation_required: bool = False,
     config: dict[str, Any],
     repo_root: Path,
 ) -> dict[str, Any]:
     reason_codes: list[str] = []
     source_summaries: dict[str, Any] = {}
+    if quasi_real_teacher_equivalent_validation_path is None:
+        quasi_real_teacher_equivalent_validation_path = (
+            batch_root / "quasi-real-teacher-equivalent-summary.json"
+        )
     anchor_only_mode = (
         anchor_candidate_required
         and anchor_contract_required
@@ -1011,6 +1073,24 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=quasi_real_safe_alternative_opportunity_required,
     )
+    quasi_real_safe_better_opportunity_expansion = _load_optional_source(
+        quasi_real_safe_better_opportunity_expansion_path,
+        label="quasi_real_safe_better_opportunity_expansion_summary",
+        expected_schema=QUASI_REAL_SAFE_BETTER_OPPORTUNITY_EXPANSION_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_safe_better_opportunity_expansion_required,
+    )
+    quasi_real_teacher_equivalent_validation = _load_optional_source(
+        quasi_real_teacher_equivalent_validation_path,
+        label="quasi_real_teacher_equivalent_validation_summary",
+        expected_schema=QUASI_REAL_TEACHER_EQUIVALENT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_teacher_equivalent_validation_required,
+    )
     if _fail_on_input_failure(config):
         for label, payload in (
             ("calibrated_policy_application_smoke_summary", smoke),
@@ -1052,6 +1132,16 @@ def analyze_policy_training_readiness_review(
             (
                 "quasi_real_safe_alternative_opportunity_summary",
                 quasi_real_safe_alternative_opportunity,
+            ),
+            (
+                "quasi_real_safe_better_opportunity_expansion_summary",
+                quasi_real_safe_better_opportunity_expansion
+                if not quasi_real_teacher_equivalent_validation
+                else {},
+            ),
+            (
+                "quasi_real_teacher_equivalent_validation_summary",
+                quasi_real_teacher_equivalent_validation,
             ),
         ):
             if payload.get("status") == "failed":
@@ -1298,6 +1388,26 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if quasi_real_safe_better_opportunity_expansion:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_safe_better_opportunity_expansion,
+                label="quasi_real_safe_better_opportunity_expansion_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if quasi_real_teacher_equivalent_validation:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_teacher_equivalent_validation,
+                label="quasi_real_teacher_equivalent_validation_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
 
     review = _review_metrics(
         smoke=smoke,
@@ -1328,6 +1438,12 @@ def analyze_policy_training_readiness_review(
         quasi_real_guarded_policy_pilot=quasi_real_guarded_policy_pilot,
         quasi_real_safe_alternative_opportunity=(
             quasi_real_safe_alternative_opportunity
+        ),
+        quasi_real_safe_better_opportunity_expansion=(
+            quasi_real_safe_better_opportunity_expansion
+        ),
+        quasi_real_teacher_equivalent_validation=(
+            quasi_real_teacher_equivalent_validation
         ),
         validation_reason_codes=reason_codes,
         anchor_only_mode=anchor_only_mode,
@@ -1455,6 +1571,16 @@ def analyze_policy_training_readiness_review(
             if quasi_real_safe_alternative_opportunity
             else None
         ),
+        "quasi_real_safe_better_opportunity_expansion_summary_path": (
+            _display_path(quasi_real_safe_better_opportunity_expansion_path, repo_root)
+            if quasi_real_safe_better_opportunity_expansion
+            else None
+        ),
+        "quasi_real_teacher_equivalent_validation_summary_path": (
+            _display_path(quasi_real_teacher_equivalent_validation_path, repo_root)
+            if quasi_real_teacher_equivalent_validation
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -1497,6 +1623,12 @@ def analyze_policy_training_readiness_review(
             "quasi_real_guarded_policy_pilot": _public_git(quasi_real_guarded_policy_pilot),
             "quasi_real_safe_alternative_opportunity": _public_git(
                 quasi_real_safe_alternative_opportunity
+            ),
+            "quasi_real_safe_better_opportunity_expansion": _public_git(
+                quasi_real_safe_better_opportunity_expansion
+            ),
+            "quasi_real_teacher_equivalent_validation": _public_git(
+                quasi_real_teacher_equivalent_validation
             ),
             "current_matches_sources": all(source_git_matches),
         },
@@ -1548,6 +1680,8 @@ def _review_metrics(
     quasi_real_shadow_alignment: dict[str, Any],
     quasi_real_guarded_policy_pilot: dict[str, Any],
     quasi_real_safe_alternative_opportunity: dict[str, Any],
+    quasi_real_safe_better_opportunity_expansion: dict[str, Any],
+    quasi_real_teacher_equivalent_validation: dict[str, Any],
     validation_reason_codes: list[str],
     anchor_only_mode: bool,
     config: dict[str, Any],
@@ -1644,6 +1778,12 @@ def _review_metrics(
             "quasi_real_shadow_alignment": quasi_real_shadow_alignment,
             "quasi_real_guarded_policy_pilot": quasi_real_guarded_policy_pilot,
             "quasi_real_safe_alternative_opportunity": quasi_real_safe_alternative_opportunity,
+            "quasi_real_safe_better_opportunity_expansion": (
+                quasi_real_safe_better_opportunity_expansion
+            ),
+            "quasi_real_teacher_equivalent_validation": (
+                quasi_real_teacher_equivalent_validation
+            ),
         }
     )
     anchor_projection_readiness = _anchor_projection_readiness(
@@ -1690,6 +1830,16 @@ def _review_metrics(
     quasi_real_safe_alternative_opportunity_readiness = (
         _quasi_real_safe_alternative_opportunity_readiness(
             quasi_real_safe_alternative_opportunity
+        )
+    )
+    quasi_real_safe_better_opportunity_expansion_readiness = (
+        _quasi_real_safe_better_opportunity_expansion_readiness(
+            quasi_real_safe_better_opportunity_expansion
+        )
+    )
+    quasi_real_teacher_equivalent_validation_readiness = (
+        _quasi_real_teacher_equivalent_validation_readiness(
+            quasi_real_teacher_equivalent_validation
         )
     )
     controlled_candidate_readiness = _controlled_hybrid_training_candidate_readiness(
@@ -1769,6 +1919,11 @@ def _review_metrics(
             _append_reason(training_blockers, reason)
     for reason in quasi_real_safe_alternative_opportunity_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in quasi_real_safe_better_opportunity_expansion_readiness["training_blockers"]:
+        if not quasi_real_teacher_equivalent_validation_readiness["present"]:
+            _append_reason(training_blockers, reason)
+    for reason in quasi_real_teacher_equivalent_validation_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
 
     hard_validation_failed = bool(validation_reason_codes)
     if hard_validation_failed:
@@ -1777,6 +1932,18 @@ def _review_metrics(
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
         recommended_next_action = "needs_training_contract_refinement"
+    elif (
+        quasi_real_teacher_equivalent_validation_readiness["present"]
+        and quasi_real_teacher_equivalent_validation_readiness["completed"]
+    ):
+        training_readiness_status = QUASI_REAL_TEACHER_EQUIVALENT_VALIDATED_ACTION
+        recommended_next_action = QUASI_REAL_TEACHER_EQUIVALENT_VALIDATED_ACTION
+    elif (
+        quasi_real_safe_better_opportunity_expansion_readiness["present"]
+        and quasi_real_safe_better_opportunity_expansion_readiness["completed"]
+    ):
+        training_readiness_status = QUASI_REAL_SAFE_BETTER_OPPORTUNITY_EXPANDED_ACTION
+        recommended_next_action = QUASI_REAL_SAFE_BETTER_OPPORTUNITY_EXPANDED_ACTION
     elif (
         quasi_real_safe_alternative_opportunity_readiness["present"]
         and quasi_real_safe_alternative_opportunity_readiness["completed"]
@@ -1939,6 +2106,12 @@ def _review_metrics(
         "quasi_real_safe_alternative_opportunity_readiness": (
             quasi_real_safe_alternative_opportunity_readiness
         ),
+        "quasi_real_safe_better_opportunity_expansion_readiness": (
+            quasi_real_safe_better_opportunity_expansion_readiness
+        ),
+        "quasi_real_teacher_equivalent_validation_readiness": (
+            quasi_real_teacher_equivalent_validation_readiness
+        ),
         "anchor_projection_candidate_generation_trainable_count": anchor_projection_readiness[
             "candidate_generation_trainable_count"
         ],
@@ -1989,6 +2162,17 @@ def _review_metrics(
         ],
         "training_blockers": training_blockers,
         "next_required_change": (
+            quasi_real_teacher_equivalent_validation_readiness.get(
+                "next_required_change"
+            )
+            or (
+                None
+                if quasi_real_teacher_equivalent_validation_readiness["present"]
+                else quasi_real_safe_better_opportunity_expansion_readiness.get(
+                    "next_required_change"
+                )
+            )
+            or
             quasi_real_safe_alternative_opportunity_readiness.get("next_required_change")
             or
             quasi_real_guarded_policy_pilot_readiness.get("next_required_change")
@@ -2033,6 +2217,10 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == QUASI_REAL_TEACHER_EQUIVALENT_VALIDATED_ACTION:
+        return "quasi_real_teacher_equivalent_validation_only"
+    if recommended_next_action == QUASI_REAL_SAFE_BETTER_OPPORTUNITY_EXPANDED_ACTION:
+        return "quasi_real_safe_better_opportunity_expansion_only"
     if recommended_next_action == QUASI_REAL_SHADOW_ALIGNMENT_EVALUATED_ACTION:
         return "quasi_real_shadow_alignment_evaluation_only"
     if recommended_next_action == QUASI_REAL_SHADOW_POLICY_BEHAVIOR_AUDITED_ACTION:
@@ -3895,6 +4083,144 @@ def _quasi_real_safe_alternative_opportunity_readiness(summary: dict[str, Any]) 
             summary.get("safe_better_opportunity_context_count"),
             0,
         ),
+    }
+
+
+def _quasi_real_safe_better_opportunity_expansion_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "safe_better_opportunity_context_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_safe_better_opportunity_expansion_failed")
+    if _int_value_or_default(summary.get("candidate_context_count"), 0) < 48:
+        _append_reason(blockers, "quasi_real_safe_better_candidate_context_count_below_threshold")
+    if _int_value_or_default(summary.get("roi_group_count"), 0) < 4:
+        _append_reason(blockers, "quasi_real_safe_better_roi_group_count_below_threshold")
+    for field, reason in (
+        ("start_cell_missing_count", "quasi_real_safe_better_start_cell_missing"),
+        ("context_id_missing_count", "quasi_real_safe_better_context_id_missing"),
+        ("context_id_overlap_count", "quasi_real_safe_better_context_id_overlap"),
+        ("scenario_id_overlap_count", "quasi_real_safe_better_scenario_id_overlap"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if _int_value_or_default(summary.get("safe_alternative_context_count"), 0) < 8:
+        _append_reason(blockers, "quasi_real_safe_better_safe_alternative_count_below_threshold")
+    if _int_value_or_default(summary.get("safe_better_opportunity_context_count"), 0) < 4:
+        _append_reason(blockers, "quasi_real_safe_better_opportunity_count_below_threshold")
+    if _int_value_or_default(summary.get("roi_group_with_safe_better_opportunity_count"), 0) < 2:
+        _append_reason(blockers, "quasi_real_safe_better_roi_group_opportunity_count_below_threshold")
+    if summary.get("runs_ppo_update") is True:
+        _append_reason(blockers, "quasi_real_safe_better_unexpected_ppo_update")
+    if summary.get("policy_takes_control") is True:
+        _append_reason(blockers, "quasi_real_safe_better_unexpected_policy_takeover")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "quasi_real_safe_better_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "quasi_real_safe_better_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "quasi_real_safe_better_policy_performance_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": None if not blockers else "quasi_real_roi_start_target_expansion_required",
+        "safe_better_opportunity_context_count": _int_value_or_default(
+            summary.get("safe_better_opportunity_context_count"),
+            0,
+        ),
+    }
+
+
+def _quasi_real_teacher_equivalent_validation_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "teacher_equivalent_context_count": 0,
+        "teacher_agreement_rate": 0.0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_teacher_equivalent_scoring_failed")
+    verdict = str(summary.get("teacher_equivalent_verdict", ""))
+    if verdict != "teacher_equivalent_validated":
+        if verdict == "quasi_real_teacher_equivalent_unsafe_disagreement":
+            _append_reason(blockers, "quasi_real_teacher_equivalent_unsafe_disagreement")
+        elif verdict == "quasi_real_teacher_equivalent_gate_regression":
+            _append_reason(blockers, "quasi_real_teacher_equivalent_gate_regression")
+        elif verdict == "quasi_real_teacher_equivalent_context_id_missing":
+            _append_reason(blockers, "quasi_real_teacher_equivalent_context_id_missing")
+        elif verdict == "quasi_real_teacher_equivalent_context_coverage_insufficient":
+            _append_reason(blockers, "quasi_real_teacher_equivalent_context_coverage_insufficient")
+        else:
+            _append_reason(blockers, "quasi_real_teacher_equivalent_scoring_failed")
+
+    context_count = _int_value_or_default(summary.get("teacher_equivalent_context_count"), 0)
+    policy_decision_count = _int_value_or_default(summary.get("policy_decision_count"), 0)
+    if context_count < 48:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_context_coverage_insufficient")
+    if policy_decision_count != context_count:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_scoring_failed")
+    if _int_value_or_default(summary.get("roi_group_count"), 0) < 4:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_context_coverage_insufficient")
+    if _int_value_or_default(summary.get("context_id_missing_count"), 0):
+        _append_reason(blockers, "quasi_real_teacher_equivalent_context_id_missing")
+    teacher_agreement_rate = _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0)
+    if teacher_agreement_rate < 0.9:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_context_coverage_insufficient")
+    if _int_value_or_default(summary.get("unsafe_disagreement_count"), 0):
+        _append_reason(blockers, "quasi_real_teacher_equivalent_unsafe_disagreement")
+    if _int_value_or_default(summary.get("policy_changed_gate_rejected_count"), 0):
+        _append_reason(blockers, "quasi_real_teacher_equivalent_unsafe_disagreement")
+    for field in (
+        "invalid_action_mask_count",
+        "fallback_or_open_grid_count",
+        "open_grid_fallback_count",
+        "safety_regression_count",
+        "contract_violation_count",
+        "contract_regression_count",
+        "path_cost_regression_count",
+        "risk_regression_count",
+        "source_selection_regression_count",
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, "quasi_real_teacher_equivalent_gate_regression")
+    if summary.get("runs_ppo_update") is True:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_unexpected_ppo_update")
+    if summary.get("policy_takes_control") is True:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_unexpected_policy_takeover")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "quasi_real_teacher_equivalent_policy_performance_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "teacher_equivalent_context_count": context_count,
+        "teacher_agreement_rate": teacher_agreement_rate,
     }
 
 

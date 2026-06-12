@@ -1,0 +1,68 @@
+{
+  "schema_version": "quasi-real-safe-better-opportunity-expansion-config/v1",
+  "matrix_name": "qreal-safe-better-opportunity-v1",
+  "run_id": "safe-better-opportunity-v1",
+  "seed": 20260612,
+  "candidate_count": 6,
+  "top_k": 3,
+  "max_slices": 108,
+  "planning_backend": "channel_aware_astar",
+  "processed_output_root": "../processed/qreal_safe_better_opportunity_v1",
+  "output_files": {
+    "matrix_manifest": "model-explorer/data/manifests/lunar_south_pole_lro_lola_safe_better_opportunity_matrix_v1.json",
+    "summary": "quasi-real-safe-better-opportunity-expansion-summary.json",
+    "report": "quasi-real-safe-better-opportunity-expansion-report.md"
+  },
+  "roi_offsets": [
+    [0, 0],
+    [8, 0],
+    [0, 8],
+    [8, 8]
+  ],
+  "start_cells": [
+    [0, 0],
+    [0, 31],
+    [31, 0],
+    [31, 31],
+    [16, 16],
+    [8, 8],
+    [8, 24],
+    [24, 8],
+    [24, 24]
+  ],
+  "validation": {
+    "min_candidate_context_count": 48,
+    "min_roi_group_count": 4,
+    "max_start_cell_missing_count": 0,
+    "max_context_id_missing_count": 0,
+    "max_context_id_overlap_count": 0,
+    "max_scenario_id_overlap_count": 0,
+    "min_safe_alternative_context_count": 8,
+    "min_safe_better_opportunity_context_count": 4,
+    "min_roi_group_with_safe_better_opportunity_count": 2
+  },
+  "dataset_validation": {
+    "min_trainable_transition_count": 0,
+    "require_finite_reward": true,
+    "min_roi_group_count": 4
+  },
+  "train": {
+    "seed": 20260612,
+    "architectures": ["mlp_v1"],
+    "hidden_size": 16,
+    "learning_rate": 0.001,
+    "epochs": 1,
+    "evaluate_trained_policy": false
+  },
+  "non_goals": [
+    "no_ppo_update",
+    "no_ppo_transition_materialization",
+    "no_policy_takeover",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_or_action_space_change",
+    "no_gate_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_policy_performance_claim"
+  ]
+}
