@@ -1319,12 +1319,13 @@ trajectory claim, and no policy performance claim.
 
 ## Guarded PPO Rollout Pilot
 
-After `iterative_ppo_mini_loop_stability_evaluated`, the next boundary is a
-guarded PPO rollout pilot. It is the first stage that treats the rollout entry
-point itself as the object under test: the policy proposes each step, the
-existing safety/contract/path/risk/source-selection gate decides whether that
-choice may execute, and only policy-controlled accepted steps become
-PPO-trainable transitions.
+After the current-HEAD quasi-real iterative mini-loop reaches
+`iterative_ppo_mini_loop_stability_evaluated`, the next boundary is the
+Quasi-Real Guarded PPO Rollout Pilot. It is the first stage that treats the
+rollout entry point itself as the object under test: the policy proposes each
+step, the existing safety/contract/path/risk/source-selection gate decides
+whether that choice may execute, and only train-split, policy-controlled,
+gate-passed steps become PPO-trainable transitions.
 
 New artifacts:
 
@@ -1335,7 +1336,11 @@ New artifacts:
 - `outputs/path_feedback_batch_guarded_ppo_rollout_pilot_v1/`
 
 The pilot reuses the same 36 episode / 108 step sequential multi-step
-opportunity set for comparability. It writes guarded root-level aliases for the
+opportunity set for comparability, then rechecks the updated candidate against
+quasi-real teacher-following and quasi-real collector gates. Raw policy probe
+rejections stay visible as diagnostics, but they are not counted as controlled
+rollout regression after the gate falls back safely. It writes guarded
+root-level aliases for the
 pilot collector outputs: `guarded-ppo-rollout-episodes.jsonl`,
 `guarded-ppo-rollout-transitions.jsonl`,
 `guarded-ppo-rollout-reward-audit.json`,
@@ -1348,19 +1353,87 @@ source-fallback trainable samples, valid action masks, finite log-prob/value and
 reward, state continuity, no fallback/open-grid, and zero safety, contract,
 path/risk, or source-selection regression. The pilot then performs one tiny
 on-policy PPO update from the same checkpoint and re-runs raw generalization,
-sequential canary, and collector gates. Readiness may advance only to
-`guarded_ppo_rollout_pilot_evaluated`.
+generated sequential canary, generated collector, quasi-real teacher-following,
+and quasi-real collector gates. Readiness may advance only to
+`guarded_ppo_rollout_pilot_evaluated` when raw TEST regression and controlled
+generated/quasi-real regressions are all zero.
 
 This is still a guarded pilot only: no released PPO policy, no default-policy
 replacement, no network/action-space/default-A* change, no distance-contract
 relaxation, no Ackermann-feasible trajectory claim, no IRIS/GCS diagnostic as
 training release evidence, and no policy performance claim.
 
+## Training Progress Telemetry
+
+Long guarded/iterative closures can spend minutes inside generated sequential
+path-feedback, compatibility replay, collector, or PPO update stages without
+printing new JSON stdout. `Training Progress Telemetry & Progress Bar v1` adds a
+small observability layer for those runs without changing training behavior.
+
+New artifacts:
+
+- `configs/training_progress_telemetry_v1.json`
+- `scripts/training_progress.py`
+- `outputs/.../training-progress-events.jsonl`
+- `outputs/.../training-progress-summary.json`
+
+Supported entry points accept `--progress auto|plain|jsonl|off`. Plain progress
+is written to stderr so existing machine-readable JSON stdout remains stable.
+Structured events record the run id, stage, status, current/total counters,
+round/step indexes, elapsed time, summary path, reason codes, and stage metrics.
+The guarded pilot closure writes its progress artifacts under
+`outputs/path_feedback_batch_guarded_ppo_rollout_pilot_v1/`.
+
+The progress layer tracks coarse closure stages and inner signals such as
+`round 2/3`, `sequential step 2/3`, `ppo epoch 1/1`, trainable/diagnostic
+transition counts, raw rejected policy choices, controlled regression counts,
+loss, KL, gradient norm, parameter delta, and finite/non-finite counters.
+`--progress off` preserves the old behavior and writes no progress artifacts.
+
+This stage is observability only: it does not expand PPO batches, change reward
+or gates, alter readiness semantics, publish checkpoints, or claim formal
+training readiness.
+
+## Guarded PPO Evidence Freeze
+
+After the guarded pilot closure and progress telemetry pass, the next boundary
+is **Guarded PPO Evidence Freeze & Reproducible Closure v1**. This stage does
+not run another PPO update. It freezes the evidence package that proves why the
+current guarded pilot is accepted: the guarded pilot summary, progress summary,
+progress event log, explicit readiness validate-only result, git provenance, and
+artifact hashes.
+
+New artifacts:
+
+- `configs/guarded_ppo_evidence_freeze_v1.json`
+- `scripts/run_guarded_ppo_evidence_freeze.py/.sh`
+- `outputs/path_feedback_batch_guarded_ppo_evidence_freeze_v1/`
+
+The freeze output writes `guarded-ppo-evidence-freeze-summary.json`,
+`evidence-manifest.json`, `readiness-final.json`,
+`progress-consistency-report.json`, and `reproducibility-report.md`. The
+manifest records every required artifact path, existence, schema/status summary,
+and sha256 digest. The consistency report explicitly detects stale readiness
+drift, for example when an older `policy-training-readiness-review-summary.json`
+still reports an iterative status while a fresh validate-only run with the
+guarded summary reports `guarded_ppo_rollout_pilot_evaluated`.
+
+Passing freeze requires the guarded pilot summary to remain `passed`, progress
+telemetry to remain `passed` with zero failed stages, readiness to return
+`guarded_ppo_rollout_pilot_evaluated` with no blockers, and all required
+artifacts to exist with non-empty hashes. Stale readiness is diagnostic only;
+the final source of truth is the explicit guarded-summary readiness run.
+
+This is evidence packaging only: it does not publish checkpoints, replace the
+default policy, claim formal training readiness, relax gates, or change PPO,
+network, action space, default A*, reward, collector, or path-risk contracts.
+
 ## Policy Training CUDA Device Support
 
-After `guarded_ppo_rollout_pilot_evaluated`, the next boundary is not a larger
-rollout or real-map training. It is an opt-in training-device contract so later
-larger PPO runs can use GPU compute without changing existing CPU evidence.
+After `guarded_ppo_rollout_pilot_evaluated`, progress telemetry, and evidence
+freeze, a later boundary is not a larger rollout or real-map training. It is an opt-in
+training-device contract so later larger PPO runs can use GPU compute without
+changing existing CPU evidence.
 
 New artifacts:
 

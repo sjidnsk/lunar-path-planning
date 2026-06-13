@@ -14,6 +14,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from git_provenance import git_snapshot as _git_snapshot
+from training_progress import add_progress_argument, make_progress_reporter, ppo_update_progress_metrics
 
 
 CONFIG_SCHEMA_VERSION = "limited-ppo-update-smoke-config/v1"
@@ -43,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--validate-only", action="store_true")
+    add_progress_argument(parser)
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -65,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         output_root=_resolve_path(args.output_root, repo_root),
         config=config,
         repo_root=repo_root,
+        progress_mode=args.progress,
     )
     print(
         json.dumps(
@@ -90,6 +93,7 @@ def run_limited_ppo_update_smoke(
     output_root: Path,
     config: dict[str, Any],
     repo_root: Path,
+    progress_mode: str | None = None,
 ) -> dict[str, Any]:
     import torch
     from model_explorer.policy.architectures import build_policy_network_from_metadata
@@ -108,6 +112,14 @@ def run_limited_ppo_update_smoke(
         config=config,
     )
     output_root.mkdir(parents=True, exist_ok=True)
+    progress = make_progress_reporter(output_root=output_root, mode=progress_mode, config=config)
+    progress.emit(
+        stage="ppo_update",
+        status="start",
+        current=0,
+        total=_int_value(config["training"].get("epochs"), 1),
+        message="limited PPO update smoke",
+    )
     reason_codes: list[str] = []
     diagnostics: dict[str, Any] = {}
     device_resolution = resolve_training_device(config["training"].get("device"), torch_module=torch)
@@ -310,6 +322,19 @@ def run_limited_ppo_update_smoke(
                         "max_grad_norm_after_clip": max_grad_norm_after_clip,
                     }
                 )
+                progress.emit(
+                    stage="ppo_update",
+                    status="progress",
+                    current=epoch_index + 1,
+                    total=_int_value(config["training"].get("epochs"), 1),
+                    message=f"ppo epoch {epoch_index + 1}/{_int_value(config['training'].get('epochs'), 1)}",
+                    metrics={
+                        "optimizer_train_transition_count": len(trainable_transitions),
+                        "loss": training_curves[-1]["total_loss"],
+                        "approx_kl": approx_kl,
+                        "max_grad_norm_after_clip": max_grad_norm_after_clip,
+                    },
+                )
             parameter_l2_delta = _parameter_l2_delta(network.state_dict(), base_state, torch=torch)
             if parameter_l2_delta <= 0.0:
                 _append_reason(reason_codes, NEXT_INPUT_INVALID)
@@ -415,6 +440,17 @@ def run_limited_ppo_update_smoke(
     _write_json(paths["summary"], summary)
     _write_json(paths["training_curves"], {"schema_version": "limited-ppo-update-training-curves/v1", "records": training_curves})
     _write_json(paths["diagnostics"], {"schema_version": "limited-ppo-update-diagnostics/v1", **diagnostics})
+    progress.emit(
+        stage="ppo_update",
+        status=status,
+        current=_int_value(config["training"].get("epochs"), 1),
+        total=_int_value(config["training"].get("epochs"), 1),
+        message=f"limited PPO update {status}",
+        summary_path=_display_path(paths["summary"], repo_root),
+        reason_codes=reason_codes,
+        metrics=ppo_update_progress_metrics(summary),
+    )
+    progress.finalize(status=status)
     return summary
 
 

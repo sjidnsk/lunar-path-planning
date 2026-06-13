@@ -539,8 +539,42 @@ def main(argv: list[str] | None = None) -> int:
             args.quasi_real_guarded_teacher_following_pilot_summary,
         )
     )
+    explicit_guarded_only_summary = bool(args.guarded_ppo_rollout_pilot_summary) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.iterative_ppo_mini_loop_stability_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
     anchor_only_defaults_available = (
         not explicit_iterative_only_summary
+        and not explicit_guarded_only_summary
         and
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -1023,7 +1057,148 @@ def analyze_policy_training_readiness_review(
             quasi_real_guarded_teacher_following_pilot_required,
         )
     )
-    stage_isolated_mode = anchor_only_mode or iterative_only_mode
+    guarded_only_mode = guarded_ppo_rollout_pilot_required and not any(
+        (
+            anchor_candidate_required,
+            anchor_contract_required,
+            contract_aware_target_required,
+            planner_validated_mining_required,
+            hybrid_training_dry_run_required,
+            controlled_candidate_required,
+            controlled_holdout_required,
+            fresh_holdout_required,
+            scenario_rollout_required,
+            raw_strict_rollout_required,
+            raw_generalization_required,
+            policy_canary_required,
+            sequential_canary_required,
+            ppo_collector_required,
+            limited_ppo_update_smoke_required,
+            limited_quasi_real_ppo_update_smoke_required,
+            generated_sequential_gate_metric_accounting_audit_required,
+            generated_sequential_long_horizon_teacher_skill_contract_required,
+            iterative_ppo_mini_loop_required,
+            policy_training_cuda_device_support_required,
+            quasi_real_map_domain_gap_required,
+            quasi_real_shadow_policy_behavior_required,
+            quasi_real_shadow_alignment_required,
+            quasi_real_guarded_policy_pilot_required,
+            quasi_real_safe_alternative_opportunity_required,
+            quasi_real_safe_better_opportunity_expansion_required,
+            quasi_real_teacher_equivalent_validation_required,
+            quasi_real_teacher_distillation_required,
+            quasi_real_guarded_teacher_following_pilot_required,
+        )
+    )
+    stage_isolated_mode = anchor_only_mode or iterative_only_mode or guarded_only_mode
+    if guarded_only_mode:
+        isolated_root = batch_root / ".stage-isolated" / "guarded_ppo_rollout_pilot_only"
+
+        def _isolated_path(path: Path, label: str) -> Path:
+            return isolated_root / label / path.name
+
+        smoke_path = _isolated_path(smoke_path, "calibrated_policy_application_smoke_summary")
+        readiness_path = _isolated_path(readiness_path, "channel_aware_training_readiness_summary")
+        coverage_path = _isolated_path(coverage_path, "channel_aware_contrast_coverage_summary")
+        calibration_path = _isolated_path(calibration_path, "channel_aware_selection_contrast_calibration_summary")
+        anchor_candidate_path = _isolated_path(anchor_candidate_path, "anchor_projection_candidate_generation_summary")
+        anchor_contract_path = _isolated_path(anchor_contract_path, "anchor_projection_evidence_contract_summary")
+        contract_aware_target_path = _isolated_path(contract_aware_target_path, "contract_aware_trainable_target_summary")
+        planner_validated_mining_path = _isolated_path(
+            planner_validated_mining_path,
+            "planner_validated_trainable_target_mining_summary",
+        )
+        hybrid_training_dry_run_path = _isolated_path(
+            hybrid_training_dry_run_path,
+            "hybrid_policy_training_dry_run_summary",
+        )
+        controlled_candidate_path = _isolated_path(
+            controlled_candidate_path,
+            "controlled_hybrid_policy_training_candidate_summary",
+        )
+        controlled_holdout_path = _isolated_path(
+            controlled_holdout_path,
+            "controlled_hybrid_policy_holdout_evaluation_summary",
+        )
+        fresh_holdout_path = _isolated_path(fresh_holdout_path, "fresh_holdout_policy_candidate_evaluation_summary")
+        scenario_rollout_path = _isolated_path(
+            scenario_rollout_path,
+            "scenario_disjoint_policy_rollout_evaluation_summary",
+        )
+        raw_strict_rollout_path = _isolated_path(
+            raw_strict_rollout_path,
+            "raw_policy_strict_rollout_evaluation_summary",
+        )
+        raw_generalization_path = _isolated_path(
+            raw_generalization_path,
+            "raw_policy_generalization_evaluation_summary",
+        )
+        policy_canary_path = _isolated_path(policy_canary_path, "policy_gated_canary_rollout_summary")
+        sequential_canary_path = _isolated_path(
+            sequential_canary_path,
+            "policy_gated_sequential_canary_rollout_summary",
+        )
+        ppo_collector_path = _isolated_path(ppo_collector_path, "ppo_rollout_collector_summary")
+        limited_ppo_update_smoke_path = _isolated_path(
+            limited_ppo_update_smoke_path,
+            "limited_ppo_update_smoke_summary",
+        )
+        limited_quasi_real_ppo_update_smoke_path = _isolated_path(
+            limited_quasi_real_ppo_update_smoke_path,
+            "limited_quasi_real_ppo_update_smoke_summary",
+        )
+        generated_sequential_gate_metric_accounting_audit_path = _isolated_path(
+            generated_sequential_gate_metric_accounting_audit_path,
+            "generated_sequential_gate_metric_accounting_audit_summary",
+        )
+        generated_sequential_long_horizon_teacher_skill_contract_path = _isolated_path(
+            generated_sequential_long_horizon_teacher_skill_contract_path,
+            "generated_sequential_long_horizon_teacher_skill_contract_summary",
+        )
+        iterative_ppo_mini_loop_path = _isolated_path(
+            iterative_ppo_mini_loop_path,
+            "iterative_ppo_mini_loop_stability_summary",
+        )
+        policy_training_cuda_device_support_path = _isolated_path(
+            policy_training_cuda_device_support_path,
+            "policy_training_cuda_device_support_summary",
+        )
+        quasi_real_map_domain_gap_path = _isolated_path(
+            quasi_real_map_domain_gap_path,
+            "quasi_real_map_domain_gap_summary",
+        )
+        quasi_real_shadow_policy_behavior_path = _isolated_path(
+            quasi_real_shadow_policy_behavior_path,
+            "quasi_real_shadow_policy_behavior_summary",
+        )
+        quasi_real_shadow_alignment_path = _isolated_path(
+            quasi_real_shadow_alignment_path,
+            "quasi_real_shadow_alignment_summary",
+        )
+        quasi_real_guarded_policy_pilot_path = _isolated_path(
+            quasi_real_guarded_policy_pilot_path,
+            "quasi_real_guarded_policy_pilot_summary",
+        )
+        quasi_real_safe_alternative_opportunity_path = _isolated_path(
+            quasi_real_safe_alternative_opportunity_path,
+            "quasi_real_safe_alternative_opportunity_summary",
+        )
+        quasi_real_safe_better_opportunity_expansion_path = _isolated_path(
+            quasi_real_safe_better_opportunity_expansion_path,
+            "quasi_real_safe_better_opportunity_expansion_summary",
+        )
+        quasi_real_teacher_equivalent_validation_path = _isolated_path(
+            quasi_real_teacher_equivalent_validation_path,
+            "quasi_real_teacher_equivalent_validation_summary",
+        )
+        quasi_real_teacher_distillation_path = _isolated_path(
+            quasi_real_teacher_distillation_path,
+            "quasi_real_teacher_distillation_summary",
+        )
+        quasi_real_guarded_teacher_following_pilot_path = _isolated_path(
+            quasi_real_guarded_teacher_following_pilot_path,
+            "quasi_real_guarded_teacher_following_pilot_summary",
+        )
     if stage_isolated_mode:
         smoke = _load_optional_source(
             smoke_path,
@@ -5337,11 +5512,23 @@ def _guarded_ppo_rollout_pilot_readiness(summary: dict[str, Any]) -> dict[str, A
         ("missing_value_count", "guarded_ppo_on_policy_contract_invalid"),
         ("non_finite_reward_count", "guarded_ppo_update_loss_non_finite"),
         ("post_update_raw_test_regression_count", "guarded_ppo_post_update_regression"),
-        ("post_update_sequential_rejected_count", "guarded_ppo_post_update_regression"),
+        ("post_update_controlled_sequential_regression_count", "guarded_ppo_post_update_regression"),
         ("post_update_collector_regression_count", "guarded_ppo_post_update_regression"),
+        ("post_update_quasi_real_unsafe_disagreement_count", "guarded_ppo_post_update_regression"),
+        ("post_update_quasi_real_teacher_following_regression_count", "guarded_ppo_post_update_regression"),
+        ("post_update_quasi_real_collector_regression_count", "guarded_ppo_post_update_regression"),
     ):
         if _int_value_or_default(summary.get(field), 0):
             _append_reason(blockers, reason)
+    if summary.get("post_update_quasi_real_teacher_following_status") not in {None, "passed"}:
+        _append_reason(blockers, "guarded_ppo_post_update_regression")
+    if summary.get("post_update_quasi_real_collector_status") not in {None, "passed"}:
+        _append_reason(blockers, "guarded_ppo_post_update_regression")
+    if _float_value_or_default(summary.get("post_update_quasi_real_teacher_agreement_rate"), 1.0) < 0.9:
+        _append_reason(blockers, "guarded_ppo_post_update_regression")
+    quasi_collector_trainable = summary.get("post_update_quasi_real_collector_trainable_transition_count")
+    if quasi_collector_trainable is not None and _int_value_or_default(quasi_collector_trainable, 0) < 24:
+        _append_reason(blockers, "guarded_ppo_trainable_transition_count_insufficient")
     if _float_value_or_default(summary.get("old_log_prob_max_abs_error"), float("inf")) > 1.0e-4:
         _append_reason(blockers, "guarded_ppo_on_policy_contract_invalid")
     if _float_value_or_default(summary.get("old_value_max_abs_error"), float("inf")) > 1.0e-4:

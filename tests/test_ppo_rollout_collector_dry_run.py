@@ -283,6 +283,141 @@ class PpoRolloutCollectorDryRunTests(unittest.TestCase):
         self.assertIn("ppo_reward_contract_invalid", summary["reason_codes"])
         self.assertEqual(summary["non_finite_reward_count"], 1)
 
+    def test_collector_trainable_filter_keeps_validation_and_test_diagnostic(self) -> None:
+        from model_explorer.policy.rollout_io import read_rollout_episodes
+        from scripts.run_ppo_rollout_collector_dry_run import run_ppo_rollout_collector_dry_run
+
+        sequential_root = Path(tempfile.mkdtemp(prefix="ppo-collector-split-seq-"))
+        output_root = Path(tempfile.mkdtemp(prefix="ppo-collector-split-out-"))
+        train_step = self._step(
+            episode_id="ep-train",
+            step_index=0,
+            controlled_choice_source="policy",
+            controlled_action_index=1,
+            context_id="ctx-train",
+            log_prob=-0.2,
+            value=0.3,
+            path_delta=-0.1,
+            risk_delta=-0.01,
+        )
+        train_step["split"] = "train"
+        validation_step = self._step(
+            episode_id="ep-val",
+            step_index=0,
+            controlled_choice_source="policy",
+            controlled_action_index=1,
+            context_id="ctx-val",
+            log_prob=-0.2,
+            value=0.3,
+            path_delta=-0.1,
+            risk_delta=-0.01,
+        )
+        validation_step["split"] = "validation"
+        test_step = self._step(
+            episode_id="ep-test",
+            step_index=0,
+            controlled_choice_source="policy",
+            controlled_action_index=1,
+            context_id="ctx-test",
+            log_prob=-0.2,
+            value=0.3,
+            path_delta=-0.1,
+            risk_delta=-0.01,
+        )
+        test_step["split"] = "test"
+        self._write_jsonl(
+            sequential_root / "policy-gated-sequential-canary-steps.jsonl",
+            [train_step, validation_step, test_step],
+        )
+        self._write_json(
+            sequential_root / "policy-gated-sequential-canary-rollout-summary.json",
+            {
+                "schema_version": "policy-gated-sequential-canary-rollout-summary/v1",
+                "status": "passed",
+                "reason_codes": [],
+                "episode_count": 3,
+                "step_count": 3,
+                "state_continuity_violation_count": 0,
+                "canary_rejected_policy_choice_count": 0,
+            },
+        )
+
+        summary = run_ppo_rollout_collector_dry_run(
+            sequential_root=sequential_root,
+            output_root=output_root,
+            candidate_root=None,
+            config={
+                "schema_version": "ppo-rollout-collector-dry-run-config/v1",
+                "trainable_filter": {
+                    "splits": ["train"],
+                    "controlled_choice_sources": ["policy"],
+                    "require_empty_gate_reason_codes": True,
+                },
+                "validation": {"min_ppo_trainable_transition_count": 1},
+                "reward": {},
+            },
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["ppo_trainable_transition_count"], 1)
+        self.assertEqual(summary["diagnostic_transition_count"], 2)
+        episodes = read_rollout_episodes(output_root / "ppo-rollout-episodes.jsonl")
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(episodes[0].transitions[0].info.extra["split"], "train")
+
+    def test_collector_can_treat_raw_probe_sequential_failure_as_diagnostic(self) -> None:
+        from scripts.run_ppo_rollout_collector_dry_run import run_ppo_rollout_collector_dry_run
+
+        sequential_root = Path(tempfile.mkdtemp(prefix="ppo-collector-seq-diagnostic-"))
+        output_root = Path(tempfile.mkdtemp(prefix="ppo-collector-seq-diagnostic-out-"))
+        step = self._step(
+            episode_id="ep-train",
+            step_index=0,
+            controlled_choice_source="policy",
+            controlled_action_index=1,
+            context_id="ctx-train",
+            log_prob=-0.2,
+            value=0.3,
+            path_delta=-0.1,
+            risk_delta=-0.01,
+        )
+        self._write_jsonl(sequential_root / "policy-gated-sequential-canary-steps.jsonl", [step])
+        self._write_json(
+            sequential_root / "policy-gated-sequential-canary-rollout-summary.json",
+            {
+                "schema_version": "policy-gated-sequential-canary-rollout-summary/v1",
+                "status": "failed",
+                "reason_codes": ["canary_rejected_policy_choice_count_above_threshold"],
+                "episode_count": 1,
+                "step_count": 1,
+                "state_continuity_violation_count": 0,
+                "cumulative_path_cost_regression_count": 0,
+                "cumulative_risk_regression_count": 0,
+            },
+        )
+
+        summary = run_ppo_rollout_collector_dry_run(
+            sequential_root=sequential_root,
+            output_root=output_root,
+            candidate_root=None,
+            config={
+                "schema_version": "ppo-rollout-collector-dry-run-config/v1",
+                "validation": {
+                    "min_ppo_trainable_transition_count": 1,
+                    "sequential_status_diagnostic_reason_codes": [
+                        "canary_rejected_policy_choice_count_above_threshold"
+                    ],
+                },
+                "reward": {},
+            },
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertEqual(summary["ppo_trainable_transition_count"], 1)
+
     def test_readiness_accepts_passed_ppo_collector_summary(self) -> None:
         from scripts.run_policy_training_readiness_review import _ppo_rollout_collector_readiness
 

@@ -1,0 +1,39 @@
+{
+  "schema_version": "guarded-ppo-evidence-freeze-config/v1",
+  "description": "Freeze guarded PPO rollout pilot evidence into a reproducible, auditable manifest without changing training or gate semantics.",
+  "default_paths": {
+    "guarded_root": "outputs/path_feedback_batch_guarded_ppo_rollout_pilot_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_guarded_ppo_evidence_freeze_v1"
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "guarded_ppo_rollout_pilot_evaluated"
+  },
+  "required_artifacts": [
+    "guarded-ppo-rollout-pilot-summary.json",
+    "training-progress-summary.json",
+    "training-progress-events.jsonl",
+    "readiness-final.json"
+  ],
+  "output_files": {
+    "summary": "guarded-ppo-evidence-freeze-summary.json",
+    "manifest": "evidence-manifest.json",
+    "readiness_final": "readiness-final.json",
+    "consistency_report": "progress-consistency-report.json",
+    "reproducibility_report": "reproducibility-report.md"
+  },
+  "non_goals": [
+    "does_not_start_new_ppo_update",
+    "does_not_expand_batch",
+    "does_not_enter_formal_training",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_safety_contract_path_risk_or_source_selection_gates",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release"
+  ]
+}

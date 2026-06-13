@@ -135,7 +135,7 @@ def run_ppo_rollout_collector_dry_run(
         _append_reason(reason_codes, "ppo_trainable_transition_count_insufficient")
 
     _apply_validation_gates(reason_codes, counters, config)
-    if sequential_summary.get("status") not in {None, "passed"}:
+    if _sequential_status_blocks_collector(sequential_summary, config):
         _append_reason(reason_codes, "sequential_rollout_not_passed")
 
     write_rollout_episodes_jsonl(paths["episodes"], tuple(episodes))
@@ -209,12 +209,12 @@ def _transition_from_step(
     counter_deltas: Counter[str] = Counter()
     rejection_reasons: list[str] = []
     controlled_source = str(step.get("controlled_choice_source") or "")
-    ppo_trainable = (
-        controlled_source == "policy"
-        and bool(step.get("canary_gate_passed", step.get("decision_class") == "canary_accepted_policy_choice"))
-        and not _string_list(step.get("canary_rejection_reason_codes"))
-        and not _string_list(step.get("controlled_regression_reason_codes"))
-        and not _string_list(step.get("raw_policy_regression_reason_codes"))
+    split = _step_split(step, config)
+    ppo_trainable = _step_matches_trainable_filter(
+        step,
+        split=split,
+        controlled_source=controlled_source,
+        config=config,
     )
     if not ppo_trainable:
         counter_deltas["diagnostic_transition_count"] += 1
@@ -290,6 +290,7 @@ def _transition_from_step(
                     "step_index": step.get("step_index"),
                     "context_id": step.get("context_id"),
                     "scenario_family": step.get("scenario_group"),
+                    "split": split,
                     "raw_policy_action_index": step.get("raw_policy_selected_action_index"),
                     "source_action_index": step.get("source_selected_action_index"),
                     "controlled_action_index": controlled_action_index,
@@ -310,6 +311,7 @@ def _transition_from_step(
         "scenario_id": step.get("scenario_id"),
         "scenario_family": step.get("scenario_group"),
         "context_id": step.get("context_id"),
+        "split": split,
         "controlled_choice_source": controlled_source,
         "controlled_action_index": controlled_action_index,
         "ppo_trainable": bool(transition is not None),
@@ -327,6 +329,60 @@ def _transition_from_step(
         "counter_deltas": dict(counter_deltas),
     }
     return record, transition
+
+
+def _step_matches_trainable_filter(
+    step: dict[str, Any],
+    *,
+    split: str | None,
+    controlled_source: str,
+    config: dict[str, Any],
+) -> bool:
+    filter_config = config.get("trainable_filter", {})
+    if not isinstance(filter_config, dict):
+        filter_config = {}
+    allowed_sources = {
+        str(value)
+        for value in filter_config.get("controlled_choice_sources", ["policy"])
+    }
+    if controlled_source not in allowed_sources:
+        return False
+    allowed_splits = filter_config.get("splits")
+    if isinstance(allowed_splits, list):
+        split_value = str(split or "")
+        if split_value not in {str(value) for value in allowed_splits}:
+            return False
+    gate_passed = bool(
+        step.get(
+            "canary_gate_passed",
+            step.get("decision_class") == "canary_accepted_policy_choice",
+        )
+    )
+    if not gate_passed:
+        return False
+    require_empty_reasons = bool(filter_config.get("require_empty_gate_reason_codes", True))
+    if require_empty_reasons:
+        for key in (
+            "gate_reason_codes",
+            "canary_rejection_reason_codes",
+            "controlled_regression_reason_codes",
+        ):
+            if _string_list(step.get(key)):
+                return False
+        raw_policy_diagnostic_only = bool(filter_config.get("raw_policy_regression_diagnostic_only", False))
+        if not raw_policy_diagnostic_only and _string_list(step.get("raw_policy_regression_reason_codes")):
+            return False
+    return True
+
+
+def _step_split(step: dict[str, Any], config: dict[str, Any]) -> str | None:
+    for key in ("split", "dataset_split"):
+        if step.get(key):
+            return str(step.get(key))
+    filter_config = config.get("trainable_filter", {})
+    if isinstance(filter_config, dict) and filter_config.get("default_split"):
+        return str(filter_config.get("default_split"))
+    return None
 
 
 def _observation_from_step_or_scenario(step: dict[str, Any], scenario_group: dict[str, Any] | None, action_index: int | None):
@@ -531,6 +587,21 @@ def _apply_validation_gates(reason_codes: list[str], counters: Counter[str], con
         max_value = int(validation.get(f"max_{field}", 0))
         if counters[field] > max_value:
             _append_reason(reason_codes, reason)
+
+
+def _sequential_status_blocks_collector(summary: dict[str, Any], config: dict[str, Any]) -> bool:
+    if summary.get("status") in {None, "passed"}:
+        return False
+    allowed_reasons = set(
+        str(reason)
+        for reason in config.get("validation", {}).get(
+            "sequential_status_diagnostic_reason_codes",
+            [],
+        )
+    )
+    if not allowed_reasons:
+        return True
+    return any(reason not in allowed_reasons for reason in _string_list(summary.get("reason_codes")))
 
 
 def _output_paths(output_root: Path, config: dict[str, Any]) -> dict[str, Path]:

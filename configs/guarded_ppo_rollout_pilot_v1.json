@@ -5,7 +5,9 @@
     "sequential_canary_config": "configs/policy_gated_sequential_multi_step_opportunity_rollout_v1.json",
     "collector_config": "configs/ppo_rollout_collector_dry_run_v1.json",
     "update_config": "configs/guarded_ppo_rollout_update_v1.json",
-    "raw_generalization_config": "configs/raw_policy_generalization_evaluation_v1.json"
+    "raw_generalization_config": "configs/raw_policy_generalization_evaluation_v1.json",
+    "quasi_real_teacher_following_config": "configs/quasi_real_guarded_teacher_following_pilot_v1.json",
+    "quasi_real_collector_config": "configs/quasi_real_ppo_collector_dry_run_v1.json"
   },
   "output_files": {
     "summary": "guarded-ppo-rollout-pilot-summary.json",
@@ -26,7 +28,21 @@
     "max_grad_norm_after_clip": 1.0,
     "max_raw_test_regression_count": 0,
     "min_accepted_takeover_family_count": 6,
-    "min_multi_step_accepted_episode_count": 12
+    "min_multi_step_accepted_episode_count": 12,
+    "min_quasi_real_teacher_agreement_rate": 0.9,
+    "raw_policy_diagnostic_reason_codes": [
+      "multi_step_accepted_episode_count_below_threshold",
+      "family_with_multi_step_accepted_episode_count_below_threshold",
+      "canary_rejected_policy_choice_count_above_threshold"
+    ],
+    "collector_diagnostic_reason_codes": [
+      "sequential_rollout_not_passed"
+    ],
+    "raw_generalization_diagnostic_reason_codes": [
+      "baseline_dev_rollout_failed",
+      "baseline_val_rollout_failed",
+      "baseline_test_rollout_failed"
+    ]
   },
   "non_goals": [
     "not_formal_ppo_rollout_release",

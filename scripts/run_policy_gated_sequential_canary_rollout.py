@@ -14,6 +14,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from git_provenance import git_snapshot as _git_snapshot
+from training_progress import add_progress_argument, make_progress_reporter, sequential_progress_metrics
 
 try:  # Imported as scripts.run_policy_gated_sequential_canary_rollout in tests.
     from scripts.run_controlled_hybrid_policy_training_candidate import (
@@ -80,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-root", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--validate-only", action="store_true")
+    add_progress_argument(parser)
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -104,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         batch_root=batch_root,
         config=config,
         repo_root=repo_root,
+        progress_mode=args.progress,
     )
     outputs = _output_paths(batch_root, config)
     batch_root.mkdir(parents=True, exist_ok=True)
@@ -139,6 +142,7 @@ def run_policy_gated_sequential_canary_rollout(
     batch_root: Path,
     config: dict[str, Any],
     repo_root: Path,
+    progress_mode: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     reason_codes: list[str] = []
     candidate_summary = _load_json(
@@ -187,10 +191,27 @@ def run_policy_gated_sequential_canary_rollout(
     starts = {episode["episode_id"]: list(episode["initial_start_cell"]) for episode in episodes}
     steps: list[dict[str, Any]] = []
     horizon = int(config["generation"].get("episode_horizon", 3))
+    progress = make_progress_reporter(output_root=batch_root, mode=progress_mode, config=config)
+    progress.emit(
+        stage="generated_sequential",
+        status="start",
+        current=0,
+        total=horizon,
+        message=f"generated sequential rollout horizon {horizon}",
+    )
     if not reason_codes:
         for step_index in range(horizon):
             step_root = batch_root / f"sequential-step-{step_index:02d}"
             spec_path = batch_root / "scenario-specs" / f"sequential-step-{step_index:02d}.json"
+            progress.emit(
+                stage="generated_sequential_step",
+                status="start",
+                current=step_index + 1,
+                total=horizon,
+                step_index=step_index,
+                message=f"sequential step {step_index + 1}/{horizon}",
+                output_root=step_root,
+            )
             _write_step_scenario_spec(
                 spec_path,
                 episodes,
@@ -206,6 +227,16 @@ def run_policy_gated_sequential_canary_rollout(
             )
             if completed.returncode != 0:
                 _append_reason(reason_codes, "sequential_step_path_feedback_failed")
+                progress.emit(
+                    stage="generated_sequential_step",
+                    status="failed",
+                    current=step_index + 1,
+                    total=horizon,
+                    step_index=step_index,
+                    message=f"sequential step {step_index + 1}/{horizon} path-feedback failed",
+                    output_root=step_root,
+                    reason_codes=["sequential_step_path_feedback_failed"],
+                )
                 break
             try:
                 canary_decisions = _score_step(
@@ -216,6 +247,16 @@ def run_policy_gated_sequential_canary_rollout(
                 )
             except Exception as exc:  # noqa: BLE001
                 _append_reason(reason_codes, "sequential_step_policy_scoring_failed")
+                progress.emit(
+                    stage="generated_sequential_step",
+                    status="failed",
+                    current=step_index + 1,
+                    total=horizon,
+                    step_index=step_index,
+                    message=f"sequential step {step_index + 1}/{horizon} policy scoring failed",
+                    output_root=step_root,
+                    reason_codes=["sequential_step_policy_scoring_failed"],
+                )
                 steps.append(
                     {
                         "schema_version": STEP_SCHEMA_VERSION,
@@ -252,6 +293,21 @@ def run_policy_gated_sequential_canary_rollout(
                 controlled_goal = step.get("controlled_execution_goal_cell")
                 if _valid_cell(controlled_goal):
                     starts[episode["episode_id"]] = list(controlled_goal)
+            progress.emit(
+                stage="generated_sequential_step",
+                status="passed",
+                current=step_index + 1,
+                total=horizon,
+                step_index=step_index,
+                message=f"sequential step {step_index + 1}/{horizon} completed",
+                output_root=step_root,
+                metrics={
+                    "step_record_count": len(
+                        [step for step in steps if int(step.get("step_index", -1)) == step_index]
+                    ),
+                    "cumulative_step_record_count": len(steps),
+                },
+            )
 
     summary, rejection_report = summarize_sequential_steps(steps, config=config)
     for reason in reason_codes:
@@ -279,7 +335,32 @@ def run_policy_gated_sequential_canary_rollout(
     summary["next_required_change"] = _next_required_change(summary)
     rejection_report["schema_version"] = REJECTION_REPORT_SCHEMA_VERSION
     rejection_report["reason_codes"] = summary["reason_codes"]
+    progress_status = _progress_status_for_sequential_summary(summary)
+    progress.emit(
+        stage="generated_sequential",
+        status=progress_status,
+        current=horizon,
+        total=horizon,
+        message=f"generated sequential rollout {progress_status}",
+        reason_codes=summary["reason_codes"],
+        metrics=sequential_progress_metrics(summary),
+    )
+    progress.finalize(status=progress_status)
     return summary, episodes, steps, rejection_report
+
+
+def _progress_status_for_sequential_summary(summary: dict[str, Any]) -> str:
+    if summary.get("status") != "failed":
+        return str(summary.get("status") or "passed")
+    diagnostic_reasons = {
+        "multi_step_accepted_episode_count_below_threshold",
+        "family_with_multi_step_accepted_episode_count_below_threshold",
+        "canary_rejected_policy_choice_count_above_threshold",
+    }
+    reason_codes = {str(reason) for reason in summary.get("reason_codes") or []}
+    if reason_codes and reason_codes <= diagnostic_reasons:
+        return "passed"
+    return "failed"
 
 
 def build_sequential_step_record(

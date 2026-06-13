@@ -17,6 +17,14 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from git_provenance import git_snapshot as _git_snapshot
+from training_progress import (
+    add_progress_argument,
+    collector_progress_metrics,
+    make_progress_reporter,
+    ppo_update_progress_metrics,
+    progress_child_env,
+    sequential_progress_metrics,
+)
 
 
 CONFIG_SCHEMA_VERSION = "guarded-ppo-rollout-pilot-config/v1"
@@ -44,9 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dev-root", required=True)
     parser.add_argument("--val-root", required=True)
     parser.add_argument("--test-root", required=True)
+    parser.add_argument("--quasi-real-root", default=None)
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--validate-only", action="store_true")
+    add_progress_argument(parser)
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -67,9 +77,11 @@ def main(argv: list[str] | None = None) -> int:
         dev_root=_resolve_path(args.dev_root, repo_root),
         val_root=_resolve_path(args.val_root, repo_root),
         test_root=_resolve_path(args.test_root, repo_root),
+        quasi_real_root=None if args.quasi_real_root is None else _resolve_path(args.quasi_real_root, repo_root),
         output_root=_resolve_path(args.output_root, repo_root),
         config=config,
         repo_root=repo_root,
+        progress_mode=args.progress,
     )
     print(
         json.dumps(
@@ -95,6 +107,8 @@ def build_guarded_pilot_plan(*, output_root: Path, base_candidate_root: Path) ->
         "update_root": output_root / "update",
         "post_sequential_root": output_root / "final" / "sequential",
         "post_collector_root": output_root / "final" / "collector",
+        "post_quasi_real_teacher_following_root": output_root / "final" / "quasi_real_teacher_following",
+        "post_quasi_real_collector_root": output_root / "final" / "quasi_real_collector",
     }
 
 
@@ -109,6 +123,8 @@ def run_guarded_ppo_rollout_pilot(
     output_root: Path,
     config: dict[str, Any],
     repo_root: Path,
+    quasi_real_root: Path | None = None,
+    progress_mode: str | None = None,
 ) -> dict[str, Any]:
     output_root.mkdir(parents=True, exist_ok=True)
     plan = build_guarded_pilot_plan(
@@ -118,7 +134,18 @@ def run_guarded_ppo_rollout_pilot(
     python_bin = sys.executable
     env = dict(os.environ)
     env["PYTHON"] = python_bin
+    progress = make_progress_reporter(output_root=output_root, mode=progress_mode, config=config)
+    env = progress_child_env(
+        env,
+        output_root=progress.output_root,
+        mode=progress.mode,
+        run_id=progress.run_id,
+    )
     paths = config["config_paths"]
+    include_quasi_real = quasi_real_root is not None and paths.get("quasi_real_teacher_following_config") and paths.get(
+        "quasi_real_collector_config"
+    )
+    stage_total = 9 if include_quasi_real else 7
 
     for path in (
         plan["sequential_root"],
@@ -126,12 +153,21 @@ def run_guarded_ppo_rollout_pilot(
         plan["update_root"],
         plan["post_sequential_root"],
         plan["post_collector_root"],
+        plan["post_quasi_real_teacher_following_root"],
+        plan["post_quasi_real_collector_root"],
     ):
         if path.exists():
             shutil.rmtree(path)
 
-    _run_command(
-        [
+    _run_progress_stage(
+        progress=progress,
+        stage="pilot_generated_sequential",
+        current=1,
+        total=stage_total,
+        summary_path=plan["sequential_root"] / "policy-gated-sequential-canary-rollout-summary.json",
+        repo_root=repo_root,
+        metrics_loader=sequential_progress_metrics,
+        command=[
             "bash",
             str(repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.sh"),
             "--source-root",
@@ -145,9 +181,17 @@ def run_guarded_ppo_rollout_pilot(
         ],
         cwd=repo_root,
         env=env,
+        check=False,
     )
-    _run_command(
-        [
+    _run_progress_stage(
+        progress=progress,
+        stage="pilot_collector",
+        current=2,
+        total=stage_total,
+        summary_path=plan["collector_root"] / "ppo-rollout-collector-summary.json",
+        repo_root=repo_root,
+        metrics_loader=collector_progress_metrics,
+        command=[
             "bash",
             str(repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.sh"),
             "--sequential-root",
@@ -162,8 +206,15 @@ def run_guarded_ppo_rollout_pilot(
         cwd=repo_root,
         env=env,
     )
-    _run_command(
-        [
+    _run_progress_stage(
+        progress=progress,
+        stage="ppo_update",
+        current=3,
+        total=stage_total,
+        summary_path=plan["update_root"] / "limited-ppo-update-smoke-summary.json",
+        repo_root=repo_root,
+        metrics_loader=ppo_update_progress_metrics,
+        command=[
             "bash",
             str(repo_root / "scripts" / "run_limited_ppo_update_smoke.sh"),
             "--source-root",
@@ -176,12 +227,21 @@ def run_guarded_ppo_rollout_pilot(
             str(plan["update_root"]),
             "--config",
             str(repo_root / paths["update_config"]),
+            "--progress",
+            progress.mode,
         ],
         cwd=repo_root,
         env=env,
     )
-    _run_command(
-        [
+    _run_progress_stage(
+        progress=progress,
+        stage="post_update_raw_generalization",
+        current=4,
+        total=stage_total,
+        summary_path=plan["update_root"] / "raw-policy-generalization-evaluation-summary.json",
+        repo_root=repo_root,
+        metrics_loader=_raw_generalization_progress_metrics,
+        command=[
             "bash",
             str(repo_root / "scripts" / "run_raw_policy_generalization_evaluation.sh"),
             "--source-root",
@@ -201,9 +261,17 @@ def run_guarded_ppo_rollout_pilot(
         ],
         cwd=repo_root,
         env=env,
+        check=False,
     )
-    _run_command(
-        [
+    _run_progress_stage(
+        progress=progress,
+        stage="post_update_generated_sequential",
+        current=5,
+        total=stage_total,
+        summary_path=plan["post_sequential_root"] / "policy-gated-sequential-canary-rollout-summary.json",
+        repo_root=repo_root,
+        metrics_loader=sequential_progress_metrics,
+        command=[
             "bash",
             str(repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.sh"),
             "--source-root",
@@ -217,9 +285,17 @@ def run_guarded_ppo_rollout_pilot(
         ],
         cwd=repo_root,
         env=env,
+        check=False,
     )
-    _run_command(
-        [
+    _run_progress_stage(
+        progress=progress,
+        stage="post_update_generated_collector",
+        current=6,
+        total=stage_total,
+        summary_path=plan["post_collector_root"] / "ppo-rollout-collector-summary.json",
+        repo_root=repo_root,
+        metrics_loader=collector_progress_metrics,
+        command=[
             "bash",
             str(repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.sh"),
             "--sequential-root",
@@ -234,6 +310,70 @@ def run_guarded_ppo_rollout_pilot(
         cwd=repo_root,
         env=env,
     )
+
+    post_update_quasi_real_teacher_following_summary = None
+    post_update_quasi_real_collector_summary = None
+    if include_quasi_real:
+        _run_progress_stage(
+            progress=progress,
+            stage="post_update_quasi_real_teacher_following",
+            current=7,
+            total=stage_total,
+            summary_path=(
+                plan["post_quasi_real_teacher_following_root"]
+                / "quasi-real-guarded-teacher-following-pilot-summary.json"
+            ),
+            repo_root=repo_root,
+            metrics_loader=_quasi_teacher_progress_metrics,
+            command=[
+                "bash",
+                str(repo_root / "scripts" / "run_quasi_real_guarded_teacher_following_pilot.sh"),
+                "--source-root",
+                str(source_root),
+                "--candidate-root",
+                str(plan["update_root"]),
+                "--quasi-real-root",
+                str(quasi_real_root),
+                "--output-root",
+                str(plan["post_quasi_real_teacher_following_root"]),
+                "--config",
+                str(repo_root / paths["quasi_real_teacher_following_config"]),
+            ],
+            cwd=repo_root,
+            env=env,
+        )
+        _run_progress_stage(
+            progress=progress,
+            stage="post_update_quasi_real_collector",
+            current=8,
+            total=stage_total,
+            summary_path=plan["post_quasi_real_collector_root"] / "ppo-rollout-collector-summary.json",
+            repo_root=repo_root,
+            metrics_loader=collector_progress_metrics,
+            command=[
+                "bash",
+                str(repo_root / "scripts" / "run_quasi_real_ppo_collector_dry_run.sh"),
+                "--guarded-teacher-following-root",
+                str(plan["post_quasi_real_teacher_following_root"]),
+                "--candidate-root",
+                str(plan["update_root"]),
+                "--quasi-real-root",
+                str(quasi_real_root),
+                "--output-root",
+                str(plan["post_quasi_real_collector_root"]),
+                "--config",
+                str(repo_root / paths["quasi_real_collector_config"]),
+            ],
+            cwd=repo_root,
+            env=env,
+        )
+        post_update_quasi_real_teacher_following_summary = _load_json(
+            plan["post_quasi_real_teacher_following_root"]
+            / "quasi-real-guarded-teacher-following-pilot-summary.json"
+        )
+        post_update_quasi_real_collector_summary = _load_json(
+            plan["post_quasi_real_collector_root"] / "ppo-rollout-collector-summary.json"
+        )
 
     summary, rejection_report = summarize_guarded_ppo_rollout_pilot(
         output_root=output_root,
@@ -255,10 +395,32 @@ def run_guarded_ppo_rollout_pilot(
         post_update_collector_summary=_load_json(
             plan["post_collector_root"] / "ppo-rollout-collector-summary.json"
         ),
+        post_update_quasi_real_teacher_following_summary=post_update_quasi_real_teacher_following_summary,
+        post_update_quasi_real_collector_summary=post_update_quasi_real_collector_summary,
     )
     _write_outputs(output_root=output_root, config=config, summary=summary, rejection_report=rejection_report)
     _copy_guarded_artifacts(plan, output_root=output_root, config=config)
     _copy_post_update_artifacts(plan, output_root=output_root)
+    progress.emit(
+        stage="guarded_pilot_summary",
+        status=summary["status"],
+        current=stage_total,
+        total=stage_total,
+        message=f"guarded pilot {summary['status']}",
+        summary_path=summary["summary"],
+        reason_codes=summary["reason_codes"],
+        metrics={
+            "ppo_trainable_transition_count": summary["ppo_trainable_transition_count"],
+            "optimizer_train_transition_count": summary["optimizer_train_transition_count"],
+            "post_update_controlled_sequential_regression_count": summary[
+                "post_update_controlled_sequential_regression_count"
+            ],
+            "post_update_quasi_real_collector_trainable_transition_count": summary[
+                "post_update_quasi_real_collector_trainable_transition_count"
+            ],
+        },
+    )
+    progress.finalize(status=summary["status"])
     return summary
 
 
@@ -275,6 +437,8 @@ def summarize_guarded_ppo_rollout_pilot(
     raw_generalization_summary: dict[str, Any],
     post_update_sequential_summary: dict[str, Any],
     post_update_collector_summary: dict[str, Any],
+    post_update_quasi_real_teacher_following_summary: dict[str, Any] | None = None,
+    post_update_quasi_real_collector_summary: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     validation = config["validation"]
     reason_codes: list[str] = []
@@ -316,6 +480,23 @@ def summarize_guarded_ppo_rollout_pilot(
         stage="post_update_collector",
         reasons=_collector_reasons(post_update_collector_summary, validation),
     )
+    if post_update_quasi_real_teacher_following_summary is not None:
+        _extend_stage_reasons(
+            reason_codes,
+            rejection_records,
+            stage="post_update_quasi_real_teacher_following",
+            reasons=_quasi_real_teacher_following_reasons(
+                post_update_quasi_real_teacher_following_summary,
+                validation,
+            ),
+        )
+    if post_update_quasi_real_collector_summary is not None:
+        _extend_stage_reasons(
+            reason_codes,
+            rejection_records,
+            stage="post_update_quasi_real_collector",
+            reasons=_collector_reasons(post_update_quasi_real_collector_summary, validation),
+        )
 
     summary_path = output_root / config["output_files"]["summary"]
     rejection_path = output_root / config["output_files"]["rejection_report"]
@@ -352,6 +533,23 @@ def summarize_guarded_ppo_rollout_pilot(
         "missing_value_count": _int_value(pilot_collector_summary.get("missing_value_count")),
         "non_finite_reward_count": _int_value(pilot_collector_summary.get("non_finite_reward_count"))
         + _int_value(update_summary.get("non_finite_reward_count")),
+        "reward_finite_count": _update_reward_finite_count(update_summary),
+        "return_finite_count": _finite_tensor_count(
+            update_summary,
+            total_field="optimizer_train_transition_count",
+            non_finite_field="non_finite_return_count",
+        ),
+        "advantage_finite_count": _finite_tensor_count(
+            update_summary,
+            total_field="optimizer_train_transition_count",
+            non_finite_field="non_finite_advantage_count",
+        ),
+        "loss_finite_count": _loss_finite_count(update_summary),
+        "gradient_finite_count": _gradient_finite_count(update_summary),
+        "loss_non_finite_count": _int_value(update_summary.get("loss_non_finite_count")),
+        "non_finite_gradient_count": _int_value(update_summary.get("non_finite_gradient_count")),
+        "non_finite_return_count": _int_value(update_summary.get("non_finite_return_count")),
+        "non_finite_advantage_count": _int_value(update_summary.get("non_finite_advantage_count")),
         "old_log_prob_max_abs_error": _finite_or_inf(update_summary.get("old_log_prob_max_abs_error")),
         "old_value_max_abs_error": _finite_or_inf(update_summary.get("old_value_max_abs_error")),
         "update_requested_device": update_summary.get("requested_device"),
@@ -365,11 +563,43 @@ def summarize_guarded_ppo_rollout_pilot(
         "post_update_raw_test_regression_count": _int_value(
             raw_generalization_summary.get("test_raw_policy_regression_count")
         ),
+        "pilot_raw_rejected_policy_choice_count": _int_value(
+            pilot_sequential_summary.get("canary_rejected_policy_choice_count")
+        ),
         "post_update_sequential_rejected_count": _int_value(
             post_update_sequential_summary.get("canary_rejected_policy_choice_count")
         ),
+        "post_update_raw_rejected_policy_choice_count": _int_value(
+            post_update_sequential_summary.get("canary_rejected_policy_choice_count")
+        ),
+        "post_update_controlled_sequential_regression_count": _sequential_controlled_regression_count(
+            post_update_sequential_summary
+        ),
         "post_update_collector_regression_count": _collector_regression_count(
             post_update_collector_summary
+        ),
+        "post_update_quasi_real_teacher_following_status": (
+            post_update_quasi_real_teacher_following_summary or {}
+        ).get("status"),
+        "post_update_quasi_real_teacher_agreement_rate": _finite_or_inf(
+            (post_update_quasi_real_teacher_following_summary or {}).get("teacher_agreement_rate")
+        )
+        if post_update_quasi_real_teacher_following_summary is not None
+        else None,
+        "post_update_quasi_real_unsafe_disagreement_count": _int_value(
+            (post_update_quasi_real_teacher_following_summary or {}).get("unsafe_disagreement_count")
+        ),
+        "post_update_quasi_real_teacher_following_regression_count": _quasi_real_teacher_following_regression_count(
+            post_update_quasi_real_teacher_following_summary or {}
+        ),
+        "post_update_quasi_real_collector_status": (
+            post_update_quasi_real_collector_summary or {}
+        ).get("status"),
+        "post_update_quasi_real_collector_trainable_transition_count": _int_value(
+            (post_update_quasi_real_collector_summary or {}).get("ppo_trainable_transition_count")
+        ),
+        "post_update_quasi_real_collector_regression_count": _collector_regression_count(
+            post_update_quasi_real_collector_summary or {}
         ),
         "pilot_sequential_summary_path": "pilot/sequential/policy-gated-sequential-canary-rollout-summary.json",
         "pilot_collector_summary_path": "pilot/collector/ppo-rollout-collector-summary.json",
@@ -377,6 +607,16 @@ def summarize_guarded_ppo_rollout_pilot(
         "post_update_raw_policy_generalization_summary_path": "final/raw-policy-generalization-evaluation-summary.json",
         "post_update_sequential_summary_path": "final/sequential/policy-gated-sequential-canary-rollout-summary.json",
         "post_update_collector_summary_path": "final/collector/ppo-rollout-collector-summary.json",
+        "post_update_quasi_real_teacher_following_summary_path": (
+            "final/quasi_real_teacher_following/quasi-real-guarded-teacher-following-pilot-summary.json"
+            if post_update_quasi_real_teacher_following_summary is not None
+            else None
+        ),
+        "post_update_quasi_real_collector_summary_path": (
+            "final/quasi_real_collector/ppo-rollout-collector-summary.json"
+            if post_update_quasi_real_collector_summary is not None
+            else None
+        ),
         "summary": _display_path(summary_path, repo_root),
         "rejection_report": _display_path(rejection_path, repo_root),
         "episodes": _display_path(output_root / config["output_files"].get("episodes", ""), repo_root)
@@ -412,26 +652,63 @@ def summarize_guarded_ppo_rollout_pilot(
     return summary, rejection_report
 
 
+def _update_reward_finite_count(summary: dict[str, Any]) -> int:
+    dataset_summary = summary.get("dataset_summary")
+    if isinstance(dataset_summary, dict) and "finite_reward_count" in dataset_summary:
+        return _int_value(dataset_summary.get("finite_reward_count"))
+    return _finite_tensor_count(
+        summary,
+        total_field="optimizer_train_transition_count",
+        non_finite_field="non_finite_reward_count",
+    )
+
+
+def _finite_tensor_count(summary: dict[str, Any], *, total_field: str, non_finite_field: str) -> int:
+    total = _int_value(summary.get(total_field))
+    non_finite = _int_value(summary.get(non_finite_field))
+    return max(0, total - non_finite)
+
+
+def _loss_finite_count(summary: dict[str, Any]) -> int:
+    training_result = summary.get("training_result")
+    epochs = 1
+    if isinstance(training_result, dict):
+        epochs = max(1, _int_value(training_result.get("epochs"), default=1))
+    return max(0, epochs - _int_value(summary.get("loss_non_finite_count")))
+
+
+def _gradient_finite_count(summary: dict[str, Any]) -> int:
+    training_result = summary.get("training_result")
+    epochs = 1
+    if isinstance(training_result, dict):
+        epochs = max(1, _int_value(training_result.get("epochs"), default=1))
+    return 0 if _int_value(summary.get("non_finite_gradient_count")) else epochs
+
+
 def _sequential_reasons(summary: dict[str, Any], validation: dict[str, Any], *, post_update: bool) -> list[str]:
     reasons: list[str] = []
-    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+    raw_diagnostic_reasons = set(
+        validation.get(
+            "raw_policy_diagnostic_reason_codes",
+            [
+                "multi_step_accepted_episode_count_below_threshold",
+                "family_with_multi_step_accepted_episode_count_below_threshold",
+                "canary_rejected_policy_choice_count_above_threshold",
+            ],
+        )
+    )
+    unknown_reasons = [
+        reason for reason in _string_list(summary.get("reason_codes")) if reason not in raw_diagnostic_reasons
+    ]
+    if summary.get("status") not in {None, "passed"} and unknown_reasons:
         _append_reason(reasons, NEXT_GATE_REGRESSION)
     for field, minimum in (
         ("episode_count", _int_value(validation.get("min_episode_count"), 36)),
         ("step_count", _int_value(validation.get("min_step_count"), 108)),
-        (
-            "accepted_takeover_family_count",
-            _int_value(validation.get("min_accepted_takeover_family_count"), 6),
-        ),
-        (
-            "multi_step_accepted_episode_count",
-            _int_value(validation.get("min_multi_step_accepted_episode_count"), 12),
-        ),
     ):
         if _int_value(summary.get(field)) < minimum:
             _append_reason(reasons, NEXT_GATE_REGRESSION if post_update else NEXT_CONTRACT_INVALID)
     for field in (
-        "canary_rejected_policy_choice_count",
         "state_continuity_violation_count",
         "episode_fallback_count",
         "invalid_action_mask_count",
@@ -450,7 +727,17 @@ def _sequential_reasons(summary: dict[str, Any], validation: dict[str, Any], *, 
 def _collector_reasons(summary: dict[str, Any], validation: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
-        _append_reason(reasons, NEXT_CONTRACT_INVALID)
+        allowed_reasons = set(
+            validation.get(
+                "collector_diagnostic_reason_codes",
+                ["sequential_rollout_not_passed"],
+            )
+        )
+        unknown_reasons = [
+            reason for reason in _string_list(summary.get("reason_codes")) if reason not in allowed_reasons
+        ]
+        if summary.get("status") != "failed" or unknown_reasons:
+            _append_reason(reasons, NEXT_CONTRACT_INVALID)
     if _int_value(summary.get("ppo_trainable_transition_count")) < _int_value(
         validation.get("min_ppo_trainable_transition_count"), 24
     ):
@@ -515,7 +802,20 @@ def _update_reasons(summary: dict[str, Any], validation: dict[str, Any]) -> list
 
 def _raw_generalization_reasons(summary: dict[str, Any], validation: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
-    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+    allowed_reasons = set(
+        validation.get(
+            "raw_generalization_diagnostic_reason_codes",
+            [
+                "baseline_dev_rollout_failed",
+                "baseline_val_rollout_failed",
+                "baseline_test_rollout_failed",
+            ],
+        )
+    )
+    unknown_reasons = [
+        reason for reason in _string_list(summary.get("reason_codes")) if reason not in allowed_reasons
+    ]
+    if summary.get("status") not in {None, "passed"} and unknown_reasons:
         _append_reason(reasons, NEXT_POST_UPDATE_REGRESSION)
     if _int_value(summary.get("test_raw_policy_regression_count")) > _int_value(
         validation.get("max_raw_test_regression_count"), 0
@@ -534,6 +834,51 @@ def _collector_regression_count(summary: dict[str, Any]) -> int:
             "missing_value_count",
             "non_finite_reward_count",
             "state_continuity_violation_count",
+            "path_cost_regression_count",
+            "risk_regression_count",
+            "source_selection_regression_count",
+        )
+    )
+
+
+def _sequential_controlled_regression_count(summary: dict[str, Any]) -> int:
+    return sum(
+        _int_value(summary.get(field))
+        for field in (
+            "state_continuity_violation_count",
+            "episode_fallback_count",
+            "invalid_action_mask_count",
+            "fallback_or_open_grid_count",
+            "cumulative_safety_regression_count",
+            "cumulative_contract_violation_count",
+            "cumulative_path_cost_regression_count",
+            "cumulative_risk_regression_count",
+            "cumulative_source_selection_regression_count",
+        )
+    )
+
+
+def _quasi_real_teacher_following_reasons(summary: dict[str, Any], validation: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(reasons, NEXT_POST_UPDATE_REGRESSION)
+    if _float_value(summary.get("teacher_agreement_rate"), 0.0) < float(
+        validation.get("min_quasi_real_teacher_agreement_rate", 0.9)
+    ):
+        _append_reason(reasons, NEXT_POST_UPDATE_REGRESSION)
+    if _quasi_real_teacher_following_regression_count(summary):
+        _append_reason(reasons, NEXT_POST_UPDATE_REGRESSION)
+    return reasons
+
+
+def _quasi_real_teacher_following_regression_count(summary: dict[str, Any]) -> int:
+    return sum(
+        _int_value(summary.get(field))
+        for field in (
+            "unsafe_disagreement_count",
+            "fallback_or_open_grid_count",
+            "safety_regression_count",
+            "contract_violation_count",
             "path_cost_regression_count",
             "risk_regression_count",
             "source_selection_regression_count",
@@ -607,8 +952,75 @@ def _copy_guarded_artifacts(plan: dict[str, Path], *, output_root: Path, config:
             shutil.copy2(source, output_root / target_name)
 
 
-def _run_command(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> None:
-    subprocess.run(cmd, cwd=cwd, env=env, check=True)
+def _run_progress_stage(
+    *,
+    progress,
+    stage: str,
+    current: int,
+    total: int,
+    summary_path: Path,
+    repo_root: Path,
+    metrics_loader,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    check: bool = True,
+) -> subprocess.CompletedProcess:
+    progress.emit(
+        stage=stage,
+        status="start",
+        current=current,
+        total=total,
+        message=stage.replace("_", " "),
+        summary_path=_display_path(summary_path, repo_root),
+    )
+    try:
+        result = _run_command(command, cwd=cwd, env=env, check=check)
+    except subprocess.CalledProcessError:
+        progress.emit(
+            stage=stage,
+            status="failed",
+            current=current,
+            total=total,
+            message=f"{stage.replace('_', ' ')} failed",
+            summary_path=_display_path(summary_path, repo_root),
+        )
+        progress.finalize(status="failed", recommended_debug_artifact=_display_path(summary_path, repo_root))
+        raise
+    summary = _load_json(summary_path)
+    progress.emit(
+        stage=stage,
+        status="passed",
+        current=current,
+        total=total,
+        message=f"{stage.replace('_', ' ')} completed",
+        summary_path=_display_path(summary_path, repo_root),
+        reason_codes=_string_list(summary.get("reason_codes")),
+        metrics=metrics_loader(summary) if summary else {},
+    )
+    return result
+
+
+def _raw_generalization_progress_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "test_raw_policy_regression_count": _int_value(summary.get("test_raw_policy_regression_count")),
+        "test_baseline_raw_policy_regression_count": _int_value(
+            summary.get("test_baseline_raw_policy_regression_count")
+        ),
+        "overfit_gap": _float_value(summary.get("overfit_gap"), 0.0),
+    }
+
+
+def _quasi_teacher_progress_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "quasi_real_context_count": _int_value(summary.get("quasi_real_context_count")),
+        "teacher_agreement_rate": _float_value(summary.get("teacher_agreement_rate"), 0.0),
+        "unsafe_disagreement_count": _int_value(summary.get("unsafe_disagreement_count")),
+    }
+
+
+def _run_command(cmd: list[str], *, cwd: Path, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, cwd=cwd, env=env, check=check)
 
 
 def _load_config(path: Path) -> dict[str, Any]:

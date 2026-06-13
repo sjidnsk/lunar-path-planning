@@ -17,6 +17,13 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from git_provenance import git_snapshot as _git_snapshot
+from training_progress import (
+    add_progress_argument,
+    collector_progress_metrics,
+    make_progress_reporter,
+    ppo_update_progress_metrics,
+    progress_child_env,
+)
 
 
 CONFIG_SCHEMA_VERSION = "quasi-real-iterative-ppo-mini-loop-stability-config/v1"
@@ -45,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--validate-only", action="store_true")
+    add_progress_argument(parser)
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -70,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         output_root=_resolve_path(args.output_root, repo_root),
         config=config,
         repo_root=repo_root,
+        progress_mode=args.progress,
     )
     print(
         json.dumps(
@@ -121,6 +130,7 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
     output_root: Path,
     config: dict[str, Any],
     repo_root: Path,
+    progress_mode: str | None = None,
 ) -> dict[str, Any]:
     output_root.mkdir(parents=True, exist_ok=True)
     round_count = _int_value(config["validation"].get("round_count"), 3)
@@ -131,12 +141,38 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
     )
     python_bin = sys.executable
     env = subprocess_env(python_bin=python_bin)
+    progress = make_progress_reporter(output_root=output_root, mode=progress_mode, config=config)
+    env = progress_child_env(
+        env,
+        output_root=progress.output_root,
+        mode=progress.mode,
+        run_id=progress.run_id,
+    )
     round_records: list[dict[str, Any]] = []
+    stages_per_round = 7
 
     for step in plan:
+        round_index = int(step["round_index"])
+        progress.emit(
+            stage="iterative_round",
+            status="start",
+            current=round_index + 1,
+            total=round_count,
+            round_index=round_index,
+            message=f"iterative round {round_index + 1}/{round_count}",
+            output_root=step["round_root"],
+        )
         try:
-            _run_command(
-                [
+            _run_progress_stage(
+                progress=progress,
+                stage="quasi_real_teacher_following",
+                current=1,
+                total=stages_per_round,
+                round_index=round_index,
+                summary_path=Path(step["teacher_following_root"]) / "quasi-real-guarded-teacher-following-pilot-summary.json",
+                repo_root=repo_root,
+                metrics_loader=_teacher_following_progress_metrics,
+                command=[
                     python_bin,
                     str(repo_root / "scripts" / "run_quasi_real_guarded_teacher_following_pilot.py"),
                     "--source-root",
@@ -154,8 +190,16 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
                 env=env,
                 check=True,
             )
-            _run_command(
-                [
+            _run_progress_stage(
+                progress=progress,
+                stage="quasi_real_collector",
+                current=2,
+                total=stages_per_round,
+                round_index=round_index,
+                summary_path=Path(step["collector_root"]) / "ppo-rollout-collector-summary.json",
+                repo_root=repo_root,
+                metrics_loader=collector_progress_metrics,
+                command=[
                     python_bin,
                     str(repo_root / "scripts" / "run_quasi_real_ppo_collector_dry_run.py"),
                     "--guarded-teacher-following-root",
@@ -173,8 +217,19 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
                 env=env,
                 check=True,
             )
-            update_result = _run_command(
-                [
+            update_summary_path = (
+                Path(step["update_root"]) / "limited-quasi-real-ppo-update-smoke-summary.json"
+            )
+            update_result = _run_progress_stage(
+                progress=progress,
+                stage="quasi_real_ppo_update",
+                current=3,
+                total=stages_per_round,
+                round_index=round_index,
+                summary_path=update_summary_path,
+                repo_root=repo_root,
+                metrics_loader=ppo_update_progress_metrics,
+                command=[
                     python_bin,
                     str(repo_root / "scripts" / "run_limited_quasi_real_ppo_update_smoke.py"),
                     "--source-root",
@@ -196,13 +251,21 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
                 env=env,
                 check=False,
             )
-            update_summary_path = (
-                Path(step["update_root"]) / "limited-quasi-real-ppo-update-smoke-summary.json"
-            )
             if update_result.returncode and not update_summary_path.is_file():
                 raise subprocess.CalledProcessError(update_result.returncode, update_result.args)
-            _run_command(
-                [
+            _run_progress_stage(
+                progress=progress,
+                stage="generated_sequential_compatibility",
+                current=4,
+                total=stages_per_round,
+                round_index=round_index,
+                summary_path=(
+                    Path(step["compatibility_root"])
+                    / "quasi-real-generated-sequential-contract-compatibility-summary.json"
+                ),
+                repo_root=repo_root,
+                metrics_loader=_compatibility_progress_metrics,
+                command=[
                     python_bin,
                     str(repo_root / "scripts" / "run_quasi_real_generated_sequential_contract_compatibility_diagnosis.py"),
                     "--update-smoke-root",
@@ -220,8 +283,19 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
                 env=env,
                 check=True,
             )
-            _run_command(
-                [
+            _run_progress_stage(
+                progress=progress,
+                stage="generated_sequential_accounting",
+                current=5,
+                total=stages_per_round,
+                round_index=round_index,
+                summary_path=(
+                    Path(step["accounting_root"])
+                    / "generated-sequential-gate-metric-accounting-audit-summary.json"
+                ),
+                repo_root=repo_root,
+                metrics_loader=_accounting_progress_metrics,
+                command=[
                     python_bin,
                     str(repo_root / "scripts" / "run_generated_sequential_gate_metric_accounting_audit.py"),
                     "--diagnosis-root",
@@ -235,8 +309,19 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
                 env=env,
                 check=True,
             )
-            _run_command(
-                [
+            _run_progress_stage(
+                progress=progress,
+                stage="long_horizon_alignment",
+                current=6,
+                total=stages_per_round,
+                round_index=round_index,
+                summary_path=(
+                    Path(step["long_horizon_root"])
+                    / "long-horizon-teacher-skill-contract-summary.json"
+                ),
+                repo_root=repo_root,
+                metrics_loader=_long_horizon_progress_metrics,
+                command=[
                     python_bin,
                     str(repo_root / "scripts" / "run_generated_sequential_long_horizon_teacher_skill_contract_alignment.py"),
                     "--diagnosis-root",
@@ -265,8 +350,26 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
                 check=True,
             )
             round_records.append(_load_round_record(step, repo_root=repo_root))
+            progress.emit(
+                stage="iterative_round",
+                status="passed",
+                current=round_index + 1,
+                total=round_count,
+                round_index=round_index,
+                message=f"iterative round {round_index + 1}/{round_count} completed",
+                output_root=step["round_root"],
+            )
         except subprocess.CalledProcessError as exc:
             round_records.append(_failed_round_record(step, exc, repo_root=repo_root))
+            progress.emit(
+                stage="iterative_round",
+                status="failed",
+                current=round_index + 1,
+                total=round_count,
+                round_index=round_index,
+                message=f"iterative round {round_index + 1}/{round_count} failed",
+                output_root=step["round_root"],
+            )
             break
 
     summary, drift_report, rejection_report = summarize_quasi_real_iterative_rounds(
@@ -286,6 +389,21 @@ def run_quasi_real_iterative_ppo_mini_loop_stability(
     )
     if round_records:
         _copy_final_artifacts(round_records[-1], output_root=output_root, repo_root=repo_root)
+    progress.emit(
+        stage="iterative_summary",
+        status=summary["status"],
+        current=round_count,
+        total=round_count,
+        message=f"iterative mini-loop {summary['status']}",
+        summary_path=summary["summary"],
+        reason_codes=summary["reason_codes"],
+        metrics={
+            "round_count": summary["round_count"],
+            "failed_round_count": summary["failed_round_count"],
+            "stability_passed": summary["stability_passed"],
+        },
+    )
+    progress.finalize(status=summary["status"])
     return summary
 
 
@@ -666,6 +784,94 @@ def _copy_final_artifacts(record: dict[str, Any], *, output_root: Path, repo_roo
             if dest.exists():
                 shutil.rmtree(dest)
             shutil.copytree(source, dest)
+
+
+def _run_progress_stage(
+    *,
+    progress,
+    stage: str,
+    current: int,
+    total: int,
+    round_index: int,
+    summary_path: Path,
+    repo_root: Path,
+    metrics_loader,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    check: bool,
+) -> subprocess.CompletedProcess[str]:
+    progress.emit(
+        stage=stage,
+        status="start",
+        current=current,
+        total=total,
+        round_index=round_index,
+        message=f"round {round_index + 1}: {stage.replace('_', ' ')}",
+        summary_path=_display_path(summary_path, repo_root),
+    )
+    try:
+        result = _run_command(command, cwd=cwd, env=env, check=check)
+    except subprocess.CalledProcessError:
+        progress.emit(
+            stage=stage,
+            status="failed",
+            current=current,
+            total=total,
+            round_index=round_index,
+            message=f"round {round_index + 1}: {stage.replace('_', ' ')} failed",
+            summary_path=_display_path(summary_path, repo_root),
+        )
+        progress.finalize(status="failed", recommended_debug_artifact=_display_path(summary_path, repo_root))
+        raise
+    summary = _load_json(summary_path)
+    progress.emit(
+        stage=stage,
+        status="passed",
+        current=current,
+        total=total,
+        round_index=round_index,
+        message=f"round {round_index + 1}: {stage.replace('_', ' ')} completed",
+        summary_path=_display_path(summary_path, repo_root),
+        reason_codes=_string_list(summary.get("reason_codes")),
+        metrics=metrics_loader(summary) if summary else {},
+    )
+    return result
+
+
+def _teacher_following_progress_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "quasi_real_context_count": _int_value(summary.get("quasi_real_context_count")),
+        "teacher_agreement_rate": _float_value(summary.get("teacher_agreement_rate"), 0.0),
+        "unsafe_disagreement_count": _int_value(summary.get("unsafe_disagreement_count")),
+    }
+
+
+def _compatibility_progress_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "diagnosis_verdict": summary.get("diagnosis_verdict"),
+        "failed_step_count": _int_value(summary.get("failed_step_count")),
+        "base_generated_sequential_status": summary.get("base_generated_sequential_status"),
+        "updated_generated_sequential_status": summary.get("updated_generated_sequential_status"),
+    }
+
+
+def _accounting_progress_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "legacy_mismatch_count": _int_value(summary.get("legacy_mismatch_count")),
+        "diagnosis_verdict_after_origin_split": summary.get("diagnosis_verdict_after_origin_split"),
+        "controlled_path_cost_regression_count": _int_value(summary.get("controlled_path_cost_regression_count")),
+        "controlled_risk_regression_count": _int_value(summary.get("controlled_risk_regression_count")),
+    }
+
+
+def _long_horizon_progress_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "verdict": summary.get("verdict"),
+        "teacher_equivalent_episode_count": _int_value(summary.get("teacher_equivalent_episode_count")),
+        "beyond_teacher_episode_count": _int_value(summary.get("beyond_teacher_episode_count")),
+        "controlled_regression_episode_count": _int_value(summary.get("controlled_regression_episode_count")),
+    }
 
 
 def _run_command(

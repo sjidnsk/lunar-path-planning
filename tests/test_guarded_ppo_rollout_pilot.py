@@ -42,6 +42,8 @@ class GuardedPpoRolloutPilotTests(unittest.TestCase):
             raw_generalization_summary=self._raw_summary(),
             post_update_sequential_summary=self._sequential_summary(),
             post_update_collector_summary=self._collector_summary(),
+            post_update_quasi_real_teacher_following_summary=self._quasi_teacher_summary(),
+            post_update_quasi_real_collector_summary=self._quasi_collector_summary(),
         )
 
         self.assertEqual(summary["schema_version"], "guarded-ppo-rollout-pilot-summary/v1")
@@ -49,15 +51,54 @@ class GuardedPpoRolloutPilotTests(unittest.TestCase):
         self.assertEqual(summary["reason_codes"], [])
         self.assertEqual(summary["ppo_trainable_transition_count"], 37)
         self.assertEqual(summary["optimizer_train_transition_count"], 37)
+        self.assertEqual(summary["reward_finite_count"], 37)
+        self.assertEqual(summary["return_finite_count"], 37)
+        self.assertEqual(summary["advantage_finite_count"], 37)
+        self.assertEqual(summary["loss_finite_count"], 1)
+        self.assertEqual(summary["gradient_finite_count"], 1)
+        self.assertEqual(summary["loss_non_finite_count"], 0)
+        self.assertEqual(summary["non_finite_gradient_count"], 0)
+        self.assertEqual(summary["non_finite_return_count"], 0)
+        self.assertEqual(summary["non_finite_advantage_count"], 0)
         self.assertEqual(summary["post_update_raw_test_regression_count"], 0)
         self.assertTrue(summary["guarded_rollout_pilot_passed"])
         self.assertEqual(rejection_report["records"], [])
 
-    def test_summary_fails_when_guarded_rollout_rejects_policy_choice(self) -> None:
+    def test_summary_treats_rejected_raw_policy_choice_as_diagnostic(self) -> None:
         from scripts.run_guarded_ppo_rollout_pilot import summarize_guarded_ppo_rollout_pilot
 
         sequential = self._sequential_summary()
-        sequential["canary_rejected_policy_choice_count"] = 1
+        sequential["canary_rejected_policy_choice_count"] = 6
+        post_sequential = self._sequential_summary()
+        post_sequential["canary_rejected_policy_choice_count"] = 6
+
+        summary, rejection_report = summarize_guarded_ppo_rollout_pilot(
+            output_root=self.temp_dir / "pilot",
+            config=self._config(),
+            repo_root=self.repo_root,
+            base_candidate_root=Path("outputs/base"),
+            update_root=Path("outputs/update"),
+            pilot_sequential_summary=sequential,
+            pilot_collector_summary=self._collector_summary(),
+            update_summary=self._update_summary(),
+            raw_generalization_summary=self._raw_summary(),
+            post_update_sequential_summary=post_sequential,
+            post_update_collector_summary=self._collector_summary(),
+            post_update_quasi_real_teacher_following_summary=self._quasi_teacher_summary(),
+            post_update_quasi_real_collector_summary=self._quasi_collector_summary(),
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertEqual(summary["pilot_raw_rejected_policy_choice_count"], 6)
+        self.assertEqual(summary["post_update_raw_rejected_policy_choice_count"], 6)
+        self.assertEqual(rejection_report["records"], [])
+
+    def test_summary_fails_when_controlled_sequential_regresses(self) -> None:
+        from scripts.run_guarded_ppo_rollout_pilot import summarize_guarded_ppo_rollout_pilot
+
+        sequential = self._sequential_summary()
+        sequential["cumulative_path_cost_regression_count"] = 1
 
         summary, rejection_report = summarize_guarded_ppo_rollout_pilot(
             output_root=self.temp_dir / "pilot",
@@ -71,11 +112,40 @@ class GuardedPpoRolloutPilotTests(unittest.TestCase):
             raw_generalization_summary=self._raw_summary(),
             post_update_sequential_summary=self._sequential_summary(),
             post_update_collector_summary=self._collector_summary(),
+            post_update_quasi_real_teacher_following_summary=self._quasi_teacher_summary(),
+            post_update_quasi_real_collector_summary=self._quasi_collector_summary(),
         )
 
         self.assertEqual(summary["status"], "failed")
         self.assertIn("guarded_ppo_rollout_gate_regression", summary["reason_codes"])
         self.assertEqual(rejection_report["records"][0]["stage"], "pilot_sequential")
+
+    def test_summary_requires_post_update_quasi_real_gates(self) -> None:
+        from scripts.run_guarded_ppo_rollout_pilot import summarize_guarded_ppo_rollout_pilot
+
+        teacher_summary = self._quasi_teacher_summary()
+        teacher_summary["status"] = "failed"
+        teacher_summary["reason_codes"] = ["teacher_agreement_below_threshold"]
+
+        summary, rejection_report = summarize_guarded_ppo_rollout_pilot(
+            output_root=self.temp_dir / "pilot",
+            config=self._config(),
+            repo_root=self.repo_root,
+            base_candidate_root=Path("outputs/base"),
+            update_root=Path("outputs/update"),
+            pilot_sequential_summary=self._sequential_summary(),
+            pilot_collector_summary=self._collector_summary(),
+            update_summary=self._update_summary(),
+            raw_generalization_summary=self._raw_summary(),
+            post_update_sequential_summary=self._sequential_summary(),
+            post_update_collector_summary=self._collector_summary(),
+            post_update_quasi_real_teacher_following_summary=teacher_summary,
+            post_update_quasi_real_collector_summary=self._quasi_collector_summary(),
+        )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertIn("guarded_ppo_post_update_regression", summary["reason_codes"])
+        self.assertEqual(rejection_report["records"][0]["stage"], "post_update_quasi_real_teacher_following")
 
     def test_readiness_accepts_passed_guarded_pilot_summary(self) -> None:
         from scripts.run_policy_training_readiness_review import _guarded_ppo_rollout_pilot_readiness
@@ -98,8 +168,15 @@ class GuardedPpoRolloutPilotTests(unittest.TestCase):
                 "missing_value_count": 0,
                 "non_finite_reward_count": 0,
                 "post_update_raw_test_regression_count": 0,
-                "post_update_sequential_rejected_count": 0,
+                "post_update_sequential_rejected_count": 6,
+                "post_update_controlled_sequential_regression_count": 0,
                 "post_update_collector_regression_count": 0,
+                "post_update_quasi_real_teacher_following_status": "passed",
+                "post_update_quasi_real_teacher_agreement_rate": 1.0,
+                "post_update_quasi_real_unsafe_disagreement_count": 0,
+                "post_update_quasi_real_collector_status": "passed",
+                "post_update_quasi_real_collector_trainable_transition_count": 36,
+                "post_update_quasi_real_collector_regression_count": 0,
                 "old_log_prob_max_abs_error": 0.0,
                 "old_value_max_abs_error": 0.0,
                 "parameter_l2_delta": 0.001,
@@ -193,6 +270,8 @@ class GuardedPpoRolloutPilotTests(unittest.TestCase):
             "reason_codes": [],
             "input_ppo_trainable_transition_count": 37,
             "optimizer_train_transition_count": 37,
+            "dataset_summary": {"finite_reward_count": 37},
+            "training_result": {"epochs": 1},
             "source_fallback_trainable_count": 0,
             "old_log_prob_max_abs_error": 0.0,
             "old_value_max_abs_error": 0.0,
@@ -217,6 +296,47 @@ class GuardedPpoRolloutPilotTests(unittest.TestCase):
             "status": "passed",
             "reason_codes": [],
             "test_raw_policy_regression_count": 0,
+        }
+
+    def _quasi_teacher_summary(self) -> dict:
+        return {
+            "schema_version": "quasi-real-guarded-teacher-following-pilot-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "teacher_following_pilot_verdict": "teacher_following_pilot_validated",
+            "quasi_real_context_count": 108,
+            "teacher_agreement_rate": 1.0,
+            "unsafe_disagreement_count": 0,
+            "fallback_or_open_grid_count": 0,
+            "safety_regression_count": 0,
+            "contract_violation_count": 0,
+            "path_cost_regression_count": 0,
+            "risk_regression_count": 0,
+            "source_selection_regression_count": 0,
+        }
+
+    def _quasi_collector_summary(self) -> dict:
+        return {
+            "schema_version": "ppo-rollout-collector-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "episode_count": 108,
+            "step_count": 108,
+            "ppo_trainable_transition_count": 36,
+            "diagnostic_transition_count": 72,
+            "source_fallback_trainable_count": 0,
+            "invalid_action_mask_count": 0,
+            "empty_action_mask_count": 0,
+            "missing_log_prob_count": 0,
+            "missing_value_count": 0,
+            "non_finite_reward_count": 0,
+            "state_continuity_violation_count": 0,
+            "fallback_or_open_grid_count": 0,
+            "safety_regression_count": 0,
+            "contract_violation_count": 0,
+            "path_cost_regression_count": 0,
+            "risk_regression_count": 0,
+            "source_selection_regression_count": 0,
         }
 
 

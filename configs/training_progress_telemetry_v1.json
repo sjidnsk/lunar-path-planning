@@ -1,0 +1,62 @@
+{
+  "schema_version": "training-progress-telemetry-config/v1",
+  "description": "Shared progress telemetry defaults for long training, collector, and closure runs. Progress output must not change training, gate, readiness, or checkpoint behavior.",
+  "progress": {
+    "default_mode": "auto",
+    "stdout_contract": "machine_readable_json_stdout_must_remain_unchanged",
+    "plain_progress_stream": "stderr",
+    "structured_events_filename": "training-progress-events.jsonl",
+    "summary_filename": "training-progress-summary.json"
+  },
+  "event_schema": {
+    "schema_version": "training-progress-event/v1",
+    "required_fields": [
+      "schema_version",
+      "run_id",
+      "stage",
+      "status",
+      "current",
+      "total",
+      "round_index",
+      "step_index",
+      "message",
+      "elapsed_seconds",
+      "output_root",
+      "summary_path",
+      "reason_codes",
+      "metrics"
+    ],
+    "statuses": [
+      "start",
+      "progress",
+      "passed",
+      "failed"
+    ]
+  },
+  "summary_schema": {
+    "schema_version": "training-progress-summary/v1",
+    "required_fields": [
+      "schema_version",
+      "run_id",
+      "status",
+      "event_count",
+      "total_stage_count",
+      "failed_stage_count",
+      "last_stage",
+      "last_status",
+      "last_reason_codes",
+      "readiness_status",
+      "recommended_debug_artifact"
+    ]
+  },
+  "non_goals": [
+    "does_not_expand_ppo_batch",
+    "does_not_start_formal_training",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network_action_space_or_default_astar",
+    "does_not_relax_safety_contract_path_risk_or_source_selection_gates",
+    "does_not_change_readiness_semantics",
+    "no_ackermann_feasible_trajectory_claim"
+  ]
+}

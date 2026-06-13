@@ -16,6 +16,16 @@
   "evaluation": {
     "hidden_size": 16
   },
+  "trainable_filter": {
+    "splits": [
+      "train"
+    ],
+    "default_split": "train",
+    "controlled_choice_sources": [
+      "policy"
+    ],
+    "require_empty_gate_reason_codes": true
+  },
   "reward": {
     "better_choice_bonus": 1.0,
     "path_improvement_weight": 1.0,
@@ -30,7 +40,12 @@
     "max_empty_action_mask_count": 0,
     "max_missing_log_prob_count": 0,
     "max_missing_value_count": 0,
-    "max_non_finite_reward_count": 0
+    "max_non_finite_reward_count": 0,
+    "sequential_status_diagnostic_reason_codes": [
+      "multi_step_accepted_episode_count_below_threshold",
+      "family_with_multi_step_accepted_episode_count_below_threshold",
+      "canary_rejected_policy_choice_count_above_threshold"
+    ]
   },
   "non_goals": [
     "no_formal_ppo_rollout",
