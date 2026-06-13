@@ -115,8 +115,120 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
             ),
         )
 
+        self.assertEqual(summary["canary_rejection_reason_counts"]["path_cost_regression"], 1)
+        self.assertEqual(summary["raw_policy_regression_reason_counts"]["path_cost_regression"], 1)
+        self.assertEqual(summary["cumulative_path_cost_regression_count"], 0)
+        self.assertEqual(summary["cumulative_risk_regression_count"], 0)
+
+    def test_raw_policy_rejection_does_not_count_as_controlled_cumulative_regression(self) -> None:
+        from scripts.run_policy_gated_sequential_canary_rollout import summarize_sequential_steps
+
+        step = self._step("ep-1", 0, "channel_contrast", [1, 6], [2, 6], "source_fallback")
+        step["decision_class"] = "canary_rejected_policy_choice"
+        step["canary_rejection_reason_codes"] = ["path_cost_regression", "risk_regression"]
+        step["raw_policy_regression_reason_codes"] = ["path_cost_regression", "risk_regression"]
+        step["raw_policy_selected_path_cost_delta"] = 1.2
+        step["raw_policy_selected_risk_delta"] = 0.2
+        step["policy_selected_path_cost_delta"] = 0.0
+        step["policy_selected_risk_delta"] = 0.0
+
+        summary, report = summarize_sequential_steps(
+            [step],
+            config=self._config(
+                min_policy_takeover_step_count=0,
+                min_accepted_takeover_step_count=0,
+                min_accepted_better_step_count=0,
+                min_accepted_takeover_family_count=0,
+                min_multi_step_accepted_episode_count=0,
+                min_family_with_multi_step_accepted_episode_count=0,
+            ),
+        )
+
+        self.assertEqual(summary["canary_rejected_policy_choice_count"], 1)
+        self.assertEqual(summary["raw_policy_path_cost_regression_count"], 1)
+        self.assertEqual(summary["raw_policy_risk_regression_count"], 1)
+        self.assertEqual(summary["controlled_path_cost_regression_count"], 0)
+        self.assertEqual(summary["controlled_risk_regression_count"], 0)
+        self.assertEqual(summary["cumulative_path_cost_regression_count"], 0)
+        self.assertEqual(summary["cumulative_risk_regression_count"], 0)
+        self.assertIn("canary_rejected_policy_choice_count_above_threshold", summary["reason_codes"])
+        self.assertNotIn("cumulative_path_cost_regression_count_above_threshold", summary["reason_codes"])
+        self.assertEqual(
+            report["failed_steps"][0]["reason_origin_counts"]["raw_policy_probe"]["path_cost_regression"],
+            1,
+        )
+        self.assertEqual(
+            report["failed_steps"][0]["reason_origin_counts"]["controlled_rollout"],
+            {},
+        )
+
+    def test_controlled_regression_counts_as_cumulative_regression(self) -> None:
+        from scripts.run_policy_gated_sequential_canary_rollout import summarize_sequential_steps
+
+        step = self._step("ep-1", 0, "channel_contrast", [1, 6], [2, 6], "source_fallback")
+        step["decision_class"] = "canary_rejected_policy_choice"
+        step["canary_rejection_reason_codes"] = []
+        step["raw_policy_regression_reason_codes"] = []
+        step["controlled_regression_reason_codes"] = ["path_cost_regression", "risk_regression"]
+        step["policy_selected_path_cost_delta"] = 1.2
+        step["policy_selected_risk_delta"] = 0.2
+
+        summary, report = summarize_sequential_steps(
+            [step],
+            config=self._config(
+                min_policy_takeover_step_count=0,
+                min_accepted_takeover_step_count=0,
+                min_accepted_better_step_count=0,
+                min_accepted_takeover_family_count=0,
+                min_multi_step_accepted_episode_count=0,
+                min_family_with_multi_step_accepted_episode_count=0,
+                max_canary_rejected_policy_choice_count=1,
+            ),
+        )
+
+        self.assertEqual(summary["raw_policy_path_cost_regression_count"], 0)
+        self.assertEqual(summary["raw_policy_risk_regression_count"], 0)
+        self.assertEqual(summary["controlled_path_cost_regression_count"], 1)
+        self.assertEqual(summary["controlled_risk_regression_count"], 1)
         self.assertEqual(summary["cumulative_path_cost_regression_count"], 1)
         self.assertEqual(summary["cumulative_risk_regression_count"], 1)
+        self.assertIn("cumulative_path_cost_regression_count_above_threshold", summary["reason_codes"])
+        self.assertEqual(
+            report["failed_steps"][0]["reason_origin_counts"]["controlled_rollout"]["path_cost_regression"],
+            1,
+        )
+
+    def test_origin_specific_regression_counters_do_not_duplicate_same_reason_per_step(self) -> None:
+        from scripts.run_policy_gated_sequential_canary_rollout import summarize_sequential_steps
+
+        step = self._step("ep-1", 0, "channel_contrast", [1, 6], [2, 6], "source_fallback")
+        step["decision_class"] = "canary_rejected_policy_choice"
+        step["canary_rejection_reason_codes"] = ["path_cost_regression"]
+        step["raw_policy_regression_reason_codes"] = ["path_cost_regression", "path_cost_regression"]
+        step["controlled_regression_reason_codes"] = ["path_cost_regression", "path_cost_regression"]
+
+        summary, report = summarize_sequential_steps(
+            [step],
+            config=self._config(
+                min_policy_takeover_step_count=0,
+                min_accepted_takeover_step_count=0,
+                min_accepted_better_step_count=0,
+                min_accepted_takeover_family_count=0,
+                min_multi_step_accepted_episode_count=0,
+                min_family_with_multi_step_accepted_episode_count=0,
+                max_canary_rejected_policy_choice_count=1,
+                max_cumulative_path_cost_regression_count=1,
+            ),
+        )
+
+        self.assertEqual(summary["raw_policy_regression_reason_counts"]["path_cost_regression"], 1)
+        self.assertEqual(summary["controlled_regression_reason_counts"]["path_cost_regression"], 1)
+        self.assertEqual(summary["canary_rejection_reason_counts"]["path_cost_regression"], 1)
+        self.assertEqual(summary["cumulative_path_cost_regression_count"], 1)
+        self.assertEqual(
+            report["failed_steps"][0]["reason_origin_counts"]["raw_policy_probe"]["path_cost_regression"],
+            1,
+        )
 
     def test_episode_templates_and_step_spec_use_configured_scenario_set(self) -> None:
         from scripts.run_policy_gated_sequential_canary_rollout import (

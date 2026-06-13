@@ -1833,6 +1833,203 @@ teacher-following summary and git provenance pass. Safe-better opportunity
 absence remains a value/augmentation branch issue, not a blocker for this
 teacher-following mainline.
 
+## Quasi-Real PPO Collector Dry-Run
+
+`Quasi-Real PPO Collector Dry-Run v1` is the next quasi-real mainline stage. It
+does not run a PPO optimizer. It materializes the clean guarded
+teacher-following decisions into PPO-consumable rollout records while preserving
+train/validation/test split isolation.
+
+New artifacts:
+
+- `configs/quasi_real_ppo_collector_dry_run_v1.json`
+- `scripts/run_quasi_real_ppo_collector_dry_run.py/.sh`
+- `scripts/run_quasi_real_ppo_collector_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_ppo_collector_dry_run_v1/`
+
+The collector reads
+`outputs/path_feedback_batch_quasi_real_guarded_teacher_following_pilot_v1/`,
+derives its candidate and quasi-real roots from the teacher-following summary,
+and consumes `quasi-real-guarded-teacher-following-decisions.jsonl`. Only
+`train` split decisions with `controlled_choice_source` equal to
+`policy_teacher_aligned` or `policy_safe_disagreement` and no gate reason codes
+are materialized as PPO-trainable transitions. `validation` and `test` splits,
+`teacher_fallback`, `none`, `not_scored`, unsafe disagreement, and any non-empty
+gate reason remain diagnostic-only.
+
+Current closure evidence is passed:
+
+- `episode_count=108`, `step_count=108`
+- `ppo_trainable_transition_count=36`
+- `diagnostic_transition_count=72`
+- `source_fallback_trainable_count=0`
+- invalid/empty mask, missing log-prob/value, non-finite reward, fallback,
+  safety, contract, path/risk, and source-selection regression counters all `0`
+- `publishes_checkpoint=false`, `replaces_default_policy=false`,
+  `performance_claimed=false`, `formal_training_ready_claimed=false`
+- readiness validate-only reaches
+  `training_readiness_status=ppo_rollout_collector_dry_run_evaluated`
+
+The next stage is `Limited Quasi-Real PPO Update Smoke`: a tiny local optimizer
+smoke from the same experimental checkpoint and these 36 trainable transitions,
+with all generated and quasi-real gates still required to remain clean. This
+collector stage still does not publish checkpoints, replace the default policy,
+change network/action space/default A*, relax distance/path-risk/source-selection
+gates, claim Ackermann-feasible trajectories, or promote IRIS/GCS diagnostics to
+training release evidence.
+
+### Limited Quasi-Real PPO Update Smoke
+
+The implementation now has a quasi-real wrapper for the next smoke boundary:
+
+- `configs/limited_quasi_real_ppo_update_smoke_v1.json`
+- `scripts/run_limited_quasi_real_ppo_update_smoke.py/.sh`
+- `scripts/run_limited_quasi_real_ppo_update_smoke_closure.sh`
+- `outputs/path_feedback_batch_limited_quasi_real_ppo_update_smoke_v1/`
+
+The wrapper reuses the existing limited PPO update machinery, but makes the
+trainable filter explicit for quasi-real data: only `train` split transitions
+with `controlled_choice_source` equal to `policy_teacher_aligned` or
+`policy_safe_disagreement` and empty gate reasons may enter the optimizer.
+The generic generated smoke remains backward-compatible with
+`controlled_choice_source=policy`.
+
+Current execution status is intentionally blocked, not promoted. The update
+smoke consumed all 36 quasi-real trainable transitions, reconstructed old
+`log_prob` and `value` with zero max error, produced a small non-zero parameter
+delta (`~4.37e-4`) and tiny `approx_kl` (`~7.7e-5`), and kept the post-update
+quasi-real teacher-following and quasi-real collector gates clean:
+
+- post-update quasi-real teacher-following: `status=passed`,
+  `teacher_agreement_rate=1.0`
+- post-update quasi-real collector: `status=passed`,
+  `ppo_trainable_transition_count=36`, `diagnostic_transition_count=72`
+
+The blocker is the generated sequential post-update gate. When the updated
+quasi-real candidate is evaluated on the generated sequential canary, the gate
+fails with rejected policy choices and cumulative path-cost/risk regressions:
+
+- `multi_step_accepted_episode_count_below_threshold`
+- `family_with_multi_step_accepted_episode_count_below_threshold`
+- `canary_rejected_policy_choice_count_above_threshold`
+- `cumulative_path_cost_regression_count_above_threshold`
+- `cumulative_risk_regression_count_above_threshold`
+
+Therefore `limited-quasi-real-ppo-update-smoke-summary.json` currently reports
+`status=failed` and `reason_codes=["limited_quasi_real_ppo_update_post_update_gate_regression"]`.
+Readiness must not advance to `limited_quasi_real_ppo_update_smoke_evaluated`
+until this generated sequential compatibility issue is resolved or the stage
+contract is deliberately narrowed with new evidence. No checkpoint is published,
+no default policy is replaced, and no performance or formal-training-ready claim
+is made.
+
+### Quasi-Real / Generated Sequential Contract Compatibility Diagnosis
+
+The next implemented stage is a diagnosis pass, not another PPO update. It
+answers whether the generated sequential failure is caused by the tiny
+quasi-real PPO update, or whether the quasi-real teacher-following candidate and
+the generated sequential canary contract were already incompatible.
+
+New artifacts:
+
+- `configs/quasi_real_generated_sequential_contract_compatibility_diagnosis_v1.json`
+- `scripts/run_quasi_real_generated_sequential_contract_compatibility_diagnosis.py/.sh`
+- `scripts/run_quasi_real_generated_sequential_contract_compatibility_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_generated_sequential_contract_compatibility_diagnosis_v1/`
+
+The diagnosis reads the failed
+`outputs/path_feedback_batch_limited_quasi_real_ppo_update_smoke_v1/` root,
+copies the quasi-real base candidate checkpoint into
+`diagnostic-base-candidate/`, preserves weights, refreshes current git
+provenance, and marks the clone as diagnostic, experimental, non-publishing,
+and non-default. It then runs generated sequential canary on that diagnostic
+base candidate and compares it with the post-update generated sequential replay.
+
+The summary classifies exactly one verdict:
+
+- `ppo_update_induced_generated_regression`
+- `pre_existing_generated_sequential_contract_mismatch`
+- `stale_or_unreplayable_base_candidate`
+- `gate_accounting_or_metric_mismatch`
+- `diagnosis_inconclusive`
+
+It writes `failed-step-comparison.jsonl`,
+`baseline-vs-updated-sequential-summary.json`, and
+`compatibility-diagnosis-report.md`, including failed family/reason counts,
+source/raw/policy action indices, logits, selected target cells, and path/risk
+delta comparisons. Readiness should remain at
+`needs_training_contract_refinement` until a follow-up plan resolves the
+diagnosed blocker. This stage does not run PPO, publish checkpoints, replace the
+default policy, relax generated sequential gates, modify network/action
+space/default A*, or claim formal training readiness.
+
+### Generated Sequential Gate Metric / Accounting Audit
+
+`Generated Sequential Gate Metric / Accounting Audit v1` splits the generated
+sequential failure into raw policy probe accounting and controlled rollout
+accounting. The previous diagnosis showed six failed generated sequential steps,
+but those steps fell back to the source action before controlled execution.
+
+New artifacts:
+
+- `configs/generated_sequential_gate_metric_accounting_audit_v1.json`
+- `scripts/run_generated_sequential_gate_metric_accounting_audit.py/.sh`
+- `scripts/run_generated_sequential_gate_metric_accounting_closure.sh`
+- `outputs/path_feedback_batch_generated_sequential_gate_metric_accounting_audit_v1/`
+
+The audit confirms the old accounting mixed raw policy probe rejection with
+controlled cumulative path/risk regression. The origin-aware accounting result
+is:
+
+- `legacy_mismatch_count=6`
+- `raw_policy_path_cost_regression_count=6`
+- `raw_policy_risk_regression_count=2`
+- `controlled_path_cost_regression_count=0`
+- `controlled_risk_regression_count=0`
+- corrected shadow `cumulative_path_cost_regression_count=0`
+- corrected shadow `cumulative_risk_regression_count=0`
+
+Generated sequential still does **not** pass: the corrected shadow summary
+remains failed because raw policy choices are rejected and multi-step accepted
+coverage is too low. The diagnosis after origin split is
+`pre_existing_generated_sequential_contract_mismatch`, with
+`recommended_next_action=generated_sequential_contract_alignment_required`.
+Readiness must remain `needs_training_contract_refinement`; this audit refines
+the blocker but does not publish a checkpoint, replace default policy, run PPO,
+remove generated sequential from the acceptance contract, or claim performance.
+
+### Generated Sequential Long-Horizon Teacher-Skill Contract Alignment
+
+`Generated Sequential Long-Horizon Teacher-Skill Contract Alignment v1` is the
+next generated-sequential contract stage. It keeps the generated sequential gate
+in the acceptance chain, but changes the success question from "did the policy
+take a different step?" to "does the controlled multi-step behavior match or
+beat the teacher over cumulative return?"
+
+New artifacts:
+
+- `configs/generated_sequential_long_horizon_teacher_skill_contract_alignment_v1.json`
+- `scripts/run_generated_sequential_long_horizon_teacher_skill_contract_alignment.py/.sh`
+- `scripts/run_generated_sequential_long_horizon_teacher_skill_contract_alignment_closure.sh`
+- `outputs/path_feedback_batch_generated_sequential_long_horizon_teacher_skill_contract_alignment_v1/`
+
+The stage writes `long-horizon-teacher-skill-contract-summary.json`,
+`teacher-vs-policy-return-comparison.jsonl`,
+`teacher-equivalent-episode-report.md`, `beyond-teacher-opportunity-report.md`,
+and `dominated-raw-choice-diagnostics.jsonl`. The return accounting compares the
+teacher trajectory, controlled policy trajectory, and raw policy diagnostic
+trajectory across the configured horizon. Same-as-teacher active choices count
+as positive teacher-skill evidence. Beyond-teacher evidence requires cumulative
+return dominance, not merely a one-step different target.
+
+Readiness accepts
+`--generated-sequential-long-horizon-teacher-skill-contract-summary`. A passed
+summary with `verdict=long_horizon_teacher_skill_contract_aligned` may remove the
+generated sequential contract-alignment blocker; failed or inconclusive summaries
+keep readiness at `needs_training_contract_refinement`. This stage still does
+not run PPO, publish checkpoints, replace the default policy, relax safety,
+path-risk, or source-selection gates, or claim formal training readiness.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

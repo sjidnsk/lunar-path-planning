@@ -330,7 +330,9 @@ def summarize_sequential_steps(
     multi_step_accepted_episodes: set[str] = set()
     family_with_multi_step: set[str] = set()
     accepted_families: set[str] = set()
-    rejection_counts: Counter[str] = Counter()
+    canary_rejection_counts: Counter[str] = Counter()
+    raw_policy_regression_counts: Counter[str] = Counter()
+    controlled_regression_counts: Counter[str] = Counter()
     regression_counts: Counter[str] = Counter()
     episode_fallbacks: set[str] = set()
     for episode_id, episode_steps in by_episode.items():
@@ -353,14 +355,15 @@ def summarize_sequential_steps(
                     }
                 )
             previous_goal = _cell(step.get("controlled_execution_goal_cell"))
-            reasons = list(step.get("canary_rejection_reason_codes") or [])
-            reasons.extend(step.get("controlled_regression_reason_codes") or [])
-            reasons.extend(step.get("raw_policy_regression_reason_codes") or [])
-            step_reason_set = set(reasons)
-            rejection_counts.update(step_reason_set)
+            canary_reason_set = set(step.get("canary_rejection_reason_codes") or [])
+            raw_reason_set = set(step.get("raw_policy_regression_reason_codes") or [])
+            controlled_reason_set = set(step.get("controlled_regression_reason_codes") or [])
+            canary_rejection_counts.update(canary_reason_set)
+            raw_policy_regression_counts.update(raw_reason_set)
+            controlled_regression_counts.update(controlled_reason_set)
             if not bool(step.get("action_mask_valid", True)):
                 regression_counts["invalid_action_mask"] += 1
-            for reason in step_reason_set:
+            for reason in controlled_reason_set:
                 if reason in {
                     "fallback_or_open_grid",
                     "safety_regression",
@@ -370,7 +373,7 @@ def summarize_sequential_steps(
                     "source_selection_regression",
                 }:
                     regression_counts[reason] += 1
-            if regression_counts.get("fallback_or_open_grid", 0):
+            if "fallback_or_open_grid" in controlled_reason_set:
                 episode_fallbacks.add(episode_id)
             if step.get("decision_class") == "canary_accepted_policy_choice":
                 accepted_count += 1
@@ -412,6 +415,10 @@ def summarize_sequential_steps(
         "cumulative_path_cost_regression_count": regression_counts.get("path_cost_regression", 0),
         "cumulative_risk_regression_count": regression_counts.get("risk_regression", 0),
         "cumulative_source_selection_regression_count": regression_counts.get("source_selection_regression", 0),
+        "raw_policy_path_cost_regression_count": raw_policy_regression_counts.get("path_cost_regression", 0),
+        "raw_policy_risk_regression_count": raw_policy_regression_counts.get("risk_regression", 0),
+        "controlled_path_cost_regression_count": controlled_regression_counts.get("path_cost_regression", 0),
+        "controlled_risk_regression_count": controlled_regression_counts.get("risk_regression", 0),
     }
     _check_min(metrics, validation, reason_codes, "episode_count")
     _check_min(metrics, validation, reason_codes, "step_count")
@@ -437,7 +444,9 @@ def summarize_sequential_steps(
         "status": "failed" if reason_codes else "passed",
         "reason_codes": reason_codes,
         **metrics,
-        "canary_rejection_reason_counts": dict(sorted(rejection_counts.items())),
+        "canary_rejection_reason_counts": dict(sorted(canary_rejection_counts.items())),
+        "raw_policy_regression_reason_counts": dict(sorted(raw_policy_regression_counts.items())),
+        "controlled_regression_reason_counts": dict(sorted(controlled_regression_counts.items())),
         "next_required_change": None,
         "experimental_checkpoint": True,
         "publishes_checkpoint": False,
@@ -450,9 +459,11 @@ def summarize_sequential_steps(
     rejection_report = {
         "schema_version": REJECTION_REPORT_SCHEMA_VERSION,
         "state_continuity_violations": continuity_violations,
-        "canary_rejection_reason_counts": dict(sorted(rejection_counts.items())),
+        "canary_rejection_reason_counts": dict(sorted(canary_rejection_counts.items())),
+        "raw_policy_regression_reason_counts": dict(sorted(raw_policy_regression_counts.items())),
+        "controlled_regression_reason_counts": dict(sorted(controlled_regression_counts.items())),
         "failed_steps": [
-            step
+            _step_with_reason_origin_counts(step)
             for step in steps
             if step.get("decision_class") in {"canary_rejected_policy_choice", "missing_decision"}
             or step.get("controlled_regression_reason_codes")
@@ -460,6 +471,20 @@ def summarize_sequential_steps(
         ],
     }
     return summary, rejection_report
+
+
+def _step_with_reason_origin_counts(step: dict[str, Any]) -> dict[str, Any]:
+    row = dict(step)
+    row["reason_origin_counts"] = {
+        "canary_gate": _reason_count_map(step.get("canary_rejection_reason_codes")),
+        "raw_policy_probe": _reason_count_map(step.get("raw_policy_regression_reason_codes")),
+        "controlled_rollout": _reason_count_map(step.get("controlled_regression_reason_codes")),
+    }
+    return row
+
+
+def _reason_count_map(value: Any) -> dict[str, int]:
+    return dict(sorted(Counter(set(str(item) for item in (value or []) if str(item))).items()))
 
 
 def _score_step(*, checkpoint: Path, step_root: Path, config: dict[str, Any], repo_root: Path) -> list[dict[str, Any]]:

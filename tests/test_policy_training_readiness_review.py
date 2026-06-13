@@ -1276,6 +1276,236 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "scenario_disjoint_holdout_generation_required",
         )
 
+    def test_generated_sequential_accounting_audit_refines_quasi_real_smoke_blocker_without_advancing_readiness(self) -> None:
+        self._write_sources()
+        limited_path = self.batch_root / "limited-quasi-real-ppo-update-smoke-summary.json"
+        limited_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "limited-quasi-real-ppo-update-smoke-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "input_ppo_trainable_transition_count": 36,
+                    "optimizer_train_transition_count": 36,
+                    "validation_test_optimizer_transition_count": 0,
+                    "non_empty_gate_reason_optimizer_transition_count": 0,
+                    "disallowed_source_optimizer_transition_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "loss_non_finite_count": 0,
+                    "non_finite_gradient_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "old_log_prob_max_abs_error": 0.0,
+                    "old_value_max_abs_error": 0.0,
+                    "parameter_l2_delta": 0.001,
+                    "approx_kl": 0.001,
+                    "max_grad_norm_after_clip": 0.5,
+                    "experimental_checkpoint": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "post_update_raw_generalization_status": "passed",
+                    "post_update_sequential_canary_status": "failed",
+                    "post_update_generated_collector_status": "failed",
+                    "post_update_quasi_real_teacher_following_status": "passed",
+                    "post_update_quasi_real_collector_status": "passed",
+                    "post_update_raw_test_regression_count": 0,
+                    "post_update_sequential_rejected_choice_count": 0,
+                    "post_update_generated_collector_trainable_transition_count": 30,
+                    "post_update_quasi_real_collector_trainable_transition_count": 36,
+                    "post_update_quasi_real_teacher_agreement_rate": 1.0,
+                    "post_update_quasi_real_unsafe_disagreement_count": 0,
+                    "next_required_change": None,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        audit_path = self.batch_root / "generated-sequential-gate-metric-accounting-audit-summary.json"
+        audit_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "generated-sequential-gate-metric-accounting-audit-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "legacy_mismatch_count": 6,
+                    "raw_policy_path_cost_regression_count": 6,
+                    "raw_policy_risk_regression_count": 2,
+                    "controlled_path_cost_regression_count": 0,
+                    "controlled_risk_regression_count": 0,
+                    "diagnosis_verdict_after_origin_split": "pre_existing_generated_sequential_contract_mismatch",
+                    "recommended_next_action": "generated_sequential_contract_alignment_required",
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--limited-quasi-real-ppo-update-smoke-summary",
+            str(limited_path),
+            "--generated-sequential-gate-metric-accounting-audit-summary",
+            str(audit_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["training_readiness_status"], "needs_training_contract_refinement")
+        self.assertEqual(
+            summary["recommended_next_action"],
+            "generated_sequential_contract_alignment_required",
+        )
+        self.assertIn(
+            "generated_sequential_contract_alignment_required",
+            summary["training_blockers"],
+        )
+        self.assertFalse(summary["generated_sequential_gate_metric_accounting_readiness"]["completed"])
+
+    def test_long_horizon_teacher_skill_contract_alignment_unblocks_generated_sequential_contract(self) -> None:
+        self._write_sources()
+        limited_path = self.batch_root / "limited-quasi-real-ppo-update-smoke-summary.json"
+        limited_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "limited-quasi-real-ppo-update-smoke-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "input_ppo_trainable_transition_count": 36,
+                    "optimizer_train_transition_count": 36,
+                    "validation_test_optimizer_transition_count": 0,
+                    "non_empty_gate_reason_optimizer_transition_count": 0,
+                    "disallowed_source_optimizer_transition_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "loss_non_finite_count": 0,
+                    "non_finite_gradient_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "old_log_prob_max_abs_error": 0.0,
+                    "old_value_max_abs_error": 0.0,
+                    "parameter_l2_delta": 0.001,
+                    "approx_kl": 0.001,
+                    "max_grad_norm_after_clip": 0.5,
+                    "experimental_checkpoint": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "post_update_raw_generalization_status": "passed",
+                    "post_update_sequential_canary_status": "failed",
+                    "post_update_generated_collector_status": "failed",
+                    "post_update_quasi_real_teacher_following_status": "passed",
+                    "post_update_quasi_real_collector_status": "passed",
+                    "post_update_raw_test_regression_count": 0,
+                    "post_update_sequential_rejected_choice_count": 0,
+                    "post_update_generated_collector_trainable_transition_count": 30,
+                    "post_update_quasi_real_collector_trainable_transition_count": 36,
+                    "post_update_quasi_real_teacher_agreement_rate": 1.0,
+                    "post_update_quasi_real_unsafe_disagreement_count": 0,
+                    "next_required_change": None,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        audit_path = self.batch_root / "generated-sequential-gate-metric-accounting-audit-summary.json"
+        audit_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "generated-sequential-gate-metric-accounting-audit-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "legacy_mismatch_count": 6,
+                    "diagnosis_verdict_after_origin_split": "pre_existing_generated_sequential_contract_mismatch",
+                    "recommended_next_action": "generated_sequential_contract_alignment_required",
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        long_horizon_path = self.batch_root / "long-horizon-teacher-skill-contract-summary.json"
+        long_horizon_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "generated-sequential-long-horizon-teacher-skill-contract-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "verdict": "long_horizon_teacher_skill_contract_aligned",
+                    "teacher_equivalent_episode_count": 12,
+                    "beyond_teacher_episode_count": 4,
+                    "controlled_regression_episode_count": 0,
+                    "dominated_raw_choice_count": 6,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--limited-quasi-real-ppo-update-smoke-summary",
+            str(limited_path),
+            "--generated-sequential-gate-metric-accounting-audit-summary",
+            str(audit_path),
+            "--generated-sequential-long-horizon-teacher-skill-contract-summary",
+            str(long_horizon_path),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(
+            (self.batch_root / "policy-training-readiness-review-summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "limited_quasi_real_ppo_update_smoke_evaluated",
+        )
+        self.assertNotIn(
+            "generated_sequential_contract_alignment_required",
+            summary["training_blockers"],
+        )
+        self.assertTrue(
+            summary[
+                "generated_sequential_long_horizon_teacher_skill_contract_readiness"
+            ]["completed"]
+        )
+        self.assertTrue(
+            summary[
+                "limited_quasi_real_generated_sequential_blocker_overridden_by_long_horizon_contract"
+            ]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

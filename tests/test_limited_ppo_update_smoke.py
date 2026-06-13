@@ -135,6 +135,56 @@ class LimitedPpoUpdateSmokeTests(unittest.TestCase):
         self.assertEqual(summary["optimizer_train_transition_count"], 0)
         self.assertIn("limited_ppo_update_input_contract_invalid", summary["reason_codes"])
 
+    def test_configured_trainable_filter_accepts_quasi_real_teacher_following_sources(self) -> None:
+        from scripts.run_limited_ppo_update_smoke import run_limited_ppo_update_smoke
+
+        observation = self._observation()
+        self._write_base_candidate(observation=observation)
+        self._write_collector_episodes(
+            [
+                self._transition_payload(
+                    observation=observation,
+                    action_index=1,
+                    reward=1.0,
+                    context_id="ctx-quasi-train",
+                    ppo_trainable=True,
+                    controlled_choice_source="policy_teacher_aligned",
+                    split="train",
+                ),
+                self._transition_payload(
+                    observation=observation,
+                    action_index=0,
+                    reward=1.0,
+                    context_id="ctx-quasi-validation",
+                    ppo_trainable=True,
+                    controlled_choice_source="policy_teacher_aligned",
+                    split="validation",
+                ),
+            ]
+        )
+        self._write_collector_summary(trainable_count=1)
+        config = self._config(expected_count=1)
+        config["trainable_filter"] = {
+            "splits": ["train"],
+            "controlled_choice_sources": ["policy_teacher_aligned", "policy_safe_disagreement"],
+            "require_empty_gate_reason_codes": True,
+        }
+
+        summary = run_limited_ppo_update_smoke(
+            source_root=self.temp_dir / "source",
+            base_candidate_root=self.base_candidate_root,
+            collector_root=self.collector_root,
+            output_root=self.output_root,
+            config=config,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["input_ppo_trainable_transition_count"], 1)
+        self.assertEqual(summary["optimizer_train_transition_count"], 1)
+        self.assertEqual(summary["optimizer_transition_split_counts"], {"train": 1})
+        self.assertEqual(summary["optimizer_transition_source_counts"], {"policy_teacher_aligned": 1})
+
     def test_readiness_accepts_passed_limited_ppo_update_smoke_summary(self) -> None:
         from scripts.run_policy_training_readiness_review import _limited_ppo_update_smoke_readiness
 
@@ -236,6 +286,8 @@ class LimitedPpoUpdateSmokeTests(unittest.TestCase):
         context_id: str,
         ppo_trainable: bool,
         controlled_choice_source: str,
+        split: str | None = None,
+        gate_reason_codes: list[str] | None = None,
     ) -> dict:
         import torch
         from model_explorer.policy.architectures import build_policy_network
@@ -289,6 +341,8 @@ class LimitedPpoUpdateSmokeTests(unittest.TestCase):
                 "context_id": context_id,
                 "episode_id": "ep-smoke",
                 "step_index": 0,
+                "split": split,
+                "gate_reason_codes": list(gate_reason_codes or []),
             },
         }
 

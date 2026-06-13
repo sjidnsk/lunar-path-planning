@@ -1,0 +1,46 @@
+{
+  "schema_version": "generated-sequential-long-horizon-teacher-skill-contract-alignment-config/v1",
+  "input_files": {
+    "compatibility_summary": "quasi-real-generated-sequential-contract-compatibility-summary.json",
+    "accounting_audit_summary": "generated-sequential-gate-metric-accounting-audit-summary.json",
+    "updated_steps": "updated_generated_sequential_replay/policy-gated-sequential-canary-steps.jsonl",
+    "updated_rejection_report": "updated_generated_sequential_replay/policy-gated-sequential-canary-rejection-report.json",
+    "base_steps": "base_generated_sequential/policy-gated-sequential-canary-steps.jsonl",
+    "base_rejection_report": "base_generated_sequential/policy-gated-sequential-canary-rejection-report.json"
+  },
+  "output_files": {
+    "summary": "long-horizon-teacher-skill-contract-summary.json",
+    "return_comparison": "teacher-vs-policy-return-comparison.jsonl",
+    "teacher_equivalent_report": "teacher-equivalent-episode-report.md",
+    "beyond_teacher_report": "beyond-teacher-opportunity-report.md",
+    "dominated_raw_choice_diagnostics": "dominated-raw-choice-diagnostics.jsonl"
+  },
+  "evaluation": {
+    "horizon_steps": 3,
+    "teacher_equivalence_tolerance": 0.000001,
+    "beyond_teacher_margin": 0.000001,
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0,
+    "return_weights": {
+      "path_cost": 1.0,
+      "risk": 1.0,
+      "utility": 0.0,
+      "progress": 1.0,
+      "terminal": 1.0,
+      "safety_penalty": 10.0,
+      "contract_penalty": 10.0,
+      "source_selection_penalty": 10.0
+    }
+  },
+  "non_goals": [
+    "no_new_ppo_update",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_or_action_space_change",
+    "no_default_astar_change",
+    "no_distance_path_risk_source_selection_gate_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_iris_gcs_path_planner_diagnostic_training_release",
+    "no_generated_sequential_gate_removal"
+  ]
+}

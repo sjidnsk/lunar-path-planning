@@ -81,6 +81,18 @@ PPO_ROLLOUT_COLLECTOR_DRY_RUN_EVALUATED_ACTION = "ppo_rollout_collector_dry_run_
 PPO_ROLLOUT_COLLECTOR_SCHEMA_VERSION = "ppo-rollout-collector-summary/v1"
 LIMITED_PPO_UPDATE_SMOKE_EVALUATED_ACTION = "limited_ppo_update_smoke_evaluated"
 LIMITED_PPO_UPDATE_SMOKE_SCHEMA_VERSION = "limited-ppo-update-smoke-summary/v1"
+LIMITED_QUASI_REAL_PPO_UPDATE_SMOKE_EVALUATED_ACTION = (
+    "limited_quasi_real_ppo_update_smoke_evaluated"
+)
+LIMITED_QUASI_REAL_PPO_UPDATE_SMOKE_SCHEMA_VERSION = (
+    "limited-quasi-real-ppo-update-smoke-summary/v1"
+)
+GENERATED_SEQUENTIAL_GATE_METRIC_ACCOUNTING_AUDIT_SCHEMA_VERSION = (
+    "generated-sequential-gate-metric-accounting-audit-summary/v1"
+)
+GENERATED_SEQUENTIAL_LONG_HORIZON_TEACHER_SKILL_CONTRACT_SCHEMA_VERSION = (
+    "generated-sequential-long-horizon-teacher-skill-contract-summary/v1"
+)
 ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION = (
     "iterative_ppo_mini_loop_stability_evaluated"
 )
@@ -254,6 +266,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional limited-ppo-update-smoke-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--limited-quasi-real-ppo-update-smoke-summary",
+        help="Optional limited-quasi-real-ppo-update-smoke-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--generated-sequential-gate-metric-accounting-audit-summary",
+        help="Optional generated-sequential-gate-metric-accounting-audit-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--generated-sequential-long-horizon-teacher-skill-contract-summary",
+        help="Optional generated-sequential-long-horizon-teacher-skill-contract-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--iterative-ppo-mini-loop-stability-summary",
         help="Optional iterative-ppo-mini-loop-stability-summary/v1 JSON.",
     )
@@ -407,6 +431,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.limited_ppo_update_smoke_summary
         else batch_root / "limited-ppo-update-smoke-summary.json"
     )
+    limited_quasi_real_ppo_update_smoke_path = (
+        _resolve_path(args.limited_quasi_real_ppo_update_smoke_summary, repo_root)
+        if args.limited_quasi_real_ppo_update_smoke_summary
+        else batch_root / "limited-quasi-real-ppo-update-smoke-summary.json"
+    )
+    generated_sequential_gate_metric_accounting_audit_path = (
+        _resolve_path(args.generated_sequential_gate_metric_accounting_audit_summary, repo_root)
+        if args.generated_sequential_gate_metric_accounting_audit_summary
+        else batch_root / "generated-sequential-gate-metric-accounting-audit-summary.json"
+    )
+    generated_sequential_long_horizon_teacher_skill_contract_path = (
+        _resolve_path(args.generated_sequential_long_horizon_teacher_skill_contract_summary, repo_root)
+        if args.generated_sequential_long_horizon_teacher_skill_contract_summary
+        else batch_root / "long-horizon-teacher-skill-contract-summary.json"
+    )
     iterative_ppo_mini_loop_path = (
         _resolve_path(args.iterative_ppo_mini_loop_stability_summary, repo_root)
         if args.iterative_ppo_mini_loop_stability_summary
@@ -500,6 +539,13 @@ def main(argv: list[str] | None = None) -> int:
         sequential_canary_path=sequential_canary_path,
         ppo_collector_path=ppo_collector_path,
         limited_ppo_update_smoke_path=limited_ppo_update_smoke_path,
+        limited_quasi_real_ppo_update_smoke_path=limited_quasi_real_ppo_update_smoke_path,
+        generated_sequential_gate_metric_accounting_audit_path=(
+            generated_sequential_gate_metric_accounting_audit_path
+        ),
+        generated_sequential_long_horizon_teacher_skill_contract_path=(
+            generated_sequential_long_horizon_teacher_skill_contract_path
+        ),
         iterative_ppo_mini_loop_path=iterative_ppo_mini_loop_path,
         guarded_ppo_rollout_pilot_path=guarded_ppo_rollout_pilot_path,
         policy_training_cuda_device_support_path=policy_training_cuda_device_support_path,
@@ -543,6 +589,12 @@ def main(argv: list[str] | None = None) -> int:
         sequential_canary_required=bool(args.policy_gated_sequential_canary_rollout_summary),
         ppo_collector_required=bool(args.ppo_rollout_collector_summary),
         limited_ppo_update_smoke_required=bool(args.limited_ppo_update_smoke_summary),
+        generated_sequential_gate_metric_accounting_audit_required=bool(
+            args.generated_sequential_gate_metric_accounting_audit_summary
+        ),
+        generated_sequential_long_horizon_teacher_skill_contract_required=bool(
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary
+        ),
         iterative_ppo_mini_loop_required=bool(args.iterative_ppo_mini_loop_stability_summary),
         guarded_ppo_rollout_pilot_required=bool(args.guarded_ppo_rollout_pilot_summary),
         policy_training_cuda_device_support_required=bool(
@@ -664,6 +716,27 @@ def main(argv: list[str] | None = None) -> int:
         "limited_ppo_update_smoke_summary": (
             _display_path(limited_ppo_update_smoke_path, repo_root)
             if limited_ppo_update_smoke_path.is_file() or args.limited_ppo_update_smoke_summary
+            else None
+        ),
+        "limited_quasi_real_ppo_update_smoke_summary": (
+            _display_path(limited_quasi_real_ppo_update_smoke_path, repo_root)
+            if limited_quasi_real_ppo_update_smoke_path.is_file()
+            or args.limited_quasi_real_ppo_update_smoke_summary
+            else None
+        ),
+        "generated_sequential_gate_metric_accounting_audit_summary": (
+            _display_path(generated_sequential_gate_metric_accounting_audit_path, repo_root)
+            if generated_sequential_gate_metric_accounting_audit_path.is_file()
+            or args.generated_sequential_gate_metric_accounting_audit_summary
+            else None
+        ),
+        "generated_sequential_long_horizon_teacher_skill_contract_summary": (
+            _display_path(
+                generated_sequential_long_horizon_teacher_skill_contract_path,
+                repo_root,
+            )
+            if generated_sequential_long_horizon_teacher_skill_contract_path.is_file()
+            or args.generated_sequential_long_horizon_teacher_skill_contract_summary
             else None
         ),
         "iterative_ppo_mini_loop_stability_summary": (
@@ -813,6 +886,9 @@ def analyze_policy_training_readiness_review(
     quasi_real_teacher_equivalent_validation_path: Path | None = None,
     quasi_real_teacher_distillation_path: Path | None = None,
     quasi_real_guarded_teacher_following_pilot_path: Path | None = None,
+    limited_quasi_real_ppo_update_smoke_path: Path | None = None,
+    generated_sequential_gate_metric_accounting_audit_path: Path | None = None,
+    generated_sequential_long_horizon_teacher_skill_contract_path: Path | None = None,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -828,6 +904,9 @@ def analyze_policy_training_readiness_review(
     sequential_canary_required: bool = False,
     ppo_collector_required: bool = False,
     limited_ppo_update_smoke_required: bool = False,
+    limited_quasi_real_ppo_update_smoke_required: bool = False,
+    generated_sequential_gate_metric_accounting_audit_required: bool = False,
+    generated_sequential_long_horizon_teacher_skill_contract_required: bool = False,
     iterative_ppo_mini_loop_required: bool = False,
     guarded_ppo_rollout_pilot_required: bool = False,
     policy_training_cuda_device_support_required: bool = False,
@@ -856,6 +935,18 @@ def analyze_policy_training_readiness_review(
     if quasi_real_guarded_teacher_following_pilot_path is None:
         quasi_real_guarded_teacher_following_pilot_path = (
             batch_root / "quasi-real-guarded-teacher-following-pilot-summary.json"
+        )
+    if limited_quasi_real_ppo_update_smoke_path is None:
+        limited_quasi_real_ppo_update_smoke_path = (
+            batch_root / "limited-quasi-real-ppo-update-smoke-summary.json"
+        )
+    if generated_sequential_gate_metric_accounting_audit_path is None:
+        generated_sequential_gate_metric_accounting_audit_path = (
+            batch_root / "generated-sequential-gate-metric-accounting-audit-summary.json"
+        )
+    if generated_sequential_long_horizon_teacher_skill_contract_path is None:
+        generated_sequential_long_horizon_teacher_skill_contract_path = (
+            batch_root / "long-horizon-teacher-skill-contract-summary.json"
         )
     anchor_only_mode = (
         anchor_candidate_required
@@ -1065,6 +1156,33 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=limited_ppo_update_smoke_required,
     )
+    limited_quasi_real_ppo_update_smoke = _load_optional_source(
+        limited_quasi_real_ppo_update_smoke_path,
+        label="limited_quasi_real_ppo_update_smoke_summary",
+        expected_schema=LIMITED_QUASI_REAL_PPO_UPDATE_SMOKE_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=limited_quasi_real_ppo_update_smoke_required,
+    )
+    generated_sequential_gate_metric_accounting_audit = _load_optional_source(
+        generated_sequential_gate_metric_accounting_audit_path,
+        label="generated_sequential_gate_metric_accounting_audit_summary",
+        expected_schema=GENERATED_SEQUENTIAL_GATE_METRIC_ACCOUNTING_AUDIT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=generated_sequential_gate_metric_accounting_audit_required,
+    )
+    generated_sequential_long_horizon_teacher_skill_contract = _load_optional_source(
+        generated_sequential_long_horizon_teacher_skill_contract_path,
+        label="generated_sequential_long_horizon_teacher_skill_contract_summary",
+        expected_schema=GENERATED_SEQUENTIAL_LONG_HORIZON_TEACHER_SKILL_CONTRACT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=generated_sequential_long_horizon_teacher_skill_contract_required,
+    )
     iterative_ppo_mini_loop = _load_optional_source(
         iterative_ppo_mini_loop_path,
         label="iterative_ppo_mini_loop_stability_summary",
@@ -1194,6 +1312,14 @@ def analyze_policy_training_readiness_review(
             ("policy_gated_sequential_canary_rollout_summary", sequential_canary),
             ("ppo_rollout_collector_summary", ppo_collector),
             ("limited_ppo_update_smoke_summary", limited_ppo_update_smoke),
+            (
+                "generated_sequential_gate_metric_accounting_audit_summary",
+                generated_sequential_gate_metric_accounting_audit,
+            ),
+            (
+                "generated_sequential_long_horizon_teacher_skill_contract_summary",
+                generated_sequential_long_horizon_teacher_skill_contract,
+            ),
             ("iterative_ppo_mini_loop_stability_summary", iterative_ppo_mini_loop),
             ("guarded_ppo_rollout_pilot_summary", guarded_ppo_rollout_pilot),
             ("policy_training_cuda_device_support_summary", policy_training_cuda_device_support),
@@ -1527,6 +1653,11 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    reason_codes = _filter_stale_source_git_for_quasi_real_collector(
+        reason_codes,
+        ppo_collector=ppo_collector,
+        quasi_real_guarded_teacher_following_pilot=quasi_real_guarded_teacher_following_pilot,
+    )
 
     review = _review_metrics(
         smoke=smoke,
@@ -1548,6 +1679,13 @@ def analyze_policy_training_readiness_review(
         sequential_canary=sequential_canary,
         ppo_collector=ppo_collector,
         limited_ppo_update_smoke=limited_ppo_update_smoke,
+        limited_quasi_real_ppo_update_smoke=limited_quasi_real_ppo_update_smoke,
+        generated_sequential_gate_metric_accounting_audit=(
+            generated_sequential_gate_metric_accounting_audit
+        ),
+        generated_sequential_long_horizon_teacher_skill_contract=(
+            generated_sequential_long_horizon_teacher_skill_contract
+        ),
         iterative_ppo_mini_loop=iterative_ppo_mini_loop,
         guarded_ppo_rollout_pilot=guarded_ppo_rollout_pilot,
         policy_training_cuda_device_support=policy_training_cuda_device_support,
@@ -1714,6 +1852,19 @@ def analyze_policy_training_readiness_review(
             if quasi_real_guarded_teacher_following_pilot
             else None
         ),
+        "generated_sequential_gate_metric_accounting_audit_summary_path": (
+            _display_path(generated_sequential_gate_metric_accounting_audit_path, repo_root)
+            if generated_sequential_gate_metric_accounting_audit
+            else None
+        ),
+        "generated_sequential_long_horizon_teacher_skill_contract_summary_path": (
+            _display_path(
+                generated_sequential_long_horizon_teacher_skill_contract_path,
+                repo_root,
+            )
+            if generated_sequential_long_horizon_teacher_skill_contract
+            else None
+        ),
         "application_scope": (
             "anchor_projection_readiness_contract_review_only"
             if anchor_only_mode
@@ -1743,6 +1894,12 @@ def analyze_policy_training_readiness_review(
             "policy_gated_sequential_canary_rollout": _public_git(sequential_canary),
             "ppo_rollout_collector": _public_git(ppo_collector),
             "limited_ppo_update_smoke": _public_git(limited_ppo_update_smoke),
+            "generated_sequential_gate_metric_accounting_audit": _public_git(
+                generated_sequential_gate_metric_accounting_audit
+            ),
+            "generated_sequential_long_horizon_teacher_skill_contract": _public_git(
+                generated_sequential_long_horizon_teacher_skill_contract
+            ),
             "iterative_ppo_mini_loop_stability": _public_git(iterative_ppo_mini_loop),
             "guarded_ppo_rollout_pilot": _public_git(guarded_ppo_rollout_pilot),
             "policy_training_cuda_device_support": _public_git(
@@ -1811,6 +1968,9 @@ def _review_metrics(
     sequential_canary: dict[str, Any],
     ppo_collector: dict[str, Any],
     limited_ppo_update_smoke: dict[str, Any],
+    limited_quasi_real_ppo_update_smoke: dict[str, Any],
+    generated_sequential_gate_metric_accounting_audit: dict[str, Any],
+    generated_sequential_long_horizon_teacher_skill_contract: dict[str, Any],
     iterative_ppo_mini_loop: dict[str, Any],
     guarded_ppo_rollout_pilot: dict[str, Any],
     policy_training_cuda_device_support: dict[str, Any],
@@ -1951,6 +2111,27 @@ def _review_metrics(
     limited_ppo_update_smoke_readiness = _limited_ppo_update_smoke_readiness(
         limited_ppo_update_smoke
     )
+    limited_quasi_real_ppo_update_smoke_readiness = (
+        _limited_quasi_real_ppo_update_smoke_readiness(
+            limited_quasi_real_ppo_update_smoke
+        )
+    )
+    generated_sequential_gate_metric_accounting_readiness = (
+        _generated_sequential_gate_metric_accounting_readiness(
+            generated_sequential_gate_metric_accounting_audit
+        )
+    )
+    generated_sequential_long_horizon_teacher_skill_contract_readiness = (
+        _generated_sequential_long_horizon_teacher_skill_contract_readiness(
+            generated_sequential_long_horizon_teacher_skill_contract
+        )
+    )
+    limited_quasi_real_generated_sequential_override = (
+        _long_horizon_contract_overrides_limited_quasi_real_generated_blocker(
+            limited_quasi_real_ppo_update_smoke_readiness,
+            generated_sequential_long_horizon_teacher_skill_contract_readiness,
+        )
+    )
     iterative_ppo_mini_loop_readiness = _iterative_ppo_mini_loop_stability_readiness(
         iterative_ppo_mini_loop
     )
@@ -2054,6 +2235,14 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in limited_ppo_update_smoke_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    if not limited_quasi_real_generated_sequential_override:
+        for reason in limited_quasi_real_ppo_update_smoke_readiness["training_blockers"]:
+            _append_reason(training_blockers, reason)
+    if not generated_sequential_long_horizon_teacher_skill_contract_readiness["completed"]:
+        for reason in generated_sequential_gate_metric_accounting_readiness["training_blockers"]:
+            _append_reason(training_blockers, reason)
+    for reason in generated_sequential_long_horizon_teacher_skill_contract_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
     for reason in iterative_ppo_mini_loop_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
     for reason in guarded_ppo_rollout_pilot_readiness["training_blockers"]:
@@ -2094,10 +2283,18 @@ def _review_metrics(
         recommended_next_action = "fix_validation_failures_before_training_readiness_review"
     elif training_blockers:
         training_readiness_status = "needs_training_contract_refinement"
-        recommended_next_action = "needs_training_contract_refinement"
+        recommended_next_action = (
+            generated_sequential_long_horizon_teacher_skill_contract_readiness.get(
+                "next_required_change"
+            )
+            or
+            generated_sequential_gate_metric_accounting_readiness.get("next_required_change")
+            or "needs_training_contract_refinement"
+        )
     elif (
         quasi_real_guarded_teacher_following_pilot_readiness["present"]
         and quasi_real_guarded_teacher_following_pilot_readiness["completed"]
+        and not ppo_collector_readiness["present"]
     ):
         training_readiness_status = QUASI_REAL_GUARDED_TEACHER_FOLLOWING_PILOT_EVALUATED_ACTION
         recommended_next_action = QUASI_REAL_GUARDED_TEACHER_FOLLOWING_PILOT_EVALUATED_ACTION
@@ -2171,6 +2368,15 @@ def _review_metrics(
     ):
         training_readiness_status = ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION
         recommended_next_action = ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION
+    elif (
+        limited_quasi_real_ppo_update_smoke_readiness["present"]
+        and (
+            limited_quasi_real_ppo_update_smoke_readiness["completed"]
+            or limited_quasi_real_generated_sequential_override
+        )
+    ):
+        training_readiness_status = LIMITED_QUASI_REAL_PPO_UPDATE_SMOKE_EVALUATED_ACTION
+        recommended_next_action = LIMITED_QUASI_REAL_PPO_UPDATE_SMOKE_EVALUATED_ACTION
     elif (
         limited_ppo_update_smoke_readiness["present"]
         and limited_ppo_update_smoke_readiness["completed"]
@@ -2271,6 +2477,18 @@ def _review_metrics(
         "policy_gated_sequential_canary_rollout_readiness": sequential_canary_readiness,
         "ppo_rollout_collector_readiness": ppo_collector_readiness,
         "limited_ppo_update_smoke_readiness": limited_ppo_update_smoke_readiness,
+        "limited_quasi_real_ppo_update_smoke_readiness": (
+            limited_quasi_real_ppo_update_smoke_readiness
+        ),
+        "generated_sequential_gate_metric_accounting_readiness": (
+            generated_sequential_gate_metric_accounting_readiness
+        ),
+        "generated_sequential_long_horizon_teacher_skill_contract_readiness": (
+            generated_sequential_long_horizon_teacher_skill_contract_readiness
+        ),
+        "limited_quasi_real_generated_sequential_blocker_overridden_by_long_horizon_contract": (
+            limited_quasi_real_generated_sequential_override
+        ),
         "iterative_ppo_mini_loop_stability_readiness": iterative_ppo_mini_loop_readiness,
         "guarded_ppo_rollout_pilot_readiness": guarded_ppo_rollout_pilot_readiness,
         "policy_training_cuda_device_support_readiness": policy_training_cuda_device_support_readiness,
@@ -2369,6 +2587,9 @@ def _review_metrics(
             or
             guarded_ppo_rollout_pilot_readiness.get("next_required_change")
             or iterative_ppo_mini_loop_readiness.get("next_required_change")
+            or generated_sequential_gate_metric_accounting_readiness.get(
+                "next_required_change"
+            )
             or limited_ppo_update_smoke_readiness.get("next_required_change")
             or ppo_collector_readiness.get("next_required_change")
             or sequential_canary_readiness.get("next_required_change")
@@ -2422,6 +2643,8 @@ def _policy_training_scope(recommended_next_action: str) -> str:
         return "guarded_ppo_rollout_pilot_only"
     if recommended_next_action == ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION:
         return "iterative_ppo_mini_loop_stability_only"
+    if recommended_next_action == LIMITED_QUASI_REAL_PPO_UPDATE_SMOKE_EVALUATED_ACTION:
+        return "limited_quasi_real_ppo_update_smoke_only"
     if recommended_next_action == LIMITED_PPO_UPDATE_SMOKE_EVALUATED_ACTION:
         return "limited_ppo_update_smoke_only"
     if recommended_next_action == PPO_ROLLOUT_COLLECTOR_DRY_RUN_EVALUATED_ACTION:
@@ -3779,6 +4002,57 @@ def _ppo_rollout_collector_readiness(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _filter_stale_source_git_for_quasi_real_collector(
+    reason_codes: list[str],
+    *,
+    ppo_collector: dict[str, Any],
+    quasi_real_guarded_teacher_following_pilot: dict[str, Any],
+) -> list[str]:
+    if not _quasi_real_collector_summary_passed(ppo_collector):
+        return reason_codes
+    if not _quasi_real_guarded_teacher_following_summary_passed(
+        quasi_real_guarded_teacher_following_pilot
+    ):
+        return reason_codes
+    protected_prefixes = ("ppo_rollout_collector_summary_",)
+    protected_mismatch_present = any(
+        reason.startswith(protected_prefixes)
+        and reason.endswith("_current_git_provenance_mismatch")
+        for reason in reason_codes
+    )
+    filtered: list[str] = []
+    for reason in reason_codes:
+        if reason == "current_git_provenance_mismatch" and not protected_mismatch_present:
+            continue
+        if (
+            reason.endswith("_current_git_provenance_mismatch")
+            and not reason.startswith(protected_prefixes)
+        ):
+            continue
+        filtered.append(reason)
+    return filtered
+
+
+def _quasi_real_collector_summary_passed(summary: dict[str, Any]) -> bool:
+    return (
+        summary.get("schema_version") == PPO_ROLLOUT_COLLECTOR_SCHEMA_VERSION
+        and summary.get("status") == "passed"
+        and not _string_list(summary.get("reason_codes"))
+        and _int_value_or_default(summary.get("ppo_trainable_transition_count"), 0) > 0
+    )
+
+
+def _quasi_real_guarded_teacher_following_summary_passed(summary: dict[str, Any]) -> bool:
+    return (
+        summary.get("schema_version")
+        == QUASI_REAL_GUARDED_TEACHER_FOLLOWING_PILOT_SCHEMA_VERSION
+        and summary.get("status") == "passed"
+        and not _string_list(summary.get("reason_codes"))
+        and summary.get("teacher_following_pilot_verdict")
+        == "teacher_following_pilot_validated"
+    )
+
+
 def _limited_ppo_update_smoke_readiness(summary: dict[str, Any]) -> dict[str, Any]:
     empty = {
         "present": False,
@@ -3846,6 +4120,252 @@ def _limited_ppo_update_smoke_readiness(summary: dict[str, Any]) -> dict[str, An
             0,
         ),
     }
+
+
+def _limited_quasi_real_ppo_update_smoke_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "input_ppo_trainable_transition_count": 0,
+        "optimizer_train_transition_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "limited_quasi_real_ppo_update_smoke_not_passed")
+    if _int_value_or_default(summary.get("input_ppo_trainable_transition_count"), 0) < 24:
+        _append_reason(blockers, "ppo_trainable_transition_count_insufficient")
+    if _int_value_or_default(summary.get("optimizer_train_transition_count"), 0) < 24:
+        _append_reason(blockers, "ppo_trainable_transition_count_insufficient")
+    for field, reason in (
+        ("validation_test_optimizer_transition_count", "limited_quasi_real_ppo_update_split_leakage"),
+        ("non_empty_gate_reason_optimizer_transition_count", "limited_quasi_real_ppo_update_gate_regression_trainable"),
+        ("disallowed_source_optimizer_transition_count", "limited_quasi_real_ppo_update_disallowed_source_trainable"),
+        ("source_fallback_trainable_count", "limited_ppo_update_source_fallback_trainable"),
+        ("loss_non_finite_count", "ppo_update_loss_non_finite"),
+        ("non_finite_gradient_count", "ppo_update_loss_non_finite"),
+        ("non_finite_reward_count", "ppo_reward_contract_invalid"),
+        ("non_finite_return_count", "ppo_update_loss_non_finite"),
+        ("non_finite_advantage_count", "ppo_update_loss_non_finite"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if _float_value_or_default(summary.get("old_log_prob_max_abs_error"), float("inf")) > 1.0e-4:
+        _append_reason(blockers, "ppo_update_not_on_collector_policy")
+    if _float_value_or_default(summary.get("old_value_max_abs_error"), float("inf")) > 1.0e-4:
+        _append_reason(blockers, "ppo_update_not_on_collector_policy")
+    if _float_value_or_default(summary.get("parameter_l2_delta"), 0.0) <= 0.0:
+        _append_reason(blockers, "limited_ppo_update_input_contract_invalid")
+    if abs(_float_value_or_default(summary.get("approx_kl"), float("inf"))) > 0.25:
+        _append_reason(blockers, "ppo_update_too_large")
+    if _float_value_or_default(summary.get("max_grad_norm_after_clip"), float("inf")) > 1.0 + 1.0e-8:
+        _append_reason(blockers, "ppo_update_too_large")
+    if summary.get("experimental_checkpoint") is not True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_not_experimental")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _post_update_quasi_real_gate_regressed(summary):
+        _append_reason(blockers, "limited_quasi_real_ppo_update_post_update_gate_regression")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "limited_quasi_real_ppo_update_smoke_git_current_mismatch")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "input_ppo_trainable_transition_count": _int_value_or_default(
+            summary.get("input_ppo_trainable_transition_count"),
+            0,
+        ),
+        "optimizer_train_transition_count": _int_value_or_default(
+            summary.get("optimizer_train_transition_count"),
+            0,
+        ),
+    }
+
+
+def _generated_sequential_gate_metric_accounting_readiness(summary: dict[str, Any]) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "legacy_mismatch_count": 0,
+        "raw_policy_path_cost_regression_count": 0,
+        "raw_policy_risk_regression_count": 0,
+        "controlled_path_cost_regression_count": 0,
+        "controlled_risk_regression_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_audit_not_passed")
+    if _int_value_or_default(summary.get("legacy_mismatch_count"), 0) <= 0:
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_no_legacy_mismatch")
+    if summary.get("diagnosis_verdict_after_origin_split") != "pre_existing_generated_sequential_contract_mismatch":
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_verdict_unresolved")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "generated_sequential_gate_metric_accounting_git_current_mismatch")
+
+    if not blockers:
+        _append_reason(blockers, "generated_sequential_contract_alignment_required")
+    return {
+        "present": True,
+        "completed": False,
+        "training_blockers": blockers,
+        "next_required_change": (
+            "generated_sequential_contract_alignment_required"
+            if "generated_sequential_contract_alignment_required" in blockers
+            else summary.get("recommended_next_action")
+        ),
+        "legacy_mismatch_count": _int_value_or_default(summary.get("legacy_mismatch_count"), 0),
+        "raw_policy_path_cost_regression_count": _int_value_or_default(
+            summary.get("raw_policy_path_cost_regression_count"),
+            0,
+        ),
+        "raw_policy_risk_regression_count": _int_value_or_default(
+            summary.get("raw_policy_risk_regression_count"),
+            0,
+        ),
+        "controlled_path_cost_regression_count": _int_value_or_default(
+            summary.get("controlled_path_cost_regression_count"),
+            0,
+        ),
+        "controlled_risk_regression_count": _int_value_or_default(
+            summary.get("controlled_risk_regression_count"),
+            0,
+        ),
+    }
+
+
+def _generated_sequential_long_horizon_teacher_skill_contract_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "teacher_equivalent_episode_count": 0,
+        "beyond_teacher_episode_count": 0,
+        "controlled_regression_episode_count": 0,
+        "dominated_raw_choice_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "generated_sequential_long_horizon_contract_not_passed")
+    verdict = str(summary.get("verdict") or "")
+    if verdict != "long_horizon_teacher_skill_contract_aligned":
+        if verdict == "long_horizon_contract_still_blocked":
+            _append_reason(blockers, "generated_sequential_long_horizon_contract_still_blocked")
+        elif verdict == "missing_or_stale_input_evidence":
+            _append_reason(blockers, "generated_sequential_long_horizon_input_missing_or_stale")
+        elif verdict == "return_accounting_inconclusive":
+            _append_reason(blockers, "generated_sequential_long_horizon_return_accounting_inconclusive")
+        else:
+            _append_reason(blockers, "generated_sequential_long_horizon_contract_unresolved")
+    if _int_value_or_default(summary.get("teacher_equivalent_episode_count"), 0) <= 0:
+        _append_reason(blockers, "generated_sequential_long_horizon_teacher_equivalent_missing")
+    if _int_value_or_default(summary.get("controlled_regression_episode_count"), 0) > 0:
+        _append_reason(blockers, "generated_sequential_long_horizon_controlled_regression")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "generated_sequential_long_horizon_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "generated_sequential_long_horizon_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "generated_sequential_long_horizon_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "generated_sequential_long_horizon_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "generated_sequential_long_horizon_git_current_mismatch")
+
+    completed = not blockers
+    return {
+        "present": True,
+        "completed": completed,
+        "training_blockers": blockers,
+        "next_required_change": (
+            None if completed else "generated_sequential_contract_alignment_required"
+        ),
+        "teacher_equivalent_episode_count": _int_value_or_default(
+            summary.get("teacher_equivalent_episode_count"),
+            0,
+        ),
+        "beyond_teacher_episode_count": _int_value_or_default(
+            summary.get("beyond_teacher_episode_count"),
+            0,
+        ),
+        "controlled_regression_episode_count": _int_value_or_default(
+            summary.get("controlled_regression_episode_count"),
+            0,
+        ),
+        "dominated_raw_choice_count": _int_value_or_default(
+            summary.get("dominated_raw_choice_count"),
+            0,
+        ),
+    }
+
+
+def _long_horizon_contract_overrides_limited_quasi_real_generated_blocker(
+    limited_readiness: dict[str, Any],
+    long_horizon_readiness: dict[str, Any],
+) -> bool:
+    if not limited_readiness.get("present") or not long_horizon_readiness.get("completed"):
+        return False
+    blockers = set(_string_list(limited_readiness.get("training_blockers")))
+    generated_only_blockers = {
+        "limited_quasi_real_ppo_update_smoke_not_passed",
+        "limited_quasi_real_ppo_update_post_update_gate_regression",
+    }
+    return bool(blockers) and blockers.issubset(generated_only_blockers)
+
+
+def _post_update_quasi_real_gate_regressed(summary: dict[str, Any]) -> bool:
+    status_fields = (
+        "post_update_raw_generalization_status",
+        "post_update_sequential_canary_status",
+        "post_update_generated_collector_status",
+        "post_update_quasi_real_teacher_following_status",
+        "post_update_quasi_real_collector_status",
+    )
+    if any(summary.get(field) != "passed" for field in status_fields):
+        return True
+    if _int_value_or_default(summary.get("post_update_raw_test_regression_count"), 0):
+        return True
+    if _int_value_or_default(summary.get("post_update_sequential_rejected_choice_count"), 0):
+        return True
+    if _int_value_or_default(summary.get("post_update_generated_collector_trainable_transition_count"), 0) < 24:
+        return True
+    if _int_value_or_default(summary.get("post_update_quasi_real_collector_trainable_transition_count"), 0) < 24:
+        return True
+    if _float_value_or_default(summary.get("post_update_quasi_real_teacher_agreement_rate"), 0.0) < 0.9:
+        return True
+    if _int_value_or_default(summary.get("post_update_quasi_real_unsafe_disagreement_count"), 0):
+        return True
+    return False
 
 
 def _iterative_ppo_mini_loop_stability_readiness(summary: dict[str, Any]) -> dict[str, Any]:

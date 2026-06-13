@@ -1,0 +1,39 @@
+{
+  "schema_version": "generated-sequential-gate-metric-accounting-audit-config/v1",
+  "description": "Audit generated sequential canary accounting so raw policy probe rejection is not counted as controlled rollout cumulative regression.",
+  "input_files": {
+    "diagnosis_summary": "quasi-real-generated-sequential-contract-compatibility-summary.json",
+    "failed_step_comparison": "failed-step-comparison.jsonl",
+    "base_rejection_report": "base_generated_sequential/policy-gated-sequential-canary-rejection-report.json",
+    "updated_rejection_report": "updated_generated_sequential_replay/policy-gated-sequential-canary-rejection-report.json"
+  },
+  "output_files": {
+    "summary": "generated-sequential-gate-metric-accounting-audit-summary.json",
+    "legacy_mismatch_rows": "legacy-mismatch-rows.jsonl",
+    "origin_aware_failed_step_accounting": "origin-aware-failed-step-accounting.jsonl",
+    "corrected_shadow_summary": "corrected-accounting-shadow-summary.json",
+    "report": "generated-sequential-gate-metric-accounting-report.md"
+  },
+  "evaluation": {
+    "max_path_cost_regression": 0.0,
+    "max_risk_regression": 0.0
+  },
+  "validation": {
+    "expected_legacy_mismatch_count": 6
+  },
+  "non_goals": [
+    "no_new_ppo_update",
+    "no_iterative_ppo_mini_loop",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_distance_path_risk_source_selection_gate_relaxation",
+    "no_generated_sequential_acceptance_contract_removal",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_iris_gcs_training_release_claim",
+    "no_policy_performance_claim",
+    "no_formal_training_ready_claim"
+  ]
+}

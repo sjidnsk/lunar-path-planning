@@ -135,7 +135,39 @@ def run_limited_ppo_update_smoke(
     trainable_transitions = tuple(
         transition
         for transition in all_transitions
-        if _is_policy_ppo_trainable_transition(transition)
+        if _is_policy_ppo_trainable_transition(transition, config=config)
+    )
+    optimizer_transition_split_counts = dict(
+        sorted(
+            Counter(
+                str(_transition_extra(transition).get("split") or "unknown")
+                for transition in trainable_transitions
+            ).items()
+        )
+    )
+    optimizer_transition_source_counts = dict(
+        sorted(
+            Counter(
+                str(_transition_extra(transition).get("controlled_choice_source") or "unknown")
+                for transition in trainable_transitions
+            ).items()
+        )
+    )
+    allowed_sources = _trainable_filter_sources(config)
+    validation_test_optimizer_transition_count = sum(
+        1
+        for transition in trainable_transitions
+        if str(_transition_extra(transition).get("split") or "") in {"validation", "test"}
+    )
+    non_empty_gate_reason_optimizer_transition_count = sum(
+        1
+        for transition in trainable_transitions
+        if _string_list(_transition_extra(transition).get("gate_reason_codes"))
+    )
+    disallowed_source_optimizer_transition_count = sum(
+        1
+        for transition in trainable_transitions
+        if str(_transition_extra(transition).get("controlled_choice_source") or "") not in allowed_sources
     )
     source_fallback_trainable_count = sum(
         1
@@ -342,6 +374,11 @@ def run_limited_ppo_update_smoke(
         "device_reason_codes": list(device_resolution.reason_codes),
         "input_ppo_trainable_transition_count": len(trainable_transitions),
         "optimizer_train_transition_count": len(trainable_transitions) if training_result else 0,
+        "optimizer_transition_split_counts": optimizer_transition_split_counts,
+        "optimizer_transition_source_counts": optimizer_transition_source_counts,
+        "validation_test_optimizer_transition_count": validation_test_optimizer_transition_count,
+        "non_empty_gate_reason_optimizer_transition_count": non_empty_gate_reason_optimizer_transition_count,
+        "disallowed_source_optimizer_transition_count": disallowed_source_optimizer_transition_count,
         "collector_ppo_trainable_transition_count": _int_value(collector_summary.get("ppo_trainable_transition_count")),
         "source_fallback_trainable_count": source_fallback_trainable_count,
         "missing_context_id_count": missing_context_id_count,
@@ -381,12 +418,59 @@ def run_limited_ppo_update_smoke(
     return summary
 
 
-def _is_policy_ppo_trainable_transition(transition) -> bool:
+def _is_policy_ppo_trainable_transition(transition, *, config: dict[str, Any] | None = None) -> bool:
+    extra = _transition_extra(transition)
+    allowed_sources = _trainable_filter_sources(config)
+    allowed_splits = _trainable_filter_splits(config)
     return (
         transition.action_index >= 0
-        and transition.info.extra.get("ppo_trainable") is True
-        and transition.info.extra.get("controlled_choice_source") == "policy"
+        and extra.get("ppo_trainable") is True
+        and str(extra.get("controlled_choice_source") or "") in allowed_sources
+        and (allowed_splits is None or str(extra.get("split") or "") in allowed_splits)
+        and (
+            not _trainable_filter_requires_empty_gate_reasons(config)
+            or not _string_list(extra.get("gate_reason_codes"))
+        )
     )
+
+
+def _transition_extra(transition) -> dict[str, Any]:
+    info = getattr(transition, "info", None)
+    extra = getattr(info, "extra", None)
+    return extra if isinstance(extra, dict) else {}
+
+
+def _trainable_filter_sources(config: dict[str, Any] | None) -> set[str]:
+    filter_config = config.get("trainable_filter", {}) if isinstance(config, dict) else {}
+    sources = filter_config.get("controlled_choice_sources", ["policy"])
+    if not isinstance(sources, list) or not sources:
+        return {"policy"}
+    return {str(source) for source in sources}
+
+
+def _trainable_filter_splits(config: dict[str, Any] | None) -> set[str] | None:
+    filter_config = config.get("trainable_filter", {}) if isinstance(config, dict) else {}
+    splits = filter_config.get("splits")
+    if splits is None:
+        return None
+    if not isinstance(splits, list) or not splits:
+        return set()
+    return {str(split) for split in splits}
+
+
+def _trainable_filter_requires_empty_gate_reasons(config: dict[str, Any] | None) -> bool:
+    filter_config = config.get("trainable_filter", {}) if isinstance(config, dict) else {}
+    return bool(filter_config.get("require_empty_gate_reason_codes", False))
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item)]
+    return [str(value)] if str(value) else []
 
 
 def _old_policy_errors(network, transitions, *, torch, observation_to_tensors, device: str) -> tuple[float, float]:
