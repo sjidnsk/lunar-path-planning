@@ -1894,8 +1894,8 @@ with `controlled_choice_source` equal to `policy_teacher_aligned` or
 The generic generated smoke remains backward-compatible with
 `controlled_choice_source=policy`.
 
-Current execution status is intentionally blocked, not promoted. The update
-smoke consumed all 36 quasi-real trainable transitions, reconstructed old
+Current-HEAD rebaseline confirms the optimizer smoke itself is clean. The
+update consumed all 36 quasi-real trainable transitions, reconstructed old
 `log_prob` and `value` with zero max error, produced a small non-zero parameter
 delta (`~4.37e-4`) and tiny `approx_kl` (`~7.7e-5`), and kept the post-update
 quasi-real teacher-following and quasi-real collector gates clean:
@@ -1905,23 +1905,23 @@ quasi-real teacher-following and quasi-real collector gates clean:
 - post-update quasi-real collector: `status=passed`,
   `ppo_trainable_transition_count=36`, `diagnostic_transition_count=72`
 
-The blocker is the generated sequential post-update gate. When the updated
-quasi-real candidate is evaluated on the generated sequential canary, the gate
-fails with rejected policy choices and cumulative path-cost/risk regressions:
+The strict generated sequential post-update gate still fails, so the wrapper
+summary remains `status=failed` with
+`reason_codes=["limited_quasi_real_ppo_update_post_update_gate_regression"]`.
+After the accounting split, the generated sequential failure is no longer a
+controlled rollout path/risk regression. It is a raw policy takeover/coverage
+contract issue:
 
 - `multi_step_accepted_episode_count_below_threshold`
 - `family_with_multi_step_accepted_episode_count_below_threshold`
 - `canary_rejected_policy_choice_count_above_threshold`
-- `cumulative_path_cost_regression_count_above_threshold`
-- `cumulative_risk_regression_count_above_threshold`
 
-Therefore `limited-quasi-real-ppo-update-smoke-summary.json` currently reports
-`status=failed` and `reason_codes=["limited_quasi_real_ppo_update_post_update_gate_regression"]`.
-Readiness must not advance to `limited_quasi_real_ppo_update_smoke_evaluated`
-until this generated sequential compatibility issue is resolved or the stage
-contract is deliberately narrowed with new evidence. No checkpoint is published,
-no default policy is replaced, and no performance or formal-training-ready claim
-is made.
+Current accounting reports `canary_rejected_policy_choice_count=6`,
+`raw_policy_path_cost_regression_count=6`,
+`raw_policy_risk_regression_count=2`,
+`controlled_path_cost_regression_count=0`, and
+`controlled_risk_regression_count=0`. No checkpoint is published, no default
+policy is replaced, and no performance or formal-training-ready claim is made.
 
 ### Quasi-Real / Generated Sequential Contract Compatibility Diagnosis
 
@@ -1957,11 +1957,15 @@ It writes `failed-step-comparison.jsonl`,
 `baseline-vs-updated-sequential-summary.json`, and
 `compatibility-diagnosis-report.md`, including failed family/reason counts,
 source/raw/policy action indices, logits, selected target cells, and path/risk
-delta comparisons. Readiness should remain at
-`needs_training_contract_refinement` until a follow-up plan resolves the
-diagnosed blocker. This stage does not run PPO, publish checkpoints, replace the
-default policy, relax generated sequential gates, modify network/action
-space/default A*, or claim formal training readiness.
+delta comparisons. Current-HEAD rebaseline reports `status=passed`,
+`failed_step_count=6`, and
+`diagnosis_verdict=pre_existing_generated_sequential_contract_mismatch`: the
+diagnostic base and updated candidate fail the same generated sequential
+contract steps. This stage alone does not advance readiness; it supplies the
+origin evidence consumed by the accounting and long-horizon contract stages. It
+does not run PPO, publish checkpoints, replace the default policy, relax
+generated sequential gates, modify network/action space/default A*, or claim
+formal training readiness.
 
 ### Generated Sequential Gate Metric / Accounting Audit
 
@@ -1989,14 +1993,16 @@ is:
 - corrected shadow `cumulative_path_cost_regression_count=0`
 - corrected shadow `cumulative_risk_regression_count=0`
 
-Generated sequential still does **not** pass: the corrected shadow summary
-remains failed because raw policy choices are rejected and multi-step accepted
-coverage is too low. The diagnosis after origin split is
+Generated sequential still does **not** pass as a raw takeover gate: the
+corrected shadow summary remains failed because raw policy choices are rejected
+and multi-step accepted coverage is too low. The diagnosis after origin split is
 `pre_existing_generated_sequential_contract_mismatch`, with
 `recommended_next_action=generated_sequential_contract_alignment_required`.
-Readiness must remain `needs_training_contract_refinement`; this audit refines
-the blocker but does not publish a checkpoint, replace default policy, run PPO,
-remove generated sequential from the acceptance contract, or claim performance.
+The audit by itself only refines the blocker; downstream long-horizon alignment
+is what allows readiness to distinguish teacher-skill evidence from raw
+takeover failure. This audit does not publish a checkpoint, replace default
+policy, run PPO, remove generated sequential from the acceptance contract, or
+claim performance.
 
 ### Generated Sequential Long-Horizon Teacher-Skill Contract Alignment
 
@@ -2022,13 +2028,75 @@ trajectory across the configured horizon. Same-as-teacher active choices count
 as positive teacher-skill evidence. Beyond-teacher evidence requires cumulative
 return dominance, not merely a one-step different target.
 
+Current-HEAD rebaseline writes a passed summary with
+`verdict=long_horizon_teacher_skill_contract_aligned`,
+`teacher_equivalent_episode_count=36`, `beyond_teacher_episode_count=15`,
+`dominated_raw_choice_count=6`, and `controlled_regression_episode_count=0`.
 Readiness accepts
-`--generated-sequential-long-horizon-teacher-skill-contract-summary`. A passed
-summary with `verdict=long_horizon_teacher_skill_contract_aligned` may remove the
-generated sequential contract-alignment blocker; failed or inconclusive summaries
-keep readiness at `needs_training_contract_refinement`. This stage still does
-not run PPO, publish checkpoints, replace the default policy, relax safety,
-path-risk, or source-selection gates, or claim formal training readiness.
+`--generated-sequential-long-horizon-teacher-skill-contract-summary`; with the
+post-update quasi-real teacher-following summary, post-update collector summary,
+limited quasi-real smoke summary, accounting audit summary, and long-horizon
+summary all supplied, readiness now reports
+`training_readiness_status=limited_quasi_real_ppo_update_smoke_evaluated`,
+`training_blockers=[]`, and `reason_codes=[]`.
+
+This does not start iterative PPO. It only establishes a current-HEAD evidence
+baseline for the next stage, `Quasi-Real Iterative PPO Mini-Loop Stability v1`.
+The stage still does not publish checkpoints, replace the default policy, relax
+safety, path-risk, or source-selection gates, or claim formal training
+readiness.
+
+### Quasi-Real Iterative PPO Mini-Loop Stability
+
+`Quasi-Real Iterative PPO Mini-Loop Stability v1` is the next quasi-real
+training-readiness boundary after the current-HEAD rebaseline. It is separate
+from the older generated `Iterative PPO Mini-Loop Stability` stage: the loop
+starts from the quasi-real teacher-distillation experimental candidate, uses
+quasi-real teacher-following plus quasi-real PPO collector materialization, and
+judges generated sequential evidence through the accounting and long-horizon
+teacher-skill contract instead of the strict raw takeover gate alone.
+
+New artifacts:
+
+- `configs/quasi_real_iterative_ppo_mini_loop_stability_v1.json`
+- `scripts/run_quasi_real_iterative_ppo_mini_loop_stability.py/.sh`
+- `scripts/run_quasi_real_iterative_ppo_mini_loop_stability_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_iterative_ppo_mini_loop_stability_v1/`
+
+The summary files are
+`quasi-real-iterative-ppo-mini-loop-stability-summary.json`,
+`quasi-real-iterative-ppo-mini-loop-rounds.jsonl`,
+`quasi-real-iterative-ppo-mini-loop-drift-report.json`, and
+`quasi-real-iterative-ppo-mini-loop-rejection-report.json`. The summary keeps
+the existing readiness schema `iterative-ppo-mini-loop-stability-summary/v1`
+so readiness can advance to
+`iterative_ppo_mini_loop_stability_evaluated` without introducing a competing
+status.
+
+Each of the three rounds runs a bounded chain:
+
+```text
+quasi-real teacher-following
+  -> quasi-real PPO collector
+  -> limited quasi-real PPO update
+  -> compatibility diagnosis
+  -> accounting audit
+  -> long-horizon teacher-skill contract
+```
+
+The loop allows the limited quasi-real update wrapper to retain the known strict
+generated raw takeover failure only when the per-round compatibility,
+accounting, quasi-real gates, and long-horizon contract all pass. Validation/test
+split transitions, fallback sources, unsafe disagreements, and non-empty gate
+reasons remain diagnostic-only. The drift guard requires finite optimizer
+metrics, old `log_prob`/`value` reconstruction error no larger than `1e-4`,
+`abs(approx_kl)<=0.25`, `max_grad_norm_after_clip<=1.0`, and cumulative
+parameter L2 delta no larger than `0.05`.
+
+This is still a local experimental stability check: no formal PPO rollout, no
+checkpoint publication, no default-policy replacement, no network/action-space
+or default-A* change, no distance/path-risk/source-selection relaxation, no
+Ackermann-feasible trajectory claim, and no formal training-ready claim.
 
 ## Core Algorithm Development Chain
 

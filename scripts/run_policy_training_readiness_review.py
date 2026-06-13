@@ -506,7 +506,42 @@ def main(argv: list[str] | None = None) -> int:
         if args.quasi_real_guarded_teacher_following_pilot_summary
         else batch_root / "quasi-real-guarded-teacher-following-pilot-summary.json"
     )
+    explicit_iterative_only_summary = bool(args.iterative_ppo_mini_loop_stability_summary) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.guarded_ppo_rollout_pilot_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
     anchor_only_defaults_available = (
+        not explicit_iterative_only_summary
+        and
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
         and not any(path.is_file() for path in (smoke_path, readiness_path, coverage_path, calibration_path))
@@ -955,7 +990,41 @@ def analyze_policy_training_readiness_review(
         and anchor_contract_path.is_file()
         and not any(path.is_file() for path in (smoke_path, readiness_path, coverage_path, calibration_path))
     )
-    if anchor_only_mode:
+    iterative_only_mode = iterative_ppo_mini_loop_required and not any(
+        (
+            anchor_candidate_required,
+            anchor_contract_required,
+            contract_aware_target_required,
+            planner_validated_mining_required,
+            hybrid_training_dry_run_required,
+            controlled_candidate_required,
+            controlled_holdout_required,
+            fresh_holdout_required,
+            scenario_rollout_required,
+            raw_strict_rollout_required,
+            raw_generalization_required,
+            policy_canary_required,
+            sequential_canary_required,
+            ppo_collector_required,
+            limited_ppo_update_smoke_required,
+            limited_quasi_real_ppo_update_smoke_required,
+            generated_sequential_gate_metric_accounting_audit_required,
+            generated_sequential_long_horizon_teacher_skill_contract_required,
+            guarded_ppo_rollout_pilot_required,
+            policy_training_cuda_device_support_required,
+            quasi_real_map_domain_gap_required,
+            quasi_real_shadow_policy_behavior_required,
+            quasi_real_shadow_alignment_required,
+            quasi_real_guarded_policy_pilot_required,
+            quasi_real_safe_alternative_opportunity_required,
+            quasi_real_safe_better_opportunity_expansion_required,
+            quasi_real_teacher_equivalent_validation_required,
+            quasi_real_teacher_distillation_required,
+            quasi_real_guarded_teacher_following_pilot_required,
+        )
+    )
+    stage_isolated_mode = anchor_only_mode or iterative_only_mode
+    if stage_isolated_mode:
         smoke = _load_optional_source(
             smoke_path,
             label="calibrated_policy_application_smoke_summary",
@@ -1374,7 +1443,7 @@ def analyze_policy_training_readiness_review(
 
     current_git = _git_snapshot(repo_root)
     source_git_matches = []
-    if not anchor_only_mode:
+    if not stage_isolated_mode:
         source_git_matches.extend(
             [
                 _inspect_git(smoke, label="calibrated_policy_application_smoke_summary", current_git=current_git, config=config, reason_codes=reason_codes),
@@ -1658,6 +1727,11 @@ def analyze_policy_training_readiness_review(
         ppo_collector=ppo_collector,
         quasi_real_guarded_teacher_following_pilot=quasi_real_guarded_teacher_following_pilot,
     )
+    reason_codes = _filter_stale_source_git_for_iterative_only(
+        reason_codes,
+        iterative_ppo_mini_loop=iterative_ppo_mini_loop,
+        iterative_only_mode=iterative_only_mode,
+    )
 
     review = _review_metrics(
         smoke=smoke,
@@ -1707,7 +1781,7 @@ def analyze_policy_training_readiness_review(
             quasi_real_guarded_teacher_following_pilot
         ),
         validation_reason_codes=reason_codes,
-        anchor_only_mode=anchor_only_mode,
+        anchor_only_mode=stage_isolated_mode,
         config=config,
     )
     status = "failed" if reason_codes else "passed"
@@ -4028,6 +4102,41 @@ def _filter_stale_source_git_for_quasi_real_collector(
             reason.endswith("_current_git_provenance_mismatch")
             and not reason.startswith(protected_prefixes)
         ):
+            continue
+        filtered.append(reason)
+    return filtered
+
+
+def _filter_stale_source_git_for_iterative_only(
+    reason_codes: list[str],
+    *,
+    iterative_ppo_mini_loop: dict[str, Any],
+    iterative_only_mode: bool,
+) -> list[str]:
+    if not iterative_only_mode:
+        return reason_codes
+    if not _iterative_ppo_mini_loop_stability_readiness(iterative_ppo_mini_loop)[
+        "completed"
+    ]:
+        return reason_codes
+    protected_prefix = "iterative_ppo_mini_loop_stability_summary_"
+    protected_mismatch_present = any(
+        reason.startswith(protected_prefix)
+        and (
+            reason.endswith("_current_git_provenance_mismatch")
+            or reason.endswith("_git_provenance_mismatch")
+        )
+        for reason in reason_codes
+    )
+    filtered: list[str] = []
+    for reason in reason_codes:
+        if reason in {"current_git_provenance_mismatch", "git_provenance_mismatch"}:
+            if not protected_mismatch_present:
+                continue
+        if (
+            reason.endswith("_current_git_provenance_mismatch")
+            or reason.endswith("_git_provenance_mismatch")
+        ) and not reason.startswith(protected_prefix):
             continue
         filtered.append(reason)
     return filtered

@@ -1,0 +1,40 @@
+{
+  "schema_version": "quasi-real-iterative-ppo-mini-loop-stability-config/v1",
+  "description": "Three-round quasi-real collect-update-evaluate mini-loop stability check for experimental PPO candidates.",
+  "config_paths": {
+    "teacher_following_config": "configs/quasi_real_guarded_teacher_following_pilot_v1.json",
+    "collector_config": "configs/quasi_real_ppo_collector_dry_run_v1.json",
+    "update_config": "configs/limited_quasi_real_ppo_update_smoke_v1.json",
+    "compatibility_config": "configs/quasi_real_generated_sequential_contract_compatibility_diagnosis_v1.json",
+    "accounting_config": "configs/generated_sequential_gate_metric_accounting_audit_v1.json",
+    "long_horizon_config": "configs/generated_sequential_long_horizon_teacher_skill_contract_alignment_v1.json"
+  },
+  "output_files": {
+    "summary": "quasi-real-iterative-ppo-mini-loop-stability-summary.json",
+    "rounds": "quasi-real-iterative-ppo-mini-loop-rounds.jsonl",
+    "drift_report": "quasi-real-iterative-ppo-mini-loop-drift-report.json",
+    "rejection_report": "quasi-real-iterative-ppo-mini-loop-rejection-report.json"
+  },
+  "validation": {
+    "round_count": 3,
+    "min_optimizer_train_transition_count": 24,
+    "min_ppo_trainable_transition_count": 24,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_abs_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0,
+    "max_cumulative_parameter_l2_delta": 0.05,
+    "min_teacher_agreement_rate": 0.9
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_claim_policy_performance_improvement",
+    "does_not_claim_formal_training_ready",
+    "does_not_modify_network_action_space_or_default_astar",
+    "does_not_relax_distance_or_path_risk_source_selection_gates",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_iris_gcs_training_release_claim"
+  ]
+}

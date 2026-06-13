@@ -509,6 +509,70 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
         )
         self.assertFalse((self.batch_root / "policy-training-readiness-review-summary.json").exists())
 
+    def test_iterative_summary_validate_only_ignores_stale_unrequired_default_summaries(self) -> None:
+        candidate_path, contract_path = self._write_anchor_projection_summaries(
+            candidate_trainable_count=1,
+            candidate_nontrainable_count=0,
+            contract_trainable_count=1,
+            contract_nontrainable_count=0,
+        )
+        stale_git = self._git_snapshot(git_mismatch=True)
+        for path in (candidate_path, contract_path):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["git_provenance"] = {
+                "current": stale_git,
+                "current_matches_sources": False,
+            }
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        iterative_path = self.batch_root / "quasi-real-iterative-ppo-mini-loop-stability-summary.json"
+        iterative_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "iterative-ppo-mini-loop-stability-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "round_count": 3,
+                    "failed_round_count": 0,
+                    "stability_passed": True,
+                    "min_optimizer_train_transition_count": 36,
+                    "min_ppo_trainable_transition_count": 36,
+                    "max_abs_approx_kl": 0.01,
+                    "cumulative_parameter_l2_delta": 0.006,
+                    "raw_test_regression_count": 0,
+                    "sequential_rejected_count": 0,
+                    "collector_regression_count": 0,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {
+                        "current": self.git_snapshot,
+                        "current_matches_sources": True,
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--iterative-ppo-mini-loop-stability-summary",
+            str(iterative_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        validation = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            validation["training_readiness_status"],
+            "iterative_ppo_mini_loop_stability_evaluated",
+        )
+        self.assertEqual(validation["reason_codes"], [])
+
     def test_review_consumes_anchor_projection_summaries_and_blocks_regressed_contract(self) -> None:
         self._write_sources()
         candidate_path, contract_path = self._write_anchor_projection_summaries(
