@@ -3023,6 +3023,49 @@ replace the default policy, modify network/action space/default A*, relax
 gates, download new raw data, claim Ackermann-feasible trajectory, claim
 performance improvement, or claim formal training readiness.
 
+## Guarded Experimental Policy Staged Release Canary Preflight v1
+
+**Guarded Experimental Policy Staged Release Canary Preflight v1** is the next
+offline checkpoint after the staged trial. It is a canary launch checklist, not
+the launch itself: the stage reads the 64 gate-clean trial activations, selects
+at most 16 offline canary-eligible candidates, and verifies limit controls,
+kill-switch, rollback, telemetry, automatic downgrade, budget, and operator
+approval before any real executor can be connected.
+
+The runner consumes the staged-release trial summary and activation ledger, then
+writes:
+
+- `guarded-experimental-policy-staged-release-canary-preflight-summary.json`
+- `staged-canary-preflight-manifest.json`
+- `staged-canary-eligibility-ledger.jsonl`
+- `staged-canary-rejection-report.json`
+- `staged-canary-kill-switch-audit.json`
+- `staged-canary-rollback-audit.json`
+- `staged-canary-telemetry-audit.json`
+- `staged-canary-automatic-downgrade-audit.json`
+- `staged-canary-budget-audit.json`
+- `staged-canary-operator-approval-audit.json`
+- `staged-canary-preflight-readiness-validate-only.json`
+- `staged-canary-preflight-report.md`
+
+Acceptance requires `staged_canary_enabled=false`,
+`connects_real_executor=false`, `default_policy_authoritative=true`,
+`canary_traffic_fraction<=0.01`, `1 <= canary_eligible_activation_count <= 16`,
+zero diagnostic/fallback/rejected/missing/non-finite/control-regression eligible
+rows, zero controlled safety/contract/path-risk/source-selection regression, and
+passed kill-switch, rollback, telemetry, automatic downgrade, budget, and
+operator approval audits. Readiness accepts
+`--guarded-experimental-policy-staged-release-canary-preflight-summary` and
+advances to
+`guarded_experimental_policy_staged_release_canary_preflight_evaluated`.
+
+This remains offline preflight evidence. It does not start an online canary,
+connect a real executor, run new PPO, publish a checkpoint, replace the default
+policy, modify network/action space/default A*, relax gates, download new raw
+data, claim Ackermann-feasible trajectory, treat IRIS/GCS/path-planner
+diagnostics as release evidence, claim policy performance improvement, or claim
+formal training readiness.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

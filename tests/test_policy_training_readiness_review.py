@@ -2894,6 +2894,98 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_guarded_experimental_policy_staged_release_canary_preflight_advances_readiness(self) -> None:
+        canary_preflight_path = (
+            self.batch_root
+            / "guarded-experimental-policy-staged-release-canary-preflight-summary.json"
+        )
+        canary_preflight_path.write_text(
+            json.dumps(
+                self._guarded_experimental_policy_staged_release_canary_preflight_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-staged-release-canary-preflight-summary",
+            str(canary_preflight_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "guarded_experimental_policy_staged_release_canary_preflight_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["guarded_experimental_policy_staged_release_canary_preflight_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_guarded_experimental_policy_staged_release_canary_preflight_boundary_blocks_readiness(self) -> None:
+        canary_preflight_path = (
+            self.batch_root
+            / "guarded-experimental-policy-staged-release-canary-preflight-summary.json"
+        )
+        payload = self._guarded_experimental_policy_staged_release_canary_preflight_summary()
+        payload["staged_release_canary_preflight_verdict"] = "blocked_by_staged_release_canary_preflight"
+        payload["staged_canary_enabled"] = True
+        payload["connects_real_executor"] = True
+        payload["canary_eligible_activation_count"] = 17
+        payload["controlled_regression_count"] = 1
+        payload["kill_switch_audit_passed"] = False
+        canary_preflight_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-staged-release-canary-preflight-summary",
+            str(canary_preflight_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_canary_preflight_not_eligible",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_canary_preflight_unexpectedly_enabled",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_canary_preflight_real_executor_connected",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_canary_preflight_activation_count_out_of_bounds",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_canary_preflight_controlled_regression",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_canary_preflight_kill_switch_failed",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -3226,6 +3318,59 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
             "readiness_status": "guarded_experimental_policy_staged_release_trial_evaluated",
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _guarded_experimental_policy_staged_release_canary_preflight_summary(self) -> dict:
+        return {
+            "schema_version": "guarded-experimental-policy-staged-release-canary-preflight-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "staged_release_canary_preflight_verdict": (
+                "eligible_for_guarded_staged_release_canary_dry_run"
+            ),
+            "source_staged_release_trial_summary": (
+                "outputs/path_feedback_batch_guarded_experimental_policy_staged_release_trial_v1/"
+                "guarded-experimental-policy-staged-release-trial-summary.json"
+            ),
+            "manifest": "staged-canary-preflight-manifest.json",
+            "eligibility_ledger": "staged-canary-eligibility-ledger.jsonl",
+            "rejection_report": "staged-canary-rejection-report.json",
+            "kill_switch_audit": "staged-canary-kill-switch-audit.json",
+            "rollback_audit": "staged-canary-rollback-audit.json",
+            "telemetry_audit": "staged-canary-telemetry-audit.json",
+            "automatic_downgrade_audit": "staged-canary-automatic-downgrade-audit.json",
+            "budget_audit": "staged-canary-budget-audit.json",
+            "operator_approval_audit": "staged-canary-operator-approval-audit.json",
+            "staged_canary_enabled": False,
+            "connects_real_executor": False,
+            "default_policy_authoritative": True,
+            "canary_traffic_fraction": 0.01,
+            "canary_eligible_activation_count": 16,
+            "max_canary_control_activation_count": 16,
+            "diagnostic_fallback_rejected_canary_eligible_count": 0,
+            "missing_observation_canary_eligible_count": 0,
+            "non_finite_canary_eligible_count": 0,
+            "controlled_regression_canary_eligible_count": 0,
+            "controlled_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "kill_switch_audit_passed": True,
+            "rollback_audit_passed": True,
+            "telemetry_audit_passed": True,
+            "automatic_downgrade_audit_passed": True,
+            "canary_budget_audit_passed": True,
+            "operator_approval_audit_passed": True,
+            "runs_staged_release_canary_preflight": True,
+            "runs_online_canary": False,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "guarded_experimental_policy_staged_release_canary_preflight_evaluated",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 
