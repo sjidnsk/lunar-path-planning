@@ -3105,6 +3105,43 @@ download new raw data, claim Ackermann-feasible trajectory, treat
 IRIS/GCS/path-planner diagnostics as training or release evidence, claim policy
 performance improvement, or claim formal training readiness.
 
+## Guarded Formal PPO Training Run v1
+
+**Guarded Formal PPO Training Run v1** is the first authorized local formal PPO
+training pass. It consumes the authorization package above, reads the 684
+gate-clean train-split quasi-real transitions from the formal stability/holdout
+evidence, and runs one small full-batch PPO update for each seed in
+`[0,1,2,3,4]`.
+
+The runner writes:
+
+- `formal-ppo-training-run-summary.json`
+- `formal-ppo-training-run-seed-summaries.jsonl`
+- `formal-ppo-training-run-progress.jsonl`
+- `formal-ppo-training-run-training-curves.json`
+- `formal-ppo-training-run-gate-audit.json`
+- `formal-ppo-training-run-rollback-manifest.json`
+- `formal-ppo-training-run-readiness-validate-only.json`
+- `formal-ppo-training-run-report.md`
+
+Acceptance requires the input authorization to be passed, 684 optimizer
+transitions, zero validation/test/fallback/diagnostic trainable leakage, all
+five seeds passed, finite reward/return/advantage/loss/gradient values, old
+`log_prob`/value reconstruction error at or below `1e-4`,
+`parameter_l2_delta>0`, `abs(approx_kl)<=0.25`,
+`max_grad_norm_after_clip<=1.0`, teacher agreement at least `0.95`, zero
+controlled safety/contract/path-risk/source-selection regression, and passed
+post-training holdout/canary gate status. Readiness accepts
+`--guarded-formal-ppo-training-run-summary` and advances to
+`guarded_formal_ppo_training_run_evaluated`.
+
+This stage runs a PPO update, but the resulting checkpoints are still
+experimental candidates only. It does not start an online canary, connect a real
+executor, publish or replace a checkpoint, replace the default policy, modify
+network/action space/default A*, relax gates, download new raw data, claim
+Ackermann-feasible trajectory, treat IRIS/GCS/path-planner diagnostics as
+training or release evidence, or claim deployable policy performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
