@@ -2986,6 +2986,80 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_guarded_formal_ppo_training_authorization_advances_readiness(self) -> None:
+        authorization_path = self.batch_root / "formal-ppo-training-authorization-summary.json"
+        authorization_path.write_text(
+            json.dumps(
+                self._guarded_formal_ppo_training_authorization_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-formal-ppo-training-authorization-summary",
+            str(authorization_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "guarded_formal_ppo_training_authorized",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(summary["guarded_formal_ppo_training_authorization_readiness"]["completed"])
+
+    def test_guarded_formal_ppo_training_authorization_boundary_blocks_readiness(self) -> None:
+        authorization_path = self.batch_root / "formal-ppo-training-authorization-summary.json"
+        payload = self._guarded_formal_ppo_training_authorization_summary()
+        payload["authorization_verdict"] = "blocked_by_training_authorization"
+        payload["runs_new_ppo_update"] = True
+        payload["publishes_checkpoint"] = True
+        payload["budget_manifest_passed"] = False
+        payload["controlled_regression_count"] = 1
+        authorization_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-formal-ppo-training-authorization-summary",
+            str(authorization_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "guarded_formal_ppo_training_authorization_not_eligible",
+            summary["training_blockers"],
+        )
+        self.assertIn("formal_ppo_update_unexpected", summary["training_blockers"])
+        self.assertIn(
+            "limited_ppo_update_checkpoint_publication_claimed",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_formal_ppo_training_authorization_budget_manifest_failed",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_formal_ppo_training_authorization_controlled_regression",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -3371,6 +3445,81 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
             "readiness_status": "guarded_experimental_policy_staged_release_canary_preflight_evaluated",
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _guarded_formal_ppo_training_authorization_summary(self) -> dict:
+        return {
+            "schema_version": "guarded-formal-ppo-training-authorization-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "authorization_verdict": "authorized_for_guarded_formal_ppo_training_run",
+            "formal_preflight_summary": (
+                "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_preflight_v1/"
+                "quasi-real-guarded-formal-ppo-preflight-summary.json"
+            ),
+            "formal_rollout_canary_summary": (
+                "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_rollout_canary_v1/"
+                "quasi-real-guarded-formal-ppo-rollout-canary-summary.json"
+            ),
+            "formal_stability_holdout_summary": (
+                "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_stability_holdout_validation_v1/"
+                "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary.json"
+            ),
+            "candidate_selection_summary": (
+                "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_v1/"
+                "quasi-real-guarded-formal-ppo-candidate-selection-long-horizon-holdout-summary.json"
+            ),
+            "promotion_decision_review_summary": (
+                "outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_decision_review_v1/"
+                "selected-formal-ppo-candidate-promotion-decision-review-summary.json"
+            ),
+            "canary_preflight_summary": (
+                "outputs/path_feedback_batch_guarded_experimental_policy_staged_release_canary_preflight_v1/"
+                "guarded-experimental-policy-staged-release-canary-preflight-summary.json"
+            ),
+            "training_input_audit": "formal-ppo-training-input-audit.json",
+            "budget_manifest": "formal-ppo-training-budget-manifest.json",
+            "seed_plan": "formal-ppo-training-seed-plan.json",
+            "stop_condition_manifest": "formal-ppo-training-stop-condition-manifest.json",
+            "rollback_manifest": "formal-ppo-training-rollback-manifest.json",
+            "post_training_gate_plan": "formal-ppo-post-training-gate-plan.json",
+            "authorized_trainable_transition_count": 684,
+            "authorized_optimizer_train_transition_count": 684,
+            "unique_authorized_trainable_context_count": 684,
+            "validation_trainable_count": 0,
+            "test_trainable_count": 0,
+            "fallback_trainable_count": 0,
+            "source_fallback_trainable_count": 0,
+            "teacher_fallback_trainable_count": 0,
+            "diagnostic_trainable_count": 0,
+            "non_empty_gate_reason_trainable_count": 0,
+            "missing_observation_count": 0,
+            "missing_log_prob_count": 0,
+            "missing_value_count": 0,
+            "invalid_action_mask_count": 0,
+            "non_finite_reward_count": 0,
+            "non_finite_return_count": 0,
+            "non_finite_advantage_count": 0,
+            "controlled_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "seed_count": 5,
+            "seeds": [0, 1, 2, 3, 4],
+            "budget_manifest_passed": True,
+            "seed_plan_passed": True,
+            "stop_condition_manifest_passed": True,
+            "rollback_manifest_passed": True,
+            "post_training_gate_plan_passed": True,
+            "runs_guarded_formal_ppo_training_authorization": True,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "guarded_formal_ppo_training_authorized",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 

@@ -3066,6 +3066,45 @@ data, claim Ackermann-feasible trajectory, treat IRIS/GCS/path-planner
 diagnostics as release evidence, claim policy performance improvement, or claim
 formal training readiness.
 
+## Guarded Formal PPO Training Authorization v1
+
+**Guarded Formal PPO Training Authorization v1** is the training-side permission
+package after the guarded formal PPO evidence chain and staged canary preflight.
+It is a launch authorization for a future controlled PPO training run, not the
+run itself: it checks the existing formal preflight, rollout canary,
+stability/holdout, candidate selection, promotion decision review, and canary
+preflight summaries, then writes the allowed training input, seed plan, budget,
+stop conditions, rollback plan, and post-training gate plan.
+
+The runner writes:
+
+- `formal-ppo-training-authorization-summary.json`
+- `formal-ppo-training-input-audit.json`
+- `formal-ppo-training-budget-manifest.json`
+- `formal-ppo-training-seed-plan.json`
+- `formal-ppo-training-stop-condition-manifest.json`
+- `formal-ppo-training-rollback-manifest.json`
+- `formal-ppo-post-training-gate-plan.json`
+- `formal-ppo-training-authorization-readiness-validate-only.json`
+- `formal-ppo-training-authorization-report.md`
+
+Acceptance requires
+`authorization_verdict=authorized_for_guarded_formal_ppo_training_run`,
+`authorized_trainable_transition_count>=684`, matching optimizer and unique
+trainable context counts, seeds `[0,1,2,3,4]`, zero validation/test/fallback or
+diagnostic trainable leakage, zero missing/non-finite/invalid-mask counters,
+zero controlled safety/contract/path-risk/source-selection regression, and
+passed budget, seed, stop-condition, rollback, and post-training gate manifests.
+Readiness accepts `--guarded-formal-ppo-training-authorization-summary` and
+advances to `guarded_formal_ppo_training_authorized`.
+
+This is still not formal PPO training. It does not run a new PPO update, start
+an online canary, connect a real executor, publish or replace a checkpoint,
+replace the default policy, modify network/action space/default A*, relax gates,
+download new raw data, claim Ackermann-feasible trajectory, treat
+IRIS/GCS/path-planner diagnostics as training or release evidence, claim policy
+performance improvement, or claim formal training readiness.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

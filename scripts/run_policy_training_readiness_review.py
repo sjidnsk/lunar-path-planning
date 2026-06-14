@@ -231,6 +231,12 @@ GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_CANARY_PREFLIGHT_EVALUATED_ACTION = (
 GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_CANARY_PREFLIGHT_SCHEMA_VERSION = (
     "guarded-experimental-policy-staged-release-canary-preflight-summary/v1"
 )
+GUARDED_FORMAL_PPO_TRAINING_AUTHORIZED_ACTION = (
+    "guarded_formal_ppo_training_authorized"
+)
+GUARDED_FORMAL_PPO_TRAINING_AUTHORIZATION_SCHEMA_VERSION = (
+    "guarded-formal-ppo-training-authorization-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -494,6 +500,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--guarded-experimental-policy-staged-release-canary-preflight-summary",
         help="Optional guarded-experimental-policy-staged-release-canary-preflight-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--guarded-formal-ppo-training-authorization-summary",
+        help="Optional guarded-formal-ppo-training-authorization-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -823,6 +833,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.guarded_experimental_policy_staged_release_canary_preflight_summary
         else batch_root
         / "guarded-experimental-policy-staged-release-canary-preflight-summary.json"
+    )
+    guarded_formal_ppo_training_authorization_path = (
+        _resolve_path(
+            args.guarded_formal_ppo_training_authorization_summary,
+            repo_root,
+        )
+        if args.guarded_formal_ppo_training_authorization_summary
+        else batch_root / "formal-ppo-training-authorization-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -1279,6 +1297,7 @@ def main(argv: list[str] | None = None) -> int:
         and not args.guarded_experimental_policy_staged_release_preflight_summary
         and not args.guarded_experimental_policy_staged_release_trial_summary
         and not args.guarded_experimental_policy_staged_release_canary_preflight_summary
+        and not args.guarded_formal_ppo_training_authorization_summary
         and
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -1290,6 +1309,65 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.guarded_formal_ppo_training_authorization_summary:
+        summary = _analyze_guarded_formal_ppo_training_authorization_stage_only(
+            batch_root=batch_root,
+            authorization_path=guarded_formal_ppo_training_authorization_path,
+            config=config,
+            repo_root=repo_root,
+        )
+        output_file = _output_file(batch_root, config)
+        validation_message = {
+            "status": "config validated" if summary["status"] == "passed" else "validation failed",
+            "batch_root": _display_path(batch_root, repo_root),
+            "guarded_formal_ppo_training_authorization_summary": _display_path(
+                guarded_formal_ppo_training_authorization_path,
+                repo_root,
+            ),
+            "config": _display_path(config_path, repo_root),
+            "reason_codes": summary["reason_codes"],
+            "training_readiness_status": summary["training_readiness_status"],
+            "training_blockers": summary["training_blockers"],
+            "recommended_next_action": summary["recommended_next_action"],
+            "guarded_formal_ppo_training_authorization_readiness": summary[
+                "guarded_formal_ppo_training_authorization_readiness"
+            ],
+            "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+        }
+        print(json.dumps(validation_message, ensure_ascii=False))
+        if args.validate_only or args.dry_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry-run",
+                            "would_write": {
+                                "policy_training_readiness_review_summary": _display_path(
+                                    output_file,
+                                    repo_root,
+                                ),
+                            },
+                            "recommended_next_action": summary["recommended_next_action"],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return 1 if summary["status"] == "failed" else 0
+        _write_json(output_file, summary)
+        print(
+            json.dumps(
+                {
+                    "status": summary["status"],
+                    "training_readiness_status": summary["training_readiness_status"],
+                    "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+                    "recommended_next_action": summary["recommended_next_action"],
+                    "failure_reason_code_counts": summary["failure_reason_code_counts"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1 if summary["status"] == "failed" else 0
 
     if args.guarded_experimental_policy_staged_release_canary_preflight_summary:
         summary = _analyze_guarded_experimental_policy_staged_release_canary_preflight_stage_only(
@@ -2750,6 +2828,227 @@ def _analyze_guarded_experimental_policy_staged_release_canary_preflight_stage_o
         "recommended_next_action": recommended_next_action,
         "guarded_experimental_policy_staged_release_canary_preflight_readiness": readiness,
         "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _analyze_guarded_formal_ppo_training_authorization_stage_only(
+    *,
+    batch_root: Path,
+    authorization_path: Path,
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    source_summaries: dict[str, Any] = {}
+    authorization_summary = _load_source(
+        authorization_path,
+        label="guarded_formal_ppo_training_authorization_summary",
+        expected_schema=GUARDED_FORMAL_PPO_TRAINING_AUTHORIZATION_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+    )
+    current_git = _git_snapshot(repo_root)
+    if authorization_summary:
+        _inspect_git(
+            authorization_summary,
+            label="guarded_formal_ppo_training_authorization_summary",
+            current_git=current_git,
+            config=config,
+            reason_codes=reason_codes,
+        )
+    readiness = _guarded_formal_ppo_training_authorization_readiness(
+        authorization_summary
+    )
+    blockers = list(readiness["training_blockers"])
+    training_readiness_status = (
+        GUARDED_FORMAL_PPO_TRAINING_AUTHORIZED_ACTION
+        if not reason_codes and readiness["completed"]
+        else "needs_training_contract_refinement"
+    )
+    recommended_next_action = (
+        GUARDED_FORMAL_PPO_TRAINING_AUTHORIZED_ACTION
+        if training_readiness_status == GUARDED_FORMAL_PPO_TRAINING_AUTHORIZED_ACTION
+        else "fix_guarded_formal_ppo_training_authorization"
+    )
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "status": "failed" if reason_codes else "passed",
+        "reason_codes": reason_codes,
+        "failure_reason_code_counts": dict(Counter(reason_codes)),
+        "batch_root": _display_path(batch_root, repo_root),
+        "source_summaries": source_summaries,
+        "training_readiness_status": training_readiness_status,
+        "training_blockers": blockers,
+        "recommended_next_action": recommended_next_action,
+        "guarded_formal_ppo_training_authorization_readiness": readiness,
+        "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _guarded_formal_ppo_training_authorization_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "authorization_verdict": None,
+        "authorized_trainable_transition_count": 0,
+        "seed_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    authorized_trainable = _int_value_or_default(
+        summary.get("authorized_trainable_transition_count"),
+        0,
+    )
+    optimizer_trainable = _int_value_or_default(
+        summary.get("authorized_optimizer_train_transition_count"),
+        0,
+    )
+    unique_contexts = _int_value_or_default(
+        summary.get("unique_authorized_trainable_context_count"),
+        0,
+    )
+    seed_count = _int_value_or_default(summary.get("seed_count"), 0)
+
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_not_passed")
+    if summary.get("authorization_verdict") != "authorized_for_guarded_formal_ppo_training_run":
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_not_eligible")
+    if authorized_trainable < 684:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_training_authorization_trainable_count_below_threshold",
+        )
+    if optimizer_trainable != authorized_trainable:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_training_authorization_optimizer_count_mismatch",
+        )
+    if unique_contexts < 684:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_training_authorization_unique_context_count_below_threshold",
+        )
+    for field in (
+        "formal_preflight_summary",
+        "formal_rollout_canary_summary",
+        "formal_stability_holdout_summary",
+        "candidate_selection_summary",
+        "promotion_decision_review_summary",
+        "canary_preflight_summary",
+        "training_input_audit",
+        "budget_manifest",
+        "seed_plan",
+        "stop_condition_manifest",
+        "rollback_manifest",
+        "post_training_gate_plan",
+    ):
+        if not summary.get(field):
+            _append_reason(
+                blockers,
+                "guarded_formal_ppo_training_authorization_artifacts_missing",
+            )
+    if _int_value_or_default(summary.get("validation_trainable_count"), 0) > 0:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_split_leakage")
+    if _int_value_or_default(summary.get("test_trainable_count"), 0) > 0:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_split_leakage")
+    if _int_value_or_default(summary.get("fallback_trainable_count"), 0) > 0:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_fallback_trainable")
+    if _int_value_or_default(summary.get("source_fallback_trainable_count"), 0) > 0:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_fallback_trainable")
+    if _int_value_or_default(summary.get("teacher_fallback_trainable_count"), 0) > 0:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_fallback_trainable")
+    if _int_value_or_default(summary.get("diagnostic_trainable_count"), 0) > 0:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_diagnostic_trainable")
+    if _int_value_or_default(summary.get("non_empty_gate_reason_trainable_count"), 0) > 0:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_gate_reason_trainable")
+    for field in (
+        "missing_observation_count",
+        "missing_log_prob_count",
+        "missing_value_count",
+        "invalid_action_mask_count",
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(blockers, "guarded_formal_ppo_training_authorization_contract_invalid")
+    for field in (
+        "non_finite_reward_count",
+        "non_finite_return_count",
+        "non_finite_advantage_count",
+        "loss_non_finite_count",
+        "non_finite_gradient_count",
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(blockers, "guarded_formal_ppo_training_authorization_non_finite")
+    for field in (
+        "controlled_regression_count",
+        "controlled_safety_regression_count",
+        "controlled_contract_regression_count",
+        "controlled_path_risk_regression_count",
+        "controlled_source_selection_regression_count",
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(
+                blockers,
+                "guarded_formal_ppo_training_authorization_controlled_regression",
+            )
+    if seed_count < 5:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_seed_count_below_threshold")
+    for field, reason in (
+        ("budget_manifest_passed", "guarded_formal_ppo_training_authorization_budget_manifest_failed"),
+        ("seed_plan_passed", "guarded_formal_ppo_training_authorization_seed_plan_failed"),
+        ("stop_condition_manifest_passed", "guarded_formal_ppo_training_authorization_stop_condition_manifest_failed"),
+        ("rollback_manifest_passed", "guarded_formal_ppo_training_authorization_rollback_manifest_failed"),
+        ("post_training_gate_plan_passed", "guarded_formal_ppo_training_authorization_post_training_gate_plan_failed"),
+    ):
+        if summary.get(field) is not True:
+            _append_reason(blockers, reason)
+    if summary.get("runs_guarded_formal_ppo_training_authorization") is not True:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_not_run")
+    if summary.get("runs_new_ppo_update") is True:
+        _append_reason(blockers, "formal_ppo_update_unexpected")
+    if summary.get("runs_online_canary") is True:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_online_canary_started")
+    if summary.get("connects_real_executor") is True:
+        _append_reason(blockers, "guarded_formal_ppo_training_authorization_real_executor_connected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": None
+        if not blockers
+        else "fix_guarded_formal_ppo_training_authorization",
+        "authorization_verdict": summary.get("authorization_verdict"),
+        "authorized_trainable_transition_count": authorized_trainable,
+        "authorized_optimizer_train_transition_count": optimizer_trainable,
+        "unique_authorized_trainable_context_count": unique_contexts,
+        "seed_count": seed_count,
+        "budget_manifest_passed": summary.get("budget_manifest_passed") is True,
+        "seed_plan_passed": summary.get("seed_plan_passed") is True,
+        "stop_condition_manifest_passed": summary.get("stop_condition_manifest_passed") is True,
+        "rollback_manifest_passed": summary.get("rollback_manifest_passed") is True,
+        "post_training_gate_plan_passed": summary.get("post_training_gate_plan_passed") is True,
+        "controlled_regression_count": _int_value_or_default(
+            summary.get("controlled_regression_count"),
+            0,
+        ),
     }
 
 
