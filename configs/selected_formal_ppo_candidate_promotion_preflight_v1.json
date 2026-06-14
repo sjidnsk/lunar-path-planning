@@ -1,0 +1,59 @@
+{
+  "schema_version": "selected-formal-ppo-candidate-promotion-preflight-config/v1",
+  "description": "Run a read-only promotion preflight for the selected formal PPO experimental candidate. This validates checkpoint, metadata, hash, load/inference behavior, rollback boundaries, and multi-horizon evidence lineage without publishing or replacing any policy.",
+  "default_paths": {
+    "multihorizon_root": "outputs/path_feedback_batch_selected_formal_ppo_candidate_multihorizon_shadow_rollout_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_preflight_v1"
+  },
+  "input_files": {
+    "multihorizon_summary": "multihorizon-shadow-rollout-summary.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json",
+    "limited_ppo_summary": "limited-ppo-update-smoke-summary.json",
+    "diagnostics": "limited-ppo-update-diagnostics.json",
+    "training_curves": "limited-ppo-update-training-curves.json",
+    "progress_events": "training-progress-events.jsonl",
+    "progress_summary": "training-progress-summary.json"
+  },
+  "validation": {
+    "expected_trainable_transition_count": 684,
+    "min_inference_audit_count": 64,
+    "max_log_prob_abs_error": 0.0001,
+    "max_value_abs_error": 0.0001,
+    "min_teacher_agreement_rate": 0.95
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "selected_formal_ppo_candidate_promotion_preflight_evaluated"
+  },
+  "output_files": {
+    "summary": "selected-formal-ppo-candidate-promotion-preflight-summary.json",
+    "manifest": "promotion-candidate-manifest.json",
+    "checkpoint_hash_audit": "checkpoint-hash-audit.json",
+    "inference_audit": "checkpoint-load-inference-audit.json",
+    "rollback_audit": "rollback-audit.json",
+    "readiness_validate_only": "promotion-preflight-readiness-validate-only.json",
+    "report": "promotion-preflight-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-selected-formal-ppo-candidate-promotion-preflight.md"
+  ],
+  "non_goals": [
+    "does_not_run_new_ppo_update",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}

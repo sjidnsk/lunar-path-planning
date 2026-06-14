@@ -2650,6 +2650,48 @@ network/action space/default A*, relax distance/path-risk/source-selection
 gates, download new raw data, claim Ackermann-feasible trajectories, or promote
 IRIS/GCS/path-planner diagnostics to training release evidence.
 
+### Selected Formal PPO Candidate Promotion Preflight
+
+`Selected Formal PPO Candidate Promotion Preflight v1` follows the passed
+multi-horizon shadow rollout. The selected experimental candidate has already
+survived the longer read-only road test; this stage is the registration-desk
+inspection before any later promotion decision. It verifies that the checkpoint,
+metadata, hash, load/inference path, rollback boundary, and shadow-evidence
+lineage are coherent on the current HEAD.
+
+New artifacts:
+
+- `configs/selected_formal_ppo_candidate_promotion_preflight_v1.json`
+- `scripts/run_selected_formal_ppo_candidate_promotion_preflight.py/.sh`
+- `scripts/run_selected_formal_ppo_candidate_promotion_preflight_closure.sh`
+- `tests/test_selected_formal_ppo_candidate_promotion_preflight.py`
+- `docs/superpowers/specs/2026-06-14-selected-formal-ppo-candidate-promotion-preflight.md`
+- `outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_preflight_v1/`
+
+The preflight reads the selected candidate root from
+`multihorizon-shadow-rollout-summary.json`, audits
+`experimental-hybrid-policy-candidate.pt` and its metadata, records a checkpoint
+SHA-256 and size, samples at least 64 multi-horizon shadow observations, reloads
+the policy network, and reconstructs finite logits, log-probabilities, and
+values. It writes a current-HEAD promotion manifest, checkpoint hash audit,
+load/inference audit, rollback audit, readiness validate-only result, and
+markdown report. Readiness accepts
+`--selected-formal-ppo-candidate-promotion-preflight-summary` and advances to
+`selected_formal_ppo_candidate_promotion_preflight_evaluated` only for a passed
+summary with no blockers.
+
+Clean-HEAD freeze note: the promotion preflight is frozen only after the stage
+code, tests, and docs are committed, the closure is rerun from that clean HEAD,
+and readiness is refreshed against the regenerated summary. The frozen evidence
+covers checkpoint load, inference, rollback, and readiness audits, but it is
+still not a checkpoint release or formal-training-ready claim.
+
+This is still not a release or formal-training-ready claim. It does not publish
+a checkpoint, replace the default policy, run another PPO update, change
+network/action space/default A*, relax distance/path-risk/source-selection
+gates, download new raw data, claim Ackermann-feasible trajectories, or promote
+IRIS/GCS/path-planner diagnostics to training release evidence.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the

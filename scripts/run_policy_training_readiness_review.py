@@ -183,6 +183,12 @@ SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_EVALUATED_ACTION = (
 SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_SCHEMA_VERSION = (
     "selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary/v1"
 )
+SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_EVALUATED_ACTION = (
+    "selected_formal_ppo_candidate_promotion_preflight_evaluated"
+)
+SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_SCHEMA_VERSION = (
+    "selected-formal-ppo-candidate-promotion-preflight-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -414,6 +420,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary",
         help="Optional selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--selected-formal-ppo-candidate-promotion-preflight-summary",
+        help="Optional selected-formal-ppo-candidate-promotion-preflight-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -673,6 +683,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary
         else batch_root / "multihorizon-shadow-rollout-summary.json"
+    )
+    selected_formal_ppo_candidate_promotion_preflight_path = (
+        _resolve_path(
+            args.selected_formal_ppo_candidate_promotion_preflight_summary,
+            repo_root,
+        )
+        if args.selected_formal_ppo_candidate_promotion_preflight_summary
+        else batch_root / "selected-formal-ppo-candidate-promotion-preflight-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -1130,6 +1148,65 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.selected_formal_ppo_candidate_promotion_preflight_summary:
+        summary = _analyze_selected_formal_ppo_candidate_promotion_preflight_stage_only(
+            batch_root=batch_root,
+            promotion_path=selected_formal_ppo_candidate_promotion_preflight_path,
+            config=config,
+            repo_root=repo_root,
+        )
+        output_file = _output_file(batch_root, config)
+        validation_message = {
+            "status": "config validated" if summary["status"] == "passed" else "validation failed",
+            "batch_root": _display_path(batch_root, repo_root),
+            "selected_formal_ppo_candidate_promotion_preflight_summary": _display_path(
+                selected_formal_ppo_candidate_promotion_preflight_path,
+                repo_root,
+            ),
+            "config": _display_path(config_path, repo_root),
+            "reason_codes": summary["reason_codes"],
+            "training_readiness_status": summary["training_readiness_status"],
+            "training_blockers": summary["training_blockers"],
+            "recommended_next_action": summary["recommended_next_action"],
+            "selected_formal_ppo_candidate_promotion_preflight_readiness": summary[
+                "selected_formal_ppo_candidate_promotion_preflight_readiness"
+            ],
+            "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+        }
+        print(json.dumps(validation_message, ensure_ascii=False))
+        if args.validate_only or args.dry_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry-run",
+                            "would_write": {
+                                "policy_training_readiness_review_summary": _display_path(
+                                    output_file,
+                                    repo_root,
+                                ),
+                            },
+                            "recommended_next_action": summary["recommended_next_action"],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return 1 if summary["status"] == "failed" else 0
+        _write_json(output_file, summary)
+        print(
+            json.dumps(
+                {
+                    "status": summary["status"],
+                    "training_readiness_status": summary["training_readiness_status"],
+                    "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+                    "recommended_next_action": summary["recommended_next_action"],
+                    "failure_reason_code_counts": summary["failure_reason_code_counts"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1 if summary["status"] == "failed" else 0
 
     if args.selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary:
         summary = _analyze_selected_formal_ppo_candidate_multihorizon_shadow_stage_only(
@@ -1752,6 +1829,237 @@ def _analyze_selected_formal_ppo_candidate_multihorizon_shadow_stage_only(
         "recommended_next_action": recommended_next_action,
         "selected_formal_ppo_candidate_multihorizon_shadow_rollout_readiness": readiness,
         "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _analyze_selected_formal_ppo_candidate_promotion_preflight_stage_only(
+    *,
+    batch_root: Path,
+    promotion_path: Path,
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    source_summaries: dict[str, Any] = {}
+    promotion_summary = _load_source(
+        promotion_path,
+        label="selected_formal_ppo_candidate_promotion_preflight_summary",
+        expected_schema=SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+    )
+    current_git = _git_snapshot(repo_root)
+    if promotion_summary:
+        _inspect_git(
+            promotion_summary,
+            label="selected_formal_ppo_candidate_promotion_preflight_summary",
+            current_git=current_git,
+            config=config,
+            reason_codes=reason_codes,
+        )
+    readiness = _selected_formal_ppo_candidate_promotion_preflight_readiness(
+        promotion_summary
+    )
+    blockers = list(readiness["training_blockers"])
+    training_readiness_status = (
+        SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_EVALUATED_ACTION
+        if not reason_codes and readiness["completed"]
+        else "needs_training_contract_refinement"
+    )
+    recommended_next_action = (
+        SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_EVALUATED_ACTION
+        if training_readiness_status
+        == SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_EVALUATED_ACTION
+        else "fix_selected_formal_ppo_candidate_promotion_preflight"
+    )
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "status": "failed" if reason_codes else "passed",
+        "reason_codes": reason_codes,
+        "failure_reason_code_counts": dict(Counter(reason_codes)),
+        "batch_root": _display_path(batch_root, repo_root),
+        "source_summaries": source_summaries,
+        "training_readiness_status": training_readiness_status,
+        "training_blockers": blockers,
+        "recommended_next_action": recommended_next_action,
+        "selected_formal_ppo_candidate_promotion_preflight_readiness": readiness,
+        "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _selected_formal_ppo_candidate_promotion_preflight_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "trainable_transition_count": 0,
+        "shadow_trainable_transition_count": 0,
+        "unique_trainable_context_count": 0,
+        "inference_audit_count": 0,
+        "checkpoint_load_passed": False,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_not_passed",
+        )
+
+    trainable_transition_count = _int_value_or_default(
+        summary.get("input_trainable_transition_count"), 0
+    )
+    shadow_trainable_transition_count = _int_value_or_default(
+        summary.get("shadow_trainable_transition_count"), 0
+    )
+    unique_trainable_context_count = _int_value_or_default(
+        summary.get("unique_trainable_context_count"), 0
+    )
+    inference_audit_count = _int_value_or_default(summary.get("inference_audit_count"), 0)
+    horizons = [
+        _int_value_or_default(value, 0)
+        for value in summary.get("horizons", [])
+        if _int_value_or_default(value, 0) > 0
+    ]
+
+    if trainable_transition_count != 684:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_trainable_count_mismatch",
+        )
+    if shadow_trainable_transition_count != 2052:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_shadow_count_mismatch",
+        )
+    if unique_trainable_context_count != 684:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_unique_context_count_mismatch",
+        )
+    if horizons != [10, 20, 30]:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_horizons_invalid",
+        )
+    if summary.get("selected_candidate_from_multihorizon_shadow") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_candidate_missing",
+        )
+    if summary.get("selected_seed") != 0 or summary.get("selected_budget") != "epochs1_lr3e-6":
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_candidate_mismatch",
+        )
+    if not summary.get("checkpoint_path") or not summary.get("checkpoint_metadata_path"):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_checkpoint_artifacts_missing",
+        )
+    if not isinstance(summary.get("checkpoint_sha256"), str) or len(summary.get("checkpoint_sha256")) != 64:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_checkpoint_hash_missing",
+        )
+    if _int_value_or_default(summary.get("checkpoint_size_bytes"), 0) <= 0:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_checkpoint_hash_missing",
+        )
+    if summary.get("checkpoint_load_passed") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_checkpoint_load_failed",
+        )
+    if inference_audit_count < 64:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_inference_audit_count_below_threshold",
+        )
+    for field, reason in (
+        ("invalid_action_mask_count", "selected_formal_ppo_candidate_promotion_preflight_invalid_action_mask"),
+        ("missing_observation_count", "selected_formal_ppo_candidate_promotion_preflight_missing_observation"),
+        ("non_finite_logits_count", "selected_formal_ppo_candidate_promotion_preflight_non_finite_inference"),
+        ("non_finite_log_prob_count", "selected_formal_ppo_candidate_promotion_preflight_non_finite_inference"),
+        ("non_finite_value_count", "selected_formal_ppo_candidate_promotion_preflight_non_finite_inference"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if summary.get("reconstruction_difference_explained") is False:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_reconstruction_difference_unexplained",
+        )
+    for field, reason in (
+        ("controlled_regression_count", "selected_formal_ppo_candidate_promotion_preflight_controlled_regression"),
+        ("family_regression_count", "selected_formal_ppo_candidate_promotion_preflight_family_regression"),
+        ("controlled_safety_regression_count", "selected_formal_ppo_candidate_promotion_preflight_controlled_regression"),
+        ("controlled_contract_regression_count", "selected_formal_ppo_candidate_promotion_preflight_controlled_regression"),
+        ("controlled_path_risk_regression_count", "selected_formal_ppo_candidate_promotion_preflight_controlled_regression"),
+        ("controlled_source_selection_regression_count", "selected_formal_ppo_candidate_promotion_preflight_controlled_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0) < 0.95:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_teacher_alignment_insufficient",
+        )
+    if summary.get("rollback_audit_passed") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_rollback_audit_failed",
+        )
+    for field, reason in (
+        ("promotion_manifest", "selected_formal_ppo_candidate_promotion_preflight_artifacts_missing"),
+        ("checkpoint_hash_audit", "selected_formal_ppo_candidate_promotion_preflight_artifacts_missing"),
+        ("inference_audit", "selected_formal_ppo_candidate_promotion_preflight_artifacts_missing"),
+        ("rollback_audit", "selected_formal_ppo_candidate_promotion_preflight_artifacts_missing"),
+    ):
+        if not summary.get(field):
+            _append_reason(blockers, reason)
+    if summary.get("runs_promotion_preflight") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_preflight_not_run",
+        )
+    if summary.get("runs_new_ppo_update") is True:
+        _append_reason(blockers, "formal_ppo_update_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": None
+        if not blockers
+        else "fix_selected_formal_ppo_candidate_promotion_preflight",
+        "trainable_transition_count": trainable_transition_count,
+        "shadow_trainable_transition_count": shadow_trainable_transition_count,
+        "unique_trainable_context_count": unique_trainable_context_count,
+        "horizons": horizons,
+        "inference_audit_count": inference_audit_count,
+        "checkpoint_load_passed": summary.get("checkpoint_load_passed") is True,
+        "checkpoint_sha256": summary.get("checkpoint_sha256"),
+        "checkpoint_size_bytes": _int_value_or_default(summary.get("checkpoint_size_bytes"), 0),
+        "rollback_audit_passed": summary.get("rollback_audit_passed") is True,
     }
 
 

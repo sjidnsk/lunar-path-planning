@@ -2358,6 +2358,76 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_selected_formal_ppo_candidate_promotion_preflight_advances_readiness(self) -> None:
+        preflight_path = (
+            self.batch_root / "selected-formal-ppo-candidate-promotion-preflight-summary.json"
+        )
+        preflight_path.write_text(
+            json.dumps(
+                self._selected_formal_ppo_candidate_promotion_preflight_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--selected-formal-ppo-candidate-promotion-preflight-summary",
+            str(preflight_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "selected_formal_ppo_candidate_promotion_preflight_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["selected_formal_ppo_candidate_promotion_preflight_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_selected_formal_ppo_candidate_promotion_preflight_regression_blocks_readiness(self) -> None:
+        preflight_path = (
+            self.batch_root / "selected-formal-ppo-candidate-promotion-preflight-summary.json"
+        )
+        payload = self._selected_formal_ppo_candidate_promotion_preflight_summary()
+        payload["checkpoint_load_passed"] = False
+        payload["non_finite_value_count"] = 1
+        preflight_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--selected-formal-ppo-candidate-promotion-preflight-summary",
+            str(preflight_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "selected_formal_ppo_candidate_promotion_preflight_checkpoint_load_failed",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "selected_formal_ppo_candidate_promotion_preflight_non_finite_inference",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -2515,6 +2585,51 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "rejection_report": "multihorizon-rejection-report.json",
             "family_report": "multihorizon-family-report.json",
             "runs_multihorizon_shadow_rollout": True,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _selected_formal_ppo_candidate_promotion_preflight_summary(self) -> dict:
+        return {
+            "schema_version": "selected-formal-ppo-candidate-promotion-preflight-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "selected_seed": 0,
+            "selected_budget": "epochs1_lr3e-6",
+            "selected_candidate_root": "outputs/selected-candidate",
+            "selected_candidate_from_multihorizon_shadow": True,
+            "input_trainable_transition_count": 684,
+            "shadow_trainable_transition_count": 2052,
+            "unique_trainable_context_count": 684,
+            "horizons": [10, 20, 30],
+            "checkpoint_path": "outputs/selected-candidate/experimental-hybrid-policy-candidate.pt",
+            "checkpoint_metadata_path": (
+                "outputs/selected-candidate/experimental-hybrid-policy-candidate-metadata.json"
+            ),
+            "checkpoint_sha256": "a" * 64,
+            "checkpoint_size_bytes": 123,
+            "checkpoint_load_passed": True,
+            "inference_audit_count": 64,
+            "invalid_action_mask_count": 0,
+            "missing_observation_count": 0,
+            "non_finite_logits_count": 0,
+            "non_finite_log_prob_count": 0,
+            "non_finite_value_count": 0,
+            "log_prob_reconstruction_max_abs_error": 0.0,
+            "value_reconstruction_max_abs_error": 0.0,
+            "controlled_regression_count": 0,
+            "family_regression_count": 0,
+            "teacher_agreement_rate": 1.0,
+            "rollback_audit": "rollback-audit.json",
+            "rollback_audit_passed": True,
+            "promotion_manifest": "promotion-candidate-manifest.json",
+            "checkpoint_hash_audit": "checkpoint-hash-audit.json",
+            "inference_audit": "checkpoint-load-inference-audit.json",
+            "runs_promotion_preflight": True,
             "runs_new_ppo_update": False,
             "publishes_checkpoint": False,
             "replaces_default_policy": False,
