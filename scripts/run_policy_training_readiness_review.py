@@ -243,6 +243,12 @@ GUARDED_FORMAL_PPO_TRAINING_RUN_EVALUATED_ACTION = (
 GUARDED_FORMAL_PPO_TRAINING_RUN_SCHEMA_VERSION = (
     "guarded-formal-ppo-training-run-summary/v1"
 )
+GUARDED_FORMAL_PPO_POST_TRAINING_STABILITY_REPLAY_EVALUATED_ACTION = (
+    "guarded_formal_ppo_post_training_stability_replay_evaluated"
+)
+GUARDED_FORMAL_PPO_POST_TRAINING_STABILITY_REPLAY_SCHEMA_VERSION = (
+    "guarded-formal-ppo-post-training-stability-replay-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -514,6 +520,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--guarded-formal-ppo-training-run-summary",
         help="Optional guarded-formal-ppo-training-run-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--guarded-formal-ppo-post-training-stability-replay-summary",
+        help="Optional guarded-formal-ppo-post-training-stability-replay-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -859,6 +869,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.guarded_formal_ppo_training_run_summary
         else batch_root / "formal-ppo-training-run-summary.json"
+    )
+    guarded_formal_ppo_post_training_stability_replay_path = (
+        _resolve_path(
+            args.guarded_formal_ppo_post_training_stability_replay_summary,
+            repo_root,
+        )
+        if args.guarded_formal_ppo_post_training_stability_replay_summary
+        else batch_root / "formal-ppo-post-training-stability-replay-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -1328,6 +1346,52 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.guarded_formal_ppo_post_training_stability_replay_summary:
+        summary = _analyze_guarded_formal_ppo_post_training_stability_replay_stage_only(
+            batch_root=batch_root,
+            replay_path=guarded_formal_ppo_post_training_stability_replay_path,
+            config=config,
+            repo_root=repo_root,
+        )
+        output_file = _output_file(batch_root, config)
+        validation_message = {
+            "status": "config validated" if summary["status"] == "passed" else "validation failed",
+            "batch_root": _display_path(batch_root, repo_root),
+            "guarded_formal_ppo_post_training_stability_replay_summary": _display_path(
+                guarded_formal_ppo_post_training_stability_replay_path,
+                repo_root,
+            ),
+            "config": _display_path(config_path, repo_root),
+            "reason_codes": summary["reason_codes"],
+            "training_readiness_status": summary["training_readiness_status"],
+            "training_blockers": summary["training_blockers"],
+            "recommended_next_action": summary["recommended_next_action"],
+            "guarded_formal_ppo_post_training_stability_replay_readiness": summary[
+                "guarded_formal_ppo_post_training_stability_replay_readiness"
+            ],
+            "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+        }
+        print(json.dumps(validation_message, ensure_ascii=False))
+        if args.validate_only or args.dry_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry-run",
+                            "would_write": {
+                                "policy_training_readiness_review_summary": _display_path(
+                                    output_file,
+                                    repo_root,
+                                ),
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return 0 if summary["status"] == "passed" else 1
+        _write_json(output_file, summary)
+        return 0 if summary["status"] == "passed" else 1
 
     if args.guarded_formal_ppo_training_run_summary:
         summary = _analyze_guarded_formal_ppo_training_run_stage_only(
@@ -3003,6 +3067,198 @@ def _analyze_guarded_formal_ppo_training_run_stage_only(
         "recommended_next_action": recommended_next_action,
         "guarded_formal_ppo_training_run_readiness": readiness,
         "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _analyze_guarded_formal_ppo_post_training_stability_replay_stage_only(
+    *,
+    batch_root: Path,
+    replay_path: Path,
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    source_summaries: dict[str, Any] = {}
+    replay_summary = _load_source(
+        replay_path,
+        label="guarded_formal_ppo_post_training_stability_replay_summary",
+        expected_schema=GUARDED_FORMAL_PPO_POST_TRAINING_STABILITY_REPLAY_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+    )
+    current_git = _git_snapshot(repo_root)
+    if replay_summary:
+        _inspect_git(
+            replay_summary,
+            label="guarded_formal_ppo_post_training_stability_replay_summary",
+            current_git=current_git,
+            config=config,
+            reason_codes=reason_codes,
+        )
+    readiness = _guarded_formal_ppo_post_training_stability_replay_readiness(replay_summary)
+    blockers = list(readiness["training_blockers"])
+    training_readiness_status = (
+        GUARDED_FORMAL_PPO_POST_TRAINING_STABILITY_REPLAY_EVALUATED_ACTION
+        if not reason_codes and readiness["completed"]
+        else "needs_training_contract_refinement"
+    )
+    recommended_next_action = (
+        GUARDED_FORMAL_PPO_POST_TRAINING_STABILITY_REPLAY_EVALUATED_ACTION
+        if training_readiness_status
+        == GUARDED_FORMAL_PPO_POST_TRAINING_STABILITY_REPLAY_EVALUATED_ACTION
+        else "fix_guarded_formal_ppo_post_training_stability_replay"
+    )
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "status": "failed" if reason_codes else "passed",
+        "reason_codes": reason_codes,
+        "failure_reason_code_counts": dict(Counter(reason_codes)),
+        "batch_root": _display_path(batch_root, repo_root),
+        "source_summaries": source_summaries,
+        "training_readiness_status": training_readiness_status,
+        "training_blockers": blockers,
+        "recommended_next_action": recommended_next_action,
+        "guarded_formal_ppo_post_training_stability_replay_readiness": readiness,
+        "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _guarded_formal_ppo_post_training_stability_replay_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "total_replay_count": 0,
+        "passed_replay_count": 0,
+        "seed_count": 0,
+        "controlled_regression_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    seed_count = _int_value_or_default(summary.get("seed_count"), 0)
+    replay_count_per_seed = _int_value_or_default(summary.get("replay_count_per_seed"), 0)
+    total_replay_count = _int_value_or_default(summary.get("total_replay_count"), 0)
+    passed_replay_count = _int_value_or_default(summary.get("passed_replay_count"), 0)
+    optimizer_trainable = _int_value_or_default(summary.get("optimizer_train_transition_count"), 0)
+    replay_trainable = _int_value_or_default(
+        summary.get("replay_collector_trainable_transition_count"),
+        0,
+    )
+    controlled_regression_count = _int_value_or_default(
+        summary.get("controlled_regression_count"),
+        0,
+    )
+
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_post_training_stability_replay_not_passed",
+        )
+    if summary.get("input_formal_training_run_status") != "passed":
+        _append_reason(blockers, "guarded_formal_ppo_post_training_source_not_passed")
+    if (
+        summary.get("input_formal_training_run_readiness_status")
+        != GUARDED_FORMAL_PPO_TRAINING_RUN_EVALUATED_ACTION
+    ):
+        _append_reason(blockers, "guarded_formal_ppo_post_training_source_readiness_invalid")
+    if summary.get("runs_guarded_formal_ppo_post_training_stability_replay") is not True:
+        _append_reason(blockers, "guarded_formal_ppo_post_training_stability_replay_not_run")
+    if summary.get("runs_new_ppo_update") is True:
+        _append_reason(blockers, "formal_ppo_update_unexpected")
+    if seed_count < 5 or replay_count_per_seed < 3 or total_replay_count < 15:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_post_training_stability_replay_count_below_threshold",
+        )
+    if passed_replay_count != total_replay_count:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_post_training_stability_replay_not_all_passed",
+        )
+    if _int_value_or_default(summary.get("missing_seed_candidate_checkpoint_count"), 0):
+        _append_reason(blockers, "missing_seed_candidate_checkpoint")
+    if _int_value_or_default(summary.get("replay_behavior_drift_count"), 0):
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_post_training_stability_replay_behavior_drift",
+        )
+    if optimizer_trainable < 684:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_post_training_stability_replay_trainable_count_below_threshold",
+        )
+    if replay_trainable < 684:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_post_training_stability_replay_trainable_count_below_threshold",
+        )
+
+    for field, reason in (
+        ("validation_trainable_count", "guarded_formal_ppo_post_training_stability_replay_split_leakage"),
+        ("test_trainable_count", "guarded_formal_ppo_post_training_stability_replay_split_leakage"),
+        ("fallback_trainable_count", "guarded_formal_ppo_post_training_stability_replay_fallback_trainable"),
+        ("source_fallback_trainable_count", "guarded_formal_ppo_post_training_stability_replay_fallback_trainable"),
+        ("teacher_fallback_trainable_count", "guarded_formal_ppo_post_training_stability_replay_fallback_trainable"),
+        ("diagnostic_trainable_count", "guarded_formal_ppo_post_training_stability_replay_diagnostic_trainable"),
+        ("non_empty_gate_reason_trainable_count", "guarded_formal_ppo_post_training_stability_replay_gate_reason_trainable"),
+        ("missing_observation_count", "guarded_formal_ppo_post_training_stability_replay_contract_invalid"),
+        ("missing_log_prob_count", "guarded_formal_ppo_post_training_stability_replay_contract_invalid"),
+        ("missing_value_count", "guarded_formal_ppo_post_training_stability_replay_contract_invalid"),
+        ("invalid_action_mask_count", "guarded_formal_ppo_post_training_stability_replay_contract_invalid"),
+        ("non_finite_reward_count", "ppo_reward_contract_invalid"),
+        ("non_finite_return_count", "ppo_update_loss_non_finite"),
+        ("non_finite_advantage_count", "ppo_update_loss_non_finite"),
+        ("controlled_regression_count", "guarded_formal_ppo_post_training_stability_replay_controlled_regression"),
+        ("controlled_safety_regression_count", "guarded_formal_ppo_post_training_stability_replay_controlled_regression"),
+        ("controlled_contract_regression_count", "guarded_formal_ppo_post_training_stability_replay_controlled_regression"),
+        ("controlled_path_risk_regression_count", "guarded_formal_ppo_post_training_stability_replay_controlled_regression"),
+        ("controlled_source_selection_regression_count", "guarded_formal_ppo_post_training_stability_replay_controlled_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(blockers, reason)
+    if _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0) < 0.95:
+        _append_reason(
+            blockers,
+            "guarded_formal_ppo_post_training_stability_replay_teacher_alignment_insufficient",
+        )
+    if summary.get("post_training_holdout_status") != "passed" or summary.get("post_training_canary_status") != "passed":
+        _append_reason(blockers, "guarded_formal_ppo_post_training_stability_replay_gate_failed")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": None
+        if not blockers
+        else "fix_guarded_formal_ppo_post_training_stability_replay",
+        "seed_count": seed_count,
+        "replay_count_per_seed": replay_count_per_seed,
+        "total_replay_count": total_replay_count,
+        "passed_replay_count": passed_replay_count,
+        "optimizer_train_transition_count": optimizer_trainable,
+        "replay_collector_trainable_transition_count": replay_trainable,
+        "teacher_agreement_rate": _float_value_or_default(
+            summary.get("teacher_agreement_rate"),
+            0.0,
+        ),
+        "controlled_regression_count": controlled_regression_count,
     }
 
 

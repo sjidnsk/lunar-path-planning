@@ -3131,6 +3131,84 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_guarded_formal_ppo_post_training_stability_replay_advances_readiness(self) -> None:
+        replay_path = self.batch_root / "formal-ppo-post-training-stability-replay-summary.json"
+        replay_path.write_text(
+            json.dumps(self._guarded_formal_ppo_post_training_stability_replay_summary(), indent=2),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-formal-ppo-post-training-stability-replay-summary",
+            str(replay_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "guarded_formal_ppo_post_training_stability_replay_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["guarded_formal_ppo_post_training_stability_replay_readiness"]["completed"]
+        )
+
+    def test_guarded_formal_ppo_post_training_stability_replay_blocks_on_drift(self) -> None:
+        replay_path = self.batch_root / "formal-ppo-post-training-stability-replay-summary.json"
+        payload = self._guarded_formal_ppo_post_training_stability_replay_summary()
+        payload["passed_replay_count"] = 14
+        payload["replay_behavior_drift_count"] = 1
+        payload["non_finite_reward_count"] = 1
+        payload["controlled_path_risk_regression_count"] = 1
+        payload["post_training_canary_status"] = "failed"
+        payload["publishes_checkpoint"] = True
+        replay_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-formal-ppo-post-training-stability-replay-summary",
+            str(replay_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "guarded_formal_ppo_post_training_stability_replay_not_all_passed",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_formal_ppo_post_training_stability_replay_behavior_drift",
+            summary["training_blockers"],
+        )
+        self.assertIn("ppo_reward_contract_invalid", summary["training_blockers"])
+        self.assertIn(
+            "guarded_formal_ppo_post_training_stability_replay_controlled_regression",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_formal_ppo_post_training_stability_replay_gate_failed",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "limited_ppo_update_checkpoint_publication_claimed",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -3649,6 +3727,53 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
             "readiness_status": "guarded_formal_ppo_training_run_evaluated",
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _guarded_formal_ppo_post_training_stability_replay_summary(self) -> dict:
+        return {
+            "schema_version": "guarded-formal-ppo-post-training-stability-replay-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "input_formal_training_run_status": "passed",
+            "input_formal_training_run_readiness_status": "guarded_formal_ppo_training_run_evaluated",
+            "runs_guarded_formal_ppo_post_training_stability_replay": True,
+            "runs_new_ppo_update": False,
+            "seed_count": 5,
+            "replay_count_per_seed": 3,
+            "total_replay_count": 15,
+            "passed_replay_count": 15,
+            "missing_seed_candidate_checkpoint_count": 0,
+            "replay_behavior_drift_count": 0,
+            "optimizer_train_transition_count": 684,
+            "replay_collector_trainable_transition_count": 684,
+            "validation_trainable_count": 0,
+            "test_trainable_count": 0,
+            "fallback_trainable_count": 0,
+            "source_fallback_trainable_count": 0,
+            "teacher_fallback_trainable_count": 0,
+            "diagnostic_trainable_count": 0,
+            "non_empty_gate_reason_trainable_count": 0,
+            "missing_observation_count": 0,
+            "missing_log_prob_count": 0,
+            "missing_value_count": 0,
+            "invalid_action_mask_count": 0,
+            "non_finite_reward_count": 0,
+            "non_finite_return_count": 0,
+            "non_finite_advantage_count": 0,
+            "teacher_agreement_rate": 1.0,
+            "controlled_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "post_training_holdout_status": "passed",
+            "post_training_canary_status": "passed",
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "guarded_formal_ppo_post_training_stability_replay_evaluated",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 

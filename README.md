@@ -3142,6 +3142,42 @@ network/action space/default A*, relax gates, download new raw data, claim
 Ackermann-feasible trajectory, treat IRIS/GCS/path-planner diagnostics as
 training or release evidence, or claim deployable policy performance.
 
+## Guarded Formal PPO Post-Training Stability Replay v1
+
+**Guarded Formal PPO Post-Training Stability Replay v1** replays the five
+experimental candidates produced by the formal training run. It does not run a
+new PPO update. It checks that the already-trained candidates can be replayed
+three times per seed with stable gate accounting, no behavior drift, no
+holdout/canary regression, and no controlled regression.
+
+The runner writes:
+
+- `formal-ppo-post-training-stability-replay-summary.json`
+- `formal-ppo-post-training-stability-replay-seed-summaries.jsonl`
+- `formal-ppo-post-training-stability-replay-progress.jsonl`
+- `formal-ppo-post-training-stability-replay-drift-report.jsonl`
+- `formal-ppo-post-training-stability-replay-gate-audit.json`
+- `formal-ppo-post-training-stability-replay-rollback-manifest.json`
+- `formal-ppo-post-training-stability-replay-readiness-validate-only.json`
+- `formal-ppo-post-training-stability-replay-report.md`
+
+Acceptance requires 5 seeds, at least 3 replays per seed, at least 15 total
+replays, all replays passed, zero missing seed checkpoints, zero replay behavior
+drift, 684 optimizer transitions, replay collector trainable count at least
+684, zero validation/test/fallback/diagnostic trainable leakage, zero missing
+observation/log-prob/value counters, finite reward/return/advantage values,
+teacher agreement at least `0.95`, zero controlled safety/contract/path-risk/
+source-selection regression, and passed holdout/canary replay gates. Readiness
+accepts `--guarded-formal-ppo-post-training-stability-replay-summary` and
+advances to `guarded_formal_ppo_post_training_stability_replay_evaluated`.
+
+This stage is replay validation, not release. It does not run another PPO
+update, start an online canary, connect a real executor, publish or replace a
+checkpoint, replace the default policy, modify network/action space/default A*,
+relax gates, download new data, claim Ackermann-feasible trajectory, treat
+IRIS/GCS/path-planner diagnostics as release evidence, or claim deployable
+policy performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

@@ -1,0 +1,61 @@
+{
+  "schema_version": "guarded-formal-ppo-post-training-stability-replay-config/v1",
+  "description": "Replay the five experimental candidates produced by Guarded Formal PPO Training Run v1 without running another PPO update.",
+  "default_paths": {
+    "training_run_root": "outputs/path_feedback_batch_guarded_formal_ppo_training_run_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_guarded_formal_ppo_post_training_stability_replay_v1"
+  },
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "replay": {
+    "replay_count_per_seed": 3
+  },
+  "validation": {
+    "expected_seed_count": 5,
+    "expected_optimizer_train_transition_count": 684,
+    "min_replay_collector_trainable_transition_count": 684,
+    "min_teacher_agreement_rate": 0.95
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "guarded_formal_ppo_post_training_stability_replay_evaluated"
+  },
+  "output_files": {
+    "summary": "formal-ppo-post-training-stability-replay-summary.json",
+    "seed_summaries": "formal-ppo-post-training-stability-replay-seed-summaries.jsonl",
+    "progress": "formal-ppo-post-training-stability-replay-progress.jsonl",
+    "drift_report": "formal-ppo-post-training-stability-replay-drift-report.jsonl",
+    "gate_audit": "formal-ppo-post-training-stability-replay-gate-audit.json",
+    "rollback_manifest": "formal-ppo-post-training-stability-replay-rollback-manifest.json",
+    "readiness_validate_only": "formal-ppo-post-training-stability-replay-readiness-validate-only.json",
+    "report": "formal-ppo-post-training-stability-replay-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-guarded-formal-ppo-post-training-stability-replay.md"
+  ],
+  "non_goals": [
+    "does_not_run_new_ppo_update",
+    "does_not_launch_online_canary",
+    "does_not_connect_real_executor",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready",
+    "does_not_claim_releasable_policy"
+  ]
+}
