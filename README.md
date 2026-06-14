@@ -2581,6 +2581,42 @@ Ackermann-feasible trajectories, promote IRIS/GCS/path-planner diagnostics to
 training release evidence, claim policy performance, or claim formal training
 ready.
 
+### Formal PPO Candidate Selection & Long-Horizon Holdout
+
+`Formal PPO Candidate Selection & Long-Horizon Holdout v1` follows the passed
+stability matrix. The stability stage put 30 seed/budget candidates on the
+inspection line; this stage picks one auditable experimental candidate by a
+deterministic multi-gate rule, then sends it through a longer horizon-10 holdout
+audit. It does not run a new PPO update.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_v1.json`
+- `scripts/run_quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout.py/.sh`
+- `scripts/run_quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_closure.sh`
+- `tests/test_quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout.py`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-formal-ppo-candidate-selection-long-horizon-holdout.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_v1/`
+
+The current closure passes with `status=passed`, `reason_codes=[]`, selected
+candidate seed `0` and budget `epochs1_lr3e-6`, `eligible_candidate_count=30`,
+`horizon=10`, 684 long-horizon steps, 68 complete horizon-10 episodes, 4 tail
+steps, controlled regression 0, family regression 0, and
+`teacher_agreement_rate=1.0`. Readiness now accepts
+`--quasi-real-guarded-formal-ppo-candidate-selection-long-horizon-holdout-summary`
+and advances to
+`quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_evaluated`
+only for a passed summary with no blockers.
+
+This is candidate selection and long-horizon diagnostic holdout, not a release
+or formal-training-ready claim. It writes a selection audit, holdout steps and
+episodes, return audit, split/family reports, selected-candidate manifest,
+rollback manifest, validate-only readiness result, and markdown report. It does
+not publish a checkpoint, replace the default policy, run another PPO update,
+change network/action space/default A*, relax distance/path-risk/source-selection
+gates, download new raw data, claim Ackermann-feasible trajectories, or promote
+IRIS/GCS/path-planner diagnostics to training release evidence.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the
