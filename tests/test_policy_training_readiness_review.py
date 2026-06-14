@@ -2577,6 +2577,84 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_guarded_experimental_policy_install_canary_dry_run_advances_readiness(self) -> None:
+        canary_path = (
+            self.batch_root
+            / "guarded-experimental-policy-install-canary-dry-run-summary.json"
+        )
+        canary_path.write_text(
+            json.dumps(
+                self._guarded_experimental_policy_install_canary_dry_run_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-install-canary-dry-run-summary",
+            str(canary_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "guarded_experimental_policy_install_canary_dry_run_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["guarded_experimental_policy_install_canary_dry_run_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_guarded_experimental_policy_install_canary_dry_run_regression_blocks_readiness(self) -> None:
+        canary_path = (
+            self.batch_root
+            / "guarded-experimental-policy-install-canary-dry-run-summary.json"
+        )
+        payload = self._guarded_experimental_policy_install_canary_dry_run_summary()
+        payload["install_canary_verdict"] = "blocked_by_guarded_canary"
+        payload["controlled_regression_count"] = 1
+        payload["controlled_path_risk_regression_count"] = 1
+        payload["rollback_default_audit_passed"] = False
+        canary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-install-canary-dry-run-summary",
+            str(canary_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "guarded_experimental_policy_install_canary_dry_run_not_eligible",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_install_canary_dry_run_controlled_regression",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_install_canary_dry_run_rollback_default_failed",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -2713,6 +2791,49 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
             "readiness_status": "guarded_experimental_policy_release_candidate_packaging_evaluated",
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _guarded_experimental_policy_install_canary_dry_run_summary(self) -> dict:
+        return {
+            "schema_version": "guarded-experimental-policy-install-canary-dry-run-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "install_canary_verdict": "eligible_for_guarded_shadow_release_trial",
+            "packaging_summary": (
+                "outputs/path_feedback_batch_guarded_experimental_policy_release_candidate_packaging_v1/"
+                "guarded-experimental-policy-release-candidate-packaging-summary.json"
+            ),
+            "sandbox_manifest": "install-canary-sandbox-manifest.json",
+            "package_consumer_audit": "install-canary-package-consumer-audit.json",
+            "step_audit": "install-canary-step-audit.jsonl",
+            "rollback_audit": "install-canary-rollback-audit.json",
+            "package_checkpoint_sha256": "a" * 64,
+            "consumer_checkpoint_sha256": "a" * 64,
+            "package_checkpoint_size_bytes": 123,
+            "consumer_checkpoint_size_bytes": 123,
+            "sandbox_manifest_passed": True,
+            "canary_step_count": 64,
+            "missing_observation_count": 0,
+            "invalid_action_mask_count": 0,
+            "non_finite_logits_count": 0,
+            "non_finite_log_prob_count": 0,
+            "non_finite_value_count": 0,
+            "non_finite_reward_count": 0,
+            "controlled_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "rollback_default_audit_passed": True,
+            "default_policy_unchanged": True,
+            "runs_install_canary_dry_run": True,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "guarded_experimental_policy_install_canary_dry_run_evaluated",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 

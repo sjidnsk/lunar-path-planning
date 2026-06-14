@@ -2769,6 +2769,47 @@ space/default A*, relax distance/path-risk/source-selection gates, download new
 raw data, claim Ackermann-feasible trajectories, promote IRIS/GCS/path-planner
 diagnostics to training release evidence, or claim formal training readiness.
 
+### Guarded Experimental Policy Install Canary Dry-Run
+
+`Guarded Experimental Policy Install Canary Dry-Run v1` follows the passed
+release-candidate package. If packaging is the sealed evidence bag, this stage
+is a sandboxed test bench: it points an isolated consumer manifest at the
+packaged experimental checkpoint, reloads the model through that sandbox path,
+and runs a guarded 64-step canary replay without touching the default policy.
+
+New artifacts:
+
+- `configs/guarded_experimental_policy_install_canary_dry_run_v1.json`
+- `scripts/run_guarded_experimental_policy_install_canary_dry_run.py/.sh`
+- `scripts/run_guarded_experimental_policy_install_canary_dry_run_closure.sh`
+- `tests/test_guarded_experimental_policy_install_canary_dry_run.py`
+- `docs/superpowers/specs/2026-06-14-guarded-experimental-policy-install-canary-dry-run.md`
+- `outputs/path_feedback_batch_guarded_experimental_policy_install_canary_dry_run_v1/`
+
+The dry-run reads
+`guarded-experimental-policy-release-candidate-packaging-summary.json`, checks
+the package manifest and checkpoint SHA-256/size, writes an isolated sandbox
+manifest, snapshots the default policy boundary, and replays at least 64
+multi-horizon holdout steps. The step audit records raw policy action,
+controlled action, gate reasons, path/risk deltas, finite log-probability/value
+and reward checks, and controlled regression counters. Readiness accepts
+`--guarded-experimental-policy-install-canary-dry-run-summary` and advances to
+`guarded_experimental_policy_install_canary_dry_run_evaluated`.
+
+Current closure result: `status=passed`, `reason_codes=[]`,
+`install_canary_verdict=eligible_for_guarded_shadow_release_trial`,
+`canary_step_count=64`, `controlled_regression_count=0`, package and consumer
+checkpoint SHA-256 both equal
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`, and the
+rollback/default-policy audit passed.
+
+This is still only an install canary dry-run. It does not run another PPO
+update, publish a checkpoint, replace the default policy, change network/action
+space/default A*, relax distance/path-risk/source-selection gates, download new
+raw data, claim Ackermann-feasible trajectories, promote IRIS/GCS/path-planner
+diagnostics to training release evidence, or claim formal training readiness.
+The next stage is a guarded shadow release trial.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the

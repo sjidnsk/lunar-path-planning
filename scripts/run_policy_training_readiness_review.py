@@ -201,6 +201,12 @@ GUARDED_EXPERIMENTAL_POLICY_RELEASE_CANDIDATE_PACKAGING_EVALUATED_ACTION = (
 GUARDED_EXPERIMENTAL_POLICY_RELEASE_CANDIDATE_PACKAGING_SCHEMA_VERSION = (
     "guarded-experimental-policy-release-candidate-packaging-summary/v1"
 )
+GUARDED_EXPERIMENTAL_POLICY_INSTALL_CANARY_DRY_RUN_EVALUATED_ACTION = (
+    "guarded_experimental_policy_install_canary_dry_run_evaluated"
+)
+GUARDED_EXPERIMENTAL_POLICY_INSTALL_CANARY_DRY_RUN_SCHEMA_VERSION = (
+    "guarded-experimental-policy-install-canary-dry-run-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -444,6 +450,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--guarded-experimental-policy-release-candidate-packaging-summary",
         help="Optional guarded-experimental-policy-release-candidate-packaging-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--guarded-experimental-policy-install-canary-dry-run-summary",
+        help="Optional guarded-experimental-policy-install-canary-dry-run-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -729,6 +739,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.guarded_experimental_policy_release_candidate_packaging_summary
         else batch_root
         / "guarded-experimental-policy-release-candidate-packaging-summary.json"
+    )
+    guarded_experimental_policy_install_canary_dry_run_path = (
+        _resolve_path(
+            args.guarded_experimental_policy_install_canary_dry_run_summary,
+            repo_root,
+        )
+        if args.guarded_experimental_policy_install_canary_dry_run_summary
+        else batch_root
+        / "guarded-experimental-policy-install-canary-dry-run-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -1193,6 +1212,65 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.guarded_experimental_policy_install_canary_dry_run_summary:
+        summary = _analyze_guarded_experimental_policy_install_canary_dry_run_stage_only(
+            batch_root=batch_root,
+            install_canary_path=guarded_experimental_policy_install_canary_dry_run_path,
+            config=config,
+            repo_root=repo_root,
+        )
+        output_file = _output_file(batch_root, config)
+        validation_message = {
+            "status": "config validated" if summary["status"] == "passed" else "validation failed",
+            "batch_root": _display_path(batch_root, repo_root),
+            "guarded_experimental_policy_install_canary_dry_run_summary": _display_path(
+                guarded_experimental_policy_install_canary_dry_run_path,
+                repo_root,
+            ),
+            "config": _display_path(config_path, repo_root),
+            "reason_codes": summary["reason_codes"],
+            "training_readiness_status": summary["training_readiness_status"],
+            "training_blockers": summary["training_blockers"],
+            "recommended_next_action": summary["recommended_next_action"],
+            "guarded_experimental_policy_install_canary_dry_run_readiness": summary[
+                "guarded_experimental_policy_install_canary_dry_run_readiness"
+            ],
+            "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+        }
+        print(json.dumps(validation_message, ensure_ascii=False))
+        if args.validate_only or args.dry_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry-run",
+                            "would_write": {
+                                "policy_training_readiness_review_summary": _display_path(
+                                    output_file,
+                                    repo_root,
+                                ),
+                            },
+                            "recommended_next_action": summary["recommended_next_action"],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return 1 if summary["status"] == "failed" else 0
+        _write_json(output_file, summary)
+        print(
+            json.dumps(
+                {
+                    "status": summary["status"],
+                    "training_readiness_status": summary["training_readiness_status"],
+                    "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+                    "recommended_next_action": summary["recommended_next_action"],
+                    "failure_reason_code_counts": summary["failure_reason_code_counts"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1 if summary["status"] == "failed" else 0
 
     if args.guarded_experimental_policy_release_candidate_packaging_summary:
         summary = _analyze_guarded_experimental_policy_release_candidate_packaging_stage_only(
@@ -2301,6 +2379,211 @@ def _guarded_experimental_policy_release_candidate_packaging_readiness(
         "package_checkpoint_sha256": package_checkpoint_sha256,
         "checkpoint_size_bytes": checkpoint_size,
         "package_checkpoint_size_bytes": package_checkpoint_size,
+    }
+
+def _analyze_guarded_experimental_policy_install_canary_dry_run_stage_only(
+    *,
+    batch_root: Path,
+    install_canary_path: Path,
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    source_summaries: dict[str, Any] = {}
+    install_canary_summary = _load_source(
+        install_canary_path,
+        label="guarded_experimental_policy_install_canary_dry_run_summary",
+        expected_schema=GUARDED_EXPERIMENTAL_POLICY_INSTALL_CANARY_DRY_RUN_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+    )
+    current_git = _git_snapshot(repo_root)
+    if install_canary_summary:
+        _inspect_git(
+            install_canary_summary,
+            label="guarded_experimental_policy_install_canary_dry_run_summary",
+            current_git=current_git,
+            config=config,
+            reason_codes=reason_codes,
+        )
+    readiness = _guarded_experimental_policy_install_canary_dry_run_readiness(
+        install_canary_summary
+    )
+    blockers = list(readiness["training_blockers"])
+    training_readiness_status = (
+        GUARDED_EXPERIMENTAL_POLICY_INSTALL_CANARY_DRY_RUN_EVALUATED_ACTION
+        if not reason_codes and readiness["completed"]
+        else "needs_training_contract_refinement"
+    )
+    recommended_next_action = (
+        GUARDED_EXPERIMENTAL_POLICY_INSTALL_CANARY_DRY_RUN_EVALUATED_ACTION
+        if training_readiness_status
+        == GUARDED_EXPERIMENTAL_POLICY_INSTALL_CANARY_DRY_RUN_EVALUATED_ACTION
+        else "fix_guarded_experimental_policy_install_canary_dry_run"
+    )
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "status": "failed" if reason_codes else "passed",
+        "reason_codes": reason_codes,
+        "failure_reason_code_counts": dict(Counter(reason_codes)),
+        "batch_root": _display_path(batch_root, repo_root),
+        "source_summaries": source_summaries,
+        "training_readiness_status": training_readiness_status,
+        "training_blockers": blockers,
+        "recommended_next_action": recommended_next_action,
+        "guarded_experimental_policy_install_canary_dry_run_readiness": readiness,
+        "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _guarded_experimental_policy_install_canary_dry_run_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "install_canary_verdict": None,
+        "canary_step_count": 0,
+        "controlled_regression_count": 0,
+        "rollback_default_audit_passed": False,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_not_passed",
+        )
+    if summary.get("install_canary_verdict") != "eligible_for_guarded_shadow_release_trial":
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_not_eligible",
+        )
+    if not summary.get("packaging_summary"):
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_packaging_missing",
+        )
+    for field in (
+        "sandbox_manifest",
+        "package_consumer_audit",
+        "step_audit",
+        "rollback_audit",
+    ):
+        if not summary.get(field):
+            _append_reason(
+                blockers,
+                "guarded_experimental_policy_install_canary_dry_run_artifacts_missing",
+            )
+    package_sha256 = summary.get("package_checkpoint_sha256")
+    consumer_sha256 = summary.get("consumer_checkpoint_sha256")
+    package_size = _int_value_or_default(summary.get("package_checkpoint_size_bytes"), 0)
+    consumer_size = _int_value_or_default(summary.get("consumer_checkpoint_size_bytes"), 0)
+    if (
+        not isinstance(package_sha256, str)
+        or len(package_sha256) != 64
+        or package_sha256 != consumer_sha256
+    ):
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_checkpoint_hash_mismatch",
+        )
+    if package_size <= 0 or package_size != consumer_size:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_checkpoint_size_mismatch",
+        )
+    if summary.get("package_consumer_audit_passed") is False:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_package_consumer_failed",
+        )
+    if summary.get("sandbox_manifest_passed") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_sandbox_manifest_failed",
+        )
+    if _int_value_or_default(summary.get("canary_step_count"), 0) < 64:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_step_count_below_threshold",
+        )
+    for field, reason in (
+        ("missing_observation_count", "guarded_experimental_policy_install_canary_dry_run_missing_observation"),
+        ("invalid_action_mask_count", "guarded_experimental_policy_install_canary_dry_run_invalid_action_mask"),
+        ("non_finite_logits_count", "guarded_experimental_policy_install_canary_dry_run_non_finite"),
+        ("non_finite_log_prob_count", "guarded_experimental_policy_install_canary_dry_run_non_finite"),
+        ("non_finite_value_count", "guarded_experimental_policy_install_canary_dry_run_non_finite"),
+        ("non_finite_reward_count", "guarded_experimental_policy_install_canary_dry_run_non_finite"),
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(blockers, reason)
+    for field in (
+        "controlled_regression_count",
+        "controlled_safety_regression_count",
+        "controlled_contract_regression_count",
+        "controlled_path_risk_regression_count",
+        "controlled_source_selection_regression_count",
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(
+                blockers,
+                "guarded_experimental_policy_install_canary_dry_run_controlled_regression",
+            )
+    if summary.get("rollback_default_audit_passed") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_rollback_default_failed",
+        )
+    if summary.get("default_policy_unchanged") is False:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_default_policy_changed",
+        )
+    if summary.get("runs_install_canary_dry_run") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_install_canary_dry_run_not_run",
+        )
+    if summary.get("runs_new_ppo_update") is True:
+        _append_reason(blockers, "formal_ppo_update_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": None
+        if not blockers
+        else "fix_guarded_experimental_policy_install_canary_dry_run",
+        "install_canary_verdict": summary.get("install_canary_verdict"),
+        "package_checkpoint_sha256": package_sha256,
+        "consumer_checkpoint_sha256": consumer_sha256,
+        "package_checkpoint_size_bytes": package_size,
+        "consumer_checkpoint_size_bytes": consumer_size,
+        "sandbox_manifest_passed": summary.get("sandbox_manifest_passed") is True,
+        "canary_step_count": _int_value_or_default(summary.get("canary_step_count"), 0),
+        "controlled_regression_count": _int_value_or_default(
+            summary.get("controlled_regression_count"),
+            0,
+        ),
+        "rollback_default_audit_passed": summary.get("rollback_default_audit_passed") is True,
+        "default_policy_unchanged": summary.get("default_policy_unchanged") is not False,
     }
 
 

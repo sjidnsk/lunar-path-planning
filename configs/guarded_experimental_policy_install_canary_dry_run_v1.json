@@ -1,0 +1,50 @@
+{
+  "schema_version": "guarded-experimental-policy-install-canary-dry-run-config/v1",
+  "description": "Simulate installing the packaged experimental policy in an isolated sandbox and run a guarded canary dry-run. This verifies package consumption, sandbox/default-policy rollback boundaries, and controlled-regression accounting without publishing or replacing any policy.",
+  "default_paths": {
+    "packaging_root": "outputs/path_feedback_batch_guarded_experimental_policy_release_candidate_packaging_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_guarded_experimental_policy_install_canary_dry_run_v1"
+  },
+  "input_files": {
+    "packaging_summary": "guarded-experimental-policy-release-candidate-packaging-summary.json"
+  },
+  "validation": {
+    "min_canary_step_count": 64
+  },
+  "default_policy": {
+    "path": ""
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "guarded_experimental_policy_install_canary_dry_run_evaluated"
+  },
+  "output_files": {
+    "summary": "guarded-experimental-policy-install-canary-dry-run-summary.json",
+    "sandbox_manifest": "install-canary-sandbox-manifest.json",
+    "package_consumer_audit": "install-canary-package-consumer-audit.json",
+    "step_audit": "install-canary-step-audit.jsonl",
+    "rollback_audit": "install-canary-rollback-audit.json",
+    "readiness_validate_only": "install-canary-readiness-validate-only.json",
+    "report": "install-canary-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-guarded-experimental-policy-install-canary-dry-run.md"
+  ],
+  "non_goals": [
+    "does_not_run_new_ppo_update",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}
