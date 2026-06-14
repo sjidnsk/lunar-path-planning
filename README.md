@@ -2919,6 +2919,43 @@ default-policy replacement, no performance claim, no formal training-ready
 claim, no network/action-space/default-A* change, no gate relaxation, and no
 Ackermann-feasible trajectory claim.
 
+## Guarded Experimental Policy Shadow Release Trial v1
+
+**Guarded Experimental Policy Shadow Release Trial v1** is the next stage after
+the install canary dry-run. It is a shadow-only release trial: the packaged
+experimental policy is allowed to produce side-channel decisions and gate audit
+rows, but the default policy remains the authoritative output.
+
+The runner consumes the install canary summary and the selected formal PPO
+candidate multi-horizon shadow rollout. It writes a runtime manifest, per-step
+comparison JSONL, rejection report, risk/reward audit, readiness validate-only
+result, markdown report, and
+`guarded-experimental-policy-shadow-release-trial-summary.json`.
+
+Current closure result:
+
+- summary `status=passed`, `reason_codes=[]`
+- `shadow_release_trial_verdict=eligible_for_guarded_staged_release_preflight`
+- `shadow_step_count=2052`
+- `unique_shadow_context_count=684`
+- `controlled_regression_count=0`
+- `shadow_rejection_diagnostic_count=0`
+- `shadow_fallback_diagnostic_count=0`
+- package/consumer checkpoint SHA-256 remains
+  `9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`
+- readiness accepts
+  `--guarded-experimental-policy-shadow-release-trial-summary`
+- readiness status:
+  `guarded_experimental_policy_shadow_release_trial_evaluated`
+- `training_blockers=[]`
+
+This remains a shadow release trial, not a staged release or default-policy
+replacement. It does not run a new PPO update, publish a checkpoint, replace the
+default policy, modify network/action space/default A*, relax gates, download
+new raw data, claim Ackermann-feasible trajectory, claim performance
+improvement, or claim formal training readiness. The next stage is a guarded
+staged release preflight.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

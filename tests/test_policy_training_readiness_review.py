@@ -2655,6 +2655,79 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_guarded_experimental_policy_shadow_release_trial_advances_readiness(self) -> None:
+        shadow_path = (
+            self.batch_root
+            / "guarded-experimental-policy-shadow-release-trial-summary.json"
+        )
+        shadow_path.write_text(
+            json.dumps(
+                self._guarded_experimental_policy_shadow_release_trial_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-shadow-release-trial-summary",
+            str(shadow_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "guarded_experimental_policy_shadow_release_trial_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["guarded_experimental_policy_shadow_release_trial_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_guarded_experimental_policy_shadow_release_trial_regression_blocks_readiness(self) -> None:
+        shadow_path = (
+            self.batch_root
+            / "guarded-experimental-policy-shadow-release-trial-summary.json"
+        )
+        payload = self._guarded_experimental_policy_shadow_release_trial_summary()
+        payload["shadow_release_trial_verdict"] = "blocked_by_shadow_release_trial"
+        payload["controlled_regression_count"] = 1
+        payload["controlled_path_risk_regression_count"] = 1
+        shadow_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-shadow-release-trial-summary",
+            str(shadow_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "guarded_experimental_policy_shadow_release_trial_not_eligible",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_shadow_release_trial_controlled_regression",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -2834,6 +2907,58 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
             "readiness_status": "guarded_experimental_policy_install_canary_dry_run_evaluated",
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _guarded_experimental_policy_shadow_release_trial_summary(self) -> dict:
+        return {
+            "schema_version": "guarded-experimental-policy-shadow-release-trial-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "shadow_release_trial_verdict": "eligible_for_guarded_staged_release_preflight",
+            "install_canary_summary": (
+                "outputs/path_feedback_batch_guarded_experimental_policy_install_canary_dry_run_v1/"
+                "guarded-experimental-policy-install-canary-dry-run-summary.json"
+            ),
+            "multihorizon_shadow_summary": (
+                "outputs/path_feedback_batch_selected_formal_ppo_candidate_multihorizon_shadow_rollout_v1/"
+                "multihorizon-shadow-rollout-summary.json"
+            ),
+            "runtime_manifest": "shadow-release-runtime-manifest.json",
+            "step_comparison": "shadow-release-step-comparison.jsonl",
+            "rejection_report": "shadow-release-rejection-report.json",
+            "risk_reward_audit": "shadow-release-risk-reward-audit.json",
+            "package_checkpoint_sha256": "a" * 64,
+            "consumer_checkpoint_sha256": "a" * 64,
+            "package_checkpoint_size_bytes": 123,
+            "consumer_checkpoint_size_bytes": 123,
+            "shadow_step_count": 256,
+            "unique_shadow_context_count": 256,
+            "shadow_policy_takes_control": False,
+            "shadow_rejection_diagnostic_count": 2,
+            "shadow_fallback_diagnostic_count": 2,
+            "missing_observation_count": 0,
+            "missing_log_prob_count": 0,
+            "missing_value_count": 0,
+            "invalid_action_mask_count": 0,
+            "non_finite_logits_count": 0,
+            "non_finite_log_prob_count": 0,
+            "non_finite_value_count": 0,
+            "non_finite_reward_count": 0,
+            "controlled_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "rollback_default_audit_passed": True,
+            "default_policy_unchanged": True,
+            "runs_shadow_release_trial": True,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "guarded_experimental_policy_shadow_release_trial_evaluated",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 
