@@ -165,6 +165,12 @@ QUASI_REAL_GUARDED_FORMAL_PPO_ROLLOUT_CANARY_EVALUATED_ACTION = (
 QUASI_REAL_GUARDED_FORMAL_PPO_ROLLOUT_CANARY_SCHEMA_VERSION = (
     "quasi-real-guarded-formal-ppo-rollout-canary-summary/v1"
 )
+QUASI_REAL_GUARDED_FORMAL_PPO_STABILITY_HOLDOUT_VALIDATED_ACTION = (
+    "quasi_real_guarded_formal_ppo_stability_holdout_validated"
+)
+QUASI_REAL_GUARDED_FORMAL_PPO_STABILITY_HOLDOUT_SCHEMA_VERSION = (
+    "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -384,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quasi-real-guarded-formal-ppo-rollout-canary-summary",
         help="Optional quasi-real-guarded-formal-ppo-rollout-canary-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-guarded-formal-ppo-stability-holdout-validation-summary",
+        help="Optional quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -617,6 +627,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.quasi_real_guarded_formal_ppo_rollout_canary_summary
         else batch_root / "quasi-real-guarded-formal-ppo-rollout-canary-summary.json"
+    )
+    quasi_real_guarded_formal_ppo_stability_holdout_path = (
+        _resolve_path(
+            args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary,
+            repo_root,
+        )
+        if args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary
+        else batch_root
+        / "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -951,6 +970,51 @@ def main(argv: list[str] | None = None) -> int:
             args.quasi_real_guarded_teacher_following_pilot_summary,
         )
     )
+    explicit_quasi_real_guarded_formal_stability_holdout_only_summary = bool(
+        args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary
+    ) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.iterative_ppo_mini_loop_stability_summary,
+            args.return_aligned_guarded_multistep_collector_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
+            args.guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_stability_replay_summary,
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
+            args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary,
+            args.quasi_real_guarded_formal_ppo_preflight_summary,
+            args.quasi_real_guarded_formal_ppo_rollout_canary_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
     anchor_only_defaults_available = (
         not explicit_iterative_only_summary
         and not explicit_guarded_only_summary
@@ -959,6 +1023,7 @@ def main(argv: list[str] | None = None) -> int:
         and not explicit_quasi_real_guarded_stability_only_summary
         and not explicit_quasi_real_guarded_horizon5_only_summary
         and not explicit_quasi_real_guarded_scale512_only_summary
+        and not explicit_quasi_real_guarded_formal_stability_holdout_only_summary
         and not args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary
         and not args.return_aligned_guarded_ppo_update_smoke_summary
         and not args.quasi_real_guarded_ppo_rollout_pilot_summary
@@ -968,6 +1033,7 @@ def main(argv: list[str] | None = None) -> int:
         and not args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary
         and not args.quasi_real_guarded_formal_ppo_preflight_summary
         and not args.quasi_real_guarded_formal_ppo_rollout_canary_summary
+        and not args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary
         and
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -1036,6 +1102,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
         quasi_real_guarded_formal_ppo_rollout_canary_path=(
             quasi_real_guarded_formal_ppo_rollout_canary_path
+        ),
+        quasi_real_guarded_formal_ppo_stability_holdout_path=(
+            quasi_real_guarded_formal_ppo_stability_holdout_path
         ),
         policy_training_cuda_device_support_path=policy_training_cuda_device_support_path,
         quasi_real_map_domain_gap_path=quasi_real_map_domain_gap_path,
@@ -1112,6 +1181,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
         quasi_real_guarded_formal_ppo_rollout_canary_required=bool(
             args.quasi_real_guarded_formal_ppo_rollout_canary_summary
+        ),
+        quasi_real_guarded_formal_ppo_stability_holdout_required=bool(
+            args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary
         ),
         policy_training_cuda_device_support_required=bool(
             args.policy_training_cuda_device_support_summary
@@ -1334,6 +1406,15 @@ def main(argv: list[str] | None = None) -> int:
             or args.quasi_real_guarded_formal_ppo_rollout_canary_summary
             else None
         ),
+        "quasi_real_guarded_formal_ppo_stability_holdout_validation_summary": (
+            _display_path(
+                quasi_real_guarded_formal_ppo_stability_holdout_path,
+                repo_root,
+            )
+            if quasi_real_guarded_formal_ppo_stability_holdout_path.is_file()
+            or args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary
+            else None
+        ),
         "policy_training_cuda_device_support_summary": (
             _display_path(policy_training_cuda_device_support_path, repo_root)
             if policy_training_cuda_device_support_path.is_file()
@@ -1412,6 +1493,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "quasi_real_guarded_formal_ppo_rollout_canary_readiness": summary.get(
             "quasi_real_guarded_formal_ppo_rollout_canary_readiness"
+        ),
+        "quasi_real_guarded_formal_ppo_stability_holdout_validation_readiness": summary.get(
+            "quasi_real_guarded_formal_ppo_stability_holdout_validation_readiness"
         ),
         "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
     }
@@ -1498,6 +1582,7 @@ def analyze_policy_training_readiness_review(
     quasi_real_guarded_ppo_iterative_miniloop_stability_path: Path | None = None,
     quasi_real_guarded_formal_ppo_preflight_path: Path | None = None,
     quasi_real_guarded_formal_ppo_rollout_canary_path: Path | None = None,
+    quasi_real_guarded_formal_ppo_stability_holdout_path: Path | None = None,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -1527,6 +1612,7 @@ def analyze_policy_training_readiness_review(
     quasi_real_guarded_ppo_iterative_miniloop_stability_required: bool = False,
     quasi_real_guarded_formal_ppo_preflight_required: bool = False,
     quasi_real_guarded_formal_ppo_rollout_canary_required: bool = False,
+    quasi_real_guarded_formal_ppo_stability_holdout_required: bool = False,
     policy_training_cuda_device_support_required: bool = False,
     quasi_real_map_domain_gap_required: bool = False,
     quasi_real_shadow_policy_behavior_required: bool = False,
@@ -1601,6 +1687,11 @@ def analyze_policy_training_readiness_review(
     if quasi_real_guarded_formal_ppo_rollout_canary_path is None:
         quasi_real_guarded_formal_ppo_rollout_canary_path = (
             batch_root / "quasi-real-guarded-formal-ppo-rollout-canary-summary.json"
+        )
+    if quasi_real_guarded_formal_ppo_stability_holdout_path is None:
+        quasi_real_guarded_formal_ppo_stability_holdout_path = (
+            batch_root
+            / "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary.json"
         )
     anchor_only_mode = (
         anchor_candidate_required
@@ -2006,6 +2097,7 @@ def analyze_policy_training_readiness_review(
                 quasi_real_guarded_ppo_horizon5_batch_expansion_required,
                 quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
                 quasi_real_guarded_ppo_iterative_miniloop_stability_required,
+                quasi_real_guarded_formal_ppo_stability_holdout_required,
                 policy_training_cuda_device_support_required,
                 quasi_real_map_domain_gap_required,
                 quasi_real_shadow_policy_behavior_required,
@@ -2051,6 +2143,53 @@ def analyze_policy_training_readiness_review(
                 quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
                 quasi_real_guarded_ppo_iterative_miniloop_stability_required,
                 quasi_real_guarded_formal_ppo_preflight_required,
+                quasi_real_guarded_formal_ppo_stability_holdout_required,
+                policy_training_cuda_device_support_required,
+                quasi_real_map_domain_gap_required,
+                quasi_real_shadow_policy_behavior_required,
+                quasi_real_shadow_alignment_required,
+                quasi_real_guarded_policy_pilot_required,
+                quasi_real_safe_alternative_opportunity_required,
+                quasi_real_safe_better_opportunity_expansion_required,
+                quasi_real_teacher_equivalent_validation_required,
+                quasi_real_teacher_distillation_required,
+                quasi_real_guarded_teacher_following_pilot_required,
+            )
+        )
+    )
+    quasi_real_guarded_formal_stability_holdout_only_mode = (
+        quasi_real_guarded_formal_ppo_stability_holdout_required
+        and not any(
+            (
+                anchor_candidate_required,
+                anchor_contract_required,
+                contract_aware_target_required,
+                planner_validated_mining_required,
+                hybrid_training_dry_run_required,
+                controlled_candidate_required,
+                controlled_holdout_required,
+                fresh_holdout_required,
+                scenario_rollout_required,
+                raw_strict_rollout_required,
+                raw_generalization_required,
+                policy_canary_required,
+                sequential_canary_required,
+                ppo_collector_required,
+                limited_ppo_update_smoke_required,
+                limited_quasi_real_ppo_update_smoke_required,
+                generated_sequential_gate_metric_accounting_audit_required,
+                generated_sequential_long_horizon_teacher_skill_contract_required,
+                iterative_ppo_mini_loop_required,
+                return_aligned_guarded_multistep_collector_required,
+                return_aligned_guarded_ppo_update_smoke_required,
+                guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_stability_replay_required,
+                quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+                quasi_real_guarded_ppo_iterative_miniloop_stability_required,
+                quasi_real_guarded_formal_ppo_preflight_required,
+                quasi_real_guarded_formal_ppo_rollout_canary_required,
                 policy_training_cuda_device_support_required,
                 quasi_real_map_domain_gap_required,
                 quasi_real_shadow_policy_behavior_required,
@@ -2077,6 +2216,7 @@ def analyze_policy_training_readiness_review(
         or quasi_real_guarded_iterative_miniloop_only_mode
         or quasi_real_guarded_formal_preflight_only_mode
         or quasi_real_guarded_formal_canary_only_mode
+        or quasi_real_guarded_formal_stability_holdout_only_mode
     )
     if (
         guarded_only_mode
@@ -2089,8 +2229,12 @@ def analyze_policy_training_readiness_review(
         or quasi_real_guarded_iterative_miniloop_only_mode
         or quasi_real_guarded_formal_preflight_only_mode
         or quasi_real_guarded_formal_canary_only_mode
+        or quasi_real_guarded_formal_stability_holdout_only_mode
     ):
         isolated_label = (
+            "quasi_real_guarded_formal_ppo_stability_holdout_validation_only"
+            if quasi_real_guarded_formal_stability_holdout_only_mode
+            else
             "quasi_real_guarded_formal_ppo_rollout_canary_only"
             if quasi_real_guarded_formal_canary_only_mode
             else
@@ -2237,6 +2381,11 @@ def analyze_policy_training_readiness_review(
             quasi_real_guarded_formal_ppo_rollout_canary_path = _isolated_path(
                 quasi_real_guarded_formal_ppo_rollout_canary_path,
                 "quasi_real_guarded_formal_ppo_rollout_canary_summary",
+            )
+        if not quasi_real_guarded_formal_stability_holdout_only_mode:
+            quasi_real_guarded_formal_ppo_stability_holdout_path = _isolated_path(
+                quasi_real_guarded_formal_ppo_stability_holdout_path,
+                "quasi_real_guarded_formal_ppo_stability_holdout_validation_summary",
             )
         policy_training_cuda_device_support_path = _isolated_path(
             policy_training_cuda_device_support_path,
@@ -2604,6 +2753,15 @@ def analyze_policy_training_readiness_review(
         reason_codes=reason_codes,
         source_summaries=source_summaries,
         required=quasi_real_guarded_formal_ppo_rollout_canary_required,
+    )
+    quasi_real_guarded_formal_ppo_stability_holdout = _load_optional_source(
+        quasi_real_guarded_formal_ppo_stability_holdout_path,
+        label="quasi_real_guarded_formal_ppo_stability_holdout_validation_summary",
+        expected_schema=QUASI_REAL_GUARDED_FORMAL_PPO_STABILITY_HOLDOUT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_guarded_formal_ppo_stability_holdout_required,
     )
     policy_training_cuda_device_support = _load_optional_source(
         policy_training_cuda_device_support_path,
@@ -3067,6 +3225,16 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if quasi_real_guarded_formal_ppo_stability_holdout:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_guarded_formal_ppo_stability_holdout,
+                label="quasi_real_guarded_formal_ppo_stability_holdout_validation_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
     if policy_training_cuda_device_support:
         source_git_matches.append(
             _inspect_git(
@@ -3229,6 +3397,9 @@ def analyze_policy_training_readiness_review(
         ),
         quasi_real_guarded_formal_ppo_rollout_canary=(
             quasi_real_guarded_formal_ppo_rollout_canary
+        ),
+        quasi_real_guarded_formal_ppo_stability_holdout=(
+            quasi_real_guarded_formal_ppo_stability_holdout
         ),
         policy_training_cuda_device_support=policy_training_cuda_device_support,
         quasi_real_map_domain_gap=quasi_real_map_domain_gap,
@@ -3404,6 +3575,14 @@ def analyze_policy_training_readiness_review(
             if quasi_real_guarded_formal_ppo_rollout_canary
             else None
         ),
+        "quasi_real_guarded_formal_ppo_stability_holdout_validation_summary_path": (
+            _display_path(
+                quasi_real_guarded_formal_ppo_stability_holdout_path,
+                repo_root,
+            )
+            if quasi_real_guarded_formal_ppo_stability_holdout
+            else None
+        ),
         "policy_training_cuda_device_support_summary_path": (
             _display_path(policy_training_cuda_device_support_path, repo_root)
             if policy_training_cuda_device_support
@@ -3531,6 +3710,9 @@ def analyze_policy_training_readiness_review(
             "quasi_real_guarded_formal_ppo_rollout_canary": _public_git(
                 quasi_real_guarded_formal_ppo_rollout_canary
             ),
+            "quasi_real_guarded_formal_ppo_stability_holdout_validation": (
+                _public_git(quasi_real_guarded_formal_ppo_stability_holdout)
+            ),
             "policy_training_cuda_device_support": _public_git(
                 policy_training_cuda_device_support
             ),
@@ -3611,6 +3793,7 @@ def _review_metrics(
     quasi_real_guarded_ppo_iterative_miniloop_stability: dict[str, Any],
     quasi_real_guarded_formal_ppo_preflight: dict[str, Any],
     quasi_real_guarded_formal_ppo_rollout_canary: dict[str, Any],
+    quasi_real_guarded_formal_ppo_stability_holdout: dict[str, Any],
     policy_training_cuda_device_support: dict[str, Any],
     quasi_real_map_domain_gap: dict[str, Any],
     quasi_real_shadow_policy_behavior: dict[str, Any],
@@ -3731,6 +3914,9 @@ def _review_metrics(
             "quasi_real_guarded_formal_ppo_rollout_canary": (
                 quasi_real_guarded_formal_ppo_rollout_canary
             ),
+            "quasi_real_guarded_formal_ppo_stability_holdout_validation": (
+                quasi_real_guarded_formal_ppo_stability_holdout
+            ),
             "policy_training_cuda_device_support": policy_training_cuda_device_support,
             "quasi_real_map_domain_gap": quasi_real_map_domain_gap,
             "quasi_real_shadow_policy_behavior": quasi_real_shadow_policy_behavior,
@@ -3839,6 +4025,11 @@ def _review_metrics(
     quasi_real_guarded_formal_ppo_rollout_canary_readiness = (
         _quasi_real_guarded_formal_ppo_rollout_canary_readiness(
             quasi_real_guarded_formal_ppo_rollout_canary
+        )
+    )
+    quasi_real_guarded_formal_ppo_stability_holdout_readiness = (
+        _quasi_real_guarded_formal_ppo_stability_holdout_readiness(
+            quasi_real_guarded_formal_ppo_stability_holdout
         )
     )
     policy_training_cuda_device_support_readiness = (
@@ -3974,6 +4165,10 @@ def _review_metrics(
         "training_blockers"
     ]:
         _append_reason(training_blockers, reason)
+    for reason in quasi_real_guarded_formal_ppo_stability_holdout_readiness[
+        "training_blockers"
+    ]:
+        _append_reason(training_blockers, reason)
     for reason in policy_training_cuda_device_support_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
     for reason in quasi_real_map_domain_gap_readiness["training_blockers"]:
@@ -4077,6 +4272,16 @@ def _review_metrics(
     ):
         training_readiness_status = QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION
         recommended_next_action = QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION
+    elif (
+        quasi_real_guarded_formal_ppo_stability_holdout_readiness["present"]
+        and quasi_real_guarded_formal_ppo_stability_holdout_readiness["completed"]
+    ):
+        training_readiness_status = (
+            QUASI_REAL_GUARDED_FORMAL_PPO_STABILITY_HOLDOUT_VALIDATED_ACTION
+        )
+        recommended_next_action = (
+            QUASI_REAL_GUARDED_FORMAL_PPO_STABILITY_HOLDOUT_VALIDATED_ACTION
+        )
     elif (
         quasi_real_guarded_formal_ppo_rollout_canary_readiness["present"]
         and quasi_real_guarded_formal_ppo_rollout_canary_readiness["completed"]
@@ -4314,6 +4519,9 @@ def _review_metrics(
         ),
         "quasi_real_guarded_formal_ppo_rollout_canary_readiness": (
             quasi_real_guarded_formal_ppo_rollout_canary_readiness
+        ),
+        "quasi_real_guarded_formal_ppo_stability_holdout_validation_readiness": (
+            quasi_real_guarded_formal_ppo_stability_holdout_readiness
         ),
         "policy_training_cuda_device_support_readiness": policy_training_cuda_device_support_readiness,
         "quasi_real_map_domain_gap_readiness": quasi_real_map_domain_gap_readiness,
@@ -8114,6 +8322,122 @@ def _quasi_real_guarded_formal_ppo_rollout_canary_readiness(
         "unique_trainable_context_count": unique_trainable_context_count,
         "seed_count": seed_count,
         "passed_seed_count": passed_seed_count,
+    }
+
+
+def _quasi_real_guarded_formal_ppo_stability_holdout_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "trainable_transition_count": 0,
+        "optimizer_train_transition_count": 0,
+        "unique_trainable_context_count": 0,
+        "seed_count": 0,
+        "budget_count": 0,
+        "run_count": 0,
+        "passed_run_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_not_passed")
+
+    trainable_transition_count = _int_value_or_default(
+        summary.get("input_trainable_transition_count"), 0
+    )
+    optimizer_train_transition_count = _int_value_or_default(
+        summary.get("optimizer_train_transition_count"), 0
+    )
+    unique_trainable_context_count = _int_value_or_default(
+        summary.get("unique_trainable_context_count"), 0
+    )
+    seed_count = _int_value_or_default(summary.get("seed_count"), 0)
+    budget_count = _int_value_or_default(summary.get("budget_count"), 0)
+    run_count = _int_value_or_default(summary.get("run_count"), 0)
+    passed_run_count = _int_value_or_default(summary.get("passed_run_count"), 0)
+    run_failure_count = _int_value_or_default(summary.get("run_failure_count"), 0)
+    if trainable_transition_count != 684 or optimizer_train_transition_count != 684:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_trainable_count_mismatch")
+    if unique_trainable_context_count != 684:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_unique_context_count_mismatch")
+    if seed_count < 5:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_seed_count_below_threshold")
+    if budget_count < 2:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_budget_count_below_threshold")
+    if run_count < seed_count * budget_count or passed_run_count != run_count or run_failure_count:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_run_not_all_passed")
+    for field, reason in (
+        ("validation_trainable_count", "quasi_real_guarded_formal_ppo_stability_holdout_split_leakage"),
+        ("test_trainable_count", "quasi_real_guarded_formal_ppo_stability_holdout_split_leakage"),
+        ("fallback_trainable_count", "quasi_real_guarded_formal_ppo_stability_holdout_fallback_trainable"),
+        ("source_fallback_trainable_count", "quasi_real_guarded_formal_ppo_stability_holdout_fallback_trainable"),
+        ("teacher_fallback_trainable_count", "quasi_real_guarded_formal_ppo_stability_holdout_fallback_trainable"),
+        ("non_empty_gate_reason_trainable_count", "quasi_real_guarded_formal_ppo_stability_holdout_gate_reason_trainable"),
+        ("missing_observation_count", "quasi_real_guarded_formal_ppo_stability_holdout_contract_invalid"),
+        ("missing_log_prob_count", "quasi_real_guarded_formal_ppo_stability_holdout_contract_invalid"),
+        ("missing_value_count", "quasi_real_guarded_formal_ppo_stability_holdout_contract_invalid"),
+        ("non_finite_reward_count", "quasi_real_guarded_formal_ppo_stability_holdout_non_finite"),
+        ("non_finite_return_count", "quasi_real_guarded_formal_ppo_stability_holdout_non_finite"),
+        ("non_finite_advantage_count", "quasi_real_guarded_formal_ppo_stability_holdout_non_finite"),
+        ("loss_non_finite_count", "quasi_real_guarded_formal_ppo_stability_holdout_non_finite"),
+        ("non_finite_gradient_count", "quasi_real_guarded_formal_ppo_stability_holdout_non_finite"),
+        ("controlled_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("train_controlled_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("validation_controlled_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("test_controlled_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("controlled_safety_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("controlled_contract_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("controlled_path_risk_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("controlled_source_selection_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression"),
+        ("family_regression_count", "quasi_real_guarded_formal_ppo_stability_holdout_family_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if _float_value_or_default(summary.get("max_old_log_prob_abs_error"), 0.0) > 1.0e-4:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_old_policy_reconstruction_error")
+    if _float_value_or_default(summary.get("max_old_value_abs_error"), 0.0) > 1.0e-4:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_old_policy_reconstruction_error")
+    if abs(_float_value_or_default(summary.get("max_abs_approx_kl"), 0.0)) > 0.25:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_kl_too_large")
+    if _float_value_or_default(summary.get("max_grad_norm_after_clip"), 0.0) > 1.0:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_grad_norm_too_large")
+    if _float_value_or_default(summary.get("min_parameter_l2_delta"), 0.0) <= 0.0:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_parameter_delta_missing")
+    if _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0) < 0.95:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_teacher_alignment_insufficient")
+    if not summary.get("rollback_manifest") or not summary.get("baseline_manifest"):
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_rollback_manifest_missing")
+    if summary.get("runs_formal_ppo_stability_holdout_validation") is not True:
+        _append_reason(blockers, "quasi_real_guarded_formal_ppo_stability_holdout_not_run")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "trainable_transition_count": trainable_transition_count,
+        "optimizer_train_transition_count": optimizer_train_transition_count,
+        "unique_trainable_context_count": unique_trainable_context_count,
+        "seed_count": seed_count,
+        "budget_count": budget_count,
+        "run_count": run_count,
+        "passed_run_count": passed_run_count,
     }
 
 

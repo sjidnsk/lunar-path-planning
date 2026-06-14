@@ -2543,6 +2543,44 @@ do not change network/action space/default A*, do not relax distance/path-risk
 or source-selection gates, and do not claim policy performance or formal
 training readiness.
 
+### Quasi-Real Guarded Formal PPO Stability & Holdout Validation
+
+`Quasi-Real Guarded Formal PPO Stability & Holdout Validation v1` is the
+endurance-and-unfamiliar-road check after the canary. The canary proved one
+guarded formal PPO road test can stay clean; this stage repeats the experiment
+across a seed/budget matrix and keeps validation/test as holdout diagnostics,
+so a lucky single seed cannot masquerade as stable training evidence.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_formal_ppo_stability_holdout_validation_v1.json`
+- `scripts/run_quasi_real_guarded_formal_ppo_stability_holdout_validation.py/.sh`
+- `scripts/run_quasi_real_guarded_formal_ppo_stability_holdout_validation_closure.sh`
+- `tests/test_quasi_real_guarded_formal_ppo_stability_holdout_validation.py`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-formal-ppo-stability-holdout-validation.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_stability_holdout_validation_v1/`
+
+The current closure passes with `status=passed`, `reason_codes=[]`, 684 input
+trainable transitions, 684 optimizer transitions, 684 unique trainable
+contexts, five seeds, six budget settings, and 30/30 passed seed-budget runs.
+The held-out diagnostic accounting reports validation/test trainable leakage 0,
+validation/test controlled regression 0, family regression 0, teacher agreement
+`1.0`, old `log_prob/value` reconstruction error `0.0/0.0`, max
+`abs(approx_kl)` about `2.92e-5`, and max clipped grad norm `1.0`. Readiness now
+accepts
+`--quasi-real-guarded-formal-ppo-stability-holdout-validation-summary` and
+advances to `quasi_real_guarded_formal_ppo_stability_holdout_validated` only
+for a passed summary with no blockers.
+
+This is still not a release. It freezes the canary as baseline, writes a
+stability matrix, holdout audit, family regression report, rollback manifest,
+and validate-only readiness result, but it does not publish a checkpoint,
+replace the default policy, change network/action space/default A*, relax
+distance/path-risk/source-selection gates, download new raw data, claim
+Ackermann-feasible trajectories, promote IRIS/GCS/path-planner diagnostics to
+training release evidence, claim policy performance, or claim formal training
+ready.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the

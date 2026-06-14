@@ -2160,6 +2160,125 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["quasi_real_guarded_formal_ppo_rollout_canary_readiness"]["completed"]
         )
 
+    def test_quasi_real_guarded_formal_ppo_stability_holdout_summary_advances_readiness(self) -> None:
+        stability_path = (
+            self.batch_root
+            / "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary.json"
+        )
+        stability_path.write_text(
+            json.dumps(
+                self._formal_stability_holdout_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--quasi-real-guarded-formal-ppo-stability-holdout-validation-summary",
+            str(stability_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "quasi_real_guarded_formal_ppo_stability_holdout_validated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary[
+                "quasi_real_guarded_formal_ppo_stability_holdout_validation_readiness"
+            ]["completed"]
+        )
+
+    def test_quasi_real_guarded_formal_ppo_stability_holdout_regression_blocks_readiness(self) -> None:
+        stability_path = (
+            self.batch_root
+            / "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary.json"
+        )
+        payload = self._formal_stability_holdout_summary()
+        payload["controlled_regression_count"] = 1
+        payload["validation_controlled_regression_count"] = 1
+        stability_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--quasi-real-guarded-formal-ppo-stability-holdout-validation-summary",
+            str(stability_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "quasi_real_guarded_formal_ppo_stability_holdout_controlled_regression",
+            summary["training_blockers"],
+        )
+
+    def _formal_stability_holdout_summary(self) -> dict:
+        return {
+            "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "input_trainable_transition_count": 684,
+            "optimizer_train_transition_count": 684,
+            "unique_trainable_context_count": 684,
+            "seed_count": 5,
+            "budget_count": 6,
+            "run_count": 30,
+            "passed_run_count": 30,
+            "validation_trainable_count": 0,
+            "test_trainable_count": 0,
+            "fallback_trainable_count": 0,
+            "source_fallback_trainable_count": 0,
+            "teacher_fallback_trainable_count": 0,
+            "non_empty_gate_reason_trainable_count": 0,
+            "missing_observation_count": 0,
+            "missing_log_prob_count": 0,
+            "missing_value_count": 0,
+            "non_finite_reward_count": 0,
+            "non_finite_return_count": 0,
+            "non_finite_advantage_count": 0,
+            "loss_non_finite_count": 0,
+            "non_finite_gradient_count": 0,
+            "max_old_log_prob_abs_error": 0.0,
+            "max_old_value_abs_error": 0.0,
+            "max_abs_approx_kl": 0.01,
+            "max_grad_norm_after_clip": 0.5,
+            "min_parameter_l2_delta": 0.001,
+            "teacher_agreement_rate": 1.0,
+            "controlled_regression_count": 0,
+            "train_controlled_regression_count": 0,
+            "validation_controlled_regression_count": 0,
+            "test_controlled_regression_count": 0,
+            "family_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "rollback_manifest": "formal-ppo-stability-rollback-manifest.json",
+            "baseline_manifest": "formal-ppo-stability-baseline-manifest.json",
+            "runs_formal_ppo_stability_holdout_validation": True,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,73 @@
+{
+  "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-config/v1",
+  "description": "Stability and holdout validation over the 684-transition quasi-real guarded formal PPO rollout canary baseline. This is not checkpoint publication, default policy replacement, or a formal training-ready claim.",
+  "default_paths": {
+    "canary_root": "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_rollout_canary_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_stability_holdout_validation_v1"
+  },
+  "seeds": [0, 1, 2, 3, 4],
+  "budgets": [
+    {"name": "epochs1_lr3e-6", "epochs": 1, "learning_rate": 0.000003},
+    {"name": "epochs1_lr1e-5", "epochs": 1, "learning_rate": 0.00001},
+    {"name": "epochs2_lr3e-6", "epochs": 2, "learning_rate": 0.000003},
+    {"name": "epochs2_lr1e-5", "epochs": 2, "learning_rate": 0.00001},
+    {"name": "epochs3_lr3e-6", "epochs": 3, "learning_rate": 0.000003},
+    {"name": "epochs3_lr1e-5", "epochs": 3, "learning_rate": 0.00001}
+  ],
+  "training": {
+    "clip_ratio": 0.2,
+    "max_grad_norm": 1.0,
+    "discount_factor": 0.99,
+    "device": "cpu"
+  },
+  "validation": {
+    "expected_trainable_transition_count": 684,
+    "min_seed_count": 5,
+    "min_budget_count": 2,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_abs_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0,
+    "min_teacher_agreement_rate": 0.95
+  },
+  "update_smoke": {
+    "base_candidate_root": "outputs/path_feedback_batch_quasi_real_teacher_distillation_candidate_v1",
+    "source_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "base_checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "base_checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "quasi_real_guarded_formal_ppo_stability_holdout_validated"
+  },
+  "output_files": {
+    "summary": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary.json",
+    "baseline_manifest": "formal-ppo-stability-baseline-manifest.json",
+    "stability_matrix": "formal-ppo-stability-matrix.jsonl",
+    "training_curves": "formal-ppo-stability-training-curves.json",
+    "holdout_audit": "formal-ppo-stability-holdout-audit.json",
+    "family_regression_report": "formal-ppo-stability-family-regression-report.json",
+    "rollback_manifest": "formal-ppo-stability-rollback-manifest.json",
+    "readiness_validate_only": "formal-ppo-stability-readiness-validate-only.json",
+    "report": "formal-ppo-stability-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-quasi-real-guarded-formal-ppo-stability-holdout-validation.md"
+  ],
+  "non_goals": [
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}
