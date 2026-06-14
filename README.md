@@ -2692,6 +2692,43 @@ network/action space/default A*, relax distance/path-risk/source-selection
 gates, download new raw data, claim Ackermann-feasible trajectories, or promote
 IRIS/GCS/path-planner diagnostics to training release evidence.
 
+### Selected Formal PPO Candidate Promotion Decision Review
+
+`Selected Formal PPO Candidate Promotion Decision Review v1` follows the frozen
+promotion preflight. If the preflight is the registration-desk inspection, this
+stage is the signing desk: it checks that the evidence chain, checkpoint
+identity, and release boundary all agree before deciding whether the selected
+experimental candidate may enter guarded release-candidate packaging.
+
+New artifacts:
+
+- `configs/selected_formal_ppo_candidate_promotion_decision_review_v1.json`
+- `scripts/run_selected_formal_ppo_candidate_promotion_decision_review.py/.sh`
+- `scripts/run_selected_formal_ppo_candidate_promotion_decision_review_closure.sh`
+- `tests/test_selected_formal_ppo_candidate_promotion_decision_review.py`
+- `docs/superpowers/specs/2026-06-14-selected-formal-ppo-candidate-promotion-decision-review.md`
+- `outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_decision_review_v1/`
+
+The review follows four source summaries: promotion preflight,
+multi-horizon shadow rollout, candidate-selection long-horizon holdout, and
+formal stability holdout validation. It recomputes checkpoint SHA-256/size,
+checks metadata and manifest consistency, and writes an evidence lineage report,
+checkpoint identity audit, release-boundary audit, readiness validate-only
+result, and markdown report. Readiness accepts
+`--selected-formal-ppo-candidate-promotion-decision-review-summary` and advances
+to `selected_formal_ppo_candidate_promotion_decision_review_evaluated`.
+
+Current closure result: `status=passed`, `reason_codes=[]`,
+`decision_verdict=eligible_for_guarded_release_candidate_packaging`,
+lineage/checkpoint/release-boundary audits all passed, and checkpoint SHA-256 is
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`.
+
+This is a decision review, not a release. It does not publish a checkpoint,
+replace the default policy, run another PPO update, change network/action
+space/default A*, relax distance/path-risk/source-selection gates, download new
+raw data, claim Ackermann-feasible trajectories, promote IRIS/GCS/path-planner
+diagnostics to training release evidence, or claim formal training readiness.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the

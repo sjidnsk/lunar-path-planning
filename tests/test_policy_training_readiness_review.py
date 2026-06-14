@@ -2428,6 +2428,78 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_selected_formal_ppo_candidate_promotion_decision_review_advances_readiness(self) -> None:
+        decision_path = (
+            self.batch_root
+            / "selected-formal-ppo-candidate-promotion-decision-review-summary.json"
+        )
+        decision_path.write_text(
+            json.dumps(
+                self._selected_formal_ppo_candidate_promotion_decision_review_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--selected-formal-ppo-candidate-promotion-decision-review-summary",
+            str(decision_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "selected_formal_ppo_candidate_promotion_decision_review_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["selected_formal_ppo_candidate_promotion_decision_review_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_selected_formal_ppo_candidate_promotion_decision_review_boundary_blocks_readiness(self) -> None:
+        decision_path = (
+            self.batch_root
+            / "selected-formal-ppo-candidate-promotion-decision-review-summary.json"
+        )
+        payload = self._selected_formal_ppo_candidate_promotion_decision_review_summary()
+        payload["decision_verdict"] = "hold_for_more_evidence"
+        payload["release_boundary_audit_passed"] = False
+        decision_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--selected-formal-ppo-candidate-promotion-decision-review-summary",
+            str(decision_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "selected_formal_ppo_candidate_promotion_decision_review_not_eligible",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "selected_formal_ppo_candidate_promotion_decision_review_release_boundary_failed",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -2476,6 +2548,44 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "replaces_default_policy": False,
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _selected_formal_ppo_candidate_promotion_decision_review_summary(self) -> dict:
+        return {
+            "schema_version": (
+                "selected-formal-ppo-candidate-promotion-decision-review-summary/v1"
+            ),
+            "status": "passed",
+            "reason_codes": [],
+            "decision_verdict": "eligible_for_guarded_release_candidate_packaging",
+            "preflight_summary": (
+                "outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_preflight_v1/"
+                "selected-formal-ppo-candidate-promotion-preflight-summary.json"
+            ),
+            "lineage_report": "evidence-lineage-report.json",
+            "checkpoint_identity_audit": "checkpoint-identity-audit.json",
+            "release_boundary_audit": "release-boundary-audit.json",
+            "selected_seed": 0,
+            "selected_budget": "epochs1_lr3e-6",
+            "selected_candidate_root": "outputs/selected-candidate",
+            "checkpoint_path": "outputs/selected-candidate/experimental-hybrid-policy-candidate.pt",
+            "checkpoint_metadata_path": (
+                "outputs/selected-candidate/experimental-hybrid-policy-candidate-metadata.json"
+            ),
+            "checkpoint_sha256": "a" * 64,
+            "checkpoint_size_bytes": 123,
+            "lineage_audit_passed": True,
+            "checkpoint_identity_audit_passed": True,
+            "release_boundary_audit_passed": True,
+            "source_lineage_count": 4,
+            "runs_promotion_decision_review": True,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "selected_formal_ppo_candidate_promotion_decision_review_evaluated",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 

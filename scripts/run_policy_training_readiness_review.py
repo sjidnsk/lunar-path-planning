@@ -189,6 +189,12 @@ SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_EVALUATED_ACTION = (
 SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_PREFLIGHT_SCHEMA_VERSION = (
     "selected-formal-ppo-candidate-promotion-preflight-summary/v1"
 )
+SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_DECISION_REVIEW_EVALUATED_ACTION = (
+    "selected_formal_ppo_candidate_promotion_decision_review_evaluated"
+)
+SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_DECISION_REVIEW_SCHEMA_VERSION = (
+    "selected-formal-ppo-candidate-promotion-decision-review-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -424,6 +430,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--selected-formal-ppo-candidate-promotion-preflight-summary",
         help="Optional selected-formal-ppo-candidate-promotion-preflight-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--selected-formal-ppo-candidate-promotion-decision-review-summary",
+        help="Optional selected-formal-ppo-candidate-promotion-decision-review-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -691,6 +701,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.selected_formal_ppo_candidate_promotion_preflight_summary
         else batch_root / "selected-formal-ppo-candidate-promotion-preflight-summary.json"
+    )
+    selected_formal_ppo_candidate_promotion_decision_review_path = (
+        _resolve_path(
+            args.selected_formal_ppo_candidate_promotion_decision_review_summary,
+            repo_root,
+        )
+        if args.selected_formal_ppo_candidate_promotion_decision_review_summary
+        else batch_root
+        / "selected-formal-ppo-candidate-promotion-decision-review-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -1104,7 +1123,11 @@ def main(argv: list[str] | None = None) -> int:
             args.quasi_real_guarded_formal_ppo_preflight_summary,
             args.quasi_real_guarded_formal_ppo_rollout_canary_summary,
             args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary,
+            args.quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_summary,
             args.policy_training_cuda_device_support_summary,
+            args.selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary,
+            args.selected_formal_ppo_candidate_promotion_preflight_summary,
+            args.selected_formal_ppo_candidate_promotion_decision_review_summary,
             args.quasi_real_map_domain_gap_summary,
             args.quasi_real_shadow_policy_behavior_summary,
             args.quasi_real_shadow_alignment_summary,
@@ -1137,6 +1160,9 @@ def main(argv: list[str] | None = None) -> int:
         and not args.quasi_real_guarded_formal_ppo_rollout_canary_summary
         and not args.quasi_real_guarded_formal_ppo_stability_holdout_validation_summary
         and not args.quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_summary
+        and not args.selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary
+        and not args.selected_formal_ppo_candidate_promotion_preflight_summary
+        and not args.selected_formal_ppo_candidate_promotion_decision_review_summary
         and
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -1148,6 +1174,65 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.selected_formal_ppo_candidate_promotion_decision_review_summary:
+        summary = _analyze_selected_formal_ppo_candidate_promotion_decision_review_stage_only(
+            batch_root=batch_root,
+            decision_path=selected_formal_ppo_candidate_promotion_decision_review_path,
+            config=config,
+            repo_root=repo_root,
+        )
+        output_file = _output_file(batch_root, config)
+        validation_message = {
+            "status": "config validated" if summary["status"] == "passed" else "validation failed",
+            "batch_root": _display_path(batch_root, repo_root),
+            "selected_formal_ppo_candidate_promotion_decision_review_summary": _display_path(
+                selected_formal_ppo_candidate_promotion_decision_review_path,
+                repo_root,
+            ),
+            "config": _display_path(config_path, repo_root),
+            "reason_codes": summary["reason_codes"],
+            "training_readiness_status": summary["training_readiness_status"],
+            "training_blockers": summary["training_blockers"],
+            "recommended_next_action": summary["recommended_next_action"],
+            "selected_formal_ppo_candidate_promotion_decision_review_readiness": summary[
+                "selected_formal_ppo_candidate_promotion_decision_review_readiness"
+            ],
+            "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+        }
+        print(json.dumps(validation_message, ensure_ascii=False))
+        if args.validate_only or args.dry_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry-run",
+                            "would_write": {
+                                "policy_training_readiness_review_summary": _display_path(
+                                    output_file,
+                                    repo_root,
+                                ),
+                            },
+                            "recommended_next_action": summary["recommended_next_action"],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return 1 if summary["status"] == "failed" else 0
+        _write_json(output_file, summary)
+        print(
+            json.dumps(
+                {
+                    "status": summary["status"],
+                    "training_readiness_status": summary["training_readiness_status"],
+                    "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+                    "recommended_next_action": summary["recommended_next_action"],
+                    "failure_reason_code_counts": summary["failure_reason_code_counts"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1 if summary["status"] == "failed" else 0
 
     if args.selected_formal_ppo_candidate_promotion_preflight_summary:
         summary = _analyze_selected_formal_ppo_candidate_promotion_preflight_stage_only(
@@ -1886,6 +1971,174 @@ def _analyze_selected_formal_ppo_candidate_promotion_preflight_stage_only(
         "recommended_next_action": recommended_next_action,
         "selected_formal_ppo_candidate_promotion_preflight_readiness": readiness,
         "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _analyze_selected_formal_ppo_candidate_promotion_decision_review_stage_only(
+    *,
+    batch_root: Path,
+    decision_path: Path,
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    source_summaries: dict[str, Any] = {}
+    decision_summary = _load_source(
+        decision_path,
+        label="selected_formal_ppo_candidate_promotion_decision_review_summary",
+        expected_schema=SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_DECISION_REVIEW_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+    )
+    current_git = _git_snapshot(repo_root)
+    if decision_summary:
+        _inspect_git(
+            decision_summary,
+            label="selected_formal_ppo_candidate_promotion_decision_review_summary",
+            current_git=current_git,
+            config=config,
+            reason_codes=reason_codes,
+        )
+    readiness = _selected_formal_ppo_candidate_promotion_decision_review_readiness(
+        decision_summary
+    )
+    blockers = list(readiness["training_blockers"])
+    training_readiness_status = (
+        SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_DECISION_REVIEW_EVALUATED_ACTION
+        if not reason_codes and readiness["completed"]
+        else "needs_training_contract_refinement"
+    )
+    recommended_next_action = (
+        SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_DECISION_REVIEW_EVALUATED_ACTION
+        if training_readiness_status
+        == SELECTED_FORMAL_PPO_CANDIDATE_PROMOTION_DECISION_REVIEW_EVALUATED_ACTION
+        else "fix_selected_formal_ppo_candidate_promotion_decision_review"
+    )
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "status": "failed" if reason_codes else "passed",
+        "reason_codes": reason_codes,
+        "failure_reason_code_counts": dict(Counter(reason_codes)),
+        "batch_root": _display_path(batch_root, repo_root),
+        "source_summaries": source_summaries,
+        "training_readiness_status": training_readiness_status,
+        "training_blockers": blockers,
+        "recommended_next_action": recommended_next_action,
+        "selected_formal_ppo_candidate_promotion_decision_review_readiness": readiness,
+        "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _selected_formal_ppo_candidate_promotion_decision_review_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "decision_verdict": None,
+        "source_lineage_count": 0,
+        "checkpoint_identity_audit_passed": False,
+        "release_boundary_audit_passed": False,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_not_passed",
+        )
+    if summary.get("decision_verdict") != "eligible_for_guarded_release_candidate_packaging":
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_not_eligible",
+        )
+    if summary.get("lineage_audit_passed") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_lineage_failed",
+        )
+    if _int_value_or_default(summary.get("source_lineage_count"), 0) < 4:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_lineage_incomplete",
+        )
+    if summary.get("checkpoint_identity_audit_passed") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_checkpoint_identity_failed",
+        )
+    if summary.get("release_boundary_audit_passed") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_release_boundary_failed",
+        )
+    if summary.get("selected_seed") != 0 or summary.get("selected_budget") != "epochs1_lr3e-6":
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_candidate_mismatch",
+        )
+    if not summary.get("preflight_summary"):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_preflight_missing",
+        )
+    if not summary.get("lineage_report") or not summary.get("checkpoint_identity_audit"):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_artifacts_missing",
+        )
+    if not summary.get("release_boundary_audit"):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_artifacts_missing",
+        )
+    if not isinstance(summary.get("checkpoint_sha256"), str) or len(summary.get("checkpoint_sha256")) != 64:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_checkpoint_hash_missing",
+        )
+    if _int_value_or_default(summary.get("checkpoint_size_bytes"), 0) <= 0:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_checkpoint_hash_missing",
+        )
+    if summary.get("runs_promotion_decision_review") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_promotion_decision_review_not_run",
+        )
+    if summary.get("runs_new_ppo_update") is True:
+        _append_reason(blockers, "formal_ppo_update_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": None
+        if not blockers
+        else "fix_selected_formal_ppo_candidate_promotion_decision_review",
+        "decision_verdict": summary.get("decision_verdict"),
+        "source_lineage_count": _int_value_or_default(summary.get("source_lineage_count"), 0),
+        "checkpoint_identity_audit_passed": summary.get("checkpoint_identity_audit_passed") is True,
+        "release_boundary_audit_passed": summary.get("release_boundary_audit_passed") is True,
+        "checkpoint_sha256": summary.get("checkpoint_sha256"),
+        "checkpoint_size_bytes": _int_value_or_default(summary.get("checkpoint_size_bytes"), 0),
     }
 
 

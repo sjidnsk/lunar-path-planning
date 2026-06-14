@@ -1,0 +1,43 @@
+{
+  "schema_version": "selected-formal-ppo-candidate-promotion-decision-review-config/v1",
+  "description": "Review the frozen selected formal PPO experimental candidate evidence chain and decide whether it is eligible for guarded release-candidate packaging. This is a read-only decision review, not a policy release.",
+  "default_paths": {
+    "preflight_root": "outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_preflight_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_decision_review_v1"
+  },
+  "input_files": {
+    "preflight_summary": "selected-formal-ppo-candidate-promotion-preflight-summary.json"
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "selected_formal_ppo_candidate_promotion_decision_review_evaluated"
+  },
+  "output_files": {
+    "summary": "selected-formal-ppo-candidate-promotion-decision-review-summary.json",
+    "lineage_report": "evidence-lineage-report.json",
+    "checkpoint_identity_audit": "checkpoint-identity-audit.json",
+    "release_boundary_audit": "release-boundary-audit.json",
+    "readiness_validate_only": "promotion-decision-readiness-validate-only.json",
+    "report": "promotion-decision-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-selected-formal-ppo-candidate-promotion-decision-review.md"
+  ],
+  "non_goals": [
+    "does_not_run_new_ppo_update",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}
