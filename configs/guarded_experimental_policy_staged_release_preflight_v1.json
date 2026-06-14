@@ -1,0 +1,51 @@
+{
+  "schema_version": "guarded-experimental-policy-staged-release-preflight-config/v1",
+  "description": "Audit the guarded staged release plan before enabling any experimental policy control. This preflight keeps staged_release_enabled=false and the default policy authoritative.",
+  "default_paths": {
+    "shadow_release_trial_root": "outputs/path_feedback_batch_guarded_experimental_policy_shadow_release_trial_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_guarded_experimental_policy_staged_release_preflight_v1"
+  },
+  "input_files": {
+    "shadow_release_trial_summary": "guarded-experimental-policy-shadow-release-trial-summary.json"
+  },
+  "validation": {
+    "min_shadow_step_count": 512,
+    "min_unique_shadow_context_count": 256
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "guarded_experimental_policy_staged_release_preflight_evaluated"
+  },
+  "output_files": {
+    "summary": "guarded-experimental-policy-staged-release-preflight-summary.json",
+    "preflight_manifest": "staged-release-preflight-manifest.json",
+    "gate_threshold_audit": "staged-release-gate-threshold-audit.json",
+    "kill_switch_audit": "staged-release-kill-switch-audit.json",
+    "rollback_audit": "staged-release-rollback-audit.json",
+    "telemetry_audit": "staged-release-telemetry-audit.json",
+    "readiness_validate_only": "staged-release-preflight-readiness-validate-only.json",
+    "report": "staged-release-preflight-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-guarded-experimental-policy-staged-release-preflight.md"
+  ],
+  "non_goals": [
+    "does_not_execute_actual_staged_release",
+    "does_not_allow_experimental_policy_control",
+    "does_not_run_new_ppo_update",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}

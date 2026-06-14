@@ -2956,6 +2956,37 @@ new raw data, claim Ackermann-feasible trajectory, claim performance
 improvement, or claim formal training readiness. The next stage is a guarded
 staged release preflight.
 
+## Guarded Experimental Policy Staged Release Preflight v1
+
+**Guarded Experimental Policy Staged Release Preflight v1** audits the release
+machinery that would be needed before any guarded staged release. It consumes
+the shadow release trial summary and writes a preflight manifest, gate-threshold
+audit, kill-switch audit, rollback audit, telemetry audit, readiness
+validate-only result, markdown report, and
+`guarded-experimental-policy-staged-release-preflight-summary.json`.
+
+This stage deliberately keeps the staged release disabled:
+
+- `staged_release_enabled=false`
+- `default_policy_authoritative=true`
+- `experimental_control_activation_count=0`
+- stage plan only: `stage0_shadow_only`, `stage1_guarded_opt_in`,
+  `stage2_limited_guarded_canary`
+
+Acceptance requires the source shadow trial to be passed and current, at least
+512 shadow steps and 256 unique contexts, no missing observation/log_prob/value,
+no invalid mask, no non-finite logits/value/reward, no controlled
+safety/contract/path-risk/source-selection regression, and passed kill-switch,
+rollback, and telemetry audits. Readiness accepts
+`--guarded-experimental-policy-staged-release-preflight-summary` and advances to
+`guarded_experimental_policy_staged_release_preflight_evaluated`.
+
+This remains a release preflight, not an actual staged release. It does not let
+the experimental policy take control, run a new PPO update, publish a
+checkpoint, replace the default policy, modify network/action space/default A*,
+relax gates, download new raw data, claim Ackermann-feasible trajectory, claim
+performance improvement, or claim formal training readiness.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
