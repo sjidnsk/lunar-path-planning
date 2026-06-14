@@ -2500,6 +2500,83 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_guarded_experimental_policy_release_candidate_packaging_advances_readiness(self) -> None:
+        packaging_path = (
+            self.batch_root
+            / "guarded-experimental-policy-release-candidate-packaging-summary.json"
+        )
+        packaging_path.write_text(
+            json.dumps(
+                self._guarded_experimental_policy_release_candidate_packaging_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-release-candidate-packaging-summary",
+            str(packaging_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "guarded_experimental_policy_release_candidate_packaging_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["guarded_experimental_policy_release_candidate_packaging_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_guarded_experimental_policy_release_candidate_packaging_boundary_blocks_readiness(self) -> None:
+        packaging_path = (
+            self.batch_root
+            / "guarded-experimental-policy-release-candidate-packaging-summary.json"
+        )
+        payload = self._guarded_experimental_policy_release_candidate_packaging_summary()
+        payload["package_verdict"] = "blocked_by_release_boundary"
+        payload["rollback_audit_passed"] = False
+        payload["replaces_default_policy"] = True
+        packaging_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-release-candidate-packaging-summary",
+            str(packaging_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "guarded_experimental_policy_release_candidate_packaging_not_eligible",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_release_candidate_packaging_rollback_failed",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "limited_ppo_update_default_policy_replacement_claimed",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -2586,6 +2663,56 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
             "readiness_status": "selected_formal_ppo_candidate_promotion_decision_review_evaluated",
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _guarded_experimental_policy_release_candidate_packaging_summary(self) -> dict:
+        return {
+            "schema_version": (
+                "guarded-experimental-policy-release-candidate-packaging-summary/v1"
+            ),
+            "status": "passed",
+            "reason_codes": [],
+            "package_verdict": "eligible_for_guarded_install_dry_run",
+            "decision_review_summary": (
+                "outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_decision_review_v1/"
+                "selected-formal-ppo-candidate-promotion-decision-review-summary.json"
+            ),
+            "package_manifest": "release-candidate-package-manifest.json",
+            "checkpoint_hash_audit": "checkpoint-hash-audit.json",
+            "checkpoint_load_audit": "checkpoint-load-audit.json",
+            "rollback_audit": "rollback-audit.json",
+            "selected_seed": 0,
+            "selected_budget": "epochs1_lr3e-6",
+            "selected_candidate_root": "outputs/selected-candidate",
+            "original_checkpoint_path": (
+                "outputs/selected-candidate/experimental-hybrid-policy-candidate.pt"
+            ),
+            "package_checkpoint_path": (
+                "outputs/path_feedback_batch_guarded_experimental_policy_release_candidate_packaging_v1/"
+                "release-candidate-package/experimental-hybrid-policy-candidate.pt"
+            ),
+            "checkpoint_sha256": "a" * 64,
+            "package_checkpoint_sha256": "a" * 64,
+            "checkpoint_size_bytes": 123,
+            "package_checkpoint_size_bytes": 123,
+            "checkpoint_identity_audit_passed": True,
+            "checkpoint_load_passed": True,
+            "checkpoint_load_sample_count": 64,
+            "invalid_action_mask_count": 0,
+            "missing_observation_count": 0,
+            "non_finite_logits_count": 0,
+            "non_finite_log_prob_count": 0,
+            "non_finite_value_count": 0,
+            "rollback_audit_passed": True,
+            "runs_release_candidate_packaging": True,
+            "runs_new_ppo_update": False,
+            "executes_install_or_canary": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "guarded_experimental_policy_release_candidate_packaging_evaluated",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 

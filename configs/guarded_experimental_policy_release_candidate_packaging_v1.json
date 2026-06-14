@@ -1,0 +1,48 @@
+{
+  "schema_version": "guarded-experimental-policy-release-candidate-packaging-config/v1",
+  "description": "Package the reviewed selected formal PPO experimental candidate into an isolated guarded release-candidate package. This verifies checkpoint identity, load smoke, rollback boundary, and provenance without installing, publishing, or replacing any policy.",
+  "default_paths": {
+    "decision_root": "outputs/path_feedback_batch_selected_formal_ppo_candidate_promotion_decision_review_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_guarded_experimental_policy_release_candidate_packaging_v1"
+  },
+  "input_files": {
+    "decision_review_summary": "selected-formal-ppo-candidate-promotion-decision-review-summary.json"
+  },
+  "validation": {
+    "min_load_sample_count": 64
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "guarded_experimental_policy_release_candidate_packaging_evaluated"
+  },
+  "output_files": {
+    "summary": "guarded-experimental-policy-release-candidate-packaging-summary.json",
+    "package_manifest": "release-candidate-package-manifest.json",
+    "checkpoint_hash_audit": "checkpoint-hash-audit.json",
+    "checkpoint_load_audit": "checkpoint-load-audit.json",
+    "rollback_audit": "rollback-audit.json",
+    "readiness_validate_only": "packaging-readiness-validate-only.json",
+    "report": "release-candidate-packaging-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-guarded-experimental-policy-release-candidate-packaging.md"
+  ],
+  "non_goals": [
+    "does_not_run_new_ppo_update",
+    "does_not_execute_install_or_canary",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}

@@ -2729,6 +2729,46 @@ space/default A*, relax distance/path-risk/source-selection gates, download new
 raw data, claim Ackermann-feasible trajectories, promote IRIS/GCS/path-planner
 diagnostics to training release evidence, or claim formal training readiness.
 
+### Guarded Experimental Policy Release Candidate Packaging
+
+`Guarded Experimental Policy Release Candidate Packaging v1` follows the passed
+promotion decision review. If the decision review is the signing desk, this
+stage is the sealed evidence bag: it copies the selected experimental checkpoint
+into an isolated release-candidate package, writes the manifest, and proves that
+the packaged file is byte-for-byte the same candidate before any install or
+canary dry-run is allowed.
+
+New artifacts:
+
+- `configs/guarded_experimental_policy_release_candidate_packaging_v1.json`
+- `scripts/run_guarded_experimental_policy_release_candidate_packaging.py/.sh`
+- `scripts/run_guarded_experimental_policy_release_candidate_packaging_closure.sh`
+- `tests/test_guarded_experimental_policy_release_candidate_packaging.py`
+- `docs/superpowers/specs/2026-06-14-guarded-experimental-policy-release-candidate-packaging.md`
+- `outputs/path_feedback_batch_guarded_experimental_policy_release_candidate_packaging_v1/`
+
+The packager reads the decision review summary, resolves the selected candidate
+root, checkpoint, metadata, and source lineage, then writes
+`release-candidate-package-manifest.json`, `checkpoint-hash-audit.json`,
+`checkpoint-load-audit.json`, `rollback-audit.json`, a readiness validate-only
+result, and a markdown report. The load audit reuses multi-horizon observation
+samples and checks finite logits, log-probabilities, and values from the packaged
+checkpoint. Readiness accepts
+`--guarded-experimental-policy-release-candidate-packaging-summary` and advances
+to `guarded_experimental_policy_release_candidate_packaging_evaluated`.
+
+Current closure result: `status=passed`, `reason_codes=[]`,
+`package_verdict=eligible_for_guarded_install_dry_run`, original and packaged
+checkpoint SHA-256 both equal
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`,
+`checkpoint_load_sample_count=64`, and rollback audit passed.
+
+This is packaging, not install/canary or release. It does not run another PPO
+update, publish a checkpoint, replace the default policy, change network/action
+space/default A*, relax distance/path-risk/source-selection gates, download new
+raw data, claim Ackermann-feasible trajectories, promote IRIS/GCS/path-planner
+diagnostics to training release evidence, or claim formal training readiness.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the
