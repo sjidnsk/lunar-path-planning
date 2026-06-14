@@ -2475,6 +2475,40 @@ replay and compare against. It is still not formal PPO training and does not
 relax any safety, distance/path-risk, source-selection, network, action-space,
 or default-A* boundary.
 
+### Quasi-Real Guarded Formal PPO Preflight
+
+`Quasi-Real Guarded Formal PPO Preflight v1` is the formal PPO admission
+precheck after the frozen mini-loop baseline. It still does not start formal PPO
+rollout. It asks whether the frozen 684 train split, gate-clean quasi-real
+transitions can survive three seed-level full-batch PPO smoke updates with the
+same teacher-skill and controlled-gate accounting intact.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_formal_ppo_preflight_v1.json`
+- `scripts/run_quasi_real_guarded_formal_ppo_preflight.py/.sh`
+- `scripts/run_quasi_real_guarded_formal_ppo_preflight_closure.sh`
+- `tests/test_quasi_real_guarded_formal_ppo_preflight.py`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-formal-ppo-preflight.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_preflight_v1/`
+
+The current closure passes: `status=passed`, `reason_codes=[]`, 684 input
+trainable transitions, 684 optimizer transitions, 684 unique trainable contexts,
+three seeds, three passed seed smokes, `teacher_agreement_rate=1.0`, old
+`log_prob/value` reconstruction error `0.0/0.0`, max `abs(approx_kl)` about
+`1.98e-5`, clipped grad norm at or below `1.0`, and controlled regression count
+0. Readiness now accepts
+`--quasi-real-guarded-formal-ppo-preflight-summary` and advances to
+`quasi_real_guarded_formal_ppo_preflight_evaluated` only for a passed summary
+with no publication, default-policy replacement, performance, or formal-ready
+claim.
+
+This is a release-style preflight for formal PPO, not formal PPO itself. It
+does not publish a checkpoint, replace the default policy, change network/action
+space/default A*, relax distance/path-risk/source-selection gates, claim
+Ackermann-feasible trajectories, or promote IRIS/GCS/path-planner diagnostics to
+training release evidence.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the
