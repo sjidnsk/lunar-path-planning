@@ -2811,6 +2811,89 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_guarded_experimental_policy_staged_release_trial_advances_readiness(self) -> None:
+        trial_path = (
+            self.batch_root
+            / "guarded-experimental-policy-staged-release-trial-summary.json"
+        )
+        trial_path.write_text(
+            json.dumps(
+                self._guarded_experimental_policy_staged_release_trial_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-staged-release-trial-summary",
+            str(trial_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "guarded_experimental_policy_staged_release_trial_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["guarded_experimental_policy_staged_release_trial_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_guarded_experimental_policy_staged_release_trial_boundary_blocks_readiness(self) -> None:
+        trial_path = (
+            self.batch_root
+            / "guarded-experimental-policy-staged-release-trial-summary.json"
+        )
+        payload = self._guarded_experimental_policy_staged_release_trial_summary()
+        payload["staged_release_trial_verdict"] = "blocked_by_staged_release_trial"
+        payload["experimental_control_activation_count"] = 65
+        payload["controlled_regression_count"] = 1
+        payload["kill_switch_drill_passed"] = False
+        payload["post_kill_switch_activation_count"] = 1
+        trial_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--guarded-experimental-policy-staged-release-trial-summary",
+            str(trial_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_trial_not_eligible",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_trial_activation_count_out_of_bounds",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_trial_controlled_regression",
+            summary["training_blockers"],
+        )
+        self.assertIn(
+            "guarded_experimental_policy_staged_release_trial_kill_switch_failed",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -3089,6 +3172,60 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "performance_claimed": False,
             "formal_training_ready_claimed": False,
             "readiness_status": "guarded_experimental_policy_staged_release_preflight_evaluated",
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _guarded_experimental_policy_staged_release_trial_summary(self) -> dict:
+        return {
+            "schema_version": "guarded-experimental-policy-staged-release-trial-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "staged_release_trial_verdict": "eligible_for_guarded_staged_release_canary",
+            "source_staged_release_preflight_summary": (
+                "outputs/path_feedback_batch_guarded_experimental_policy_staged_release_preflight_v1/"
+                "guarded-experimental-policy-staged-release-preflight-summary.json"
+            ),
+            "activation_ledger": "staged-release-activation-ledger.jsonl",
+            "controlled_regression_audit": "staged-release-controlled-regression-audit.json",
+            "fallback_rejection_report": "staged-release-fallback-rejection-report.json",
+            "kill_switch_drill": "staged-release-kill-switch-drill.json",
+            "rollback_drill": "staged-release-rollback-drill.json",
+            "telemetry_drill": "staged-release-telemetry-drill.json",
+            "shadow_step_count": 700,
+            "unique_shadow_context_count": 500,
+            "staged_release_enabled": True,
+            "default_policy_authoritative": True,
+            "experimental_control_activation_count": 32,
+            "max_experimental_control_activation_count": 64,
+            "diagnostic_fallback_rejected_control_activation_count": 0,
+            "missing_observation_count": 0,
+            "missing_log_prob_count": 0,
+            "missing_value_count": 0,
+            "invalid_action_mask_count": 0,
+            "non_finite_logits_count": 0,
+            "non_finite_log_prob_count": 0,
+            "non_finite_value_count": 0,
+            "non_finite_reward_count": 0,
+            "missing_observation_control_activation_count": 0,
+            "non_finite_control_activation_count": 0,
+            "controlled_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "kill_switch_drill_passed": True,
+            "post_kill_switch_activation_count": 0,
+            "rollback_drill_passed": True,
+            "telemetry_drill_passed": True,
+            "default_policy_unchanged": True,
+            "runs_staged_release_trial": True,
+            "connects_real_executor": False,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "readiness_status": "guarded_experimental_policy_staged_release_trial_evaluated",
             "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
         }
 

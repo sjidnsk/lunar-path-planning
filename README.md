@@ -2987,6 +2987,42 @@ checkpoint, replace the default policy, modify network/action space/default A*,
 relax gates, download new raw data, claim Ackermann-feasible trajectory, claim
 performance improvement, or claim formal training readiness.
 
+## Guarded Experimental Policy Staged Release Trial v1
+
+**Guarded Experimental Policy Staged Release Trial v1** is the first local,
+offline staged trial after preflight. It is a tightly guarded handoff rehearsal:
+the experimental policy may take control only on a small number of gate-clean
+shadow rows, while the default policy remains authoritative and every rejected,
+fallback, missing, or non-finite row stays diagnostic-only.
+
+The runner consumes the staged-release preflight summary and the shadow release
+step comparison, then writes:
+
+- `guarded-experimental-policy-staged-release-trial-summary.json`
+- `staged-release-activation-ledger.jsonl`
+- `staged-release-controlled-regression-audit.json`
+- `staged-release-fallback-rejection-report.json`
+- `staged-release-kill-switch-drill.json`
+- `staged-release-rollback-drill.json`
+- `staged-release-telemetry-drill.json`
+- `staged-release-trial-readiness-validate-only.json`
+- `staged-release-trial-report.md`
+
+Acceptance requires `staged_release_enabled=true`,
+`default_policy_authoritative=true`, `1 <= experimental_control_activation_count
+<= 64`, zero diagnostic/fallback/rejected activations, zero controlled
+safety/contract/path-risk/source-selection regression, zero activation-level
+missing/non-finite/mask failures, and passed kill-switch, rollback, and
+telemetry drills. Readiness accepts
+`--guarded-experimental-policy-staged-release-trial-summary` and advances to
+`guarded_experimental_policy_staged_release_trial_evaluated`.
+
+This is still local/offline release evidence, not a real staged release. It does
+not connect to a real executor, run a new PPO update, publish a checkpoint,
+replace the default policy, modify network/action space/default A*, relax
+gates, download new raw data, claim Ackermann-feasible trajectory, claim
+performance improvement, or claim formal training readiness.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:

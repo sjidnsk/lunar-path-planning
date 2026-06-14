@@ -219,6 +219,12 @@ GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_PREFLIGHT_EVALUATED_ACTION = (
 GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_PREFLIGHT_SCHEMA_VERSION = (
     "guarded-experimental-policy-staged-release-preflight-summary/v1"
 )
+GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_TRIAL_EVALUATED_ACTION = (
+    "guarded_experimental_policy_staged_release_trial_evaluated"
+)
+GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_TRIAL_SCHEMA_VERSION = (
+    "guarded-experimental-policy-staged-release-trial-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -474,6 +480,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--guarded-experimental-policy-staged-release-preflight-summary",
         help="Optional guarded-experimental-policy-staged-release-preflight-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--guarded-experimental-policy-staged-release-trial-summary",
+        help="Optional guarded-experimental-policy-staged-release-trial-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -786,6 +796,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.guarded_experimental_policy_staged_release_preflight_summary
         else batch_root
         / "guarded-experimental-policy-staged-release-preflight-summary.json"
+    )
+    guarded_experimental_policy_staged_release_trial_path = (
+        _resolve_path(
+            args.guarded_experimental_policy_staged_release_trial_summary,
+            repo_root,
+        )
+        if args.guarded_experimental_policy_staged_release_trial_summary
+        else batch_root / "guarded-experimental-policy-staged-release-trial-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -1240,6 +1258,7 @@ def main(argv: list[str] | None = None) -> int:
         and not args.selected_formal_ppo_candidate_promotion_preflight_summary
         and not args.selected_formal_ppo_candidate_promotion_decision_review_summary
         and not args.guarded_experimental_policy_staged_release_preflight_summary
+        and not args.guarded_experimental_policy_staged_release_trial_summary
         and
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -1251,6 +1270,65 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.guarded_experimental_policy_staged_release_trial_summary:
+        summary = _analyze_guarded_experimental_policy_staged_release_trial_stage_only(
+            batch_root=batch_root,
+            staged_trial_path=guarded_experimental_policy_staged_release_trial_path,
+            config=config,
+            repo_root=repo_root,
+        )
+        output_file = _output_file(batch_root, config)
+        validation_message = {
+            "status": "config validated" if summary["status"] == "passed" else "validation failed",
+            "batch_root": _display_path(batch_root, repo_root),
+            "guarded_experimental_policy_staged_release_trial_summary": _display_path(
+                guarded_experimental_policy_staged_release_trial_path,
+                repo_root,
+            ),
+            "config": _display_path(config_path, repo_root),
+            "reason_codes": summary["reason_codes"],
+            "training_readiness_status": summary["training_readiness_status"],
+            "training_blockers": summary["training_blockers"],
+            "recommended_next_action": summary["recommended_next_action"],
+            "guarded_experimental_policy_staged_release_trial_readiness": summary[
+                "guarded_experimental_policy_staged_release_trial_readiness"
+            ],
+            "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+        }
+        print(json.dumps(validation_message, ensure_ascii=False))
+        if args.validate_only or args.dry_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry-run",
+                            "would_write": {
+                                "policy_training_readiness_review_summary": _display_path(
+                                    output_file,
+                                    repo_root,
+                                ),
+                            },
+                            "recommended_next_action": summary["recommended_next_action"],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return 1 if summary["status"] == "failed" else 0
+        _write_json(output_file, summary)
+        print(
+            json.dumps(
+                {
+                    "status": summary["status"],
+                    "training_readiness_status": summary["training_readiness_status"],
+                    "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+                    "recommended_next_action": summary["recommended_next_action"],
+                    "failure_reason_code_counts": summary["failure_reason_code_counts"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1 if summary["status"] == "failed" else 0
 
     if args.guarded_experimental_policy_staged_release_preflight_summary:
         summary = _analyze_guarded_experimental_policy_staged_release_preflight_stage_only(
@@ -2536,6 +2614,226 @@ def _guarded_experimental_policy_release_candidate_packaging_readiness(
         "package_checkpoint_sha256": package_checkpoint_sha256,
         "checkpoint_size_bytes": checkpoint_size,
         "package_checkpoint_size_bytes": package_checkpoint_size,
+    }
+
+
+def _analyze_guarded_experimental_policy_staged_release_trial_stage_only(
+    *,
+    batch_root: Path,
+    staged_trial_path: Path,
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    source_summaries: dict[str, Any] = {}
+    staged_trial_summary = _load_source(
+        staged_trial_path,
+        label="guarded_experimental_policy_staged_release_trial_summary",
+        expected_schema=GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_TRIAL_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+    )
+    current_git = _git_snapshot(repo_root)
+    if staged_trial_summary:
+        _inspect_git(
+            staged_trial_summary,
+            label="guarded_experimental_policy_staged_release_trial_summary",
+            current_git=current_git,
+            config=config,
+            reason_codes=reason_codes,
+        )
+    readiness = _guarded_experimental_policy_staged_release_trial_readiness(
+        staged_trial_summary
+    )
+    blockers = list(readiness["training_blockers"])
+    training_readiness_status = (
+        GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_TRIAL_EVALUATED_ACTION
+        if not reason_codes and readiness["completed"]
+        else "needs_training_contract_refinement"
+    )
+    recommended_next_action = (
+        GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_TRIAL_EVALUATED_ACTION
+        if training_readiness_status
+        == GUARDED_EXPERIMENTAL_POLICY_STAGED_RELEASE_TRIAL_EVALUATED_ACTION
+        else "fix_guarded_experimental_policy_staged_release_trial"
+    )
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "status": "failed" if reason_codes else "passed",
+        "reason_codes": reason_codes,
+        "failure_reason_code_counts": dict(Counter(reason_codes)),
+        "batch_root": _display_path(batch_root, repo_root),
+        "source_summaries": source_summaries,
+        "training_readiness_status": training_readiness_status,
+        "training_blockers": blockers,
+        "recommended_next_action": recommended_next_action,
+        "guarded_experimental_policy_staged_release_trial_readiness": readiness,
+        "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _guarded_experimental_policy_staged_release_trial_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "staged_release_trial_verdict": None,
+        "experimental_control_activation_count": 0,
+        "controlled_regression_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    activation_count = _int_value_or_default(
+        summary.get("experimental_control_activation_count"),
+        0,
+    )
+    max_activation_count = _int_value_or_default(
+        summary.get("max_experimental_control_activation_count"),
+        64,
+    )
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_not_passed",
+        )
+    if summary.get("staged_release_trial_verdict") != "eligible_for_guarded_staged_release_canary":
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_not_eligible",
+        )
+    if not summary.get("source_staged_release_preflight_summary"):
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_inputs_missing",
+        )
+    for field in (
+        "activation_ledger",
+        "controlled_regression_audit",
+        "fallback_rejection_report",
+        "kill_switch_drill",
+        "rollback_drill",
+        "telemetry_drill",
+    ):
+        if not summary.get(field):
+            _append_reason(
+                blockers,
+                "guarded_experimental_policy_staged_release_trial_artifacts_missing",
+            )
+    if summary.get("staged_release_enabled") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_not_enabled",
+        )
+    if summary.get("default_policy_authoritative") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_default_not_authoritative",
+        )
+    if activation_count < 1 or activation_count > max_activation_count:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_activation_count_out_of_bounds",
+        )
+    for field, reason in (
+        ("diagnostic_fallback_rejected_control_activation_count", "guarded_experimental_policy_staged_release_trial_diagnostic_control_activated"),
+        ("missing_observation_count", "guarded_experimental_policy_staged_release_trial_missing_observation"),
+        ("missing_log_prob_count", "guarded_experimental_policy_staged_release_trial_missing_log_prob_or_value"),
+        ("missing_value_count", "guarded_experimental_policy_staged_release_trial_missing_log_prob_or_value"),
+        ("invalid_action_mask_count", "guarded_experimental_policy_staged_release_trial_invalid_action_mask"),
+        ("non_finite_logits_count", "guarded_experimental_policy_staged_release_trial_non_finite"),
+        ("non_finite_log_prob_count", "guarded_experimental_policy_staged_release_trial_non_finite"),
+        ("non_finite_value_count", "guarded_experimental_policy_staged_release_trial_non_finite"),
+        ("non_finite_reward_count", "guarded_experimental_policy_staged_release_trial_non_finite"),
+        ("missing_observation_control_activation_count", "guarded_experimental_policy_staged_release_trial_missing_observation"),
+        ("non_finite_control_activation_count", "guarded_experimental_policy_staged_release_trial_non_finite"),
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(blockers, reason)
+    for field in (
+        "controlled_regression_count",
+        "controlled_safety_regression_count",
+        "controlled_contract_regression_count",
+        "controlled_path_risk_regression_count",
+        "controlled_source_selection_regression_count",
+    ):
+        if _int_value_or_default(summary.get(field), 0) > 0:
+            _append_reason(
+                blockers,
+                "guarded_experimental_policy_staged_release_trial_controlled_regression",
+            )
+    if summary.get("kill_switch_drill_passed") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_kill_switch_failed",
+        )
+    if _int_value_or_default(summary.get("post_kill_switch_activation_count"), 0) != 0:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_kill_switch_failed",
+        )
+    if summary.get("rollback_drill_passed") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_rollback_failed",
+        )
+    if summary.get("telemetry_drill_passed") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_telemetry_failed",
+        )
+    if summary.get("default_policy_unchanged") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_default_policy_changed",
+        )
+    if summary.get("connects_real_executor") is True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_real_executor_connected",
+        )
+    if summary.get("runs_staged_release_trial") is not True:
+        _append_reason(
+            blockers,
+            "guarded_experimental_policy_staged_release_trial_not_run",
+        )
+    if summary.get("runs_new_ppo_update") is True:
+        _append_reason(blockers, "formal_ppo_update_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": None
+        if not blockers
+        else "fix_guarded_experimental_policy_staged_release_trial",
+        "staged_release_trial_verdict": summary.get("staged_release_trial_verdict"),
+        "experimental_control_activation_count": activation_count,
+        "max_experimental_control_activation_count": max_activation_count,
+        "controlled_regression_count": _int_value_or_default(
+            summary.get("controlled_regression_count"),
+            0,
+        ),
+        "kill_switch_drill_passed": summary.get("kill_switch_drill_passed") is True,
+        "rollback_drill_passed": summary.get("rollback_drill_passed") is True,
+        "telemetry_drill_passed": summary.get("telemetry_drill_passed") is True,
+        "default_policy_unchanged": summary.get("default_policy_unchanged") is True,
     }
 
 
