@@ -2296,6 +2296,68 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             summary["training_blockers"],
         )
 
+    def test_selected_formal_ppo_candidate_multihorizon_shadow_rollout_advances_readiness(self) -> None:
+        shadow_path = self.batch_root / "multihorizon-shadow-rollout-summary.json"
+        shadow_path.write_text(
+            json.dumps(
+                self._selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary(),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary",
+            str(shadow_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["selected_formal_ppo_candidate_multihorizon_shadow_rollout_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_selected_formal_ppo_candidate_multihorizon_shadow_regression_blocks_readiness(self) -> None:
+        shadow_path = self.batch_root / "multihorizon-shadow-rollout-summary.json"
+        payload = self._selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary()
+        payload["controlled_regression_count"] = 1
+        payload["family_regression_count"] = 1
+        shadow_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary",
+            str(shadow_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "needs_training_contract_refinement",
+        )
+        self.assertIn(
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression",
+            summary["training_blockers"],
+        )
+
     def _formal_stability_holdout_summary(self) -> dict:
         return {
             "schema_version": "quasi-real-guarded-formal-ppo-stability-holdout-validation-summary/v1",
@@ -2398,6 +2460,61 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             "candidate_manifest": "selected-candidate-manifest.json",
             "rollback_manifest": "candidate-selection-rollback-manifest.json",
             "runs_formal_ppo_candidate_selection_long_horizon_holdout": True,
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "performance_claimed": False,
+            "formal_training_ready_claimed": False,
+            "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+        }
+
+    def _selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary(self) -> dict:
+        return {
+            "schema_version": "selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary/v1",
+            "status": "passed",
+            "reason_codes": [],
+            "input_trainable_transition_count": 684,
+            "shadow_trainable_transition_count": 2052,
+            "unique_trainable_context_count": 684,
+            "selected_seed": 0,
+            "selected_budget": "epochs1_lr3e-6",
+            "selected_candidate_root": "outputs/selected-candidate",
+            "selected_candidate_from_candidate_selection": True,
+            "horizons": [10, 20, 30],
+            "per_horizon_step_count": {"10": 684, "20": 684, "30": 684},
+            "per_horizon_completed_episode_count": {"10": 68, "20": 34, "30": 22},
+            "validation_trainable_count": 0,
+            "test_trainable_count": 0,
+            "fallback_trainable_count": 0,
+            "source_fallback_trainable_count": 0,
+            "teacher_fallback_trainable_count": 0,
+            "non_empty_gate_reason_trainable_count": 0,
+            "missing_observation_count": 0,
+            "missing_log_prob_count": 0,
+            "missing_value_count": 0,
+            "non_finite_reward_count": 0,
+            "non_finite_return_count": 0,
+            "non_finite_advantage_count": 0,
+            "non_finite_shadow_return_count": 0,
+            "non_finite_shadow_advantage_count": 0,
+            "controlled_regression_count": 0,
+            "train_controlled_regression_count": 0,
+            "validation_controlled_regression_count": 0,
+            "test_controlled_regression_count": 0,
+            "family_regression_count": 0,
+            "controlled_safety_regression_count": 0,
+            "controlled_contract_regression_count": 0,
+            "controlled_path_risk_regression_count": 0,
+            "controlled_source_selection_regression_count": 0,
+            "teacher_agreement_rate": 1.0,
+            "uses_multistep_discounted_return": True,
+            "not_single_step_best_action": True,
+            "episodes": "multihorizon-shadow-rollout-episodes.jsonl",
+            "steps": "multihorizon-shadow-rollout-steps.jsonl",
+            "return_audit": "multihorizon-return-audit.json",
+            "rejection_report": "multihorizon-rejection-report.json",
+            "family_report": "multihorizon-family-report.json",
+            "runs_multihorizon_shadow_rollout": True,
             "runs_new_ppo_update": False,
             "publishes_checkpoint": False,
             "replaces_default_policy": False,

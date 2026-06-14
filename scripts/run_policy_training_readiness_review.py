@@ -177,6 +177,12 @@ QUASI_REAL_GUARDED_FORMAL_PPO_CANDIDATE_SELECTION_LONG_HORIZON_HOLDOUT_EVALUATED
 QUASI_REAL_GUARDED_FORMAL_PPO_CANDIDATE_SELECTION_LONG_HORIZON_HOLDOUT_SCHEMA_VERSION = (
     "quasi-real-guarded-formal-ppo-candidate-selection-long-horizon-holdout-summary/v1"
 )
+SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_EVALUATED_ACTION = (
+    "selected_formal_ppo_candidate_multihorizon_shadow_rollout_evaluated"
+)
+SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_SCHEMA_VERSION = (
+    "selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -404,6 +410,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quasi-real-guarded-formal-ppo-candidate-selection-long-horizon-holdout-summary",
         help="Optional quasi-real-guarded-formal-ppo-candidate-selection-long-horizon-holdout-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary",
+        help="Optional selected-formal-ppo-candidate-multihorizon-shadow-rollout-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -655,6 +665,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_summary
         else batch_root
         / "quasi-real-guarded-formal-ppo-candidate-selection-long-horizon-holdout-summary.json"
+    )
+    selected_formal_ppo_candidate_multihorizon_shadow_rollout_path = (
+        _resolve_path(
+            args.selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary,
+            repo_root,
+        )
+        if args.selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary
+        else batch_root / "multihorizon-shadow-rollout-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -1112,6 +1130,65 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
+
+    if args.selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary:
+        summary = _analyze_selected_formal_ppo_candidate_multihorizon_shadow_stage_only(
+            batch_root=batch_root,
+            shadow_path=selected_formal_ppo_candidate_multihorizon_shadow_rollout_path,
+            config=config,
+            repo_root=repo_root,
+        )
+        output_file = _output_file(batch_root, config)
+        validation_message = {
+            "status": "config validated" if summary["status"] == "passed" else "validation failed",
+            "batch_root": _display_path(batch_root, repo_root),
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary": _display_path(
+                selected_formal_ppo_candidate_multihorizon_shadow_rollout_path,
+                repo_root,
+            ),
+            "config": _display_path(config_path, repo_root),
+            "reason_codes": summary["reason_codes"],
+            "training_readiness_status": summary["training_readiness_status"],
+            "training_blockers": summary["training_blockers"],
+            "recommended_next_action": summary["recommended_next_action"],
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_readiness": summary[
+                "selected_formal_ppo_candidate_multihorizon_shadow_rollout_readiness"
+            ],
+            "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+        }
+        print(json.dumps(validation_message, ensure_ascii=False))
+        if args.validate_only or args.dry_run:
+            if args.dry_run:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry-run",
+                            "would_write": {
+                                "policy_training_readiness_review_summary": _display_path(
+                                    output_file,
+                                    repo_root,
+                                ),
+                            },
+                            "recommended_next_action": summary["recommended_next_action"],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return 1 if summary["status"] == "failed" else 0
+        _write_json(output_file, summary)
+        print(
+            json.dumps(
+                {
+                    "status": summary["status"],
+                    "training_readiness_status": summary["training_readiness_status"],
+                    "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
+                    "recommended_next_action": summary["recommended_next_action"],
+                    "failure_reason_code_counts": summary["failure_reason_code_counts"],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1 if summary["status"] == "failed" else 0
 
     summary = analyze_policy_training_readiness_review(
         batch_root=batch_root,
@@ -1619,6 +1696,227 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     return 1 if summary["status"] == "failed" else 0
+
+
+def _analyze_selected_formal_ppo_candidate_multihorizon_shadow_stage_only(
+    *,
+    batch_root: Path,
+    shadow_path: Path,
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    source_summaries: dict[str, Any] = {}
+    shadow_summary = _load_source(
+        shadow_path,
+        label="selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary",
+        expected_schema=SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+    )
+    current_git = _git_snapshot(repo_root)
+    if shadow_summary:
+        _inspect_git(
+            shadow_summary,
+            label="selected_formal_ppo_candidate_multihorizon_shadow_rollout_summary",
+            current_git=current_git,
+            config=config,
+            reason_codes=reason_codes,
+        )
+    readiness = _selected_formal_ppo_candidate_multihorizon_shadow_rollout_readiness(
+        shadow_summary
+    )
+    blockers = list(readiness["training_blockers"])
+    training_readiness_status = (
+        SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_EVALUATED_ACTION
+        if not reason_codes and readiness["completed"]
+        else "needs_training_contract_refinement"
+    )
+    recommended_next_action = (
+        SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_EVALUATED_ACTION
+        if training_readiness_status
+        == SELECTED_FORMAL_PPO_CANDIDATE_MULTIHORIZON_SHADOW_ROLLOUT_EVALUATED_ACTION
+        else "fix_selected_formal_ppo_candidate_multihorizon_shadow_rollout"
+    )
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "status": "failed" if reason_codes else "passed",
+        "reason_codes": reason_codes,
+        "failure_reason_code_counts": dict(Counter(reason_codes)),
+        "batch_root": _display_path(batch_root, repo_root),
+        "source_summaries": source_summaries,
+        "training_readiness_status": training_readiness_status,
+        "training_blockers": blockers,
+        "recommended_next_action": recommended_next_action,
+        "selected_formal_ppo_candidate_multihorizon_shadow_rollout_readiness": readiness,
+        "git_provenance": {"current": current_git, "current_matches_sources": not reason_codes},
+    }
+
+
+def _selected_formal_ppo_candidate_multihorizon_shadow_rollout_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "trainable_transition_count": 0,
+        "shadow_trainable_transition_count": 0,
+        "unique_trainable_context_count": 0,
+        "horizons": [],
+        "per_horizon_completed_episode_count": {},
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_not_passed",
+        )
+
+    trainable_transition_count = _int_value_or_default(
+        summary.get("input_trainable_transition_count"), 0
+    )
+    shadow_trainable_transition_count = _int_value_or_default(
+        summary.get("shadow_trainable_transition_count"), 0
+    )
+    unique_trainable_context_count = _int_value_or_default(
+        summary.get("unique_trainable_context_count"), 0
+    )
+    horizons = [
+        _int_value_or_default(value, 0)
+        for value in summary.get("horizons", [])
+        if _int_value_or_default(value, 0) > 0
+    ]
+    per_horizon_step_count = summary.get("per_horizon_step_count")
+    per_horizon_completed_episode_count = summary.get("per_horizon_completed_episode_count")
+    if not isinstance(per_horizon_step_count, dict):
+        per_horizon_step_count = {}
+    if not isinstance(per_horizon_completed_episode_count, dict):
+        per_horizon_completed_episode_count = {}
+
+    if trainable_transition_count != 684:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_trainable_count_mismatch",
+        )
+    if shadow_trainable_transition_count != 2052:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_shadow_count_mismatch",
+        )
+    if unique_trainable_context_count != 684:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_unique_context_count_mismatch",
+        )
+    if horizons != [10, 20, 30]:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_horizons_invalid",
+        )
+    for horizon in ("10", "20", "30"):
+        if _int_value_or_default(per_horizon_step_count.get(horizon), 0) != 684:
+            _append_reason(
+                blockers,
+                "selected_formal_ppo_candidate_multihorizon_shadow_rollout_horizon_step_count_mismatch",
+            )
+        if _int_value_or_default(per_horizon_completed_episode_count.get(horizon), 0) <= 0:
+            _append_reason(
+                blockers,
+                "selected_formal_ppo_candidate_multihorizon_shadow_rollout_horizon_episode_missing",
+            )
+    if summary.get("selected_candidate_from_candidate_selection") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_candidate_missing",
+        )
+    if summary.get("selected_seed") != 0 or summary.get("selected_budget") != "epochs1_lr3e-6":
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_candidate_mismatch",
+        )
+    for field, reason in (
+        ("validation_trainable_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_split_leakage"),
+        ("test_trainable_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_split_leakage"),
+        ("fallback_trainable_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_fallback_trainable"),
+        ("source_fallback_trainable_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_fallback_trainable"),
+        ("teacher_fallback_trainable_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_fallback_trainable"),
+        ("non_empty_gate_reason_trainable_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_gate_reason_trainable"),
+        ("missing_observation_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_contract_invalid"),
+        ("missing_log_prob_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_contract_invalid"),
+        ("missing_value_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_contract_invalid"),
+        ("non_finite_reward_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_non_finite"),
+        ("non_finite_return_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_non_finite"),
+        ("non_finite_advantage_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_non_finite"),
+        ("non_finite_shadow_return_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_non_finite"),
+        ("non_finite_shadow_advantage_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_non_finite"),
+        ("controlled_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("train_controlled_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("validation_controlled_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("test_controlled_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("controlled_safety_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("controlled_contract_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("controlled_path_risk_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("controlled_source_selection_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_controlled_regression"),
+        ("family_regression_count", "selected_formal_ppo_candidate_multihorizon_shadow_rollout_family_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    if _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0) < 0.95:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_teacher_alignment_insufficient",
+        )
+    if summary.get("uses_multistep_discounted_return") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_return_not_multistep",
+        )
+    if summary.get("not_single_step_best_action") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_single_step_greedy",
+        )
+    if not summary.get("episodes") or not summary.get("steps") or not summary.get("return_audit"):
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_artifacts_missing",
+        )
+    if summary.get("runs_multihorizon_shadow_rollout") is not True:
+        _append_reason(
+            blockers,
+            "selected_formal_ppo_candidate_multihorizon_shadow_rollout_not_run",
+        )
+    if summary.get("runs_new_ppo_update") is True:
+        _append_reason(blockers, "formal_ppo_update_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "trainable_transition_count": trainable_transition_count,
+        "shadow_trainable_transition_count": shadow_trainable_transition_count,
+        "unique_trainable_context_count": unique_trainable_context_count,
+        "horizons": horizons,
+        "per_horizon_completed_episode_count": per_horizon_completed_episode_count,
+    }
 
 
 def analyze_policy_training_readiness_review(

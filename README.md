@@ -2617,6 +2617,39 @@ change network/action space/default A*, relax distance/path-risk/source-selectio
 gates, download new raw data, claim Ackermann-feasible trajectories, or promote
 IRIS/GCS/path-planner diagnostics to training release evidence.
 
+### Selected Formal PPO Candidate Multi-Horizon Shadow Rollout
+
+`Selected Formal PPO Candidate Multi-Horizon Shadow Rollout v1` follows the
+passed candidate-selection holdout. The previous stage picked the auditable
+experimental candidate; this stage keeps that candidate frozen and runs a
+read-only shadow road test at horizons 10, 20, and 30. It is still not another
+PPO update.
+
+New artifacts:
+
+- `configs/selected_formal_ppo_candidate_multihorizon_shadow_rollout_v1.json`
+- `scripts/run_selected_formal_ppo_candidate_multihorizon_shadow_rollout.py/.sh`
+- `scripts/run_selected_formal_ppo_candidate_multihorizon_shadow_rollout_closure.sh`
+- `tests/test_selected_formal_ppo_candidate_multihorizon_shadow_rollout.py`
+- `docs/superpowers/specs/2026-06-14-selected-formal-ppo-candidate-multihorizon-shadow-rollout.md`
+- `outputs/path_feedback_batch_selected_formal_ppo_candidate_multihorizon_shadow_rollout_v1/`
+
+The current closure passes with `status=passed`, `reason_codes=[]`, horizons
+`[10,20,30]`, 684 unique trainable contexts, and 2052 shadow trainable
+transition records across the three horizon views. Complete episode counts are
+68 for horizon 10, 34 for horizon 20, and 22 for horizon 30. Controlled
+regression and family regression remain 0, `teacher_agreement_rate=1.0`, and
+readiness advances to
+`selected_formal_ppo_candidate_multihorizon_shadow_rollout_evaluated`.
+
+This is a shadow rollout, not a release or formal-training-ready claim. It
+writes multi-horizon episodes and steps, return audit, rejection report,
+family report, validate-only readiness result, and markdown report. It does not
+publish a checkpoint, replace the default policy, run another PPO update, change
+network/action space/default A*, relax distance/path-risk/source-selection
+gates, download new raw data, claim Ackermann-feasible trajectories, or promote
+IRIS/GCS/path-planner diagnostics to training release evidence.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the

@@ -1,0 +1,54 @@
+{
+  "schema_version": "selected-formal-ppo-candidate-multihorizon-shadow-rollout-config/v1",
+  "description": "Run a read-only multi-horizon shadow rollout for the selected formal PPO experimental candidate. This does not run a new PPO update, publish a checkpoint, replace the default policy, or claim formal training readiness.",
+  "default_paths": {
+    "candidate_selection_root": "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_candidate_selection_long_horizon_holdout_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_selected_formal_ppo_candidate_multihorizon_shadow_rollout_v1"
+  },
+  "shadow_rollout": {
+    "horizons": [
+      10,
+      20,
+      30
+    ],
+    "discount_factor": 0.99
+  },
+  "validation": {
+    "expected_trainable_transition_count": 684,
+    "min_teacher_agreement_rate": 0.95
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "selected_formal_ppo_candidate_multihorizon_shadow_rollout_evaluated"
+  },
+  "output_files": {
+    "summary": "multihorizon-shadow-rollout-summary.json",
+    "episodes": "multihorizon-shadow-rollout-episodes.jsonl",
+    "steps": "multihorizon-shadow-rollout-steps.jsonl",
+    "return_audit": "multihorizon-return-audit.json",
+    "rejection_report": "multihorizon-rejection-report.json",
+    "family_report": "multihorizon-family-report.json",
+    "readiness_validate_only": "multihorizon-readiness-validate-only.json",
+    "report": "multihorizon-shadow-rollout-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-selected-formal-ppo-candidate-multihorizon-shadow-rollout.md"
+  ],
+  "non_goals": [
+    "does_not_run_new_ppo_update",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}
