@@ -1,0 +1,64 @@
+{
+  "schema_version": "quasi-real-guarded-formal-ppo-rollout-canary-config/v1",
+  "description": "Guarded formal PPO rollout canary over the 684-transition quasi-real formal preflight baseline. This is a conservative experimental canary, not checkpoint publication or a formal training-ready claim.",
+  "default_paths": {
+    "preflight_root": "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_preflight_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_rollout_canary_v1"
+  },
+  "seeds": [0, 1, 2],
+  "training": {
+    "epochs": 3,
+    "learning_rate": 1e-5,
+    "clip_ratio": 0.2,
+    "max_grad_norm": 1.0,
+    "discount_factor": 0.99,
+    "device": "cpu"
+  },
+  "validation": {
+    "expected_trainable_transition_count": 684,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_abs_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0,
+    "min_teacher_agreement_rate": 0.95
+  },
+  "update_smoke": {
+    "base_candidate_root": "outputs/path_feedback_batch_quasi_real_teacher_distillation_candidate_v1",
+    "source_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "base_checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "base_checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "quasi_real_guarded_formal_ppo_rollout_canary_evaluated"
+  },
+  "output_files": {
+    "summary": "quasi-real-guarded-formal-ppo-rollout-canary-summary.json",
+    "seed_summaries": "formal-rollout-canary-seed-summaries.jsonl",
+    "training_curves": "formal-rollout-canary-training-curves.json",
+    "gate_audit": "formal-rollout-canary-gate-audit.json",
+    "rollback_manifest": "formal-rollout-canary-rollback-manifest.json",
+    "readiness_validate_only": "formal-rollout-canary-readiness-validate-only.json",
+    "progress": "formal-rollout-canary-progress.jsonl",
+    "report": "formal-rollout-canary-report.md"
+  },
+  "documentation_updates": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-quasi-real-guarded-formal-ppo-rollout-canary.md"
+  ],
+  "non_goals": [
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_download_new_raw_data",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}

@@ -2509,6 +2509,40 @@ space/default A*, relax distance/path-risk/source-selection gates, claim
 Ackermann-feasible trajectories, or promote IRIS/GCS/path-planner diagnostics to
 training release evidence.
 
+### Quasi-Real Guarded Formal PPO Rollout Canary
+
+`Quasi-Real Guarded Formal PPO Rollout Canary v1` is the next step after the
+formal preflight. The preflight was the bench inspection; the canary is a
+low-speed guarded road test. It uses the same 684 train split, gate-clean
+quasi-real transitions, runs conservative multi-seed PPO canary updates, then
+audits teacher agreement, validation/test isolation, controlled regression,
+KL, gradients, and rollback metadata before readiness can move forward.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_formal_ppo_rollout_canary_v1.json`
+- `scripts/run_quasi_real_guarded_formal_ppo_rollout_canary.py/.sh`
+- `scripts/run_quasi_real_guarded_formal_ppo_rollout_canary_closure.sh`
+- `tests/test_quasi_real_guarded_formal_ppo_rollout_canary.py`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-formal-ppo-rollout-canary.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_formal_ppo_rollout_canary_v1/`
+
+The canary summary writes seed summaries, training curves, a progress JSONL,
+gate audit, rollback manifest, validate-only readiness output, and a markdown
+report. Readiness now accepts
+`--quasi-real-guarded-formal-ppo-rollout-canary-summary` and only advances to
+`quasi_real_guarded_formal_ppo_rollout_canary_evaluated` when the canary passes
+with 684 optimizer transitions, three passed seeds, teacher agreement at least
+0.95, zero controlled regression, zero diagnostic/fallback trainable leakage,
+finite reward/return/advantage/loss/gradient values, bounded KL and clipped
+grad norm, and no publication or formal-ready claim.
+
+This stage still keeps every release guard in place. The canary outputs remain
+experimental, do not replace the default policy, do not publish a checkpoint,
+do not change network/action space/default A*, do not relax distance/path-risk
+or source-selection gates, and do not claim policy performance or formal
+training readiness.
+
 ## Return-Aligned Guarded Multi-Step PPO Collector
 
 `Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the
