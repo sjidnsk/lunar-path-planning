@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_PYTHON="/home/kai/anaconda3/envs/lunar-explorer/bin/python"
+PYTHON_BIN="${PYTHON:-$DEFAULT_PYTHON}"
+
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="python3"
+fi
+
+SRC="${SRC:-outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1}"
+UPDATE="${UPDATE:-outputs/path_feedback_batch_return_aligned_guarded_ppo_update_smoke_v1}"
+QUASI_REAL="${QUASI_REAL:-outputs/path_feedback_batch_quasi_real_safe_better_opportunity_expansion_v1}"
+PILOT="${PILOT:-outputs/path_feedback_batch_quasi_real_guarded_ppo_rollout_pilot_v1}"
+CONFIG="${CONFIG:-configs/quasi_real_guarded_ppo_rollout_pilot_v1.json}"
+READINESS_CONFIG="${READINESS_CONFIG:-configs/policy_training_readiness_review_v1.json}"
+
+PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_return_aligned_guarded_ppo_update_smoke_closure.sh"
+
+rm -rf "$REPO_ROOT/$PILOT"
+
+PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_quasi_real_guarded_ppo_rollout_pilot.sh" \
+  --update-smoke-root "$UPDATE" \
+  --candidate-root "$UPDATE" \
+  --quasi-real-root "$QUASI_REAL" \
+  --output-root "$PILOT" \
+  --config "$CONFIG"
+
+PYTHON="$PYTHON_BIN" bash "$SCRIPT_DIR/run_policy_training_readiness_review.sh" \
+  --batch-root "$SRC" \
+  --config "$READINESS_CONFIG" \
+  --quasi-real-guarded-ppo-rollout-pilot-summary "$PILOT/quasi-real-guarded-ppo-rollout-pilot-summary.json" \
+  --validate-only

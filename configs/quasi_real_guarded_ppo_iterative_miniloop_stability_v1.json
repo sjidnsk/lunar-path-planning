@@ -1,0 +1,61 @@
+{
+  "schema_version": "quasi-real-guarded-ppo-iterative-miniloop-stability-config/v1",
+  "description": "Iterative mini-loop stability preflight for quasi-real guarded PPO evidence: run three small PPO smoke iterations across three seeds over the 684 trainable transitions without claiming formal PPO readiness.",
+  "default_paths": {
+    "expansion_root": "outputs/path_feedback_batch_quasi_real_trainable_context_expansion_v1",
+    "scale512_root": "outputs/path_feedback_batch_quasi_real_trainable_context_expansion_v1/scale512_rerun",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_quasi_real_guarded_ppo_iterative_miniloop_stability_v1"
+  },
+  "iteration_count": 3,
+  "seeds": [0, 1, 2],
+  "training": {
+    "epochs": 1,
+    "learning_rate": 1e-5,
+    "clip_ratio": 0.2,
+    "max_grad_norm": 1.0,
+    "discount_factor": 0.99,
+    "device": "cpu"
+  },
+  "validation": {
+    "expected_optimizer_train_transition_count": 684,
+    "min_unique_trainable_context_count": 684,
+    "min_teacher_agreement_rate": 0.95,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_abs_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0
+  },
+  "update_smoke": {
+    "base_candidate_root": "outputs/path_feedback_batch_quasi_real_teacher_distillation_candidate_v1",
+    "source_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "base_checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "base_checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json"
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "quasi_real_guarded_ppo_iterative_miniloop_stability_evaluated"
+  },
+  "output_files": {
+    "summary": "quasi-real-guarded-ppo-iterative-miniloop-stability-summary.json",
+    "iteration_summaries": "iterative-miniloop-iteration-summaries.jsonl",
+    "progress_jsonl": "iterative-miniloop-progress.jsonl",
+    "readiness_validate_only": "iterative-miniloop-readiness-validate-only.json",
+    "report": "iterative-miniloop-stability-report.md"
+  },
+  "non_goals": [
+    "does_not_start_formal_ppo_rollout",
+    "does_not_download_new_raw_data",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_copy_samples_to_fake_scale",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}

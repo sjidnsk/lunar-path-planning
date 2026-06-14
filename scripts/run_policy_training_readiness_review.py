@@ -8,10 +8,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from git_provenance import git_snapshot as _git_snapshot
-from git_provenance import git_snapshots_match as _git_snapshots_match
-from git_provenance import inspect_source_git_provenance as _inspect_source_git_provenance
-from git_provenance import public_git as _public_git
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+try:
+    from git_provenance import git_snapshot as _git_snapshot
+    from git_provenance import git_snapshots_match as _git_snapshots_match
+    from git_provenance import inspect_source_git_provenance as _inspect_source_git_provenance
+    from git_provenance import public_git as _public_git
+except ModuleNotFoundError:  # pragma: no cover - import path used by unit tests
+    from scripts.git_provenance import git_snapshot as _git_snapshot
+    from scripts.git_provenance import git_snapshots_match as _git_snapshots_match
+    from scripts.git_provenance import inspect_source_git_provenance as _inspect_source_git_provenance
+    from scripts.git_provenance import public_git as _public_git
 
 
 CONFIG_SCHEMA_VERSION = "policy-training-readiness-review-config/v1"
@@ -99,8 +109,50 @@ ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION = (
 ITERATIVE_PPO_MINI_LOOP_STABILITY_SCHEMA_VERSION = (
     "iterative-ppo-mini-loop-stability-summary/v1"
 )
+RETURN_ALIGNED_GUARDED_MULTISTEP_COLLECTOR_EVALUATED_ACTION = (
+    "return_aligned_guarded_multistep_collector_evaluated"
+)
+RETURN_ALIGNED_GUARDED_MULTISTEP_COLLECTOR_SCHEMA_VERSION = (
+    "return-aligned-guarded-multistep-collector-summary/v1"
+)
+RETURN_ALIGNED_GUARDED_PPO_UPDATE_SMOKE_EVALUATED_ACTION = (
+    "return_aligned_guarded_ppo_update_smoke_evaluated"
+)
+RETURN_ALIGNED_GUARDED_PPO_UPDATE_SMOKE_SCHEMA_VERSION = (
+    "return-aligned-guarded-ppo-update-smoke-summary/v1"
+)
 GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION = "guarded_ppo_rollout_pilot_evaluated"
 GUARDED_PPO_ROLLOUT_PILOT_SCHEMA_VERSION = "guarded-ppo-rollout-pilot-summary/v1"
+QUASI_REAL_GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION = (
+    "quasi_real_guarded_ppo_rollout_pilot_evaluated"
+)
+QUASI_REAL_GUARDED_PPO_ROLLOUT_PILOT_SCHEMA_VERSION = (
+    "quasi-real-guarded-ppo-rollout-pilot-summary/v1"
+)
+QUASI_REAL_GUARDED_PPO_STABILITY_REPLAY_EVALUATED_ACTION = (
+    "quasi_real_guarded_ppo_stability_replay_evaluated"
+)
+QUASI_REAL_GUARDED_PPO_STABILITY_REPLAY_SCHEMA_VERSION = (
+    "quasi-real-guarded-ppo-stability-replay-summary/v1"
+)
+QUASI_REAL_GUARDED_PPO_HORIZON5_BATCH_EXPANSION_EVALUATED_ACTION = (
+    "quasi_real_guarded_ppo_horizon5_batch_expansion_evaluated"
+)
+QUASI_REAL_GUARDED_PPO_HORIZON5_BATCH_EXPANSION_SCHEMA_VERSION = (
+    "quasi-real-guarded-ppo-horizon5-batch-expansion-summary/v1"
+)
+QUASI_REAL_GUARDED_PPO_SCALE512_MULTISEED_PREFLIGHT_EVALUATED_ACTION = (
+    "quasi_real_guarded_ppo_scale512_multiseed_preflight_evaluated"
+)
+QUASI_REAL_GUARDED_PPO_SCALE512_MULTISEED_PREFLIGHT_SCHEMA_VERSION = (
+    "quasi-real-guarded-ppo-scale512-multiseed-preflight-summary/v1"
+)
+QUASI_REAL_GUARDED_PPO_ITERATIVE_MINILOOP_STABILITY_EVALUATED_ACTION = (
+    "quasi_real_guarded_ppo_iterative_miniloop_stability_evaluated"
+)
+QUASI_REAL_GUARDED_PPO_ITERATIVE_MINILOOP_STABILITY_SCHEMA_VERSION = (
+    "quasi-real-guarded-ppo-iterative-miniloop-stability-summary/v1"
+)
 POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION = (
     "policy_training_cuda_device_support_evaluated"
 )
@@ -282,8 +334,36 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional iterative-ppo-mini-loop-stability-summary/v1 JSON.",
     )
     parser.add_argument(
+        "--return-aligned-guarded-multistep-collector-summary",
+        help="Optional return-aligned-guarded-multistep-collector-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--return-aligned-guarded-ppo-update-smoke-summary",
+        help="Optional return-aligned-guarded-ppo-update-smoke-summary/v1 JSON.",
+    )
+    parser.add_argument(
         "--guarded-ppo-rollout-pilot-summary",
         help="Optional guarded-ppo-rollout-pilot-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-guarded-ppo-rollout-pilot-summary",
+        help="Optional quasi-real-guarded-ppo-rollout-pilot-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-guarded-ppo-stability-replay-summary",
+        help="Optional quasi-real-guarded-ppo-stability-replay-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-guarded-ppo-horizon5-batch-expansion-summary",
+        help="Optional quasi-real-guarded-ppo-horizon5-batch-expansion-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-guarded-ppo-scale512-multiseed-preflight-summary",
+        help="Optional quasi-real-guarded-ppo-scale512-multiseed-preflight-summary/v1 JSON.",
+    )
+    parser.add_argument(
+        "--quasi-real-guarded-ppo-iterative-miniloop-stability-summary",
+        help="Optional quasi-real-guarded-ppo-iterative-miniloop-stability-summary/v1 JSON.",
     )
     parser.add_argument(
         "--policy-training-cuda-device-support-summary",
@@ -451,10 +531,56 @@ def main(argv: list[str] | None = None) -> int:
         if args.iterative_ppo_mini_loop_stability_summary
         else batch_root / "iterative-ppo-mini-loop-stability-summary.json"
     )
+    return_aligned_guarded_multistep_collector_path = (
+        _resolve_path(args.return_aligned_guarded_multistep_collector_summary, repo_root)
+        if args.return_aligned_guarded_multistep_collector_summary
+        else batch_root / "return-aligned-collector-summary.json"
+    )
+    return_aligned_guarded_ppo_update_smoke_path = (
+        _resolve_path(args.return_aligned_guarded_ppo_update_smoke_summary, repo_root)
+        if args.return_aligned_guarded_ppo_update_smoke_summary
+        else batch_root / "return-aligned-guarded-ppo-update-smoke-summary.json"
+    )
     guarded_ppo_rollout_pilot_path = (
         _resolve_path(args.guarded_ppo_rollout_pilot_summary, repo_root)
         if args.guarded_ppo_rollout_pilot_summary
         else batch_root / "guarded-ppo-rollout-pilot-summary.json"
+    )
+    quasi_real_guarded_ppo_rollout_pilot_path = (
+        _resolve_path(args.quasi_real_guarded_ppo_rollout_pilot_summary, repo_root)
+        if args.quasi_real_guarded_ppo_rollout_pilot_summary
+        else batch_root / "quasi-real-guarded-ppo-rollout-pilot-summary.json"
+    )
+    quasi_real_guarded_ppo_stability_replay_path = (
+        _resolve_path(args.quasi_real_guarded_ppo_stability_replay_summary, repo_root)
+        if args.quasi_real_guarded_ppo_stability_replay_summary
+        else batch_root / "quasi-real-guarded-ppo-stability-replay-summary.json"
+    )
+    quasi_real_guarded_ppo_horizon5_batch_expansion_path = (
+        _resolve_path(
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
+            repo_root,
+        )
+        if args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary
+        else batch_root / "quasi-real-guarded-ppo-horizon5-batch-expansion-summary.json"
+    )
+    quasi_real_guarded_ppo_scale512_multiseed_preflight_path = (
+        _resolve_path(
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
+            repo_root,
+        )
+        if args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary
+        else batch_root
+        / "quasi-real-guarded-ppo-scale512-multiseed-preflight-summary.json"
+    )
+    quasi_real_guarded_ppo_iterative_miniloop_stability_path = (
+        _resolve_path(
+            args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary,
+            repo_root,
+        )
+        if args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary
+        else batch_root
+        / "quasi-real-guarded-ppo-iterative-miniloop-stability-summary.json"
     )
     policy_training_cuda_device_support_path = (
         _resolve_path(args.policy_training_cuda_device_support_summary, repo_root)
@@ -526,7 +652,13 @@ def main(argv: list[str] | None = None) -> int:
             args.limited_quasi_real_ppo_update_smoke_summary,
             args.generated_sequential_gate_metric_accounting_audit_summary,
             args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.return_aligned_guarded_multistep_collector_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
             args.guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_stability_replay_summary,
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
             args.policy_training_cuda_device_support_summary,
             args.quasi_real_map_domain_gap_summary,
             args.quasi_real_shadow_policy_behavior_summary,
@@ -560,6 +692,217 @@ def main(argv: list[str] | None = None) -> int:
             args.generated_sequential_gate_metric_accounting_audit_summary,
             args.generated_sequential_long_horizon_teacher_skill_contract_summary,
             args.iterative_ppo_mini_loop_stability_summary,
+            args.return_aligned_guarded_multistep_collector_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
+            args.quasi_real_guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_stability_replay_summary,
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
+    explicit_return_aligned_only_summary = bool(
+        args.return_aligned_guarded_multistep_collector_summary
+    ) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.iterative_ppo_mini_loop_stability_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
+            args.guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_stability_replay_summary,
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
+    explicit_quasi_real_guarded_rollout_only_summary = bool(
+        args.quasi_real_guarded_ppo_rollout_pilot_summary
+    ) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.iterative_ppo_mini_loop_stability_summary,
+            args.return_aligned_guarded_multistep_collector_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
+            args.guarded_ppo_rollout_pilot_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_guarded_ppo_stability_replay_summary,
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
+    explicit_quasi_real_guarded_stability_only_summary = bool(
+        args.quasi_real_guarded_ppo_stability_replay_summary
+    ) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.iterative_ppo_mini_loop_stability_summary,
+            args.return_aligned_guarded_multistep_collector_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
+            args.guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
+    explicit_quasi_real_guarded_horizon5_only_summary = bool(
+        args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary
+    ) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.iterative_ppo_mini_loop_stability_summary,
+            args.return_aligned_guarded_multistep_collector_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
+            args.guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_stability_replay_summary,
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary,
+            args.policy_training_cuda_device_support_summary,
+            args.quasi_real_map_domain_gap_summary,
+            args.quasi_real_shadow_policy_behavior_summary,
+            args.quasi_real_shadow_alignment_summary,
+            args.quasi_real_guarded_policy_pilot_summary,
+            args.quasi_real_safe_alternative_opportunity_summary,
+            args.quasi_real_safe_better_opportunity_expansion_summary,
+            args.quasi_real_teacher_equivalent_validation_summary,
+            args.quasi_real_teacher_distillation_summary,
+            args.quasi_real_guarded_teacher_following_pilot_summary,
+        )
+    )
+    explicit_quasi_real_guarded_scale512_only_summary = bool(
+        args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary
+    ) and not any(
+        (
+            args.anchor_projection_candidate_generation_summary,
+            args.anchor_projection_evidence_contract_summary,
+            args.contract_aware_trainable_target_summary,
+            args.planner_validated_trainable_target_mining_summary,
+            args.hybrid_policy_training_dry_run_summary,
+            args.controlled_hybrid_policy_training_candidate_summary,
+            args.controlled_hybrid_policy_holdout_evaluation_summary,
+            args.fresh_holdout_policy_candidate_evaluation_summary,
+            args.scenario_disjoint_policy_rollout_evaluation_summary,
+            args.raw_policy_strict_rollout_evaluation_summary,
+            args.raw_policy_generalization_evaluation_summary,
+            args.policy_gated_canary_rollout_summary,
+            args.policy_gated_sequential_canary_rollout_summary,
+            args.ppo_rollout_collector_summary,
+            args.limited_ppo_update_smoke_summary,
+            args.limited_quasi_real_ppo_update_smoke_summary,
+            args.generated_sequential_gate_metric_accounting_audit_summary,
+            args.generated_sequential_long_horizon_teacher_skill_contract_summary,
+            args.iterative_ppo_mini_loop_stability_summary,
+            args.return_aligned_guarded_multistep_collector_summary,
+            args.return_aligned_guarded_ppo_update_smoke_summary,
+            args.guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_rollout_pilot_summary,
+            args.quasi_real_guarded_ppo_stability_replay_summary,
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary,
             args.policy_training_cuda_device_support_summary,
             args.quasi_real_map_domain_gap_summary,
             args.quasi_real_shadow_policy_behavior_summary,
@@ -575,6 +918,18 @@ def main(argv: list[str] | None = None) -> int:
     anchor_only_defaults_available = (
         not explicit_iterative_only_summary
         and not explicit_guarded_only_summary
+        and not explicit_return_aligned_only_summary
+        and not explicit_quasi_real_guarded_rollout_only_summary
+        and not explicit_quasi_real_guarded_stability_only_summary
+        and not explicit_quasi_real_guarded_horizon5_only_summary
+        and not explicit_quasi_real_guarded_scale512_only_summary
+        and not args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary
+        and not args.return_aligned_guarded_ppo_update_smoke_summary
+        and not args.quasi_real_guarded_ppo_rollout_pilot_summary
+        and not args.quasi_real_guarded_ppo_stability_replay_summary
+        and not args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary
+        and not args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary
+        and not args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary
         and
         anchor_candidate_path.is_file()
         and anchor_contract_path.is_file()
@@ -616,7 +971,28 @@ def main(argv: list[str] | None = None) -> int:
             generated_sequential_long_horizon_teacher_skill_contract_path
         ),
         iterative_ppo_mini_loop_path=iterative_ppo_mini_loop_path,
+        return_aligned_guarded_multistep_collector_path=(
+            return_aligned_guarded_multistep_collector_path
+        ),
+        return_aligned_guarded_ppo_update_smoke_path=(
+            return_aligned_guarded_ppo_update_smoke_path
+        ),
         guarded_ppo_rollout_pilot_path=guarded_ppo_rollout_pilot_path,
+        quasi_real_guarded_ppo_rollout_pilot_path=(
+            quasi_real_guarded_ppo_rollout_pilot_path
+        ),
+        quasi_real_guarded_ppo_stability_replay_path=(
+            quasi_real_guarded_ppo_stability_replay_path
+        ),
+        quasi_real_guarded_ppo_horizon5_batch_expansion_path=(
+            quasi_real_guarded_ppo_horizon5_batch_expansion_path
+        ),
+        quasi_real_guarded_ppo_scale512_multiseed_preflight_path=(
+            quasi_real_guarded_ppo_scale512_multiseed_preflight_path
+        ),
+        quasi_real_guarded_ppo_iterative_miniloop_stability_path=(
+            quasi_real_guarded_ppo_iterative_miniloop_stability_path
+        ),
         policy_training_cuda_device_support_path=policy_training_cuda_device_support_path,
         quasi_real_map_domain_gap_path=quasi_real_map_domain_gap_path,
         quasi_real_shadow_policy_behavior_path=quasi_real_shadow_policy_behavior_path,
@@ -665,7 +1041,28 @@ def main(argv: list[str] | None = None) -> int:
             args.generated_sequential_long_horizon_teacher_skill_contract_summary
         ),
         iterative_ppo_mini_loop_required=bool(args.iterative_ppo_mini_loop_stability_summary),
+        return_aligned_guarded_multistep_collector_required=bool(
+            args.return_aligned_guarded_multistep_collector_summary
+        ),
+        return_aligned_guarded_ppo_update_smoke_required=bool(
+            args.return_aligned_guarded_ppo_update_smoke_summary
+        ),
         guarded_ppo_rollout_pilot_required=bool(args.guarded_ppo_rollout_pilot_summary),
+        quasi_real_guarded_ppo_rollout_pilot_required=bool(
+            args.quasi_real_guarded_ppo_rollout_pilot_summary
+        ),
+        quasi_real_guarded_ppo_stability_replay_required=bool(
+            args.quasi_real_guarded_ppo_stability_replay_summary
+        ),
+        quasi_real_guarded_ppo_horizon5_batch_expansion_required=bool(
+            args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary
+        ),
+        quasi_real_guarded_ppo_scale512_multiseed_preflight_required=bool(
+            args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary
+        ),
+        quasi_real_guarded_ppo_iterative_miniloop_stability_required=bool(
+            args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary
+        ),
         policy_training_cuda_device_support_required=bool(
             args.policy_training_cuda_device_support_summary
         ),
@@ -813,9 +1210,60 @@ def main(argv: list[str] | None = None) -> int:
             if iterative_ppo_mini_loop_path.is_file() or args.iterative_ppo_mini_loop_stability_summary
             else None
         ),
+        "return_aligned_guarded_multistep_collector_summary": (
+            _display_path(return_aligned_guarded_multistep_collector_path, repo_root)
+            if return_aligned_guarded_multistep_collector_path.is_file()
+            or args.return_aligned_guarded_multistep_collector_summary
+            else None
+        ),
+        "return_aligned_guarded_ppo_update_smoke_summary": (
+            _display_path(return_aligned_guarded_ppo_update_smoke_path, repo_root)
+            if return_aligned_guarded_ppo_update_smoke_path.is_file()
+            or args.return_aligned_guarded_ppo_update_smoke_summary
+            else None
+        ),
         "guarded_ppo_rollout_pilot_summary": (
             _display_path(guarded_ppo_rollout_pilot_path, repo_root)
             if guarded_ppo_rollout_pilot_path.is_file() or args.guarded_ppo_rollout_pilot_summary
+            else None
+        ),
+        "quasi_real_guarded_ppo_rollout_pilot_summary": (
+            _display_path(quasi_real_guarded_ppo_rollout_pilot_path, repo_root)
+            if quasi_real_guarded_ppo_rollout_pilot_path.is_file()
+            or args.quasi_real_guarded_ppo_rollout_pilot_summary
+            else None
+        ),
+        "quasi_real_guarded_ppo_stability_replay_summary": (
+            _display_path(quasi_real_guarded_ppo_stability_replay_path, repo_root)
+            if quasi_real_guarded_ppo_stability_replay_path.is_file()
+            or args.quasi_real_guarded_ppo_stability_replay_summary
+            else None
+        ),
+        "quasi_real_guarded_ppo_horizon5_batch_expansion_summary": (
+            _display_path(
+                quasi_real_guarded_ppo_horizon5_batch_expansion_path,
+                repo_root,
+            )
+            if quasi_real_guarded_ppo_horizon5_batch_expansion_path.is_file()
+            or args.quasi_real_guarded_ppo_horizon5_batch_expansion_summary
+            else None
+        ),
+        "quasi_real_guarded_ppo_scale512_multiseed_preflight_summary": (
+            _display_path(
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_path,
+                repo_root,
+            )
+            if quasi_real_guarded_ppo_scale512_multiseed_preflight_path.is_file()
+            or args.quasi_real_guarded_ppo_scale512_multiseed_preflight_summary
+            else None
+        ),
+        "quasi_real_guarded_ppo_iterative_miniloop_stability_summary": (
+            _display_path(
+                quasi_real_guarded_ppo_iterative_miniloop_stability_path,
+                repo_root,
+            )
+            if quasi_real_guarded_ppo_iterative_miniloop_stability_path.is_file()
+            or args.quasi_real_guarded_ppo_iterative_miniloop_stability_summary
             else None
         ),
         "policy_training_cuda_device_support_summary": (
@@ -882,6 +1330,15 @@ def main(argv: list[str] | None = None) -> int:
         "training_readiness_status": summary["training_readiness_status"],
         "training_blockers": summary["training_blockers"],
         "recommended_next_action": summary["recommended_next_action"],
+        "quasi_real_guarded_ppo_horizon5_batch_expansion_readiness": summary.get(
+            "quasi_real_guarded_ppo_horizon5_batch_expansion_readiness"
+        ),
+        "quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness": summary.get(
+            "quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness"
+        ),
+        "quasi_real_guarded_ppo_iterative_miniloop_stability_readiness": summary.get(
+            "quasi_real_guarded_ppo_iterative_miniloop_stability_readiness"
+        ),
         "policy_training_readiness_review_summary": _display_path(output_file, repo_root),
     }
     print(json.dumps(validation_message, ensure_ascii=False))
@@ -958,6 +1415,13 @@ def analyze_policy_training_readiness_review(
     limited_quasi_real_ppo_update_smoke_path: Path | None = None,
     generated_sequential_gate_metric_accounting_audit_path: Path | None = None,
     generated_sequential_long_horizon_teacher_skill_contract_path: Path | None = None,
+    return_aligned_guarded_multistep_collector_path: Path | None = None,
+    return_aligned_guarded_ppo_update_smoke_path: Path | None = None,
+    quasi_real_guarded_ppo_rollout_pilot_path: Path | None = None,
+    quasi_real_guarded_ppo_stability_replay_path: Path | None = None,
+    quasi_real_guarded_ppo_horizon5_batch_expansion_path: Path | None = None,
+    quasi_real_guarded_ppo_scale512_multiseed_preflight_path: Path | None = None,
+    quasi_real_guarded_ppo_iterative_miniloop_stability_path: Path | None = None,
     anchor_candidate_required: bool = False,
     anchor_contract_required: bool = False,
     contract_aware_target_required: bool = False,
@@ -977,7 +1441,14 @@ def analyze_policy_training_readiness_review(
     generated_sequential_gate_metric_accounting_audit_required: bool = False,
     generated_sequential_long_horizon_teacher_skill_contract_required: bool = False,
     iterative_ppo_mini_loop_required: bool = False,
+    return_aligned_guarded_multistep_collector_required: bool = False,
+    return_aligned_guarded_ppo_update_smoke_required: bool = False,
     guarded_ppo_rollout_pilot_required: bool = False,
+    quasi_real_guarded_ppo_rollout_pilot_required: bool = False,
+    quasi_real_guarded_ppo_stability_replay_required: bool = False,
+    quasi_real_guarded_ppo_horizon5_batch_expansion_required: bool = False,
+    quasi_real_guarded_ppo_scale512_multiseed_preflight_required: bool = False,
+    quasi_real_guarded_ppo_iterative_miniloop_stability_required: bool = False,
     policy_training_cuda_device_support_required: bool = False,
     quasi_real_map_domain_gap_required: bool = False,
     quasi_real_shadow_policy_behavior_required: bool = False,
@@ -1017,6 +1488,34 @@ def analyze_policy_training_readiness_review(
         generated_sequential_long_horizon_teacher_skill_contract_path = (
             batch_root / "long-horizon-teacher-skill-contract-summary.json"
         )
+    if return_aligned_guarded_multistep_collector_path is None:
+        return_aligned_guarded_multistep_collector_path = (
+            batch_root / "return-aligned-collector-summary.json"
+        )
+    if return_aligned_guarded_ppo_update_smoke_path is None:
+        return_aligned_guarded_ppo_update_smoke_path = (
+            batch_root / "return-aligned-guarded-ppo-update-smoke-summary.json"
+        )
+    if quasi_real_guarded_ppo_rollout_pilot_path is None:
+        quasi_real_guarded_ppo_rollout_pilot_path = (
+            batch_root / "quasi-real-guarded-ppo-rollout-pilot-summary.json"
+        )
+    if quasi_real_guarded_ppo_stability_replay_path is None:
+        quasi_real_guarded_ppo_stability_replay_path = (
+            batch_root / "quasi-real-guarded-ppo-stability-replay-summary.json"
+        )
+    if quasi_real_guarded_ppo_horizon5_batch_expansion_path is None:
+        quasi_real_guarded_ppo_horizon5_batch_expansion_path = (
+            batch_root / "quasi-real-guarded-ppo-horizon5-batch-expansion-summary.json"
+        )
+    if quasi_real_guarded_ppo_scale512_multiseed_preflight_path is None:
+        quasi_real_guarded_ppo_scale512_multiseed_preflight_path = (
+            batch_root / "quasi-real-guarded-ppo-scale512-multiseed-preflight-summary.json"
+        )
+    if quasi_real_guarded_ppo_iterative_miniloop_stability_path is None:
+        quasi_real_guarded_ppo_iterative_miniloop_stability_path = (
+            batch_root / "quasi-real-guarded-ppo-iterative-miniloop-stability-summary.json"
+        )
     anchor_only_mode = (
         anchor_candidate_required
         and anchor_contract_required
@@ -1044,7 +1543,13 @@ def analyze_policy_training_readiness_review(
             limited_quasi_real_ppo_update_smoke_required,
             generated_sequential_gate_metric_accounting_audit_required,
             generated_sequential_long_horizon_teacher_skill_contract_required,
+            return_aligned_guarded_multistep_collector_required,
+            return_aligned_guarded_ppo_update_smoke_required,
             guarded_ppo_rollout_pilot_required,
+            quasi_real_guarded_ppo_rollout_pilot_required,
+            quasi_real_guarded_ppo_stability_replay_required,
+            quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+            quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
             policy_training_cuda_device_support_required,
             quasi_real_map_domain_gap_required,
             quasi_real_shadow_policy_behavior_required,
@@ -1078,6 +1583,12 @@ def analyze_policy_training_readiness_review(
             generated_sequential_gate_metric_accounting_audit_required,
             generated_sequential_long_horizon_teacher_skill_contract_required,
             iterative_ppo_mini_loop_required,
+            return_aligned_guarded_multistep_collector_required,
+            return_aligned_guarded_ppo_update_smoke_required,
+            quasi_real_guarded_ppo_rollout_pilot_required,
+            quasi_real_guarded_ppo_stability_replay_required,
+            quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+            quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
             policy_training_cuda_device_support_required,
             quasi_real_map_domain_gap_required,
             quasi_real_shadow_policy_behavior_required,
@@ -1090,9 +1601,342 @@ def analyze_policy_training_readiness_review(
             quasi_real_guarded_teacher_following_pilot_required,
         )
     )
-    stage_isolated_mode = anchor_only_mode or iterative_only_mode or guarded_only_mode
-    if guarded_only_mode:
-        isolated_root = batch_root / ".stage-isolated" / "guarded_ppo_rollout_pilot_only"
+    return_aligned_only_mode = return_aligned_guarded_multistep_collector_required and not any(
+        (
+            anchor_candidate_required,
+            anchor_contract_required,
+            contract_aware_target_required,
+            planner_validated_mining_required,
+            hybrid_training_dry_run_required,
+            controlled_candidate_required,
+            controlled_holdout_required,
+            fresh_holdout_required,
+            scenario_rollout_required,
+            raw_strict_rollout_required,
+            raw_generalization_required,
+            policy_canary_required,
+            sequential_canary_required,
+            ppo_collector_required,
+            limited_ppo_update_smoke_required,
+            limited_quasi_real_ppo_update_smoke_required,
+            generated_sequential_gate_metric_accounting_audit_required,
+            generated_sequential_long_horizon_teacher_skill_contract_required,
+            iterative_ppo_mini_loop_required,
+            guarded_ppo_rollout_pilot_required,
+            quasi_real_guarded_ppo_rollout_pilot_required,
+            quasi_real_guarded_ppo_stability_replay_required,
+            quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+            quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+            policy_training_cuda_device_support_required,
+            quasi_real_map_domain_gap_required,
+            quasi_real_shadow_policy_behavior_required,
+            quasi_real_shadow_alignment_required,
+            quasi_real_guarded_policy_pilot_required,
+            quasi_real_safe_alternative_opportunity_required,
+            quasi_real_safe_better_opportunity_expansion_required,
+            quasi_real_teacher_equivalent_validation_required,
+            quasi_real_teacher_distillation_required,
+            quasi_real_guarded_teacher_following_pilot_required,
+        )
+    )
+    return_aligned_update_only_mode = return_aligned_guarded_ppo_update_smoke_required and not any(
+        (
+            anchor_candidate_required,
+            anchor_contract_required,
+            contract_aware_target_required,
+            planner_validated_mining_required,
+            hybrid_training_dry_run_required,
+            controlled_candidate_required,
+            controlled_holdout_required,
+            fresh_holdout_required,
+            scenario_rollout_required,
+            raw_strict_rollout_required,
+            raw_generalization_required,
+            policy_canary_required,
+            sequential_canary_required,
+            ppo_collector_required,
+            limited_ppo_update_smoke_required,
+            limited_quasi_real_ppo_update_smoke_required,
+            generated_sequential_gate_metric_accounting_audit_required,
+            generated_sequential_long_horizon_teacher_skill_contract_required,
+            iterative_ppo_mini_loop_required,
+            return_aligned_guarded_multistep_collector_required,
+            guarded_ppo_rollout_pilot_required,
+            quasi_real_guarded_ppo_rollout_pilot_required,
+            quasi_real_guarded_ppo_stability_replay_required,
+            quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+            quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+            policy_training_cuda_device_support_required,
+            quasi_real_map_domain_gap_required,
+            quasi_real_shadow_policy_behavior_required,
+            quasi_real_shadow_alignment_required,
+            quasi_real_guarded_policy_pilot_required,
+            quasi_real_safe_alternative_opportunity_required,
+            quasi_real_safe_better_opportunity_expansion_required,
+            quasi_real_teacher_equivalent_validation_required,
+            quasi_real_teacher_distillation_required,
+            quasi_real_guarded_teacher_following_pilot_required,
+        )
+    )
+    quasi_real_guarded_rollout_only_mode = (
+        quasi_real_guarded_ppo_rollout_pilot_required
+        and not any(
+            (
+                anchor_candidate_required,
+                anchor_contract_required,
+                contract_aware_target_required,
+                planner_validated_mining_required,
+                hybrid_training_dry_run_required,
+                controlled_candidate_required,
+                controlled_holdout_required,
+                fresh_holdout_required,
+                scenario_rollout_required,
+                raw_strict_rollout_required,
+                raw_generalization_required,
+                policy_canary_required,
+                sequential_canary_required,
+                ppo_collector_required,
+                limited_ppo_update_smoke_required,
+                limited_quasi_real_ppo_update_smoke_required,
+                generated_sequential_gate_metric_accounting_audit_required,
+                generated_sequential_long_horizon_teacher_skill_contract_required,
+                iterative_ppo_mini_loop_required,
+                return_aligned_guarded_multistep_collector_required,
+                return_aligned_guarded_ppo_update_smoke_required,
+                guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_stability_replay_required,
+                quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+                policy_training_cuda_device_support_required,
+                quasi_real_map_domain_gap_required,
+                quasi_real_shadow_policy_behavior_required,
+                quasi_real_shadow_alignment_required,
+                quasi_real_guarded_policy_pilot_required,
+                quasi_real_safe_alternative_opportunity_required,
+                quasi_real_safe_better_opportunity_expansion_required,
+                quasi_real_teacher_equivalent_validation_required,
+                quasi_real_teacher_distillation_required,
+                quasi_real_guarded_teacher_following_pilot_required,
+            )
+        )
+    )
+    quasi_real_guarded_stability_only_mode = (
+        quasi_real_guarded_ppo_stability_replay_required
+        and not any(
+            (
+                anchor_candidate_required,
+                anchor_contract_required,
+                contract_aware_target_required,
+                planner_validated_mining_required,
+                hybrid_training_dry_run_required,
+                controlled_candidate_required,
+                controlled_holdout_required,
+                fresh_holdout_required,
+                scenario_rollout_required,
+                raw_strict_rollout_required,
+                raw_generalization_required,
+                policy_canary_required,
+                sequential_canary_required,
+                ppo_collector_required,
+                limited_ppo_update_smoke_required,
+                limited_quasi_real_ppo_update_smoke_required,
+                generated_sequential_gate_metric_accounting_audit_required,
+                generated_sequential_long_horizon_teacher_skill_contract_required,
+                iterative_ppo_mini_loop_required,
+                return_aligned_guarded_multistep_collector_required,
+                return_aligned_guarded_ppo_update_smoke_required,
+                guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+                policy_training_cuda_device_support_required,
+                quasi_real_map_domain_gap_required,
+                quasi_real_shadow_policy_behavior_required,
+                quasi_real_shadow_alignment_required,
+                quasi_real_guarded_policy_pilot_required,
+                quasi_real_safe_alternative_opportunity_required,
+                quasi_real_safe_better_opportunity_expansion_required,
+                quasi_real_teacher_equivalent_validation_required,
+                quasi_real_teacher_distillation_required,
+                quasi_real_guarded_teacher_following_pilot_required,
+            )
+        )
+    )
+    quasi_real_guarded_horizon5_only_mode = (
+        quasi_real_guarded_ppo_horizon5_batch_expansion_required
+        and not any(
+            (
+                anchor_candidate_required,
+                anchor_contract_required,
+                contract_aware_target_required,
+                planner_validated_mining_required,
+                hybrid_training_dry_run_required,
+                controlled_candidate_required,
+                controlled_holdout_required,
+                fresh_holdout_required,
+                scenario_rollout_required,
+                raw_strict_rollout_required,
+                raw_generalization_required,
+                policy_canary_required,
+                sequential_canary_required,
+                ppo_collector_required,
+                limited_ppo_update_smoke_required,
+                limited_quasi_real_ppo_update_smoke_required,
+                generated_sequential_gate_metric_accounting_audit_required,
+                generated_sequential_long_horizon_teacher_skill_contract_required,
+                iterative_ppo_mini_loop_required,
+                return_aligned_guarded_multistep_collector_required,
+                return_aligned_guarded_ppo_update_smoke_required,
+                guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_stability_replay_required,
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+                policy_training_cuda_device_support_required,
+                quasi_real_map_domain_gap_required,
+                quasi_real_shadow_policy_behavior_required,
+                quasi_real_shadow_alignment_required,
+                quasi_real_guarded_policy_pilot_required,
+                quasi_real_safe_alternative_opportunity_required,
+                quasi_real_safe_better_opportunity_expansion_required,
+                quasi_real_teacher_equivalent_validation_required,
+                quasi_real_teacher_distillation_required,
+                quasi_real_guarded_teacher_following_pilot_required,
+            )
+        )
+    )
+    quasi_real_guarded_scale512_only_mode = (
+        quasi_real_guarded_ppo_scale512_multiseed_preflight_required
+        and not any(
+            (
+                anchor_candidate_required,
+                anchor_contract_required,
+                contract_aware_target_required,
+                planner_validated_mining_required,
+                hybrid_training_dry_run_required,
+                controlled_candidate_required,
+                controlled_holdout_required,
+                fresh_holdout_required,
+                scenario_rollout_required,
+                raw_strict_rollout_required,
+                raw_generalization_required,
+                policy_canary_required,
+                sequential_canary_required,
+                ppo_collector_required,
+                limited_ppo_update_smoke_required,
+                limited_quasi_real_ppo_update_smoke_required,
+                generated_sequential_gate_metric_accounting_audit_required,
+                generated_sequential_long_horizon_teacher_skill_contract_required,
+                iterative_ppo_mini_loop_required,
+                return_aligned_guarded_multistep_collector_required,
+                return_aligned_guarded_ppo_update_smoke_required,
+                guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_stability_replay_required,
+                quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+                policy_training_cuda_device_support_required,
+                quasi_real_map_domain_gap_required,
+                quasi_real_shadow_policy_behavior_required,
+                quasi_real_shadow_alignment_required,
+                quasi_real_guarded_policy_pilot_required,
+                quasi_real_safe_alternative_opportunity_required,
+                quasi_real_safe_better_opportunity_expansion_required,
+                quasi_real_teacher_equivalent_validation_required,
+                quasi_real_teacher_distillation_required,
+                quasi_real_guarded_teacher_following_pilot_required,
+            )
+        )
+    )
+    quasi_real_guarded_iterative_miniloop_only_mode = (
+        quasi_real_guarded_ppo_iterative_miniloop_stability_required
+        and not any(
+            (
+                anchor_candidate_required,
+                anchor_contract_required,
+                contract_aware_target_required,
+                planner_validated_mining_required,
+                hybrid_training_dry_run_required,
+                controlled_candidate_required,
+                controlled_holdout_required,
+                fresh_holdout_required,
+                scenario_rollout_required,
+                raw_strict_rollout_required,
+                raw_generalization_required,
+                policy_canary_required,
+                sequential_canary_required,
+                ppo_collector_required,
+                limited_ppo_update_smoke_required,
+                limited_quasi_real_ppo_update_smoke_required,
+                generated_sequential_gate_metric_accounting_audit_required,
+                generated_sequential_long_horizon_teacher_skill_contract_required,
+                iterative_ppo_mini_loop_required,
+                return_aligned_guarded_multistep_collector_required,
+                return_aligned_guarded_ppo_update_smoke_required,
+                guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_rollout_pilot_required,
+                quasi_real_guarded_ppo_stability_replay_required,
+                quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+                policy_training_cuda_device_support_required,
+                quasi_real_map_domain_gap_required,
+                quasi_real_shadow_policy_behavior_required,
+                quasi_real_shadow_alignment_required,
+                quasi_real_guarded_policy_pilot_required,
+                quasi_real_safe_alternative_opportunity_required,
+                quasi_real_safe_better_opportunity_expansion_required,
+                quasi_real_teacher_equivalent_validation_required,
+                quasi_real_teacher_distillation_required,
+                quasi_real_guarded_teacher_following_pilot_required,
+            )
+        )
+    )
+    stage_isolated_mode = (
+        anchor_only_mode
+        or iterative_only_mode
+        or guarded_only_mode
+        or return_aligned_only_mode
+        or return_aligned_update_only_mode
+        or quasi_real_guarded_rollout_only_mode
+        or quasi_real_guarded_stability_only_mode
+        or quasi_real_guarded_horizon5_only_mode
+        or quasi_real_guarded_scale512_only_mode
+        or quasi_real_guarded_iterative_miniloop_only_mode
+    )
+    if (
+        guarded_only_mode
+        or return_aligned_only_mode
+        or return_aligned_update_only_mode
+        or quasi_real_guarded_rollout_only_mode
+        or quasi_real_guarded_stability_only_mode
+        or quasi_real_guarded_horizon5_only_mode
+        or quasi_real_guarded_scale512_only_mode
+        or quasi_real_guarded_iterative_miniloop_only_mode
+    ):
+        isolated_label = (
+            "quasi_real_guarded_ppo_iterative_miniloop_stability_only"
+            if quasi_real_guarded_iterative_miniloop_only_mode
+            else
+            "quasi_real_guarded_ppo_scale512_multiseed_preflight_only"
+            if quasi_real_guarded_scale512_only_mode
+            else
+            "quasi_real_guarded_ppo_horizon5_batch_expansion_only"
+            if quasi_real_guarded_horizon5_only_mode
+            else
+            "quasi_real_guarded_ppo_stability_replay_only"
+            if quasi_real_guarded_stability_only_mode
+            else
+            "quasi_real_guarded_ppo_rollout_pilot_only"
+            if quasi_real_guarded_rollout_only_mode
+            else (
+                "return_aligned_guarded_ppo_update_smoke_only"
+                if return_aligned_update_only_mode
+                else (
+                    "return_aligned_guarded_multistep_collector_only"
+                    if return_aligned_only_mode
+                    else "guarded_ppo_rollout_pilot_only"
+                )
+            )
+        )
+        isolated_root = batch_root / ".stage-isolated" / isolated_label
 
         def _isolated_path(path: Path, label: str) -> Path:
             return isolated_root / label / path.name
@@ -1159,6 +2003,46 @@ def analyze_policy_training_readiness_review(
             iterative_ppo_mini_loop_path,
             "iterative_ppo_mini_loop_stability_summary",
         )
+        if not return_aligned_only_mode:
+            return_aligned_guarded_multistep_collector_path = _isolated_path(
+                return_aligned_guarded_multistep_collector_path,
+                "return_aligned_guarded_multistep_collector_summary",
+            )
+        if not return_aligned_update_only_mode:
+            return_aligned_guarded_ppo_update_smoke_path = _isolated_path(
+                return_aligned_guarded_ppo_update_smoke_path,
+                "return_aligned_guarded_ppo_update_smoke_summary",
+            )
+        if not guarded_only_mode:
+            guarded_ppo_rollout_pilot_path = _isolated_path(
+                guarded_ppo_rollout_pilot_path,
+                "guarded_ppo_rollout_pilot_summary",
+            )
+        if not quasi_real_guarded_rollout_only_mode:
+            quasi_real_guarded_ppo_rollout_pilot_path = _isolated_path(
+                quasi_real_guarded_ppo_rollout_pilot_path,
+                "quasi_real_guarded_ppo_rollout_pilot_summary",
+            )
+        if not quasi_real_guarded_stability_only_mode:
+            quasi_real_guarded_ppo_stability_replay_path = _isolated_path(
+                quasi_real_guarded_ppo_stability_replay_path,
+                "quasi_real_guarded_ppo_stability_replay_summary",
+            )
+        if not quasi_real_guarded_horizon5_only_mode:
+            quasi_real_guarded_ppo_horizon5_batch_expansion_path = _isolated_path(
+                quasi_real_guarded_ppo_horizon5_batch_expansion_path,
+                "quasi_real_guarded_ppo_horizon5_batch_expansion_summary",
+            )
+        if not quasi_real_guarded_scale512_only_mode:
+            quasi_real_guarded_ppo_scale512_multiseed_preflight_path = _isolated_path(
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_path,
+                "quasi_real_guarded_ppo_scale512_multiseed_preflight_summary",
+            )
+        if not quasi_real_guarded_iterative_miniloop_only_mode:
+            quasi_real_guarded_ppo_iterative_miniloop_stability_path = _isolated_path(
+                quasi_real_guarded_ppo_iterative_miniloop_stability_path,
+                "quasi_real_guarded_ppo_iterative_miniloop_stability_summary",
+            )
         policy_training_cuda_device_support_path = _isolated_path(
             policy_training_cuda_device_support_path,
             "policy_training_cuda_device_support_summary",
@@ -1436,6 +2320,24 @@ def analyze_policy_training_readiness_review(
         source_summaries=source_summaries,
         required=iterative_ppo_mini_loop_required,
     )
+    return_aligned_guarded_multistep_collector = _load_optional_source(
+        return_aligned_guarded_multistep_collector_path,
+        label="return_aligned_guarded_multistep_collector_summary",
+        expected_schema=RETURN_ALIGNED_GUARDED_MULTISTEP_COLLECTOR_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=return_aligned_guarded_multistep_collector_required,
+    )
+    return_aligned_guarded_ppo_update_smoke = _load_optional_source(
+        return_aligned_guarded_ppo_update_smoke_path,
+        label="return_aligned_guarded_ppo_update_smoke_summary",
+        expected_schema=RETURN_ALIGNED_GUARDED_PPO_UPDATE_SMOKE_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=return_aligned_guarded_ppo_update_smoke_required,
+    )
     guarded_ppo_rollout_pilot = _load_optional_source(
         guarded_ppo_rollout_pilot_path,
         label="guarded_ppo_rollout_pilot_summary",
@@ -1444,6 +2346,51 @@ def analyze_policy_training_readiness_review(
         reason_codes=reason_codes,
         source_summaries=source_summaries,
         required=guarded_ppo_rollout_pilot_required,
+    )
+    quasi_real_guarded_ppo_rollout_pilot = _load_optional_source(
+        quasi_real_guarded_ppo_rollout_pilot_path,
+        label="quasi_real_guarded_ppo_rollout_pilot_summary",
+        expected_schema=QUASI_REAL_GUARDED_PPO_ROLLOUT_PILOT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_guarded_ppo_rollout_pilot_required,
+    )
+    quasi_real_guarded_ppo_stability_replay = _load_optional_source(
+        quasi_real_guarded_ppo_stability_replay_path,
+        label="quasi_real_guarded_ppo_stability_replay_summary",
+        expected_schema=QUASI_REAL_GUARDED_PPO_STABILITY_REPLAY_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_guarded_ppo_stability_replay_required,
+    )
+    quasi_real_guarded_ppo_horizon5_batch_expansion = _load_optional_source(
+        quasi_real_guarded_ppo_horizon5_batch_expansion_path,
+        label="quasi_real_guarded_ppo_horizon5_batch_expansion_summary",
+        expected_schema=QUASI_REAL_GUARDED_PPO_HORIZON5_BATCH_EXPANSION_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_guarded_ppo_horizon5_batch_expansion_required,
+    )
+    quasi_real_guarded_ppo_scale512_multiseed_preflight = _load_optional_source(
+        quasi_real_guarded_ppo_scale512_multiseed_preflight_path,
+        label="quasi_real_guarded_ppo_scale512_multiseed_preflight_summary",
+        expected_schema=QUASI_REAL_GUARDED_PPO_SCALE512_MULTISEED_PREFLIGHT_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_guarded_ppo_scale512_multiseed_preflight_required,
+    )
+    quasi_real_guarded_ppo_iterative_miniloop_stability = _load_optional_source(
+        quasi_real_guarded_ppo_iterative_miniloop_stability_path,
+        label="quasi_real_guarded_ppo_iterative_miniloop_stability_summary",
+        expected_schema=QUASI_REAL_GUARDED_PPO_ITERATIVE_MINILOOP_STABILITY_SCHEMA_VERSION,
+        repo_root=repo_root,
+        reason_codes=reason_codes,
+        source_summaries=source_summaries,
+        required=quasi_real_guarded_ppo_iterative_miniloop_stability_required,
     )
     policy_training_cuda_device_support = _load_optional_source(
         policy_training_cuda_device_support_path,
@@ -1566,6 +2513,26 @@ def analyze_policy_training_readiness_review(
             ),
             ("iterative_ppo_mini_loop_stability_summary", iterative_ppo_mini_loop),
             ("guarded_ppo_rollout_pilot_summary", guarded_ppo_rollout_pilot),
+            (
+                "quasi_real_guarded_ppo_rollout_pilot_summary",
+                quasi_real_guarded_ppo_rollout_pilot,
+            ),
+            (
+                "quasi_real_guarded_ppo_stability_replay_summary",
+                quasi_real_guarded_ppo_stability_replay,
+            ),
+            (
+                "quasi_real_guarded_ppo_horizon5_batch_expansion_summary",
+                quasi_real_guarded_ppo_horizon5_batch_expansion,
+            ),
+            (
+                "quasi_real_guarded_ppo_scale512_multiseed_preflight_summary",
+                quasi_real_guarded_ppo_scale512_multiseed_preflight,
+            ),
+            (
+                "quasi_real_guarded_ppo_iterative_miniloop_stability_summary",
+                quasi_real_guarded_ppo_iterative_miniloop_stability,
+            ),
             ("policy_training_cuda_device_support_summary", policy_training_cuda_device_support),
             ("quasi_real_map_domain_gap_summary", quasi_real_map_domain_gap),
             (
@@ -1787,11 +2754,81 @@ def analyze_policy_training_readiness_review(
                 reason_codes=reason_codes,
             )
         )
+    if return_aligned_guarded_multistep_collector:
+        source_git_matches.append(
+            _inspect_git(
+                return_aligned_guarded_multistep_collector,
+                label="return_aligned_guarded_multistep_collector_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if return_aligned_guarded_ppo_update_smoke:
+        source_git_matches.append(
+            _inspect_git(
+                return_aligned_guarded_ppo_update_smoke,
+                label="return_aligned_guarded_ppo_update_smoke_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
     if guarded_ppo_rollout_pilot:
         source_git_matches.append(
             _inspect_git(
                 guarded_ppo_rollout_pilot,
                 label="guarded_ppo_rollout_pilot_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if quasi_real_guarded_ppo_rollout_pilot:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_guarded_ppo_rollout_pilot,
+                label="quasi_real_guarded_ppo_rollout_pilot_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if quasi_real_guarded_ppo_stability_replay:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_guarded_ppo_stability_replay,
+                label="quasi_real_guarded_ppo_stability_replay_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if quasi_real_guarded_ppo_horizon5_batch_expansion:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_guarded_ppo_horizon5_batch_expansion,
+                label="quasi_real_guarded_ppo_horizon5_batch_expansion_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if quasi_real_guarded_ppo_scale512_multiseed_preflight:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_guarded_ppo_scale512_multiseed_preflight,
+                label="quasi_real_guarded_ppo_scale512_multiseed_preflight_summary",
+                current_git=current_git,
+                config=config,
+                reason_codes=reason_codes,
+            )
+        )
+    if quasi_real_guarded_ppo_iterative_miniloop_stability:
+        source_git_matches.append(
+            _inspect_git(
+                quasi_real_guarded_ppo_iterative_miniloop_stability,
+                label="quasi_real_guarded_ppo_iterative_miniloop_stability_summary",
                 current_git=current_git,
                 config=config,
                 reason_codes=reason_codes,
@@ -1936,7 +2973,24 @@ def analyze_policy_training_readiness_review(
             generated_sequential_long_horizon_teacher_skill_contract
         ),
         iterative_ppo_mini_loop=iterative_ppo_mini_loop,
+        return_aligned_guarded_multistep_collector=(
+            return_aligned_guarded_multistep_collector
+        ),
+        return_aligned_guarded_ppo_update_smoke=(
+            return_aligned_guarded_ppo_update_smoke
+        ),
         guarded_ppo_rollout_pilot=guarded_ppo_rollout_pilot,
+        quasi_real_guarded_ppo_rollout_pilot=quasi_real_guarded_ppo_rollout_pilot,
+        quasi_real_guarded_ppo_stability_replay=quasi_real_guarded_ppo_stability_replay,
+        quasi_real_guarded_ppo_horizon5_batch_expansion=(
+            quasi_real_guarded_ppo_horizon5_batch_expansion
+        ),
+        quasi_real_guarded_ppo_scale512_multiseed_preflight=(
+            quasi_real_guarded_ppo_scale512_multiseed_preflight
+        ),
+        quasi_real_guarded_ppo_iterative_miniloop_stability=(
+            quasi_real_guarded_ppo_iterative_miniloop_stability
+        ),
         policy_training_cuda_device_support=policy_training_cuda_device_support,
         quasi_real_map_domain_gap=quasi_real_map_domain_gap,
         quasi_real_shadow_policy_behavior=quasi_real_shadow_policy_behavior,
@@ -2046,9 +3100,53 @@ def analyze_policy_training_readiness_review(
             if iterative_ppo_mini_loop
             else None
         ),
+        "return_aligned_guarded_multistep_collector_summary_path": (
+            _display_path(return_aligned_guarded_multistep_collector_path, repo_root)
+            if return_aligned_guarded_multistep_collector
+            else None
+        ),
+        "return_aligned_guarded_ppo_update_smoke_summary_path": (
+            _display_path(return_aligned_guarded_ppo_update_smoke_path, repo_root)
+            if return_aligned_guarded_ppo_update_smoke
+            else None
+        ),
         "guarded_ppo_rollout_pilot_summary_path": (
             _display_path(guarded_ppo_rollout_pilot_path, repo_root)
             if guarded_ppo_rollout_pilot
+            else None
+        ),
+        "quasi_real_guarded_ppo_rollout_pilot_summary_path": (
+            _display_path(quasi_real_guarded_ppo_rollout_pilot_path, repo_root)
+            if quasi_real_guarded_ppo_rollout_pilot
+            else None
+        ),
+        "quasi_real_guarded_ppo_stability_replay_summary_path": (
+            _display_path(quasi_real_guarded_ppo_stability_replay_path, repo_root)
+            if quasi_real_guarded_ppo_stability_replay
+            else None
+        ),
+        "quasi_real_guarded_ppo_horizon5_batch_expansion_summary_path": (
+            _display_path(
+                quasi_real_guarded_ppo_horizon5_batch_expansion_path,
+                repo_root,
+            )
+            if quasi_real_guarded_ppo_horizon5_batch_expansion
+            else None
+        ),
+        "quasi_real_guarded_ppo_scale512_multiseed_preflight_summary_path": (
+            _display_path(
+                quasi_real_guarded_ppo_scale512_multiseed_preflight_path,
+                repo_root,
+            )
+            if quasi_real_guarded_ppo_scale512_multiseed_preflight
+            else None
+        ),
+        "quasi_real_guarded_ppo_iterative_miniloop_stability_summary_path": (
+            _display_path(
+                quasi_real_guarded_ppo_iterative_miniloop_stability_path,
+                repo_root,
+            )
+            if quasi_real_guarded_ppo_iterative_miniloop_stability
             else None
         ),
         "policy_training_cuda_device_support_summary_path": (
@@ -2150,7 +3248,28 @@ def analyze_policy_training_readiness_review(
                 generated_sequential_long_horizon_teacher_skill_contract
             ),
             "iterative_ppo_mini_loop_stability": _public_git(iterative_ppo_mini_loop),
+            "return_aligned_guarded_multistep_collector": _public_git(
+                return_aligned_guarded_multistep_collector
+            ),
+            "return_aligned_guarded_ppo_update_smoke": _public_git(
+                return_aligned_guarded_ppo_update_smoke
+            ),
             "guarded_ppo_rollout_pilot": _public_git(guarded_ppo_rollout_pilot),
+            "quasi_real_guarded_ppo_rollout_pilot": _public_git(
+                quasi_real_guarded_ppo_rollout_pilot
+            ),
+            "quasi_real_guarded_ppo_stability_replay": _public_git(
+                quasi_real_guarded_ppo_stability_replay
+            ),
+            "quasi_real_guarded_ppo_horizon5_batch_expansion": _public_git(
+                quasi_real_guarded_ppo_horizon5_batch_expansion
+            ),
+            "quasi_real_guarded_ppo_scale512_multiseed_preflight": _public_git(
+                quasi_real_guarded_ppo_scale512_multiseed_preflight
+            ),
+            "quasi_real_guarded_ppo_iterative_miniloop_stability": _public_git(
+                quasi_real_guarded_ppo_iterative_miniloop_stability
+            ),
             "policy_training_cuda_device_support": _public_git(
                 policy_training_cuda_device_support
             ),
@@ -2221,7 +3340,14 @@ def _review_metrics(
     generated_sequential_gate_metric_accounting_audit: dict[str, Any],
     generated_sequential_long_horizon_teacher_skill_contract: dict[str, Any],
     iterative_ppo_mini_loop: dict[str, Any],
+    return_aligned_guarded_multistep_collector: dict[str, Any],
+    return_aligned_guarded_ppo_update_smoke: dict[str, Any],
     guarded_ppo_rollout_pilot: dict[str, Any],
+    quasi_real_guarded_ppo_rollout_pilot: dict[str, Any],
+    quasi_real_guarded_ppo_stability_replay: dict[str, Any],
+    quasi_real_guarded_ppo_horizon5_batch_expansion: dict[str, Any],
+    quasi_real_guarded_ppo_scale512_multiseed_preflight: dict[str, Any],
+    quasi_real_guarded_ppo_iterative_miniloop_stability: dict[str, Any],
     policy_training_cuda_device_support: dict[str, Any],
     quasi_real_map_domain_gap: dict[str, Any],
     quasi_real_shadow_policy_behavior: dict[str, Any],
@@ -2321,7 +3447,21 @@ def _review_metrics(
             "ppo_rollout_collector": ppo_collector,
             "limited_ppo_update_smoke": limited_ppo_update_smoke,
             "iterative_ppo_mini_loop_stability": iterative_ppo_mini_loop,
+            "return_aligned_guarded_multistep_collector": (
+                return_aligned_guarded_multistep_collector
+            ),
+            "return_aligned_guarded_ppo_update_smoke": (
+                return_aligned_guarded_ppo_update_smoke
+            ),
             "guarded_ppo_rollout_pilot": guarded_ppo_rollout_pilot,
+            "quasi_real_guarded_ppo_rollout_pilot": quasi_real_guarded_ppo_rollout_pilot,
+            "quasi_real_guarded_ppo_stability_replay": quasi_real_guarded_ppo_stability_replay,
+            "quasi_real_guarded_ppo_horizon5_batch_expansion": (
+                quasi_real_guarded_ppo_horizon5_batch_expansion
+            ),
+            "quasi_real_guarded_ppo_scale512_multiseed_preflight": (
+                quasi_real_guarded_ppo_scale512_multiseed_preflight
+            ),
             "policy_training_cuda_device_support": policy_training_cuda_device_support,
             "quasi_real_map_domain_gap": quasi_real_map_domain_gap,
             "quasi_real_shadow_policy_behavior": quasi_real_shadow_policy_behavior,
@@ -2384,8 +3524,43 @@ def _review_metrics(
     iterative_ppo_mini_loop_readiness = _iterative_ppo_mini_loop_stability_readiness(
         iterative_ppo_mini_loop
     )
+    return_aligned_guarded_multistep_collector_readiness = (
+        _return_aligned_guarded_multistep_collector_readiness(
+            return_aligned_guarded_multistep_collector
+        )
+    )
+    return_aligned_guarded_ppo_update_smoke_readiness = (
+        _return_aligned_guarded_ppo_update_smoke_readiness(
+            return_aligned_guarded_ppo_update_smoke
+        )
+    )
     guarded_ppo_rollout_pilot_readiness = _guarded_ppo_rollout_pilot_readiness(
         guarded_ppo_rollout_pilot
+    )
+    quasi_real_guarded_ppo_rollout_pilot_readiness = (
+        _quasi_real_guarded_ppo_rollout_pilot_readiness(
+            quasi_real_guarded_ppo_rollout_pilot
+        )
+    )
+    quasi_real_guarded_ppo_stability_replay_readiness = (
+        _quasi_real_guarded_ppo_stability_replay_readiness(
+            quasi_real_guarded_ppo_stability_replay
+        )
+    )
+    quasi_real_guarded_ppo_horizon5_batch_expansion_readiness = (
+        _quasi_real_guarded_ppo_horizon5_batch_expansion_readiness(
+            quasi_real_guarded_ppo_horizon5_batch_expansion
+        )
+    )
+    quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness = (
+        _quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness(
+            quasi_real_guarded_ppo_scale512_multiseed_preflight
+        )
+    )
+    quasi_real_guarded_ppo_iterative_miniloop_stability_readiness = (
+        _quasi_real_guarded_ppo_iterative_miniloop_stability_readiness(
+            quasi_real_guarded_ppo_iterative_miniloop_stability
+        )
     )
     policy_training_cuda_device_support_readiness = (
         _policy_training_cuda_device_support_readiness(policy_training_cuda_device_support)
@@ -2494,7 +3669,25 @@ def _review_metrics(
         _append_reason(training_blockers, reason)
     for reason in iterative_ppo_mini_loop_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
+    for reason in return_aligned_guarded_multistep_collector_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
+    for reason in return_aligned_guarded_ppo_update_smoke_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
     for reason in guarded_ppo_rollout_pilot_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
+    for reason in quasi_real_guarded_ppo_rollout_pilot_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
+    for reason in quasi_real_guarded_ppo_stability_replay_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
+    for reason in quasi_real_guarded_ppo_horizon5_batch_expansion_readiness["training_blockers"]:
+        _append_reason(training_blockers, reason)
+    for reason in quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness[
+        "training_blockers"
+    ]:
+        _append_reason(training_blockers, reason)
+    for reason in quasi_real_guarded_ppo_iterative_miniloop_stability_readiness[
+        "training_blockers"
+    ]:
         _append_reason(training_blockers, reason)
     for reason in policy_training_cuda_device_support_readiness["training_blockers"]:
         _append_reason(training_blockers, reason)
@@ -2600,11 +3793,61 @@ def _review_metrics(
         training_readiness_status = QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION
         recommended_next_action = QUASI_REAL_MAP_DOMAIN_GAP_EVALUATED_ACTION
     elif (
+        quasi_real_guarded_ppo_iterative_miniloop_stability_readiness["present"]
+        and quasi_real_guarded_ppo_iterative_miniloop_stability_readiness["completed"]
+    ):
+        training_readiness_status = (
+            QUASI_REAL_GUARDED_PPO_ITERATIVE_MINILOOP_STABILITY_EVALUATED_ACTION
+        )
+        recommended_next_action = (
+            QUASI_REAL_GUARDED_PPO_ITERATIVE_MINILOOP_STABILITY_EVALUATED_ACTION
+        )
+    elif (
+        quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness["present"]
+        and quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness["completed"]
+    ):
+        training_readiness_status = (
+            QUASI_REAL_GUARDED_PPO_SCALE512_MULTISEED_PREFLIGHT_EVALUATED_ACTION
+        )
+        recommended_next_action = (
+            QUASI_REAL_GUARDED_PPO_SCALE512_MULTISEED_PREFLIGHT_EVALUATED_ACTION
+        )
+    elif (
         policy_training_cuda_device_support_readiness["present"]
         and policy_training_cuda_device_support_readiness["completed"]
     ):
         training_readiness_status = POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION
         recommended_next_action = POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION
+    elif (
+        quasi_real_guarded_ppo_horizon5_batch_expansion_readiness["present"]
+        and quasi_real_guarded_ppo_horizon5_batch_expansion_readiness["completed"]
+    ):
+        training_readiness_status = QUASI_REAL_GUARDED_PPO_HORIZON5_BATCH_EXPANSION_EVALUATED_ACTION
+        recommended_next_action = QUASI_REAL_GUARDED_PPO_HORIZON5_BATCH_EXPANSION_EVALUATED_ACTION
+    elif (
+        quasi_real_guarded_ppo_stability_replay_readiness["present"]
+        and quasi_real_guarded_ppo_stability_replay_readiness["completed"]
+    ):
+        training_readiness_status = QUASI_REAL_GUARDED_PPO_STABILITY_REPLAY_EVALUATED_ACTION
+        recommended_next_action = QUASI_REAL_GUARDED_PPO_STABILITY_REPLAY_EVALUATED_ACTION
+    elif (
+        quasi_real_guarded_ppo_rollout_pilot_readiness["present"]
+        and quasi_real_guarded_ppo_rollout_pilot_readiness["completed"]
+    ):
+        training_readiness_status = QUASI_REAL_GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION
+        recommended_next_action = QUASI_REAL_GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION
+    elif (
+        return_aligned_guarded_ppo_update_smoke_readiness["present"]
+        and return_aligned_guarded_ppo_update_smoke_readiness["completed"]
+    ):
+        training_readiness_status = RETURN_ALIGNED_GUARDED_PPO_UPDATE_SMOKE_EVALUATED_ACTION
+        recommended_next_action = RETURN_ALIGNED_GUARDED_PPO_UPDATE_SMOKE_EVALUATED_ACTION
+    elif (
+        return_aligned_guarded_multistep_collector_readiness["present"]
+        and return_aligned_guarded_multistep_collector_readiness["completed"]
+    ):
+        training_readiness_status = RETURN_ALIGNED_GUARDED_MULTISTEP_COLLECTOR_EVALUATED_ACTION
+        recommended_next_action = RETURN_ALIGNED_GUARDED_MULTISTEP_COLLECTOR_EVALUATED_ACTION
     elif (
         guarded_ppo_rollout_pilot_readiness["present"]
         and guarded_ppo_rollout_pilot_readiness["completed"]
@@ -2739,7 +3982,28 @@ def _review_metrics(
             limited_quasi_real_generated_sequential_override
         ),
         "iterative_ppo_mini_loop_stability_readiness": iterative_ppo_mini_loop_readiness,
+        "return_aligned_guarded_multistep_collector_readiness": (
+            return_aligned_guarded_multistep_collector_readiness
+        ),
+        "return_aligned_guarded_ppo_update_smoke_readiness": (
+            return_aligned_guarded_ppo_update_smoke_readiness
+        ),
         "guarded_ppo_rollout_pilot_readiness": guarded_ppo_rollout_pilot_readiness,
+        "quasi_real_guarded_ppo_rollout_pilot_readiness": (
+            quasi_real_guarded_ppo_rollout_pilot_readiness
+        ),
+        "quasi_real_guarded_ppo_stability_replay_readiness": (
+            quasi_real_guarded_ppo_stability_replay_readiness
+        ),
+        "quasi_real_guarded_ppo_horizon5_batch_expansion_readiness": (
+            quasi_real_guarded_ppo_horizon5_batch_expansion_readiness
+        ),
+        "quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness": (
+            quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness
+        ),
+        "quasi_real_guarded_ppo_iterative_miniloop_stability_readiness": (
+            quasi_real_guarded_ppo_iterative_miniloop_stability_readiness
+        ),
         "policy_training_cuda_device_support_readiness": policy_training_cuda_device_support_readiness,
         "quasi_real_map_domain_gap_readiness": quasi_real_map_domain_gap_readiness,
         "quasi_real_shadow_policy_behavior_readiness": quasi_real_shadow_policy_behavior_readiness,
@@ -2832,9 +4096,20 @@ def _review_metrics(
             quasi_real_shadow_alignment_readiness.get("next_required_change")
             or quasi_real_shadow_policy_behavior_readiness.get("next_required_change")
             or quasi_real_map_domain_gap_readiness.get("next_required_change")
+            or quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness.get(
+                "next_required_change"
+            )
+            or quasi_real_guarded_ppo_iterative_miniloop_stability_readiness.get(
+                "next_required_change"
+            )
+            or quasi_real_guarded_ppo_horizon5_batch_expansion_readiness.get(
+                "next_required_change"
+            )
             or policy_training_cuda_device_support_readiness.get("next_required_change")
             or
             guarded_ppo_rollout_pilot_readiness.get("next_required_change")
+            or quasi_real_guarded_ppo_rollout_pilot_readiness.get("next_required_change")
+            or quasi_real_guarded_ppo_stability_replay_readiness.get("next_required_change")
             or iterative_ppo_mini_loop_readiness.get("next_required_change")
             or generated_sequential_gate_metric_accounting_readiness.get(
                 "next_required_change"
@@ -2872,8 +4147,12 @@ def _review_metrics(
 
 
 def _policy_training_scope(recommended_next_action: str) -> str:
+    if recommended_next_action == QUASI_REAL_GUARDED_PPO_STABILITY_REPLAY_EVALUATED_ACTION:
+        return "quasi_real_guarded_ppo_stability_replay_only"
     if recommended_next_action == QUASI_REAL_GUARDED_TEACHER_FOLLOWING_PILOT_EVALUATED_ACTION:
         return "quasi_real_guarded_teacher_following_pilot_only"
+    if recommended_next_action == QUASI_REAL_GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION:
+        return "quasi_real_guarded_ppo_rollout_pilot_only"
     if recommended_next_action == QUASI_REAL_TEACHER_DISTILLATION_EVALUATED_ACTION:
         return "quasi_real_teacher_distillation_robustness_only"
     if recommended_next_action == QUASI_REAL_TEACHER_EQUIVALENT_VALIDATED_ACTION:
@@ -2888,6 +4167,17 @@ def _policy_training_scope(recommended_next_action: str) -> str:
         return "quasi_real_map_domain_gap_evaluation_only"
     if recommended_next_action == POLICY_TRAINING_CUDA_DEVICE_SUPPORT_EVALUATED_ACTION:
         return "policy_training_cuda_device_support_only"
+    if (
+        recommended_next_action
+        == QUASI_REAL_GUARDED_PPO_SCALE512_MULTISEED_PREFLIGHT_EVALUATED_ACTION
+    ):
+        return "quasi_real_guarded_ppo_scale512_multiseed_preflight_only"
+    if recommended_next_action == QUASI_REAL_GUARDED_PPO_HORIZON5_BATCH_EXPANSION_EVALUATED_ACTION:
+        return "quasi_real_guarded_ppo_horizon5_batch_expansion_only"
+    if recommended_next_action == QUASI_REAL_GUARDED_PPO_STABILITY_REPLAY_EVALUATED_ACTION:
+        return "quasi_real_guarded_ppo_stability_replay_only"
+    if recommended_next_action == QUASI_REAL_GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION:
+        return "quasi_real_guarded_ppo_rollout_pilot_only"
     if recommended_next_action == GUARDED_PPO_ROLLOUT_PILOT_EVALUATED_ACTION:
         return "guarded_ppo_rollout_pilot_only"
     if recommended_next_action == ITERATIVE_PPO_MINI_LOOP_STABILITY_EVALUATED_ACTION:
@@ -4716,6 +6006,184 @@ def _iterative_ppo_mini_loop_stability_readiness(summary: dict[str, Any]) -> dic
     }
 
 
+def _return_aligned_guarded_multistep_collector_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "trainable_episode_count": 0,
+        "trainable_transition_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "return_aligned_guarded_multistep_collector_not_passed")
+    if _int_value_or_default(summary.get("trainable_episode_count"), 0) < 24:
+        _append_reason(blockers, "return_aligned_trainable_episode_count_insufficient")
+    if _int_value_or_default(summary.get("trainable_transition_count"), 0) < 24:
+        _append_reason(blockers, "return_aligned_trainable_transition_count_insufficient")
+    for key, reason in (
+        ("validation_trainable_count", "return_aligned_validation_trainable_leakage"),
+        ("test_trainable_count", "return_aligned_test_trainable_leakage"),
+        ("source_fallback_trainable_count", "return_aligned_source_fallback_trainable_detected"),
+        ("invalid_action_mask_count", "return_aligned_input_collector_invalid_mask_detected"),
+        ("empty_action_mask_count", "return_aligned_input_collector_empty_mask_detected"),
+        ("missing_log_prob_count", "return_aligned_input_collector_missing_log_prob_detected"),
+        ("missing_value_count", "return_aligned_input_collector_missing_value_detected"),
+        ("non_finite_reward_count", "return_aligned_non_finite_reward_detected"),
+        ("non_finite_return_count", "return_aligned_non_finite_return_detected"),
+        ("non_finite_advantage_count", "return_aligned_non_finite_advantage_detected"),
+        ("controlled_regression_count", "return_aligned_controlled_regression_detected"),
+        ("controlled_safety_regression_count", "return_aligned_controlled_regression_detected"),
+        ("controlled_contract_regression_count", "return_aligned_controlled_regression_detected"),
+        ("controlled_path_risk_regression_count", "return_aligned_controlled_regression_detected"),
+        ("controlled_source_selection_regression_count", "return_aligned_controlled_regression_detected"),
+    ):
+        if _int_value_or_default(summary.get(key), 0):
+            _append_reason(blockers, reason)
+    if summary.get("uses_multistep_discounted_return") is not True:
+        _append_reason(blockers, "return_aligned_multistep_discounted_return_missing")
+    if summary.get("not_single_step_best_action") is not True:
+        _append_reason(blockers, "return_aligned_single_step_best_action_claim_detected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "return_aligned_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "return_aligned_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "return_aligned_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "return_aligned_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "trainable_episode_count": _int_value_or_default(summary.get("trainable_episode_count"), 0),
+        "trainable_transition_count": _int_value_or_default(summary.get("trainable_transition_count"), 0),
+    }
+
+
+def _return_aligned_guarded_ppo_update_smoke_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "input_return_aligned_trainable_transition_count": 0,
+        "optimizer_train_transition_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "return_aligned_ppo_update_smoke_not_passed")
+    if _int_value_or_default(summary.get("input_return_aligned_trainable_transition_count"), 0) < 24:
+        _append_reason(blockers, "ppo_trainable_transition_count_insufficient")
+    if _int_value_or_default(summary.get("optimizer_train_transition_count"), 0) < 24:
+        _append_reason(blockers, "ppo_trainable_transition_count_insufficient")
+    for key, reason in (
+        ("validation_test_optimizer_transition_count", "return_aligned_ppo_update_split_leakage"),
+        ("source_fallback_optimizer_transition_count", "return_aligned_ppo_update_source_fallback_optimizer"),
+        ("non_empty_gate_reason_optimizer_transition_count", "return_aligned_ppo_update_gate_regression_trainable"),
+        ("source_fallback_trainable_count", "return_aligned_source_fallback_trainable_detected"),
+        ("materialization_error_count", "return_aligned_ppo_update_materialization_failed"),
+        ("loss_non_finite_count", "ppo_update_loss_non_finite"),
+        ("non_finite_gradient_count", "ppo_update_loss_non_finite"),
+        ("non_finite_reward_count", "ppo_reward_contract_invalid"),
+        ("non_finite_return_count", "ppo_update_loss_non_finite"),
+        ("non_finite_advantage_count", "ppo_update_loss_non_finite"),
+        ("post_update_controlled_regression_count", "return_aligned_ppo_update_post_update_gate_regression"),
+    ):
+        if _int_value_or_default(summary.get(key), 0):
+            _append_reason(blockers, reason)
+    if _float_value_or_default(summary.get("old_log_prob_max_abs_error"), float("inf")) > 1.0e-4:
+        _append_reason(blockers, "ppo_update_not_on_collector_policy")
+    if _float_value_or_default(summary.get("old_value_max_abs_error"), float("inf")) > 1.0e-4:
+        _append_reason(blockers, "ppo_update_not_on_collector_policy")
+    if _float_value_or_default(summary.get("parameter_l2_delta"), 0.0) <= 0.0:
+        _append_reason(blockers, "limited_ppo_update_input_contract_invalid")
+    if abs(_float_value_or_default(summary.get("approx_kl"), float("inf"))) > 0.25:
+        _append_reason(blockers, "ppo_update_too_large")
+    if _float_value_or_default(summary.get("max_grad_norm_after_clip"), float("inf")) > 1.0 + 1.0e-8:
+        _append_reason(blockers, "ppo_update_too_large")
+    if summary.get("uses_multistep_discounted_return") is not True:
+        _append_reason(blockers, "return_aligned_multistep_discounted_return_missing")
+    if summary.get("not_single_step_best_action") is not True:
+        _append_reason(blockers, "return_aligned_single_step_best_action_claim_detected")
+    if summary.get("post_update_gates_evaluated") is not True:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_raw_generalization_status") not in {"passed"}:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_generated_sequential_status") not in {"passed", "failed"}:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_generated_collector_status") not in {"passed"}:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_quasi_real_teacher_following_status") not in {"passed"}:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_quasi_real_collector_status") not in {"passed"}:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if _int_value_or_default(summary.get("post_update_raw_test_regression_count"), 0):
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if _int_value_or_default(summary.get("post_update_quasi_real_unsafe_disagreement_count"), 0):
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    generated_trainable = summary.get("post_update_generated_collector_trainable_transition_count")
+    if generated_trainable is not None and _int_value_or_default(generated_trainable, 0) < 24:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    quasi_trainable = summary.get("post_update_quasi_real_collector_trainable_transition_count")
+    if quasi_trainable is not None and _int_value_or_default(quasi_trainable, 0) < 24:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    return_aligned_replay_trainable = summary.get("post_update_return_aligned_replay_trainable_transition_count")
+    if return_aligned_replay_trainable is not None and _int_value_or_default(return_aligned_replay_trainable, 0) < 24:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_teacher_agreement_rate") is not None and _float_value_or_default(
+        summary.get("post_update_teacher_agreement_rate"),
+        0.0,
+    ) < 0.9:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_return_aligned_replay_status") not in {"passed"}:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_long_horizon_status") not in {None, "passed"}:
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("post_update_long_horizon_verdict") != "long_horizon_teacher_skill_contract_aligned":
+        _append_reason(blockers, "return_aligned_ppo_update_post_update_gate_regression")
+    if summary.get("experimental_checkpoint") is not True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_not_experimental")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "input_return_aligned_trainable_transition_count": _int_value_or_default(
+            summary.get("input_return_aligned_trainable_transition_count"),
+            0,
+        ),
+        "optimizer_train_transition_count": _int_value_or_default(
+            summary.get("optimizer_train_transition_count"),
+            0,
+        ),
+    }
+
+
 def _policy_training_cuda_device_support_readiness(summary: dict[str, Any]) -> dict[str, Any]:
     empty = {
         "present": False,
@@ -5564,6 +7032,575 @@ def _guarded_ppo_rollout_pilot_readiness(summary: dict[str, Any]) -> dict[str, A
             summary.get("optimizer_train_transition_count"),
             0,
         ),
+    }
+
+
+def _quasi_real_guarded_ppo_rollout_pilot_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "episode_count": 0,
+        "step_count": 0,
+        "trainable_transition_count": 0,
+        "teacher_agreement_rate": 0.0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_guarded_ppo_rollout_pilot_not_passed")
+    episode_count = _int_value_or_default(summary.get("episode_count"), 0)
+    step_count = _int_value_or_default(summary.get("step_count"), 0)
+    trainable_transition_count = _int_value_or_default(
+        summary.get("trainable_transition_count"),
+        _int_value_or_default(summary.get("ppo_trainable_transition_count"), 0),
+    )
+    if episode_count < 36:
+        _append_reason(blockers, "quasi_real_guarded_ppo_rollout_episode_count_below_threshold")
+    if step_count < 108:
+        _append_reason(blockers, "quasi_real_guarded_ppo_rollout_step_count_below_threshold")
+    if trainable_transition_count < 24:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_rollout_trainable_transition_count_below_threshold",
+        )
+    for field, reason in (
+        ("validation_trainable_count", "quasi_real_guarded_ppo_rollout_split_leakage"),
+        ("test_trainable_count", "quasi_real_guarded_ppo_rollout_split_leakage"),
+        ("source_fallback_trainable_count", "quasi_real_guarded_ppo_rollout_fallback_trainable"),
+        ("teacher_fallback_trainable_count", "quasi_real_guarded_ppo_rollout_fallback_trainable"),
+        ("non_empty_gate_reason_trainable_count", "quasi_real_guarded_ppo_rollout_gate_reason_trainable"),
+        ("missing_observation_count", "quasi_real_guarded_ppo_rollout_contract_invalid"),
+        ("missing_log_prob_count", "quasi_real_guarded_ppo_rollout_contract_invalid"),
+        ("missing_value_count", "quasi_real_guarded_ppo_rollout_contract_invalid"),
+        ("non_finite_reward_count", "quasi_real_guarded_ppo_rollout_non_finite_return"),
+        ("non_finite_return_count", "quasi_real_guarded_ppo_rollout_non_finite_return"),
+        ("non_finite_advantage_count", "quasi_real_guarded_ppo_rollout_non_finite_return"),
+        ("controlled_regression_count", "quasi_real_guarded_ppo_rollout_controlled_regression"),
+        ("controlled_safety_regression_count", "quasi_real_guarded_ppo_rollout_controlled_regression"),
+        ("controlled_contract_regression_count", "quasi_real_guarded_ppo_rollout_controlled_regression"),
+        ("controlled_path_risk_regression_count", "quasi_real_guarded_ppo_rollout_controlled_regression"),
+        ("controlled_source_selection_regression_count", "quasi_real_guarded_ppo_rollout_controlled_regression"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+
+    teacher_agreement_rate = _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0)
+    if teacher_agreement_rate < 0.9:
+        _append_reason(blockers, "quasi_real_guarded_ppo_rollout_teacher_alignment_insufficient")
+    if summary.get("quasi_real_collector_replay_status") not in {"passed"}:
+        _append_reason(blockers, "quasi_real_guarded_ppo_rollout_collector_replay_not_passed")
+    replay_trainable = summary.get("quasi_real_collector_replay_trainable_transition_count")
+    if replay_trainable is not None and _int_value_or_default(replay_trainable, 0) < 24:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_rollout_trainable_transition_count_below_threshold",
+        )
+    if summary.get("post_pilot_long_horizon_status") not in {None, "passed"}:
+        _append_reason(blockers, "quasi_real_guarded_ppo_rollout_long_horizon_not_aligned")
+    if summary.get("post_pilot_long_horizon_verdict") != "long_horizon_teacher_skill_contract_aligned":
+        _append_reason(blockers, "quasi_real_guarded_ppo_rollout_long_horizon_not_aligned")
+    if summary.get("uses_multistep_discounted_return") is not True:
+        _append_reason(blockers, "return_aligned_multistep_discounted_return_missing")
+    if summary.get("not_single_step_best_action") is not True:
+        _append_reason(blockers, "return_aligned_single_step_best_action_claim_detected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "episode_count": episode_count,
+        "step_count": step_count,
+        "trainable_transition_count": trainable_transition_count,
+        "teacher_agreement_rate": teacher_agreement_rate,
+    }
+
+
+def _quasi_real_guarded_ppo_stability_replay_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "replay_count": 0,
+        "passed_replay_count": 0,
+        "episode_count": 0,
+        "step_count": 0,
+        "trainable_transition_count": 0,
+        "teacher_agreement_rate": 0.0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_replay_not_passed")
+    replay_count = _int_value_or_default(summary.get("replay_count"), 0)
+    passed_replay_count = _int_value_or_default(summary.get("passed_replay_count"), 0)
+    episode_count = _int_value_or_default(summary.get("episode_count"), 0)
+    step_count = _int_value_or_default(summary.get("step_count"), 0)
+    trainable_transition_count = _int_value_or_default(
+        summary.get("ppo_trainable_transition_count"),
+        _int_value_or_default(summary.get("trainable_transition_count"), 0),
+    )
+    if replay_count < 3:
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_replay_count_below_threshold")
+    if passed_replay_count != replay_count:
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_replay_not_all_passed")
+    if episode_count < 36:
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_episode_count_below_threshold")
+    if step_count < 108:
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_step_count_below_threshold")
+    if trainable_transition_count < 24:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_stability_trainable_transition_count_below_threshold",
+        )
+    for field, reason in (
+        ("validation_trainable_count", "quasi_real_guarded_ppo_stability_split_leakage"),
+        ("test_trainable_count", "quasi_real_guarded_ppo_stability_split_leakage"),
+        ("source_fallback_trainable_count", "quasi_real_guarded_ppo_stability_fallback_trainable"),
+        ("teacher_fallback_trainable_count", "quasi_real_guarded_ppo_stability_fallback_trainable"),
+        ("missing_observation_count", "quasi_real_guarded_ppo_stability_contract_invalid"),
+        ("missing_log_prob_count", "quasi_real_guarded_ppo_stability_contract_invalid"),
+        ("missing_value_count", "quasi_real_guarded_ppo_stability_contract_invalid"),
+        ("non_finite_reward_count", "quasi_real_guarded_ppo_stability_non_finite_return"),
+        ("non_finite_return_count", "quasi_real_guarded_ppo_stability_non_finite_return"),
+        ("non_finite_advantage_count", "quasi_real_guarded_ppo_stability_non_finite_return"),
+        ("controlled_regression_count", "quasi_real_guarded_ppo_stability_controlled_regression"),
+        ("controlled_safety_regression_count", "quasi_real_guarded_ppo_stability_controlled_regression"),
+        ("controlled_contract_regression_count", "quasi_real_guarded_ppo_stability_controlled_regression"),
+        ("controlled_path_risk_regression_count", "quasi_real_guarded_ppo_stability_controlled_regression"),
+        ("controlled_source_selection_regression_count", "quasi_real_guarded_ppo_stability_controlled_regression"),
+        ("baseline_replay_behavior_drift_count", "quasi_real_guarded_ppo_stability_behavior_drift"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    teacher_agreement_rate = _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0)
+    if teacher_agreement_rate < 0.9:
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_teacher_alignment_insufficient")
+    if summary.get("quasi_real_collector_replay_status") != "passed":
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_collector_replay_not_passed")
+    if summary.get("long_horizon_verdict") != "long_horizon_teacher_skill_contract_aligned":
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_long_horizon_not_aligned")
+    if summary.get("acceptance_contract_refined") is not True:
+        _append_reason(blockers, "quasi_real_guarded_ppo_stability_acceptance_contract_missing")
+    if summary.get("runs_ppo_update") is True:
+        _append_reason(blockers, "limited_ppo_update_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "replay_count": replay_count,
+        "passed_replay_count": passed_replay_count,
+        "episode_count": episode_count,
+        "step_count": step_count,
+        "trainable_transition_count": trainable_transition_count,
+        "teacher_agreement_rate": teacher_agreement_rate,
+    }
+
+
+def _quasi_real_guarded_ppo_horizon5_batch_expansion_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "horizon": 0,
+        "replay_count": 0,
+        "passed_replay_count": 0,
+        "episode_count": 0,
+        "step_count": 0,
+        "trainable_transition_count": 0,
+        "teacher_agreement_rate": 0.0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_batch_expansion_not_passed")
+    horizon = _int_value_or_default(summary.get("horizon"), 0)
+    replay_count = _int_value_or_default(summary.get("replay_count"), 0)
+    passed_replay_count = _int_value_or_default(summary.get("passed_replay_count"), 0)
+    episode_count = _int_value_or_default(summary.get("episode_count"), 0)
+    step_count = _int_value_or_default(summary.get("step_count"), 0)
+    trainable_transition_count = _int_value_or_default(
+        summary.get("ppo_trainable_transition_count"),
+        _int_value_or_default(summary.get("trainable_transition_count"), 0),
+    )
+    if horizon != 5:
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_horizon_invalid")
+    if episode_count < 96:
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_episode_count_below_threshold")
+    if step_count < 480:
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_step_count_below_threshold")
+    if trainable_transition_count < 96:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_horizon5_trainable_transition_count_below_threshold",
+        )
+    if replay_count < 3:
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_replay_count_below_threshold")
+    if passed_replay_count != replay_count:
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_replay_not_all_passed")
+    for field, reason in (
+        ("validation_trainable_count", "quasi_real_guarded_ppo_horizon5_split_leakage"),
+        ("test_trainable_count", "quasi_real_guarded_ppo_horizon5_split_leakage"),
+        ("source_fallback_trainable_count", "quasi_real_guarded_ppo_horizon5_fallback_trainable"),
+        ("teacher_fallback_trainable_count", "quasi_real_guarded_ppo_horizon5_fallback_trainable"),
+        ("non_empty_gate_reason_trainable_count", "quasi_real_guarded_ppo_horizon5_gate_reason_trainable"),
+        ("missing_observation_count", "quasi_real_guarded_ppo_horizon5_contract_invalid"),
+        ("missing_log_prob_count", "quasi_real_guarded_ppo_horizon5_contract_invalid"),
+        ("missing_value_count", "quasi_real_guarded_ppo_horizon5_contract_invalid"),
+        ("non_finite_reward_count", "quasi_real_guarded_ppo_horizon5_non_finite_return"),
+        ("non_finite_return_count", "quasi_real_guarded_ppo_horizon5_non_finite_return"),
+        ("non_finite_advantage_count", "quasi_real_guarded_ppo_horizon5_non_finite_return"),
+        ("controlled_regression_count", "quasi_real_guarded_ppo_horizon5_controlled_regression"),
+        ("controlled_safety_regression_count", "quasi_real_guarded_ppo_horizon5_controlled_regression"),
+        ("controlled_contract_regression_count", "quasi_real_guarded_ppo_horizon5_controlled_regression"),
+        ("controlled_path_risk_regression_count", "quasi_real_guarded_ppo_horizon5_controlled_regression"),
+        ("controlled_source_selection_regression_count", "quasi_real_guarded_ppo_horizon5_controlled_regression"),
+        ("baseline_replay_behavior_drift_count", "quasi_real_guarded_ppo_horizon5_behavior_drift"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+    teacher_agreement_rate = _float_value_or_default(summary.get("teacher_agreement_rate"), 0.0)
+    if teacher_agreement_rate < 0.95:
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_teacher_alignment_insufficient")
+    if summary.get("quasi_real_collector_replay_status") != "passed":
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_collector_replay_not_passed")
+    replay_trainable = summary.get("quasi_real_collector_replay_trainable_transition_count")
+    if replay_trainable is not None and _int_value_or_default(replay_trainable, 0) < 96:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_horizon5_trainable_transition_count_below_threshold",
+        )
+    if summary.get("long_horizon_verdict") != "long_horizon_teacher_skill_contract_aligned":
+        _append_reason(blockers, "quasi_real_guarded_ppo_horizon5_long_horizon_not_aligned")
+    if summary.get("uses_multistep_discounted_return") is not True:
+        _append_reason(blockers, "return_aligned_multistep_discounted_return_missing")
+    if summary.get("not_single_step_best_action") is not True:
+        _append_reason(blockers, "return_aligned_single_step_best_action_claim_detected")
+    if summary.get("runs_ppo_update") is True:
+        _append_reason(blockers, "limited_ppo_update_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "horizon": horizon,
+        "replay_count": replay_count,
+        "passed_replay_count": passed_replay_count,
+        "episode_count": episode_count,
+        "step_count": step_count,
+        "trainable_transition_count": trainable_transition_count,
+        "teacher_agreement_rate": teacher_agreement_rate,
+    }
+
+
+def _quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "horizon": 0,
+        "trainable_transition_count": 0,
+        "unique_trainable_context_count": 0,
+        "seed_count": 0,
+        "passed_seed_count": 0,
+        "teacher_agreement_rate": 0.0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_preflight_not_passed")
+
+    horizon = _int_value_or_default(summary.get("horizon"), 0)
+    trainable_transition_count = _int_value_or_default(
+        summary.get("ppo_trainable_transition_count"),
+        _int_value_or_default(summary.get("trainable_transition_count"), 0),
+    )
+    unique_trainable_context_count = _int_value_or_default(
+        summary.get("unique_trainable_context_count"), 0
+    )
+    seed_count = _int_value_or_default(summary.get("seed_count"), 0)
+    passed_seed_count = _int_value_or_default(summary.get("passed_seed_count"), 0)
+    seed_failure_count = _int_value_or_default(summary.get("seed_failure_count"), 0)
+    teacher_agreement_rate = _float_value_or_default(
+        summary.get("teacher_agreement_rate"), 0.0
+    )
+
+    if horizon < 5:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_horizon_invalid")
+    if trainable_transition_count < 512:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_scale512_trainable_transition_count_below_threshold",
+        )
+    if unique_trainable_context_count < 512:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_scale512_unique_context_count_below_threshold",
+        )
+    for field, reason in (
+        ("validation_trainable_count", "quasi_real_guarded_ppo_scale512_split_leakage"),
+        ("test_trainable_count", "quasi_real_guarded_ppo_scale512_split_leakage"),
+        (
+            "source_fallback_trainable_count",
+            "quasi_real_guarded_ppo_scale512_fallback_trainable",
+        ),
+        (
+            "teacher_fallback_trainable_count",
+            "quasi_real_guarded_ppo_scale512_fallback_trainable",
+        ),
+        (
+            "non_empty_gate_reason_trainable_count",
+            "quasi_real_guarded_ppo_scale512_gate_reason_trainable",
+        ),
+        ("missing_observation_count", "quasi_real_guarded_ppo_scale512_contract_invalid"),
+        ("missing_log_prob_count", "quasi_real_guarded_ppo_scale512_contract_invalid"),
+        ("missing_value_count", "quasi_real_guarded_ppo_scale512_contract_invalid"),
+        ("non_finite_reward_count", "quasi_real_guarded_ppo_scale512_non_finite_return"),
+        ("non_finite_return_count", "quasi_real_guarded_ppo_scale512_non_finite_return"),
+        ("non_finite_advantage_count", "quasi_real_guarded_ppo_scale512_non_finite_return"),
+        ("controlled_regression_count", "quasi_real_guarded_ppo_scale512_controlled_regression"),
+        (
+            "controlled_safety_regression_count",
+            "quasi_real_guarded_ppo_scale512_controlled_regression",
+        ),
+        (
+            "controlled_contract_regression_count",
+            "quasi_real_guarded_ppo_scale512_controlled_regression",
+        ),
+        (
+            "controlled_path_risk_regression_count",
+            "quasi_real_guarded_ppo_scale512_controlled_regression",
+        ),
+        (
+            "controlled_source_selection_regression_count",
+            "quasi_real_guarded_ppo_scale512_controlled_regression",
+        ),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+
+    if teacher_agreement_rate < 0.95:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_teacher_alignment_insufficient")
+    if seed_count < 3:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_seed_count_below_threshold")
+    if passed_seed_count != seed_count or seed_failure_count:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_seed_smoke_not_all_passed")
+    if _float_value_or_default(summary.get("seed_max_old_log_prob_abs_error"), 0.0) > 1.0e-4:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_old_policy_reconstruction_error")
+    if _float_value_or_default(summary.get("seed_max_old_value_abs_error"), 0.0) > 1.0e-4:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_old_policy_reconstruction_error")
+    for field in (
+        "seed_loss_non_finite_count",
+        "seed_non_finite_gradient_count",
+        "seed_non_finite_reward_count",
+        "seed_non_finite_return_count",
+        "seed_non_finite_advantage_count",
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, "quasi_real_guarded_ppo_scale512_seed_non_finite")
+    if abs(_float_value_or_default(summary.get("seed_max_abs_approx_kl"), 0.0)) > 0.25:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_seed_kl_too_large")
+    if _float_value_or_default(summary.get("seed_max_grad_norm_after_clip"), 0.0) > 1.0:
+        _append_reason(blockers, "quasi_real_guarded_ppo_scale512_seed_grad_norm_too_large")
+    min_post_update_trainable = _int_value_or_default(
+        summary.get("min_post_update_guarded_collector_trainable_transition_count"), 0
+    )
+    if min_post_update_trainable < 512:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_scale512_post_update_collector_below_threshold",
+        )
+    if summary.get("runs_formal_ppo_rollout") is True:
+        _append_reason(blockers, "formal_ppo_rollout_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "horizon": horizon,
+        "trainable_transition_count": trainable_transition_count,
+        "unique_trainable_context_count": unique_trainable_context_count,
+        "seed_count": seed_count,
+        "passed_seed_count": passed_seed_count,
+        "teacher_agreement_rate": teacher_agreement_rate,
+    }
+
+
+def _quasi_real_guarded_ppo_iterative_miniloop_stability_readiness(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    empty = {
+        "present": False,
+        "completed": False,
+        "training_blockers": [],
+        "next_required_change": None,
+        "trainable_transition_count": 0,
+        "unique_trainable_context_count": 0,
+        "seed_count": 0,
+        "iteration_count": 0,
+        "passed_iteration_count": 0,
+    }
+    if not summary:
+        return empty
+
+    blockers: list[str] = []
+    if summary.get("status") != "passed" or _string_list(summary.get("reason_codes")):
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_miniloop_not_passed")
+
+    trainable_transition_count = _int_value_or_default(
+        summary.get("input_trainable_transition_count"),
+        _int_value_or_default(summary.get("ppo_trainable_transition_count"), 0),
+    )
+    unique_trainable_context_count = _int_value_or_default(
+        summary.get("unique_trainable_context_count"), 0
+    )
+    seed_count = _int_value_or_default(summary.get("seed_count"), 0)
+    iteration_count = _int_value_or_default(summary.get("iteration_count"), 0)
+    passed_iteration_count = _int_value_or_default(summary.get("passed_iteration_count"), 0)
+    failed_iteration_count = _int_value_or_default(summary.get("failed_iteration_count"), 0)
+    expected_iterations = seed_count * iteration_count
+
+    if trainable_transition_count != 684:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_iterative_trainable_transition_count_mismatch",
+        )
+    if unique_trainable_context_count != 684:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_iterative_unique_context_count_mismatch",
+        )
+    if seed_count < 3:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_seed_count_below_threshold")
+    if iteration_count < 3:
+        _append_reason(
+            blockers,
+            "quasi_real_guarded_ppo_iterative_iteration_count_below_threshold",
+        )
+    if passed_iteration_count != expected_iterations or failed_iteration_count:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_iterations_not_all_passed")
+    if _int_value_or_default(summary.get("min_optimizer_train_transition_count"), 0) != 684:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_optimizer_count_mismatch")
+
+    for field, reason in (
+        ("validation_trainable_count", "quasi_real_guarded_ppo_iterative_split_leakage"),
+        ("test_trainable_count", "quasi_real_guarded_ppo_iterative_split_leakage"),
+        ("source_fallback_trainable_count", "quasi_real_guarded_ppo_iterative_fallback_trainable"),
+        ("teacher_fallback_trainable_count", "quasi_real_guarded_ppo_iterative_fallback_trainable"),
+        ("non_empty_gate_reason_trainable_count", "quasi_real_guarded_ppo_iterative_gate_reason_trainable"),
+        ("missing_observation_count", "quasi_real_guarded_ppo_iterative_contract_invalid"),
+        ("missing_log_prob_count", "quasi_real_guarded_ppo_iterative_contract_invalid"),
+        ("missing_value_count", "quasi_real_guarded_ppo_iterative_contract_invalid"),
+        ("non_finite_reward_count", "quasi_real_guarded_ppo_iterative_non_finite"),
+        ("non_finite_return_count", "quasi_real_guarded_ppo_iterative_non_finite"),
+        ("non_finite_advantage_count", "quasi_real_guarded_ppo_iterative_non_finite"),
+        ("loss_non_finite_count", "quasi_real_guarded_ppo_iterative_non_finite"),
+        ("non_finite_gradient_count", "quasi_real_guarded_ppo_iterative_non_finite"),
+        ("controlled_regression_count", "quasi_real_guarded_ppo_iterative_controlled_regression"),
+        ("controlled_safety_regression_count", "quasi_real_guarded_ppo_iterative_controlled_regression"),
+        ("controlled_contract_regression_count", "quasi_real_guarded_ppo_iterative_controlled_regression"),
+        ("controlled_path_risk_regression_count", "quasi_real_guarded_ppo_iterative_controlled_regression"),
+        ("controlled_source_selection_regression_count", "quasi_real_guarded_ppo_iterative_controlled_regression"),
+        ("behavior_drift_count", "quasi_real_guarded_ppo_iterative_behavior_drift"),
+    ):
+        if _int_value_or_default(summary.get(field), 0):
+            _append_reason(blockers, reason)
+
+    if _float_value_or_default(summary.get("max_old_log_prob_abs_error"), 0.0) > 1.0e-4:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_old_policy_reconstruction_error")
+    if _float_value_or_default(summary.get("max_old_value_abs_error"), 0.0) > 1.0e-4:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_old_policy_reconstruction_error")
+    if abs(_float_value_or_default(summary.get("max_abs_approx_kl"), 0.0)) > 0.25:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_kl_too_large")
+    if _float_value_or_default(summary.get("max_grad_norm_after_clip"), 0.0) > 1.0:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_grad_norm_too_large")
+    if _float_value_or_default(summary.get("min_teacher_agreement_rate"), 0.0) < 0.95:
+        _append_reason(blockers, "quasi_real_guarded_ppo_iterative_teacher_alignment_insufficient")
+    if summary.get("runs_formal_ppo_rollout") is True:
+        _append_reason(blockers, "formal_ppo_rollout_unexpected")
+    if summary.get("publishes_checkpoint") is True:
+        _append_reason(blockers, "limited_ppo_update_checkpoint_publication_claimed")
+    if summary.get("replaces_default_policy") is True:
+        _append_reason(blockers, "limited_ppo_update_default_policy_replacement_claimed")
+    if summary.get("performance_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_policy_performance_claimed")
+    if summary.get("formal_training_ready_claimed") is True:
+        _append_reason(blockers, "limited_ppo_update_formal_training_ready_claimed")
+    if _git_current_matches(summary) is False:
+        _append_reason(blockers, "clean_head_evidence_refresh_required")
+
+    return {
+        "present": True,
+        "completed": not blockers,
+        "training_blockers": blockers,
+        "next_required_change": summary.get("next_required_change") if blockers else None,
+        "trainable_transition_count": trainable_transition_count,
+        "unique_trainable_context_count": unique_trainable_context_count,
+        "seed_count": seed_count,
+        "iteration_count": iteration_count,
+        "passed_iteration_count": passed_iteration_count,
     }
 
 

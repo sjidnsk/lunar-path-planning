@@ -531,8 +531,13 @@ def _ppo_batch(transitions, *, config: dict[str, Any], torch, device: str | None
     rewards = [float(transition.reward) for transition in transitions]
     dones = [bool(transition.done) for transition in transitions]
     old_values = [float(transition.value) for transition in transitions]
-    returns = _discounted_returns(rewards, dones=dones, discount_factor=float(config["training"].get("discount_factor", 0.99)))
-    advantages = [return_value - value for return_value, value in zip(returns, old_values)]
+    returns, advantages = _ppo_returns_and_advantages(
+        transitions,
+        rewards=rewards,
+        dones=dones,
+        old_values=old_values,
+        config=config,
+    )
     return {
         "candidate_features": torch.tensor(
             [_padded_candidate_features(transition.observation, action_count) for transition in transitions],
@@ -563,6 +568,35 @@ def _ppo_batch(transitions, *, config: dict[str, Any], torch, device: str | None
         "returns": torch.tensor(returns, dtype=torch.float32, device=device),
         "advantages": torch.tensor(advantages, dtype=torch.float32, device=device),
     }
+
+
+def _ppo_returns_and_advantages(
+    transitions,
+    *,
+    rewards: list[float],
+    dones: list[bool],
+    old_values: list[float],
+    config: dict[str, Any],
+) -> tuple[list[float], list[float]]:
+    training = config.get("training", {}) if isinstance(config, dict) else {}
+    if training.get("return_source") == "transition_info":
+        return_field = str(training.get("return_field") or "ppo_return")
+        advantage_field = str(training.get("advantage_field") or "ppo_advantage")
+        returns: list[float] = []
+        advantages: list[float] = []
+        for transition in transitions:
+            extra = _transition_extra(transition)
+            returns.append(_float_or_nan(extra.get(return_field)))
+            advantages.append(_float_or_nan(extra.get(advantage_field)))
+        return returns, advantages
+
+    returns = _discounted_returns(
+        rewards,
+        dones=dones,
+        discount_factor=float(training.get("discount_factor", 0.99)),
+    )
+    advantages = [return_value - value for return_value, value in zip(returns, old_values)]
+    return returns, advantages
 
 
 def _discounted_returns(rewards: list[float], *, dones: list[bool], discount_factor: float) -> list[float]:
@@ -845,6 +879,13 @@ def _int_value(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _float_or_nan(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
 
 
 def _finite_or_inf(value: float) -> float:

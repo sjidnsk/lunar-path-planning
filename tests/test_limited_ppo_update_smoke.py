@@ -185,6 +185,46 @@ class LimitedPpoUpdateSmokeTests(unittest.TestCase):
         self.assertEqual(summary["optimizer_transition_split_counts"], {"train": 1})
         self.assertEqual(summary["optimizer_transition_source_counts"], {"policy_teacher_aligned": 1})
 
+    def test_ppo_batch_can_use_precomputed_multistep_returns_and_advantages(self) -> None:
+        import torch
+        from model_explorer.policy.rollout import EpisodeMetrics, RolloutEpisode, RolloutInfo, RolloutTransition
+        from scripts.run_limited_ppo_update_smoke import _ppo_batch
+
+        observation = self._observation()
+        transition = RolloutTransition(
+            observation=observation,
+            action_index=1,
+            log_prob=-0.5,
+            value=0.25,
+            reward=1.0,
+            next_observation=None,
+            done=True,
+            info=RolloutInfo(
+                selected_cell=(5, 6),
+                extra={
+                    "ppo_trainable": True,
+                    "controlled_choice_source": "policy",
+                    "context_id": "ctx-return-aligned",
+                    "episode_id": "ep-return-aligned",
+                    "step_index": 0,
+                    "ppo_return": 7.5,
+                    "ppo_advantage": 7.25,
+                },
+            ),
+        )
+        episode = RolloutEpisode(transitions=(transition,), metrics=EpisodeMetrics())
+        self.assertEqual(len(episode.transitions), 1)
+
+        config = self._config(expected_count=1)
+        config["training"]["return_source"] = "transition_info"
+        config["training"]["return_field"] = "ppo_return"
+        config["training"]["advantage_field"] = "ppo_advantage"
+
+        batch = _ppo_batch(episode.transitions, config=config, torch=torch)
+
+        self.assertAlmostEqual(float(batch["returns"][0].item()), 7.5)
+        self.assertAlmostEqual(float(batch["advantages"][0].item()), 7.25)
+
     def test_readiness_accepts_passed_limited_ppo_update_smoke_summary(self) -> None:
         from scripts.run_policy_training_readiness_review import _limited_ppo_update_smoke_readiness
 

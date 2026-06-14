@@ -1,0 +1,112 @@
+{
+  "schema_version": "return-aligned-guarded-ppo-update-smoke-config/v1",
+  "description": "Return-Aligned Guarded PPO Update Smoke v1. Join return-aligned multi-step collector audit rows to original guarded rollout observations, run one tiny local PPO update, and keep the result experimental.",
+  "input_files": {
+    "return_aligned_summary": "return-aligned-collector-summary.json",
+    "return_aligned_transitions": "return-aligned-ppo-transitions.jsonl",
+    "guarded_rollout_episodes": "ppo-rollout-episodes.jsonl",
+    "guarded_collector_summary": "ppo-rollout-collector-summary.json",
+    "base_checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "base_checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json",
+    "base_candidate_summary": "raw-policy-generalization-candidate-summary.json"
+  },
+  "output_files": {
+    "summary": "return-aligned-guarded-ppo-update-smoke-summary.json",
+    "optimizer_input_root": "optimizer-input",
+    "update_summary": "limited-ppo-update-smoke-summary.json",
+    "training_curves": "limited-ppo-update-training-curves.json",
+    "diagnostics": "limited-ppo-update-diagnostics.json",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt",
+    "checkpoint_metadata": "experimental-hybrid-policy-candidate-metadata.json",
+    "candidate_summary": "raw-policy-generalization-candidate-summary.json"
+  },
+  "trainable_filter": {
+    "splits": [
+      "train"
+    ],
+    "controlled_choice_sources": [
+      "policy"
+    ],
+    "require_empty_gate_reason_codes": true,
+    "require_return_aligned_ppo_trainable": true
+  },
+  "training": {
+    "device": "cpu",
+    "seed": 0,
+    "epochs": 1,
+    "learning_rate": 0.00001,
+    "clip_ratio": 0.2,
+    "discount_factor": 0.99,
+    "max_grad_norm": 1.0,
+    "hidden_size": 16,
+    "return_source": "transition_info",
+    "return_field": "ppo_return",
+    "advantage_field": "ppo_advantage"
+  },
+  "validation": {
+    "expected_input_ppo_trainable_transition_count": 30,
+    "min_optimizer_train_transition_count": 24,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0,
+    "min_post_update_ppo_trainable_transition_count": 24,
+    "min_post_update_teacher_agreement_rate": 0.9
+  },
+  "evaluation": {
+    "hidden_size": 16
+  },
+  "post_update_gates": {
+    "enabled": true,
+    "allowed_generated_sequential_diagnostic_reason_codes": [
+      "multi_step_accepted_episode_count_below_threshold",
+      "family_with_multi_step_accepted_episode_count_below_threshold",
+      "canary_rejected_policy_choice_count_above_threshold"
+    ],
+    "generated": {
+      "dev_root": "outputs/path_feedback_batch_sequential_multi_step_opportunity_dev_v1",
+      "val_root": "outputs/path_feedback_batch_sequential_multi_step_opportunity_val_v1",
+      "test_root": "outputs/path_feedback_batch_sequential_multi_step_opportunity_test_v1",
+      "raw_baseline_candidate_root": "outputs/path_feedback_batch_sequential_multi_step_opportunity_baseline_candidate_v1",
+      "raw_generalization_config": "configs/raw_policy_generalization_evaluation_v1.json",
+      "sequential_config": "configs/policy_gated_sequential_multi_step_opportunity_rollout_v1.json",
+      "collector_config": "configs/ppo_rollout_collector_dry_run_v1.json",
+      "sequential_root": "post_update_generated_sequential",
+      "collector_root": "post_update_generated_collector"
+    },
+    "quasi_real": {
+      "quasi_real_root": "outputs/path_feedback_batch_quasi_real_safe_better_opportunity_expansion_v1",
+      "teacher_following_config": "configs/quasi_real_guarded_teacher_following_pilot_v1.json",
+      "collector_config": "configs/quasi_real_ppo_collector_dry_run_v1.json",
+      "teacher_following_root": "post_update_quasi_real_teacher_following",
+      "collector_root": "post_update_quasi_real_collector"
+    },
+    "long_horizon": {
+      "compatibility_diagnosis_root": "outputs/path_feedback_batch_quasi_real_generated_sequential_contract_compatibility_diagnosis_v1",
+      "accounting_audit_root": "outputs/path_feedback_batch_generated_sequential_gate_metric_accounting_audit_v1",
+      "config": "configs/generated_sequential_long_horizon_teacher_skill_contract_alignment_v1.json",
+      "diagnosis_input_root": "post_update_long_horizon_diagnosis_input",
+      "output_root": "post_update_long_horizon"
+    },
+    "return_aligned_replay": {
+      "evidence_freeze_summary": "outputs/path_feedback_batch_guarded_ppo_evidence_freeze_v1/guarded-ppo-evidence-freeze-summary.json",
+      "config": "configs/return_aligned_guarded_multi_step_ppo_collector_expansion_v1.json",
+      "guarded_root": "post_update_return_aligned_guarded_replay",
+      "output_root": "post_update_return_aligned_replay"
+    }
+  },
+  "non_goals": [
+    "no_formal_ppo_rollout",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_distance_contract_relaxation",
+    "no_path_risk_source_selection_gate_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_iris_gcs_training_release_claim",
+    "no_policy_performance_claim",
+    "no_formal_training_ready_claim"
+  ]
+}

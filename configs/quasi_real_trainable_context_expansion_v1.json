@@ -1,0 +1,51 @@
+{
+  "schema_version": "quasi-real-trainable-context-expansion-config/v1",
+  "horizon": 5,
+  "discount_factor": 0.99,
+  "source_roots": [
+    "outputs/path_feedback_batch_quasi_real_guarded_ppo_horizon5_batch_expansion_v1"
+  ],
+  "source_jsonl_globs": [
+    "quasi-real-guarded-ppo-horizon5-batch-expansion-steps.jsonl"
+  ],
+  "materialization": {
+    "enabled": true,
+    "dataset_roots": [
+      "outputs/path_feedback_batch_quasi_real_teacher_distillation_dataset_v1"
+    ],
+    "slices_file": "quasi-real-teacher-distillation-slices.jsonl",
+    "path_feedback_summary_file": "quasi-real-teacher-distillation-path-feedback-summary.json",
+    "candidate_root": "outputs/path_feedback_batch_quasi_real_teacher_distillation_candidate_v1",
+    "checkpoint": "experimental-hybrid-policy-candidate.pt"
+  },
+  "validation": {
+    "min_unique_trainable_context_count": 512,
+    "min_ppo_trainable_transition_count": 512,
+    "min_teacher_agreement_rate": 0.95
+  },
+  "scale512": {
+    "config": "configs/quasi_real_guarded_ppo_scale512_multiseed_preflight_v1.json",
+    "output_root": "outputs/path_feedback_batch_quasi_real_trainable_context_expansion_v1/scale512_rerun"
+  },
+  "output_files": {
+    "summary": "quasi-real-trainable-context-expansion-summary.json",
+    "contexts": "quasi-real-trainable-contexts.jsonl",
+    "steps": "quasi-real-trainable-context-expansion-steps.jsonl",
+    "episodes": "quasi-real-trainable-context-expansion-episodes.jsonl",
+    "capacity_audit": "quasi-real-trainable-context-capacity-audit.json",
+    "source_audit": "quasi-real-trainable-context-source-audit.json",
+    "rejection_report": "quasi-real-trainable-context-rejection-report.json",
+    "report": "quasi-real-trainable-context-expansion-report.md"
+  },
+  "non_goals": [
+    "does_not_start_formal_ppo",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_change_network_or_action_space",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_duplicate_contexts_to_fake_scale",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance_or_formal_training_ready"
+  ]
+}

@@ -1363,6 +1363,283 @@ replacement, no network/action-space/default-A* change, no distance-contract
 relaxation, no Ackermann-feasible trajectory claim, no IRIS/GCS diagnostic as
 training release evidence, and no policy performance claim.
 
+## Quasi-Real Guarded PPO Rollout Pilot
+
+`Quasi-Real Guarded PPO Rollout Pilot v1` is the quasi-real counterpart to the
+generated guarded pilot. It does not run another PPO update. Instead, it takes
+the experimental candidate produced by
+`outputs/path_feedback_batch_return_aligned_guarded_ppo_update_smoke_v1/` and
+lets it perform horizon-3 guarded rollout over the quasi-real teacher-following
+contexts. Each step is a small supervised test drive: the policy proposes an
+action, the existing distance/path-risk/source-selection/contract/safety guards
+decide whether that action may control the step, and rejected raw probes remain
+diagnostic-only after fallback.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_ppo_rollout_pilot_v1.json`
+- `scripts/run_quasi_real_guarded_ppo_rollout_pilot.py/.sh`
+- `scripts/run_quasi_real_guarded_ppo_rollout_pilot_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_guarded_ppo_rollout_pilot_v1/`
+
+Current evidence writes
+`quasi-real-guarded-ppo-rollout-pilot-summary.json`,
+`quasi-real-guarded-ppo-rollout-episodes.jsonl`,
+`quasi-real-guarded-ppo-rollout-steps.jsonl`,
+`quasi-real-guarded-ppo-rollout-rejection-report.json`, and
+`quasi-real-guarded-ppo-rollout-reward-audit.json`. The pilot reports
+`status=passed`, `reason_codes=[]`, `episode_count=36`, `step_count=108`,
+`ppo_trainable_transition_count=36`, `diagnostic_transition_count=72`,
+`controlled_regression_count=0`, `teacher_agreement_rate=1.0`, quasi-real
+collector replay `status=passed` with 36 trainable transitions, and
+`post_pilot_long_horizon_verdict=long_horizon_teacher_skill_contract_aligned`.
+
+Readiness now accepts
+`--quasi-real-guarded-ppo-rollout-pilot-summary` and can advance to
+`quasi_real_guarded_ppo_rollout_pilot_evaluated` when the summary is passed,
+current provenance matches, validation/test/fallback trainable leakage is zero,
+log-prob/value/reward/return/advantage are finite, and no controlled
+safety/contract/path-risk/source-selection regression is present.
+
+This remains an evidence-producing guarded rollout pilot only: no formal PPO
+rollout, no checkpoint publication, no default-policy replacement, no network
+or action-space change, no default-A* change, no gate relaxation, no
+Ackermann-feasible trajectory claim, no policy performance claim, and no formal
+training-ready claim.
+
+## Quasi-Real Guarded PPO Evidence Freeze
+
+After `quasi_real_guarded_ppo_rollout_pilot_evaluated`, the next boundary is
+evidence freeze, not more PPO. The new quasi-real freeze stage packages the
+passed guarded rollout pilot into a reproducible audit bundle and makes the
+readiness source explicit. This matters because the written
+`policy-training-readiness-review-summary.json` under the batch root can become
+stale when the worktree changes; the freeze trusts a fresh validate-only run
+with the quasi-real pilot summary and records stale written readiness only as a
+diagnostic.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_ppo_evidence_freeze_v1.json`
+- `scripts/run_quasi_real_guarded_ppo_evidence_freeze.py/.sh`
+- `scripts/run_quasi_real_guarded_ppo_evidence_freeze_closure.sh`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-ppo-evidence-freeze.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_ppo_evidence_freeze_v1/`
+
+The freeze writes
+`quasi-real-guarded-ppo-evidence-freeze-summary.json`,
+`quasi-real-guarded-ppo-evidence-manifest.json`,
+`quasi-real-guarded-ppo-readiness-validate-only.json`, and
+`quasi-real-guarded-ppo-evidence-freeze-report.md`. Current evidence is
+`status=passed`, `reason_codes=[]`, pilot status `passed`, readiness status
+`quasi_real_guarded_ppo_rollout_pilot_evaluated`, required artifact missing
+count 0, and `stale_written_readiness_summary_detected=true`. The manifest
+covers 9 required artifacts with sha256 hashes, including the pilot summary,
+episodes, steps, rejection report, reward audit, collector replay summary,
+long-horizon summary, return-aligned update smoke summary, and the fresh
+readiness validate-only artifact.
+
+The closure may refresh the quasi-real guarded rollout pilot to current
+provenance before freezing, but it does not run a new PPO update, publish a
+checkpoint, replace the default policy, relax gates, or make performance or
+formal-training-ready claims.
+
+## Quasi-Real Guarded PPO Stability Replay
+
+After evidence freeze, the next boundary is stability replay and acceptance
+contract refinement. The stage replays the frozen quasi-real guarded PPO rollout
+pilot three times with the same experimental checkpoint and quasi-real root,
+then compares every replay against the frozen baseline. It is meant to answer
+whether the passed guarded rollout is reproducible, not whether the policy is
+ready for formal training.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_ppo_stability_replay_v1.json`
+- `scripts/run_quasi_real_guarded_ppo_stability_replay.py/.sh`
+- `scripts/run_quasi_real_guarded_ppo_stability_replay_closure.sh`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-ppo-stability-replay.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_ppo_stability_replay_v1/`
+
+The stage writes
+`quasi-real-guarded-ppo-stability-replay-summary.json`,
+`stability-replay-comparison.jsonl`,
+`acceptance-contract-refinement.json`,
+`stability-replay-progress-events.jsonl`,
+`quasi-real-guarded-ppo-stability-readiness-validate-only.json`, and
+`stability-replay-report.md`. Current evidence is `status=passed`,
+`reason_codes=[]`, `replay_count=3`, `passed_replay_count=3`, readiness status
+`quasi_real_guarded_ppo_stability_replay_evaluated`, 36 episodes, 108 steps,
+36 trainable transitions, 72 diagnostic transitions, teacher agreement 1.0,
+controlled regression count 0, and baseline/replay behavior drift count 0.
+
+The refined acceptance contract lists hard gates such as freeze passed, all
+replays passed, split/fallback leakage zero, materialization complete, finite
+reward/return/advantage, controlled regression zero, collector replay passed,
+long-horizon teacher-skill contract aligned, and readiness validate-only
+passed. Validation/test, source fallback, teacher fallback, raw policy probe
+rejection, non-empty gate reasons, and IRIS/GCS/path-planner diagnostics remain
+diagnostic-only.
+
+This remains an audit and contract-refinement stage only: no new PPO update,
+batch expansion, checkpoint publication, default-policy replacement, gate
+relaxation, policy performance claim, or formal-training-ready claim is made.
+
+## Quasi-Real Guarded PPO Horizon-5 Batch Expansion
+
+After stability replay, the next boundary is a first-stage longer-horizon and
+wider-batch expansion. `Quasi-Real Guarded PPO Horizon-5 Batch Expansion v1`
+does not start formal PPO. It takes the passed stability replay evidence,
+follows it back through the freeze manifest to the same quasi-real guarded pilot
+steps, then deterministically rebuilds 96 guarded episodes with horizon 5.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_ppo_horizon5_batch_expansion_v1.json`
+- `scripts/run_quasi_real_guarded_ppo_horizon5_batch_expansion.py/.sh`
+- `scripts/run_quasi_real_guarded_ppo_horizon5_batch_expansion_closure.sh`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-ppo-horizon5-batch-expansion.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_ppo_horizon5_batch_expansion_v1/`
+
+The stage writes expanded episodes, expanded steps, reward audit, rejection
+report, replay comparison, progress events, readiness validate-only output, and
+a markdown report. Current closure evidence is `status=passed`,
+`reason_codes=[]`, `horizon=5`, `episode_count=96`, `step_count=480`,
+`ppo_trainable_transition_count=162`, `diagnostic_transition_count=318`,
+`replay_count=3`, `passed_replay_count=3`, readiness status
+`quasi_real_guarded_ppo_horizon5_batch_expansion_evaluated`, teacher agreement
+1.0, controlled regression count 0, and behavior drift count 0.
+
+Trainability remains strict: only train split, gate-clean, controlled policy
+steps can be PPO-trainable. Validation/test split steps, source fallback,
+teacher fallback, raw probe rejection, non-empty gate reasons, and
+IRIS/GCS/path-planner diagnostics remain diagnostic-only. Returns and
+advantages are recalculated over five-step episodes, so the accounting is
+multi-step return aligned rather than single-step greedy.
+
+This is still an expansion audit only: no formal PPO, no new optimizer update,
+no checkpoint publication, no default-policy replacement, no gate relaxation,
+no performance claim, and no formal-training-ready claim. Formal PPO preflight
+still needs a larger evidence gate such as at least 512 trainable transitions
+and multi-seed stability.
+
+## Quasi-Real Guarded PPO Scale-512 Multi-Seed Preflight
+
+`Quasi-Real Guarded PPO Scale-512 Multi-Seed Preflight v1` adds the formal PPO
+preflight gate after Horizon-5. It is still not formal PPO. It asks whether the
+quasi-real guarded rollout evidence is large and diverse enough to justify a
+later real training run: at least 512 PPO-trainable transitions, at least 512
+unique trainable contexts, horizon at least 5, and three seed-level tiny PPO
+smoke checks with finite losses, bounded KL, bounded clipped gradient norm, no
+teacher-skill regression, and no controlled rollout regression.
+
+New artifacts:
+
+- `configs/quasi_real_guarded_ppo_scale512_multiseed_preflight_v1.json`
+- `scripts/run_quasi_real_guarded_ppo_scale512_multiseed_preflight.py/.sh`
+- `scripts/run_quasi_real_guarded_ppo_scale512_multiseed_preflight_closure.sh`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-ppo-scale512-multiseed-preflight.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_ppo_scale512_multiseed_preflight_v1/`
+
+The preflight is intentionally strict. It only counts train split, gate-clean,
+controlled-policy transitions with complete observations, log probabilities,
+values, finite rewards, finite returns, and finite advantages. Validation/test
+split, source fallback, teacher fallback, raw probe rejection, non-empty gate
+reason, and path-planner/IRIS/GCS diagnostic rows stay diagnostic-only.
+
+With the current Horizon-5 evidence, the gate is expected to fail for capacity
+rather than optimizer instability: Horizon-5 has 162 trainable transitions, but
+only 36 unique trainable contexts traced back to the quasi-real input. The
+Scale-512 runner therefore reports `insufficient_quasi_real_trainable_capacity`
+and skips seed smoke instead of duplicating examples to fake scale.
+
+This is the correct stop signal before formal PPO. The next engineering target
+is upstream quasi-real trainable context expansion: mine or generate at least
+512 real, distinct train split, gate-clean quasi-real contexts, then rerun this
+preflight. No checkpoint is published, no default policy is replaced, no gate is
+relaxed, and no formal-training-ready claim is made.
+
+## Quasi-Real Trainable Context Expansion
+
+`Quasi-Real Trainable Context Expansion v1` implements that upstream capacity
+audit. It is not formal PPO and does not change the policy. It reads the passed
+Horizon-5 evidence and the failed Scale-512 preflight, then scans an explicit
+quasi-real source ledger for train split, controlled-policy, gate-clean,
+fully-materialized, finite trainable contexts.
+
+New artifacts:
+
+- `configs/quasi_real_trainable_context_expansion_v1.json`
+- `scripts/run_quasi_real_trainable_context_expansion.py/.sh`
+- `scripts/run_quasi_real_trainable_context_expansion_closure.sh`
+- `docs/superpowers/specs/2026-06-14-quasi-real-trainable-context-expansion.md`
+- `outputs/path_feedback_batch_quasi_real_trainable_context_expansion_v1/`
+
+The stage writes the selected unique context ledger, rebuilt expansion steps,
+capacity audit, source audit, rejection report, markdown report, and, when
+capacity is sufficient, an `expanded_horizon5/` ledger for rerunning Scale-512.
+It does not count repeated `context_id` values toward capacity. Validation/test
+split rows, fallback rows, teacher fallback rows, raw probe rejection rows,
+non-empty gate reasons, controlled regressions, and IRIS/GCS/path-planner
+diagnostics remain diagnostic-only.
+
+Current closure evidence is passed: `status=passed`, `reason_codes=[]`,
+`source_row_count=1128`, `materialized_source_row_count=648`,
+`materialized_trainable_context_count=648`,
+`unique_trainable_context_count=684`,
+`ppo_trainable_transition_count=684`, `duplicate_trainable_context_count=0`,
+and `scale512_status=passed`. The runner now materializes train split
+teacher-distillation raw slices by reconstructing policy observations from the
+paired path-feedback candidates and refreshing log_prob/value from the same
+experimental candidate checkpoint used by the PPO smoke.
+
+The Scale-512 rerun also passes with `seed_count=3`, `passed_seed_count=3`,
+zero controlled regression, zero old log_prob/value reconstruction error,
+`seed_max_abs_approx_kl≈1.01e-5`, and `seed_max_grad_norm_after_clip=1.0`.
+Readiness advances to
+`quasi_real_guarded_ppo_scale512_multiseed_preflight_evaluated`. This remains a
+formal-PPO preflight, not a formal PPO training completion: there is still no
+checkpoint publication, default-policy replacement, gate relaxation, policy
+performance claim, or formal-training-ready claim.
+
+## Quasi-Real Guarded PPO Iterative Mini-Loop Stability
+
+`Quasi-Real Guarded PPO Iterative Mini-Loop Stability v1` is the next boundary
+after the 684-context expansion. It is still not formal PPO and does not require
+downloading more raw data first. It asks a narrower question: if the same
+experimental base candidate takes three tiny PPO smoke steps per seed, across
+seeds `[0,1,2]`, do teacher skill, controlled gates, on-policy reconstruction,
+finite loss/gradient/return/advantage accounting, KL, and clipped gradient norm
+stay stable?
+
+New artifacts:
+
+- `configs/quasi_real_guarded_ppo_iterative_miniloop_stability_v1.json`
+- `scripts/run_quasi_real_guarded_ppo_iterative_miniloop_stability.py/.sh`
+- `scripts/run_quasi_real_guarded_ppo_iterative_miniloop_stability_closure.sh`
+- `tests/test_quasi_real_guarded_ppo_iterative_miniloop_stability.py`
+- `docs/superpowers/specs/2026-06-14-quasi-real-guarded-ppo-iterative-miniloop-stability.md`
+- `outputs/path_feedback_batch_quasi_real_guarded_ppo_iterative_miniloop_stability_v1/`
+
+The runner reads the current trainable context expansion summary and its
+Scale-512 rerun, requires both to be passed, and only admits the 684 train
+split, gate-clean, controlled policy transitions into the optimizer. Each seed
+starts from the same experimental base candidate; each iteration refreshes
+`log_prob/value` from the current base candidate before materializing collector
+episodes and running a full-batch PPO smoke update. The next iteration in the
+same seed chains from the previous experimental output. A progress JSONL records
+seed, iteration, optimizer count, KL, clipped grad norm, teacher agreement, and
+controlled regression for every mini-loop step.
+
+Readiness now accepts
+`--quasi-real-guarded-ppo-iterative-miniloop-stability-summary` and advances to
+`quasi_real_guarded_ppo_iterative_miniloop_stability_evaluated` only when all
+3x3 updates pass, optimizer count remains exactly 684, validation/test/fallback
+trainable counts are zero, old policy reconstruction stays within `1e-4`, all
+numeric counters are finite, teacher agreement stays at least 0.95, controlled
+regression and behavior drift remain zero, and publication/performance/formal
+ready claims stay false.
+
 ## Training Progress Telemetry
 
 Long guarded/iterative closures can spend minutes inside generated sequential
@@ -2170,6 +2447,142 @@ This is still a local experimental stability check: no formal PPO rollout, no
 checkpoint publication, no default-policy replacement, no network/action-space
 or default-A* change, no distance/path-risk/source-selection relaxation, no
 Ackermann-feasible trajectory claim, and no formal training-ready claim.
+
+### Quasi-Real Guarded PPO Iterative Mini-Loop Evidence Freeze
+
+The current mini-loop result is now frozen as a local baseline before any larger
+PPO stage. The freeze does not rerun training. It packages the passed
+`Quasi-Real Guarded PPO Iterative Mini-Loop Stability v1` evidence, progress
+telemetry, readiness result, docs, and tests into a SHA256 manifest:
+
+- `configs/quasi_real_guarded_ppo_iterative_miniloop_evidence_freeze_v1.json`
+- `scripts/run_quasi_real_guarded_ppo_iterative_miniloop_evidence_freeze.py/.sh`
+- `scripts/run_quasi_real_guarded_ppo_iterative_miniloop_evidence_freeze_closure.sh`
+- `outputs/path_feedback_batch_quasi_real_guarded_ppo_iterative_miniloop_evidence_freeze_v1/`
+
+The freeze summary is
+`quasi-real-guarded-ppo-iterative-miniloop-evidence-freeze-summary.json`; the
+manifest is
+`quasi-real-guarded-ppo-iterative-miniloop-evidence-manifest.json`. Passing
+freeze requires the mini-loop summary to remain `passed`, readiness to remain
+`quasi_real_guarded_ppo_iterative_miniloop_stability_evaluated`, 684 trainable
+contexts, three seeds, three iterations, nine passed iteration/progress rows,
+zero controlled regression, zero behavior drift, and no checkpoint publication
+or formal-training claim.
+
+This is a provenance checkpoint: it makes the current evidence package easy to
+replay and compare against. It is still not formal PPO training and does not
+relax any safety, distance/path-risk, source-selection, network, action-space,
+or default-A* boundary.
+
+## Return-Aligned Guarded Multi-Step PPO Collector
+
+`Return-Aligned Guarded Multi-Step PPO Collector Expansion v1` upgrades the
+guarded PPO evidence from clean individual steps to auditable multi-step return
+episodes. It does not run another PPO update. It reads the passed guarded pilot
+collector transitions, groups them into the configured horizon, and writes a
+separate return-aligned collector package under
+`outputs/path_feedback_batch_return_aligned_guarded_multi_step_ppo_collector_expansion_v1/`.
+
+New artifacts:
+
+- `configs/return_aligned_guarded_multi_step_ppo_collector_expansion_v1.json`
+- `scripts/run_return_aligned_guarded_multi_step_ppo_collector_expansion.py/.sh`
+- `scripts/run_return_aligned_guarded_multi_step_ppo_collector_closure.sh`
+- `outputs/.../return-aligned-ppo-episodes.jsonl`
+- `outputs/.../return-aligned-ppo-transitions.jsonl`
+- `outputs/.../return-aligned-reward-audit.json`
+- `outputs/.../return-aligned-rejection-report.json`
+- `outputs/.../return-aligned-collector-summary.json`
+
+The current closure passes with `horizon=3`, `episode_count=36`,
+`step_count=108`, `trainable_episode_count=31`, and
+`trainable_transition_count=30`. Step-level PPO trainability remains strict:
+only train-split, policy-controlled, gate-clean transitions stay trainable.
+Source fallback and other rejected/gated choices remain diagnostic. Episode
+trainability is the return-audit layer: a full-horizon train episode with finite
+discounted return, no source fallback, and no controlled safety/contract/path
+risk/source-selection regression can count as return-aligned evidence.
+
+The reward audit explicitly reports `teacher_following_return`,
+`teacher_equivalent_return`, `safe_better_return`,
+`controlled_regression_penalty`, `discounted_episode_return`, and
+`advantage_reference_value`. Same-as-teacher choices can be positive evidence;
+the collector checks multi-step discounted return rather than one-step greedy
+improvement. Readiness accepts
+`--return-aligned-guarded-multistep-collector-summary` and advances to
+`return_aligned_guarded_multistep_collector_evaluated` when the summary passes
+with no leakage, no non-finite reward/return/advantage, and no controlled
+regression.
+
+This stage is still evidence expansion only: no formal PPO training, no new PPO
+update, no checkpoint publication, no default-policy replacement, no
+network/action-space/default-A* change, no gate relaxation, no Ackermann
+feasible-trajectory claim, and no formal training-ready claim.
+
+### Return-Aligned Guarded PPO Update Smoke
+
+`Return-Aligned Guarded PPO Update Smoke v1` takes the next narrow step after
+the multi-step collector. It does not launch formal PPO training. It joins the
+return-aligned audit rows back to the original guarded rollout observations,
+actions, old log probabilities, and values, then runs one tiny local PPO update
+from the same checkpoint that produced the guarded collector evidence.
+
+New artifacts:
+
+- `configs/return_aligned_guarded_ppo_update_smoke_v1.json`
+- `scripts/run_return_aligned_guarded_ppo_update_smoke.py/.sh`
+- `scripts/run_return_aligned_guarded_ppo_update_smoke_closure.sh`
+- `outputs/path_feedback_batch_return_aligned_guarded_ppo_update_smoke_v1/`
+- `outputs/.../optimizer-input/ppo-rollout-episodes.jsonl`
+- `outputs/.../return-aligned-guarded-ppo-update-smoke-summary.json`
+
+The optimizer input is deliberately narrow. Only `split=train`,
+`controlled_choice_source=policy`, `ppo_trainable=true`, gate-clean,
+finite-return rows from the return-aligned collector are materialized. The
+original guarded rollout supplies the network-facing observation/action and
+old `log_prob/value`; the return-aligned collector supplies `ppo_return` and
+`ppo_advantage`. This prevents the update from silently falling back to
+one-step reward accounting.
+
+Current closure result:
+
+- return-aligned collector input: `status=passed`, `reason_codes=[]`
+- optimizer transition count: `30`
+- validation/test/source-fallback optimizer count: `0`
+- old `log_prob/value` max abs error: `0.0 / 0.0`
+- loss/gradient/reward/return/advantage non-finite count: `0`
+- `parameter_l2_delta=0.00042781765692363765`
+- `approx_kl=-0.0008484522695653141`
+- `max_grad_norm_after_clip<=1.0`
+- post-update gates evaluated: `true`
+- post-update raw generalization effective status: `passed`,
+  `post_update_raw_test_regression_count=0`
+- post-update generated sequential strict status: `failed` for the known
+  diagnostic reason codes
+  `multi_step_accepted_episode_count_below_threshold`,
+  `family_with_multi_step_accepted_episode_count_below_threshold`, and
+  `canary_rejected_policy_choice_count_above_threshold`; this is not counted as
+  a controlled rollout regression
+- post-update generated collector: `status=passed`,
+  `ppo_trainable_transition_count=30`
+- post-update quasi-real teacher-following: `status=passed`,
+  `teacher_agreement_rate=1.0`
+- post-update quasi-real collector: `status=passed`,
+  `ppo_trainable_transition_count=36`
+- post-update long-horizon contract:
+  `verdict=long_horizon_teacher_skill_contract_aligned`
+- post-update return-aligned replay: `status=passed`,
+  `trainable_transition_count=30`
+- post-update controlled regression count: `0`
+- readiness accepts `--return-aligned-guarded-ppo-update-smoke-summary`
+- readiness status: `return_aligned_guarded_ppo_update_smoke_evaluated`
+- `training_blockers=[]`
+
+This is still an experimental smoke only: no checkpoint publication, no
+default-policy replacement, no performance claim, no formal training-ready
+claim, no network/action-space/default-A* change, no gate relaxation, and no
+Ackermann-feasible trajectory claim.
 
 ## Core Algorithm Development Chain
 

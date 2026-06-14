@@ -1570,6 +1570,438 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
             ]
         )
 
+    def test_return_aligned_guarded_ppo_update_smoke_summary_advances_readiness(self) -> None:
+        update_path = self.batch_root / "return-aligned-guarded-ppo-update-smoke-summary.json"
+        update_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "return-aligned-guarded-ppo-update-smoke-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "input_return_aligned_trainable_transition_count": 30,
+                    "optimizer_train_transition_count": 30,
+                    "validation_test_optimizer_transition_count": 0,
+                    "source_fallback_optimizer_transition_count": 0,
+                    "non_empty_gate_reason_optimizer_transition_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "materialization_error_count": 0,
+                    "old_log_prob_max_abs_error": 0.0,
+                    "old_value_max_abs_error": 0.0,
+                    "loss_non_finite_count": 0,
+                    "non_finite_gradient_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "parameter_l2_delta": 0.001,
+                    "approx_kl": 0.01,
+                    "max_grad_norm_after_clip": 0.5,
+                    "uses_multistep_discounted_return": True,
+                    "not_single_step_best_action": True,
+                    "post_update_gates_evaluated": True,
+                    "post_update_raw_generalization_status": "passed",
+                    "post_update_raw_test_regression_count": 0,
+                    "post_update_generated_sequential_status": "failed",
+                    "post_update_generated_collector_status": "passed",
+                    "post_update_generated_collector_trainable_transition_count": 30,
+                    "post_update_quasi_real_teacher_following_status": "passed",
+                    "post_update_quasi_real_collector_status": "passed",
+                    "post_update_quasi_real_collector_trainable_transition_count": 30,
+                    "post_update_controlled_regression_count": 0,
+                    "post_update_teacher_agreement_rate": 1.0,
+                    "post_update_return_aligned_replay_status": "passed",
+                    "post_update_return_aligned_replay_trainable_transition_count": 30,
+                    "post_update_long_horizon_status": "passed",
+                    "post_update_long_horizon_verdict": "long_horizon_teacher_skill_contract_aligned",
+                    "experimental_checkpoint": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--return-aligned-guarded-ppo-update-smoke-summary",
+            str(update_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "return_aligned_guarded_ppo_update_smoke_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+
+    def test_quasi_real_guarded_ppo_rollout_pilot_summary_advances_readiness(self) -> None:
+        pilot_path = self.batch_root / "quasi-real-guarded-ppo-rollout-pilot-summary.json"
+        pilot_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "quasi-real-guarded-ppo-rollout-pilot-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "episode_count": 36,
+                    "step_count": 108,
+                    "trainable_transition_count": 30,
+                    "ppo_trainable_transition_count": 30,
+                    "diagnostic_transition_count": 78,
+                    "validation_trainable_count": 0,
+                    "test_trainable_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "teacher_fallback_trainable_count": 0,
+                    "non_empty_gate_reason_trainable_count": 0,
+                    "missing_observation_count": 0,
+                    "missing_log_prob_count": 0,
+                    "missing_value_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "controlled_regression_count": 0,
+                    "controlled_safety_regression_count": 0,
+                    "controlled_contract_regression_count": 0,
+                    "controlled_path_risk_regression_count": 0,
+                    "controlled_source_selection_regression_count": 0,
+                    "teacher_agreement_rate": 1.0,
+                    "quasi_real_collector_replay_status": "passed",
+                    "quasi_real_collector_replay_trainable_transition_count": 30,
+                    "post_pilot_long_horizon_status": "passed",
+                    "post_pilot_long_horizon_verdict": "long_horizon_teacher_skill_contract_aligned",
+                    "uses_multistep_discounted_return": True,
+                    "not_single_step_best_action": True,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--quasi-real-guarded-ppo-rollout-pilot-summary",
+            str(pilot_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "quasi_real_guarded_ppo_rollout_pilot_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+
+    def test_quasi_real_guarded_ppo_stability_replay_summary_advances_readiness(self) -> None:
+        stability_path = self.batch_root / "quasi-real-guarded-ppo-stability-replay-summary.json"
+        stability_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "quasi-real-guarded-ppo-stability-replay-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "replay_count": 3,
+                    "passed_replay_count": 3,
+                    "episode_count": 36,
+                    "step_count": 108,
+                    "ppo_trainable_transition_count": 36,
+                    "diagnostic_transition_count": 72,
+                    "validation_trainable_count": 0,
+                    "test_trainable_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "missing_observation_count": 0,
+                    "missing_log_prob_count": 0,
+                    "missing_value_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "controlled_regression_count": 0,
+                    "controlled_safety_regression_count": 0,
+                    "controlled_contract_regression_count": 0,
+                    "controlled_path_risk_regression_count": 0,
+                    "controlled_source_selection_regression_count": 0,
+                    "teacher_agreement_rate": 1.0,
+                    "baseline_replay_behavior_drift_count": 0,
+                    "quasi_real_collector_replay_status": "passed",
+                    "long_horizon_verdict": "long_horizon_teacher_skill_contract_aligned",
+                    "acceptance_contract_refined": True,
+                    "runs_ppo_update": False,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--quasi-real-guarded-ppo-stability-replay-summary",
+            str(stability_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "quasi_real_guarded_ppo_stability_replay_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+
+    def test_quasi_real_guarded_ppo_horizon5_batch_expansion_summary_advances_readiness(self) -> None:
+        expansion_path = (
+            self.batch_root / "quasi-real-guarded-ppo-horizon5-batch-expansion-summary.json"
+        )
+        expansion_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "quasi-real-guarded-ppo-horizon5-batch-expansion-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "horizon": 5,
+                    "episode_count": 96,
+                    "step_count": 480,
+                    "ppo_trainable_transition_count": 160,
+                    "diagnostic_transition_count": 320,
+                    "replay_count": 3,
+                    "passed_replay_count": 3,
+                    "baseline_replay_behavior_drift_count": 0,
+                    "validation_trainable_count": 0,
+                    "test_trainable_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "teacher_fallback_trainable_count": 0,
+                    "missing_observation_count": 0,
+                    "missing_log_prob_count": 0,
+                    "missing_value_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "controlled_regression_count": 0,
+                    "controlled_safety_regression_count": 0,
+                    "controlled_contract_regression_count": 0,
+                    "controlled_path_risk_regression_count": 0,
+                    "controlled_source_selection_regression_count": 0,
+                    "teacher_agreement_rate": 1.0,
+                    "quasi_real_collector_replay_status": "passed",
+                    "quasi_real_collector_replay_trainable_transition_count": 160,
+                    "long_horizon_verdict": "long_horizon_teacher_skill_contract_aligned",
+                    "uses_multistep_discounted_return": True,
+                    "not_single_step_best_action": True,
+                    "runs_ppo_update": False,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--quasi-real-guarded-ppo-horizon5-batch-expansion-summary",
+            str(expansion_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "quasi_real_guarded_ppo_horizon5_batch_expansion_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["quasi_real_guarded_ppo_horizon5_batch_expansion_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_quasi_real_guarded_ppo_scale512_multiseed_preflight_summary_advances_readiness(self) -> None:
+        preflight_path = (
+            self.batch_root / "quasi-real-guarded-ppo-scale512-multiseed-preflight-summary.json"
+        )
+        preflight_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "quasi-real-guarded-ppo-scale512-multiseed-preflight-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "horizon": 5,
+                    "ppo_trainable_transition_count": 512,
+                    "unique_trainable_context_count": 512,
+                    "validation_trainable_count": 0,
+                    "test_trainable_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "teacher_fallback_trainable_count": 0,
+                    "missing_observation_count": 0,
+                    "missing_log_prob_count": 0,
+                    "missing_value_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "controlled_regression_count": 0,
+                    "controlled_safety_regression_count": 0,
+                    "controlled_contract_regression_count": 0,
+                    "controlled_path_risk_regression_count": 0,
+                    "controlled_source_selection_regression_count": 0,
+                    "teacher_agreement_rate": 1.0,
+                    "seed_count": 3,
+                    "passed_seed_count": 3,
+                    "seed_failure_count": 0,
+                    "seed_max_old_log_prob_abs_error": 0.0,
+                    "seed_max_old_value_abs_error": 0.0,
+                    "seed_loss_non_finite_count": 0,
+                    "seed_non_finite_gradient_count": 0,
+                    "seed_non_finite_reward_count": 0,
+                    "seed_non_finite_return_count": 0,
+                    "seed_non_finite_advantage_count": 0,
+                    "seed_max_abs_approx_kl": 0.01,
+                    "seed_max_grad_norm_after_clip": 0.5,
+                    "min_post_update_guarded_collector_trainable_transition_count": 512,
+                    "runs_formal_ppo_rollout": False,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--quasi-real-guarded-ppo-scale512-multiseed-preflight-summary",
+            str(preflight_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "quasi_real_guarded_ppo_scale512_multiseed_preflight_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["quasi_real_guarded_ppo_scale512_multiseed_preflight_readiness"][
+                "completed"
+            ]
+        )
+
+    def test_quasi_real_guarded_ppo_iterative_miniloop_summary_advances_readiness(self) -> None:
+        iterative_path = (
+            self.batch_root
+            / "quasi-real-guarded-ppo-iterative-miniloop-stability-summary.json"
+        )
+        iterative_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "quasi-real-guarded-ppo-iterative-miniloop-stability-summary/v1",
+                    "status": "passed",
+                    "reason_codes": [],
+                    "input_trainable_transition_count": 684,
+                    "ppo_trainable_transition_count": 684,
+                    "unique_trainable_context_count": 684,
+                    "seed_count": 3,
+                    "iteration_count": 3,
+                    "passed_iteration_count": 9,
+                    "failed_iteration_count": 0,
+                    "min_optimizer_train_transition_count": 684,
+                    "validation_trainable_count": 0,
+                    "test_trainable_count": 0,
+                    "source_fallback_trainable_count": 0,
+                    "teacher_fallback_trainable_count": 0,
+                    "non_empty_gate_reason_trainable_count": 0,
+                    "missing_observation_count": 0,
+                    "missing_log_prob_count": 0,
+                    "missing_value_count": 0,
+                    "non_finite_reward_count": 0,
+                    "non_finite_return_count": 0,
+                    "non_finite_advantage_count": 0,
+                    "loss_non_finite_count": 0,
+                    "non_finite_gradient_count": 0,
+                    "max_old_log_prob_abs_error": 0.0,
+                    "max_old_value_abs_error": 0.0,
+                    "max_abs_approx_kl": 0.01,
+                    "max_grad_norm_after_clip": 0.5,
+                    "min_teacher_agreement_rate": 1.0,
+                    "controlled_regression_count": 0,
+                    "controlled_safety_regression_count": 0,
+                    "controlled_contract_regression_count": 0,
+                    "controlled_path_risk_regression_count": 0,
+                    "controlled_source_selection_regression_count": 0,
+                    "behavior_drift_count": 0,
+                    "runs_formal_ppo_rollout": False,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "performance_claimed": False,
+                    "formal_training_ready_claimed": False,
+                    "git_provenance": {"current": self.git_snapshot, "current_matches_sources": True},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        completed = self._run_review(
+            "--batch-root",
+            str(self.batch_root),
+            "--config",
+            str(self.config),
+            "--quasi-real-guarded-ppo-iterative-miniloop-stability-summary",
+            str(iterative_path),
+            "--validate-only",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        summary = json.loads(completed.stdout.splitlines()[0])
+        self.assertEqual(
+            summary["training_readiness_status"],
+            "quasi_real_guarded_ppo_iterative_miniloop_stability_evaluated",
+        )
+        self.assertEqual(summary["training_blockers"], [])
+        self.assertEqual(summary["reason_codes"], [])
+        self.assertTrue(
+            summary["quasi_real_guarded_ppo_iterative_miniloop_stability_readiness"][
+                "completed"
+            ]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,52 @@
+{
+  "schema_version": "quasi-real-guarded-ppo-scale512-multiseed-preflight-config/v1",
+  "description": "Strict formal-PPO preflight gate for quasi-real guarded PPO evidence: require at least 512 unique trainable contexts and multi-seed smoke stability before any formal rollout claim.",
+  "default_paths": {
+    "horizon5_root": "outputs/path_feedback_batch_quasi_real_guarded_ppo_horizon5_batch_expansion_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_quasi_real_guarded_ppo_scale512_multiseed_preflight_v1"
+  },
+  "horizon": 5,
+  "seeds": [0, 1, 2],
+  "training": {
+    "epochs": 1,
+    "learning_rate": 1e-5,
+    "clip_ratio": 0.2,
+    "max_grad_norm": 1.0
+  },
+  "validation": {
+    "min_horizon": 5,
+    "min_ppo_trainable_transition_count": 512,
+    "min_unique_trainable_context_count": 512,
+    "min_teacher_agreement_rate": 0.95,
+    "max_old_log_prob_abs_error": 0.0001,
+    "max_old_value_abs_error": 0.0001,
+    "max_abs_approx_kl": 0.25,
+    "max_grad_norm_after_clip": 1.0
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "quasi_real_guarded_ppo_scale512_multiseed_preflight_evaluated"
+  },
+  "output_files": {
+    "summary": "quasi-real-guarded-ppo-scale512-multiseed-preflight-summary.json",
+    "capacity_report": "scale512-trainable-capacity-report.json",
+    "trainable_contexts": "scale512-trainable-contexts.jsonl",
+    "seed_summaries": "scale512-seed-summaries.jsonl",
+    "readiness_validate_only": "scale512-readiness-validate-only.json",
+    "report": "scale512-multiseed-preflight-report.md"
+  },
+  "non_goals": [
+    "does_not_start_formal_ppo",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_count_repeated_contexts_as_unique_trainable_capacity"
+  ]
+}

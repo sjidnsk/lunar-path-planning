@@ -1,0 +1,56 @@
+{
+  "schema_version": "quasi-real-guarded-ppo-iterative-miniloop-evidence-freeze-config/v1",
+  "description": "Freeze the current quasi-real guarded PPO iterative mini-loop baseline into a reproducible manifest without running formal PPO or changing gates.",
+  "default_paths": {
+    "miniloop_root": "outputs/path_feedback_batch_quasi_real_guarded_ppo_iterative_miniloop_stability_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_quasi_real_guarded_ppo_iterative_miniloop_evidence_freeze_v1"
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "quasi_real_guarded_ppo_iterative_miniloop_stability_evaluated"
+  },
+  "required_artifacts": [
+    "quasi-real-guarded-ppo-iterative-miniloop-stability-summary.json",
+    "iterative-miniloop-progress.jsonl",
+    "iterative-miniloop-iteration-summaries.jsonl",
+    "iterative-miniloop-readiness-validate-only.json",
+    "iterative-miniloop-stability-report.md",
+    "quasi-real-guarded-ppo-iterative-miniloop-readiness-validate-only.json"
+  ],
+  "tracked_source_files": [
+    "README.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs/2026-06-14-quasi-real-guarded-ppo-iterative-miniloop-stability.md",
+    "tests/test_quasi_real_guarded_ppo_iterative_miniloop_stability.py",
+    "tests/test_policy_training_readiness_review.py"
+  ],
+  "output_files": {
+    "summary": "quasi-real-guarded-ppo-iterative-miniloop-evidence-freeze-summary.json",
+    "manifest": "quasi-real-guarded-ppo-iterative-miniloop-evidence-manifest.json",
+    "readiness_validate_only": "quasi-real-guarded-ppo-iterative-miniloop-readiness-validate-only.json",
+    "report": "quasi-real-guarded-ppo-iterative-miniloop-evidence-freeze-report.md"
+  },
+  "validation": {
+    "expected_trainable_transition_count": 684,
+    "expected_unique_trainable_context_count": 684,
+    "expected_seed_count": 3,
+    "expected_iteration_count": 3,
+    "expected_passed_iteration_count": 9
+  },
+  "non_goals": [
+    "does_not_start_formal_ppo_rollout",
+    "does_not_run_new_optimizer_step",
+    "does_not_download_new_raw_data",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "does_not_claim_formal_training_ready"
+  ]
+}

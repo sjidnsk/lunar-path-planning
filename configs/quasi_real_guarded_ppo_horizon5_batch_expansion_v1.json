@@ -1,0 +1,51 @@
+{
+  "schema_version": "quasi-real-guarded-ppo-horizon5-batch-expansion-config/v1",
+  "description": "Expand passed quasi-real guarded PPO stability evidence to horizon=5 and a wider local batch without running formal PPO, publishing checkpoints, or relaxing gates.",
+  "default_paths": {
+    "stability_root": "outputs/path_feedback_batch_quasi_real_guarded_ppo_stability_replay_v1",
+    "batch_root": "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
+    "output_root": "outputs/path_feedback_batch_quasi_real_guarded_ppo_horizon5_batch_expansion_v1"
+  },
+  "horizon": 5,
+  "discount_factor": 0.99,
+  "expansion": {
+    "episode_count": 96,
+    "replay_count": 3
+  },
+  "readiness": {
+    "config": "configs/policy_training_readiness_review_v1.json",
+    "expected_status": "quasi_real_guarded_ppo_horizon5_batch_expansion_evaluated"
+  },
+  "validation": {
+    "min_episode_count": 96,
+    "min_step_count": 480,
+    "min_ppo_trainable_transition_count": 96,
+    "min_teacher_agreement_rate": 0.95,
+    "expected_long_horizon_verdict": "long_horizon_teacher_skill_contract_aligned"
+  },
+  "output_files": {
+    "summary": "quasi-real-guarded-ppo-horizon5-batch-expansion-summary.json",
+    "episodes": "quasi-real-guarded-ppo-horizon5-batch-expansion-episodes.jsonl",
+    "steps": "quasi-real-guarded-ppo-horizon5-batch-expansion-steps.jsonl",
+    "reward_audit": "quasi-real-guarded-ppo-horizon5-batch-expansion-reward-audit.json",
+    "rejection_report": "quasi-real-guarded-ppo-horizon5-batch-expansion-rejection-report.json",
+    "comparison": "horizon5-batch-expansion-comparison.jsonl",
+    "progress_events": "horizon5-batch-expansion-progress-events.jsonl",
+    "readiness_validate_only": "horizon5-batch-expansion-readiness-validate-only.json",
+    "report": "horizon5-batch-expansion-report.md"
+  },
+  "non_goals": [
+    "does_not_start_formal_ppo",
+    "does_not_run_new_ppo_update",
+    "does_not_publish_checkpoint",
+    "does_not_replace_default_policy",
+    "does_not_modify_network",
+    "does_not_modify_action_space",
+    "does_not_modify_default_astar",
+    "does_not_relax_distance_path_risk_or_source_selection_gates",
+    "does_not_claim_ackermann_feasible_trajectory",
+    "does_not_treat_iris_gcs_or_path_planner_diagnostics_as_training_release",
+    "does_not_claim_policy_performance",
+    "formal_ppo_preflight_still_requires_at_least_512_trainable_and_multi_seed"
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "schema_version": "return-aligned-guarded-multistep-collector-config/v1",
+  "horizon": 3,
+  "discount_factor": 0.99,
+  "input_files": {
+    "guarded_summary": "guarded-ppo-rollout-pilot-summary.json",
+    "collector_summary": "pilot/collector/ppo-rollout-collector-summary.json",
+    "collector_transitions": "pilot/collector/ppo-rollout-transitions.jsonl"
+  },
+  "output_files": {
+    "episodes": "return-aligned-ppo-episodes.jsonl",
+    "transitions": "return-aligned-ppo-transitions.jsonl",
+    "reward_audit": "return-aligned-reward-audit.json",
+    "rejection_report": "return-aligned-rejection-report.json",
+    "summary": "return-aligned-collector-summary.json"
+  },
+  "trainable_filter": {
+    "splits": ["train"],
+    "controlled_choice_sources": ["policy"],
+    "require_input_ppo_trainable": true,
+    "require_empty_gate_reason_codes": true,
+    "diagnostic_only_sources": [
+      "source",
+      "source_fallback",
+      "teacher_fallback",
+      "none",
+      "not_scored"
+    ]
+  },
+  "episode_filter": {
+    "splits": ["train"],
+    "disallow_source_fallback": true,
+    "require_complete_horizon": true,
+    "require_finite_discounted_return": true,
+    "require_no_controlled_regression": true
+  },
+  "reward": {
+    "advantage_reference_value": 0.0,
+    "controlled_regression_penalty": 1.0,
+    "teacher_return_tolerance": 1e-9
+  },
+  "validation": {
+    "min_trainable_episode_count": 24,
+    "min_trainable_transition_count": 24,
+    "max_validation_trainable_count": 0,
+    "max_test_trainable_count": 0,
+    "max_source_fallback_trainable_count": 0,
+    "max_non_finite_reward_count": 0,
+    "max_non_finite_return_count": 0,
+    "max_non_finite_advantage_count": 0,
+    "max_controlled_regression_count": 0
+  },
+  "non_goals": [
+    "no_new_ppo_update",
+    "no_formal_ppo_rollout",
+    "no_checkpoint_publication",
+    "no_default_policy_replacement",
+    "no_network_architecture_change",
+    "no_action_space_change",
+    "no_default_astar_change",
+    "no_gate_relaxation",
+    "no_ackermann_feasible_trajectory_claim",
+    "no_iris_gcs_path_planner_diagnostic_training_release",
+    "no_policy_performance_claim",
+    "no_formal_training_ready_claim"
+  ]
+}
