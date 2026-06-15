@@ -3178,6 +3178,807 @@ relax gates, download new data, claim Ackermann-feasible trajectory, treat
 IRIS/GCS/path-planner diagnostics as release evidence, or claim deployable
 policy performance.
 
+## Post-Formal PPO Coverage-First Advancement Chain
+
+Current evidence proves that guarded PPO training can run and remain stable. It
+does not yet prove exploration-performance improvement. The formal training
+signal remains teacher-following and guard-focused, while `Connect Real
+Exploration Coverage Signal v1` now makes the coverage telemetry usable enough
+to move from signal audit into coverage-performance evaluation. The project
+direction remains coverage-first, not another release-packaging step.
+
+The advancement chain is:
+
+```text
+0. Guarded formal PPO training stability baseline
+1. Post-training candidate selection / reconciliation
+2. Exploration Coverage Signal Audit
+3. Exploration Coverage Performance Evaluation
+4. Coverage-Aware Reward Refinement
+5. Coverage-Driven PPO Improvement Run
+5A. Policy Coverage Opportunity / Margin Audit, only if Stage 5 does not improve
+5A.1 Candidate-Level Exploration Coverage Materialization
+5A.2 Policy-Differentiating Counterfactual Coverage Rollouts
+5B. Reward-vs-data repair decision: rerun refined PPO or expand coverage source generation
+5B.1 Refined Coverage-Driven PPO Improvement Run
+5B.2 Refined Coverage Reward/Margin Tuning
+5B.3 Safe-Better Pair Expansion Across Families
+5B.4 Low-Observation Counterfactual Opportunity Generation
+5B.5 Low-Observation Candidate Geometry Improvement
+5B.6 Expanded Four-Family Refined Coverage-Driven PPO Improvement
+5B.7 Cost-Efficiency-Aware Coverage Reward / Candidate Filter
+6. Shadow / Canary Release Performance Validation
+7. Formal Performance Claim / Release Decision
+8. Scoped Claim Publication & Evidence Freeze
+9. Checkpoint Publication Authorization Preflight
+10. Checkpoint Publication Package Preparation
+11. Checkpoint Publication Package Verification
+12. Checkpoint Publication Sandbox Install Dry-Run Preflight
+13. Checkpoint Publication Sandbox Install Dry-Run
+14. Checkpoint Publication Sandbox Install Dry-Run Verification
+```
+
+Stage 1 must reconcile which selected candidate is authoritative. Existing
+promotion evidence selects seed `0`, budget `epochs1_lr3e-6`, with checkpoint
+SHA-256 `9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`,
+but any new run rooted at
+`outputs/path_feedback_batch_guarded_formal_ppo_training_run_v1/` must explicitly
+select from that run's five seeds before evaluation.
+
+Stage 2 verifies that coverage telemetry is real before the project switches
+back from teacher-following reward toward the closed-loop reward family based on
+coverage gain, path cost, risk, and failure penalties. The audit must check
+`initial_coverage_rate`,
+`final_coverage_rate`, `coverage_rate_delta`,
+`cumulative_coverage_rate_delta`, `expected_coverage_rate_delta`, actual map or
+sidecar-backed coverage gain, multi-step state updates, and policy/source/
+fallback attribution. If the evidence is all zero, missing, defaulted, or not
+attributable, the stage must fail with
+`insufficient_exploration_coverage_signal`.
+
+`Exploration Coverage Signal Audit v1` is now implemented by
+`scripts/run_exploration_coverage_signal_audit.py` and
+`scripts/run_exploration_coverage_signal_audit.sh`. `Connect Real Exploration
+Coverage Signal v1` also wires the upstream path-feedback signal through
+`scripts/run_quasi_real_trainable_context_expansion.py` and
+`scripts/run_quasi_real_guarded_ppo_scale512_multiseed_preflight.py`, so
+materialized trainable rows and PPO collector episodes can carry
+`initial_coverage_rate`, `final_coverage_rate`, `coverage_rate_delta`,
+`cumulative_coverage_rate_delta`, and `coverage_gain_source` instead of default
+zeros. For legacy selected-candidate shadow artifacts that were produced before
+this wiring, the audit now performs a read-only backfill from existing
+path-feedback summaries and rolls those actual deltas into a continuous
+multi-step coverage state.
+
+The current audit output at
+`outputs/path_feedback_batch_exploration_coverage_signal_audit_v1/` now passes
+the signal gate: `status=passed`, `coverage_signal_status=passed`,
+`coverage_field_presence_status=passed`,
+`actual_coverage_gain_source=path_feedback`,
+`nonzero_actual_coverage_delta_count=2052`,
+`coverage_delta_default_zero_count=0`,
+`expected_actual_coverage_confusion_count=0`,
+`multi_step_state_update_verified=true`,
+`fallback_coverage_gain_claimed_as_policy_gain_count=0`, and
+`controlled_regression_count=0`. This advances the next required change to
+`run_exploration_coverage_performance_evaluation`.
+
+Stage 3 is now implemented by
+`scripts/run_exploration_coverage_performance_evaluation.py` and
+`scripts/run_exploration_coverage_performance_evaluation.sh`, with outputs in
+`outputs/path_feedback_batch_exploration_coverage_performance_evaluation_v1/`.
+It compares coverage return, cumulative coverage delta, final coverage, valuable
+coverage, path-cost/risk/energy efficiency, activation, fallback, teacher
+agreement, and controlled regression using the real delta rows from Stage 2.
+
+The current Stage 3 result is intentionally strict:
+`status=failed`, `coverage_performance_status=failed`, and
+`reason_codes=["coverage_performance_not_improved",
+"valuable_coverage_not_improved"]`. The selected seed remains `0` with budget
+`epochs1_lr3e-6`; the best available baseline is teacher, derived only as a
+`teacher_action_equivalent_from_policy_teacher_aligned_shadow` comparator because
+the selected candidate took the same guarded actions as the teacher. Selected PPO
+and teacher both have `coverage_return=81.582958126732`,
+`cumulative_coverage_rate_delta=89.45694198338`, `valuable_area_covered=0.0`,
+`coverage_gain_per_path_cost=0.06605991614`,
+`coverage_gain_per_risk=0.216170916939`, `fallback_rate=0.0`, and
+`controlled_regression_count=0`. This means the coverage instrument works, but
+the PPO candidate has not yet beaten teacher on exploration coverage.
+
+Because Stage 3 did not pass, the next required change is
+`coverage_aware_reward_refinement`: improve the reward so the policy is still
+guarded by teacher skill but is actually scored on multi-step exploration
+coverage gain, valuable coverage, and efficiency. This is still not a release or
+performance claim. The intended reward direction is:
+
+```text
+reward =
+  coverage_gain_bonus
++ valuable_area_bonus
++ information_gain_bonus
++ teacher_skill_retention_bonus
+- path_cost_penalty
+- risk_penalty
+- energy_penalty
+- fallback_penalty
+- controlled_regression_penalty
+```
+
+Stage 4 is now implemented by
+`scripts/run_coverage_aware_reward_refinement.py` and
+`scripts/run_coverage_aware_reward_refinement.sh`, with outputs in
+`outputs/path_feedback_batch_coverage_aware_reward_refinement_v1/`. It joins the
+Stage 2 coverage delta audit, selected-candidate shadow steps, and Stage 3
+comparison output, then writes `reward-component-audit.jsonl`,
+`source-field-audit.json`, `reward-rescore-comparison.json`,
+`reward-refinement-rejection-report.json`, and a markdown report.
+
+`Connect Reward Component Source Fields v1` is now implemented by
+`scripts/run_connect_reward_component_source_fields.py` and
+`scripts/run_connect_reward_component_source_fields.sh`, with outputs in
+`outputs/path_feedback_batch_connect_reward_component_source_fields_v1/`. It
+does not mutate Stage 2 artifacts; it writes a provenance overlay that connects
+2,052/2,052 rows to real `path_feedback` sources. Matching uses direct
+`context_id` for 108 rows and `scenario_id + controlled_action_index` for
+1,944 rows. The connected sources are
+`path_feedback.coverage_rate_delta*path_feedback.candidates.utility` for
+`valuable_area_bonus`, `path_feedback.coverage_rate_delta` for
+`information_gain_bonus`, and `path_feedback.candidates.risk` for
+`risk_penalty`.
+
+After rerunning Stage 4 with that overlay, the current reward refinement output
+passes the source-field gate: `status=passed`,
+`reward_refinement_status=passed`, `reason_codes=[]`,
+`source_field_missing_component_count=0`, and
+`component_source_overlay_row_count=2052`. The read-only boundary remains intact:
+`runs_new_ppo_update=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, `performance_claimed=false`, and
+`formal_release_claimed=false`. The selected candidate is still
+teacher-equivalent (`selected_teacher_equivalent=true`,
+`selected_candidate_performance_improved=false`,
+`coverage_aware_reward_improvement=0.0`), so this is a reward-contract pass, not
+a PPO performance win.
+
+Stage 5 is now implemented by
+`scripts/run_coverage_driven_ppo_improvement_run.py` and
+`scripts/run_coverage_driven_ppo_improvement_run.sh`, with outputs in
+`outputs/path_feedback_batch_coverage_driven_ppo_improvement_run_v1/`. It
+materializes a coverage-aware PPO collector from Stage 4
+`reward-component-audit.jsonl`, preserving observations, action masks,
+controlled actions, old `log_prob`/`value`, reward components, and provenance.
+It then runs one guarded offline PPO update and writes an experimental
+checkpoint only for offline evaluation.
+
+The current Stage 5 run is a clean negative result:
+`status=failed`,
+`coverage_driven_ppo_improvement_status=failed`, and
+`reason_codes=["no_coverage_return_improvement"]`. The update consumed
+2,052 coverage-aware reward transitions, wrote
+`coverage-driven-experimental-policy-candidate.pt`, and changed parameters
+(`parameter_l2_delta=0.0004370135471177026`) with finite old-policy checks
+(`old_log_prob_max_abs_error=0.0017986297607421875`,
+`old_value_max_abs_error=0.002626180648803711`). Guard replay passed on all
+2,052 audited rows: `accepted_policy_activation_rate=1.0`,
+`fallback_rate=0.0`, `teacher_agreement_rate=1.0`, and
+`controlled_regression_count=0`.
+
+That still is not a performance win. The post-update policy remains equivalent
+to the frozen pre-improvement selected PPO on coverage return:
+`coverage_return=81.582958126732`,
+`cumulative_coverage_rate_delta=89.45694198338`, so
+`coverage_return_improvement=0.0` and
+`cumulative_coverage_rate_delta_improvement=0.0`. Valuable coverage is now
+auditable (`valuable_area_covered_improvement=45.824562342498`), but the main
+coverage-return gate did not improve. The next required change is therefore
+`refine_coverage_reward_or_collect_more_policy_coverage`, not release,
+publication, or a performance claim.
+
+The Stage 5 failure now has a concrete diagnostic chain. Replay shows that the
+post-update policy did not merely get blocked by the guard: it selected the same
+action as the teacher on all 2,052 audited rows
+(`raw_policy_action_index == teacher_action_index` and
+`controlled_action_index == teacher_action_index` for 2,052/2,052 rows, with
+`guard_rejected_action_count=0`). The PPO step changed parameters
+(`parameter_l2_delta=0.0004370135471177026`) but did not move the final action
+choice away from teacher-equivalent behavior.
+
+Stage 5A is now implemented by
+`scripts/run_policy_coverage_opportunity_margin_audit.py` and
+`scripts/run_policy_coverage_opportunity_margin_audit.sh`, with outputs in
+`outputs/path_feedback_batch_policy_coverage_opportunity_margin_audit_v1/`. It
+does not run PPO. It expands the frozen Stage 5 audited data into action-level
+candidate rows, scores the pre-improvement selected checkpoint and post-update
+experimental checkpoint on the same observations, and writes a summary,
+action-level audit JSONL, policy-margin audit, candidate-feature audit,
+rejection report, and markdown report.
+
+The current Stage 5A diagnostic passes as a diagnostic but routes to data
+repair, not reward tuning: `status=passed`,
+`next_required_change=collect_more_policy_differentiating_coverage`, and
+`reason_codes=["candidate_coverage_features_missing",
+"no_safe_better_than_teacher_alternatives",
+"post_update_policy_teacher_equivalent"]`. It audited 2,052 contexts and 5,508
+action candidates. The key counts are `safe_better_than_teacher_count=0`,
+`safe_better_than_teacher_family_count=0`, `policy_argmax_changed_count=0`,
+`post_update_teacher_equal_raw_count=2052`,
+`post_update_teacher_equal_controlled_count=2052`,
+`teacher_margin_sample_count=2052`, `missing_teacher_signal_count=0`,
+`candidate_expected_coverage_nonzero_count=0`,
+`candidate_information_gain_nonzero_count=0`,
+`candidate_value_nonzero_count=0`, `fallback_gain_contamination_count=0`, and
+`controlled_regression_count=0`.
+
+This separates the Stage 5 failure cleanly. The guard is not blocking better
+actions, and the PPO update did not change action argmax. More importantly, the
+policy still sees no decision-time coverage direction: every audited candidate
+has zero `expected_coverage_rate_delta`, zero `information_gain`, and zero
+`value`. Actual `coverage_rate_delta` exists only after the selected action is
+executed, so the reward can score the taken action after the fact but cannot yet
+teach the policy which safe non-teacher candidate should have produced higher
+coverage. The next required change is therefore to collect or materialize
+policy-differentiating coverage evidence: counterfactual candidate coverage,
+nonzero decision-time expected coverage/information/value fields, and explicit
+safe-alternative labels.
+
+Stage 5B.1 has now exercised that decision: the data gap is closed well enough
+to run refined PPO, but the policy still does not improve coverage return. The
+next gate is therefore reward/margin tuning or expanding the safe-better pair
+set, followed by another refined run. Any pass still requires positive
+`coverage_return_improvement`, positive
+`cumulative_coverage_rate_delta_improvement`, positive valuable coverage, no
+efficiency regression, `controlled_regression_count=0`, and no fallback gain
+contamination.
+
+The Stage 5A diagnostic contract and current result are documented in
+`docs/superpowers/specs/2026-06-15-policy-coverage-opportunity-margin-audit.md`.
+The Stage 5A.1 materialization contract and current result are documented in
+`docs/superpowers/specs/2026-06-15-candidate-level-coverage-materialization.md`.
+The Stage 5A.2 counterfactual rollout contract and current result are documented
+in
+`docs/superpowers/specs/2026-06-15-policy-differentiating-counterfactual-coverage-rollouts.md`.
+The Stage 5B.1 refined PPO contract and current failed performance result are
+documented in
+`docs/superpowers/specs/2026-06-15-refined-coverage-driven-ppo-improvement-run.md`.
+The Stage 5B.2 reward/margin tuning contract and current failed performance
+result are documented in
+`docs/superpowers/specs/2026-06-15-refined-coverage-reward-margin-tuning.md`.
+
+Stage 5A.1 is now implemented by
+`scripts/run_candidate_level_coverage_materialization.py` and
+`scripts/run_candidate_level_coverage_materialization.sh`, with outputs in
+`outputs/path_feedback_batch_candidate_level_coverage_materialization_v1/`. It
+does not run PPO. It materializes a candidate-level coverage overlay from the
+frozen Stage 5A action audit plus available path-feedback/sidecar evidence, then
+reruns Stage 5A with `--candidate-coverage-overlay` to prove whether the policy
+can see real decision-time coverage fields.
+
+The current Stage 5A.1 result is a clean negative materialization result:
+`status=failed`,
+`next_required_change=generate_policy_differentiating_coverage_rollouts`, and
+`reason_codes=["candidate_coverage_source_missing",
+"counterfactual_candidate_coverage_source_missing",
+"no_safe_better_than_teacher_candidate"]`. It audited 2,052 decision contexts
+and 5,508 action candidates. The overlay connects 2,052 executed selected/teacher
+actions to real path-feedback coverage
+(`executed_action_actual_path_feedback`), but 3,456 non-teacher candidate rows
+only connect to path/risk/cost source rows without counterfactual coverage
+(`candidate_source_without_coverage`). As a result,
+`candidate_expected_coverage_nonzero_count=2052`,
+`candidate_information_gain_nonzero_count=2052`, `candidate_value_nonzero_count=0`,
+`counterfactual_coverage_candidate_count=0`,
+`safe_better_than_teacher_candidate_count=0`,
+`fallback_gain_contamination_count=0`, and `controlled_regression_count=0`.
+
+The overlay-fed Stage 5A rerun passes as a diagnostic, but still routes to
+`collect_more_policy_differentiating_coverage`: it now sees nonzero coverage for
+executed teacher-equivalent actions, not for safe non-teacher alternatives. This
+means the next bridge is not another PPO update; it is to generate rollout
+evidence that records candidate-level counterfactual exploration coverage for
+the missing families (`smooth_high_confidence`, `rim_or_steep_slope`,
+`low_observation_count`, and `mixed_risk`).
+
+Stage 5A.2 is now implemented by
+`scripts/run_policy_differentiating_counterfactual_coverage_rollouts.py` and
+`scripts/run_policy_differentiating_counterfactual_coverage_rollouts.sh`, with
+outputs in
+`outputs/path_feedback_batch_policy_differentiating_counterfactual_coverage_rollouts_v1/`.
+It does not run PPO. It reads the Stage 5A action audit, the Stage 5A.1 missing
+overlay/source-link audit, the quasi-real path-feedback summary, and the
+path-planner sidecars, then computes non-teacher counterfactual coverage from
+candidate `diagnostics.expanded_cells`, passable sidecar cells, terrain
+confidence, and prior executed coverage state. Missing evidence remains missing;
+the script does not fill source gaps with zero.
+
+The current Stage 5A.2 result passes as a routing/data stage:
+`status=passed`, `reason_codes=[]`, and
+`next_required_change=rerun_coverage_driven_ppo_with_refined_reward_or_advantage`.
+It consumed the 3,456 non-teacher candidate rows that Stage 5A.1 could not score
+and generated 3,456 counterfactual coverage rows with
+`match_method=counterfactual_candidate_expanded_cells_sidecar`. The rerun
+overlay has 5,508 rows, Stage 5A.1 rerun passed, and overlay-fed Stage 5A passed.
+Key counts are `candidate_expected_coverage_nonzero_count=3690`,
+`candidate_information_gain_nonzero_count=3690`,
+`candidate_value_nonzero_count=1638`,
+`safe_better_than_teacher_candidate_count=51`,
+`safe_better_than_teacher_family_count=2`,
+`missing_counterfactual_source_count=0`,
+`fallback_gain_contamination_count=0`, and
+`controlled_regression_count=0`.
+
+This is still not a performance claim. It means the project has finally produced
+decision-time evidence that some safe non-teacher candidates can beat the
+teacher on counterfactual exploration coverage. The next engineering move is to
+rerun coverage-driven PPO with a refined reward/advantage or margin objective
+that can use these safe better alternatives; the checkpoint still must not be
+published or installed as the default policy.
+
+Stage 5B.1 is now implemented by
+`scripts/run_refined_coverage_driven_ppo_improvement_run.py` and
+`scripts/run_refined_coverage_driven_ppo_improvement_run.sh`, with outputs in
+`outputs/path_feedback_batch_refined_coverage_driven_ppo_improvement_run_v2/`.
+This stage does run a guarded offline PPO update, but only as an experimental
+refinement. It converts the 51 Stage 5A.2 safe-better non-teacher candidates
+into trainable counterfactual advantage and margin records keyed by
+`context_id + episode_id + step_index`, recomputes old `log_prob` and `value`
+against the selected base checkpoint, and writes a compatibility
+`coverage-aware-ppo-batch` for the existing limited PPO update smoke.
+
+The current Stage 5B.1 run proves the refined signal can be consumed, not that
+coverage performance improved. Summary status is `failed` with
+`reason_codes=["post_update_policy_teacher_equivalent",
+"no_coverage_return_improvement",
+"no_cumulative_coverage_rate_delta_improvement", "fallback_dominates"]` and
+`next_required_change=tune_refined_reward_margin_or_expand_safe_better_pairs`.
+The refined batch has `safe_better_training_pair_count=51`,
+`refined_trainable_transition_count=51`, and
+`counterfactual_advantage_nonzero_count=51`; the PPO update itself passed with
+`optimizer_train_transition_count=51`, `old_log_prob_max_abs_error=0.0`,
+`old_value_max_abs_error=0.0`, and `parameter_l2_delta=0.0017301534299004352`.
+However `policy_argmax_changed_count=0`, `coverage_return_improvement` and
+`cumulative_coverage_rate_delta_improvement` are negative against the frozen
+baseline, `fallback_rate=1.0`, and the run keeps
+`publishes_checkpoint=false`, `replaces_default_policy=false`, and
+`performance_claimed=false`.
+
+Stage 5B.2 is now implemented by
+`scripts/run_refined_coverage_reward_margin_tuning.py` and
+`scripts/run_refined_coverage_reward_margin_tuning.sh`, with outputs in
+`outputs/path_feedback_batch_refined_coverage_reward_margin_tuning_v1/`. It
+does not change the PPO network or action space. Instead, it reuses the refined
+v2 safe-better batch and the existing limited PPO `transition_info` path to
+inject explicit `ppo_advantage` and `ppo_return` fields. Four fixed tuning
+configs were evaluated: `advantage_x3`, `advantage_x5`, `advantage_x8`, and
+`reward_margin_x5`.
+
+The current Stage 5B.2 result is also a controlled failure, but it narrows the
+next blocker. Summary status is `failed` with
+`reason_codes=["post_update_policy_teacher_equivalent",
+"no_coverage_return_improvement",
+"no_cumulative_coverage_rate_delta_improvement", "fallback_dominates"]` and
+`next_required_change=expand_safe_better_pair_generation_across_families`.
+All 4 configs ran PPO updates over the same 51 safe-better pairs, producing
+`ppo_advantage_nonzero_count=204` in aggregate. The best config by current
+comparison was `advantage_x3`, but it still had `policy_argmax_changed_count=0`,
+`coverage_return_improvement=-81.582958126732`,
+`cumulative_coverage_rate_delta_improvement=-89.45694198338`, and
+`fallback_rate=1.0`. This means reward/margin scaling alone is not enough at
+the present sample density; the next useful bridge is to expand safe-better
+candidate generation across more scenario families before another PPO
+improvement attempt.
+
+Stage 5B.3 is now implemented by
+`scripts/run_safe_better_pair_expansion_across_families.py` and
+`scripts/run_safe_better_pair_expansion_across_families.sh`, with outputs in
+`outputs/path_feedback_batch_safe_better_pair_expansion_across_families_v1/`.
+It does not run PPO, publish checkpoints, replace the default policy, connect a
+real executor, modify the network/action space/default A*, relax guards, or
+claim performance. Instead, it re-audits the Stage 5A.2 candidate overlay and
+counterfactual coverage rows, recomputes candidate-vs-teacher coverage
+advantage, and emits train-split safe-better pairs plus a family gap report.
+
+The current Stage 5B.3 result is a useful data expansion but still fails the
+cross-family gate. It expands trainable safe-better pairs from 51 to 615 with
+`missing_counterfactual_source_count=0`,
+`fallback_gain_contamination_count=0`, `controlled_regression_count=0`,
+`runs_new_ppo_update=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `performance_claimed=false`. However the
+safe-better family count is only 3: `mixed_risk=231`,
+`rim_or_steep_slope=186`, and `smooth_high_confidence=198`, while
+`low_observation_count=0`. Summary status is therefore `failed` with
+`reason_codes=["safe_better_family_count_below_threshold",
+"family_safe_better_gap_low_observation_count"]` and
+`next_required_change=expand_safe_better_pair_generation_across_families`.
+This means the next bridge is not another PPO update yet; it is targeted
+low-observation counterfactual opportunity generation that can produce at least
+8 trainable safe-better pairs for that family without using placeholder
+coverage gain.
+
+Stage 5B.4 `Low-Observation Counterfactual Opportunity Generation v1` is now
+implemented by
+`scripts/run_low_observation_counterfactual_opportunity_generation.py` and
+`scripts/run_low_observation_counterfactual_opportunity_generation.sh`, with
+configuration in
+`configs/quasi_real_low_observation_counterfactual_opportunity_v1.json` and
+outputs in
+`outputs/path_feedback_batch_low_observation_counterfactual_opportunity_v1/`.
+This stage is a targeted source-backed audit/export bridge: it filters only
+`low_observation_count` rows from the candidate-level coverage overlay, keeps
+only guard-clean, fallback-free, source-backed candidates whose coverage
+advantage over teacher is positive, and writes supplemental overlay plus
+counterfactual rollout rows for a follow-up 5B.3 run. It does not run PPO,
+publish checkpoints, replace the default policy, connect a real executor,
+relax guards, or claim performance.
+
+The current Stage 5B.4 result is a controlled failure that sharpens the next
+blocker. From 5508 source overlay rows, it found 837 low-observation candidate
+rows and all 837 had source available, but
+`low_observation_trainable_safe_better_pair_count=0` and
+`non_positive_coverage_advantage_count=837`. Summary status is `failed` with
+`reason_codes=["low_observation_safe_better_pair_count_below_threshold",
+"supplemental_overlay_no_positive_coverage_advantage"]`,
+`missing_counterfactual_source_count=0`, `fallback_gain_contamination_count=0`,
+and `performance_claimed=false`. Re-running 5B.3 with the empty supplemental
+artifacts preserves the prior controlled failure: 615 trainable pairs across 3
+families, with `low_observation_count=0`. The next useful change is therefore
+not reward tuning or PPO, but a better low-observation candidate-generation
+geometry that can actually propose actions with higher multi-step coverage
+return than teacher.
+
+Stage 5B.5 `Low-Observation Candidate Geometry Improvement v1` is now
+implemented by
+`scripts/run_low_observation_candidate_geometry_improvement.py` and
+`scripts/run_low_observation_candidate_geometry_improvement.sh`, with
+configuration in
+`configs/quasi_real_low_observation_candidate_geometry_v1.json` and outputs in
+`outputs/path_feedback_batch_low_observation_candidate_geometry_improvement_v1/`.
+It runs a high-density low-observation quasi-real geometry pass, bridges it
+through `model_explorer path-feedback run`, materializes source-backed
+candidate overlay/counterfactual rows from the path-feedback summary plus
+scenario contracts, reruns the 5B.4 low-observation audit, and finally reruns
+5B.3 with the supplemental artifacts.
+
+The current Stage 5B.5 result passes the missing-family gate. It processed 63
+low-observation path-feedback scenarios, materialized 441 ranked
+low-observation candidates, and produced
+`low_observation_trainable_safe_better_pair_count=108` with
+`missing_counterfactual_source_count=0`,
+`fallback_gain_contamination_count=0`, `controlled_regression_count=0`, and
+`performance_claimed=false`. The rerun 5B.3 summary now has
+`status=passed`, `safe_better_than_teacher_candidate_count=723`, and
+`safe_better_than_teacher_family_count=4`, with family counts
+`low_observation_count=108`, `mixed_risk=231`,
+`rim_or_steep_slope=186`, and `smooth_high_confidence=198`. The next useful
+stage is therefore to rerun refined coverage-driven PPO improvement on the
+expanded four-family safe-better set; this is still not a performance claim
+until PPO evaluation improves exploration coverage without guard or fallback
+regression.
+
+Stage 5B.6 `Expanded Four-Family Refined Coverage-Driven PPO Improvement v1`
+is now implemented by
+`scripts/run_expanded_four_family_refined_coverage_driven_ppo_improvement.py`
+and
+`scripts/run_expanded_four_family_refined_coverage_driven_ppo_improvement.sh`,
+with outputs in
+`outputs/path_feedback_batch_expanded_four_family_refined_coverage_driven_ppo_improvement_v1/`.
+It explicitly consumes the Stage 5B.3 artifacts
+`expanded-safe-better-pairs.jsonl` and
+`expanded-counterfactual-coverage-rollouts.jsonl`; it does not fall back to the
+old Stage 5A.2 51-pair source. For the 108 new low-observation decisions that
+do not exist in the old coverage-aware PPO batch, the runner synthesizes
+compatible teacher old-policy transitions, recomputes old `log_prob` and
+`value`, and then runs one guarded offline PPO update with transition-info
+`ppo_advantage` / `ppo_return`.
+
+The current Stage 5B.6 result is a controlled failure with useful progress:
+`safe_better_training_pair_count=723`,
+`safe_better_training_family_count=4`,
+`counterfactual_advantage_nonzero_count=723`,
+`policy_argmax_changed_count=379`,
+`coverage_return_improvement=4.178973625356`,
+`cumulative_coverage_rate_delta_improvement=0.936713498108`,
+`valuable_area_covered_improvement=49.499451984438`,
+`fallback_rate=0.283540802213`,
+`controlled_regression_count=0`, and
+`fallback_gain_contamination_count=0`. It still has
+`status=failed` with `reason_codes=["coverage_efficiency_regression"]`, because
+the added coverage is bought with much worse path-cost efficiency than the
+baseline. The next required change is
+`tune_cost_efficiency_aware_reward_or_candidate_filter`. The checkpoint remains
+experimental: `publishes_checkpoint=false`, `replaces_default_policy=false`, and
+`performance_claimed=false`.
+
+Stage 5B.7 `Cost-Efficiency-Aware Coverage Reward / Candidate Filter v1` is
+now implemented by
+`scripts/run_cost_efficiency_aware_coverage_reward_candidate_filter.py` and
+`scripts/run_cost_efficiency_aware_coverage_reward_candidate_filter.sh`, with
+outputs in
+`outputs/path_feedback_batch_cost_efficiency_aware_coverage_reward_candidate_filter_v1/`.
+This stage keeps the expanded four-family source contract from Stage 5B.3, but
+adds an efficiency audit before PPO: candidates remain trainable only when they
+are train split, source-backed, fallback-free, guard-clean, coverage-positive,
+and have positive cost-efficiency-adjusted advantage. High-coverage but costly
+rows are downweighted; low-gain high-cost rows become diagnostic-only. It also
+materializes a same-decision-set teacher/pre-improvement metric table so the
+post-update policy is compared against teacher behavior on the filtered 621-row
+candidate universe instead of the older 2,052-row baseline table.
+
+The current Stage 5B.7 result passes the cost-efficiency gate:
+`trainable_pair_count=621`, `safe_better_training_pair_count=621`,
+`safe_better_training_family_count=4`, family counts
+`low_observation_count=9`, `mixed_risk=231`, `rim_or_steep_slope=186`,
+`smooth_high_confidence=195`, `counterfactual_advantage_nonzero_count=621`,
+`policy_argmax_changed_count=263`,
+`coverage_return_improvement=54.96083408637`,
+`cumulative_coverage_rate_delta_improvement=56.92136202257`,
+`valuable_area_covered_improvement=25.987354935654`,
+`coverage_efficiency_regression=false`, `fallback_rate=0.220611916264`,
+`controlled_regression_count=0`, and
+`fallback_gain_contamination_count=0`. The summary is `status=passed` with
+`reason_codes=[]` and
+`next_required_change=shadow_canary_release_performance_validation_preflight`.
+This is still not a release: `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `performance_claimed=false`.
+
+Stage 6 `Shadow / Canary Release Performance Validation Preflight v1` is now
+implemented by
+`scripts/run_shadow_canary_release_performance_validation_preflight.py` and
+`scripts/run_shadow_canary_release_performance_validation_preflight.sh`, with
+outputs in
+`outputs/path_feedback_batch_shadow_canary_release_performance_validation_preflight_v1/`.
+It is an offline shadow/canary release preflight over the current 5B.7
+candidate. The runner reads the 5B.7 summary, filtered batch, refined
+transitions, guard replay audit, performance metric table, stage5a rerun
+provenance, compatible performance table, and the formal/replay/selected
+summaries. It does not reuse the old Stage 5A.2 51-pair source or an older
+selected-formal shadow result as current model evidence.
+
+The current Stage 6 result passes the preflight:
+`status=passed`, `reason_codes=[]`,
+`next_required_change=formal_performance_claim_release_decision`,
+`long_horizon_shadow_passed=true`, horizons `[10,20,30]`,
+`coverage_return_improvement=54.96083408637`,
+`cumulative_coverage_rate_delta_improvement=56.92136202257`,
+`valuable_area_covered_improvement=25.987354935654`,
+`coverage_efficiency_regression=false`, `fallback_rate=0.220611916264`,
+`safe_better_training_family_count=4`, `controlled_regression_count=0`, and
+`fallback_gain_contamination_count=0`. The offline release boundary is also
+green: `shadow_policy_takes_control=false`,
+`experimental_control_activation_count=0`, `kill_switch_audit_passed=true`,
+`rollback_audit_passed=true`, and `telemetry_audit_passed=true`. The detailed
+long-horizon artifact includes all/family/scenario/context rollups; local
+negative windows remain diagnostic risk evidence, while the pass criterion is
+the aggregate all-horizon improvement under guard. This stage still does not
+publish a checkpoint, replace the default policy, connect a real executor, or
+claim formal performance.
+
+Stage 7 `Formal Performance Claim / Release Decision v1` is now implemented by
+`scripts/run_formal_performance_claim_release_decision.py` and
+`scripts/run_formal_performance_claim_release_decision.sh`, with outputs in
+`outputs/path_feedback_batch_formal_performance_claim_release_decision_v1/`.
+It is a decision-review layer, not a training or packaging step. The runner
+reads the Stage 6 summary and audits, the 5B.7 cost-efficiency evidence, and the
+formal training/replay/selected-candidate summaries, then writes an evidence
+ledger, metric-consistency audit, claim-scope audit, release-boundary audit,
+provenance audit, decision matrix, scoped claim statement, rejection report, and
+markdown report.
+
+The current Stage 7 result is `status=passed` with `reason_codes=[]` and
+`decision_verdict=approved_for_scoped_offline_performance_claim`.
+It approves only
+`scoped_offline_performance_claim_approved=true`, with
+`performance_claim_scope=scoped_offline_guarded_shadow_canary_only`.
+The approved claim is limited to the current offline guarded shadow/canary
+evidence and same-decision-set baseline: `coverage_return_improvement=54.96083408637`,
+`cumulative_coverage_rate_delta_improvement=56.92136202257`,
+`valuable_area_covered_improvement=25.987354935654`,
+`coverage_efficiency_regression=false`, and `fallback_rate=0.220611916264`.
+Release actions remain explicitly blocked:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`.
+This decision must not be read as real-world performance, Ackermann-feasible
+trajectory, default-policy replacement, or unlimited scenario generalization.
+
+Any future checkpoint publication, default-policy installation, or executor
+connection must be handled as a separate authorization stage with its own
+evidence and rollback gates.
+
+Stage 8 `Scoped Claim Publication & Evidence Freeze v1` is now implemented by
+`scripts/run_scoped_claim_publication_evidence_freeze.py` and
+`scripts/run_scoped_claim_publication_evidence_freeze.sh`, with outputs in
+`outputs/path_feedback_batch_scoped_claim_publication_evidence_freeze_v1/`.
+It is a publication-bundle freeze for the Stage 7 scoped claim, not a training,
+checkpoint packaging, default-policy installation, or executor-connection step.
+The runner reads the Stage 7 summary, scoped claim statement, decision matrix,
+evidence ledger, metric/scope/release/provenance audits, plus the Stage 6,
+5B.7, formal training, replay, and selected-candidate summaries. It then writes
+a bundle manifest, publication claim text, scope audit, evidence-freeze ledger,
+documentation-consistency audit, release-boundary audit, rejection report, and
+markdown report.
+
+The Stage 8 pass contract is `publication_verdict=approved_for_scoped_claim_publication`,
+`scoped_claim_publication_approved=true`, and
+`performance_claim_scope=scoped_offline_guarded_shadow_canary_only`, with
+`next_required_change=checkpoint_publication_authorization_preflight`. It may
+publish only the current offline guarded shadow/canary scoped claim and evidence
+references. It still keeps `checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`.
+Stage 8 must not be read as checkpoint publication, default-policy replacement,
+real executor authorization, real-world performance, Ackermann-feasible
+trajectory, or unlimited scenario generalization.
+
+Stage 9 `Checkpoint Publication Authorization Preflight v1` is now implemented
+by `scripts/run_checkpoint_publication_authorization_preflight.py` and
+`scripts/run_checkpoint_publication_authorization_preflight.sh`, with outputs in
+`outputs/path_feedback_batch_checkpoint_publication_authorization_preflight_v1/`.
+It is an authorization preflight for the selected experimental PPO checkpoint,
+not checkpoint publication itself. The runner reads the Stage 8 scoped claim
+freeze, Stage 7 formal claim decision, Stage 6 shadow/canary validation, 5B.7
+cost-efficiency evidence, formal training/replay summaries, and selected
+candidate promotion preflight. It recomputes the selected checkpoint SHA-256 and
+size, checks metadata and load evidence, audits lineage and release boundaries,
+then writes a candidate manifest, identity audit, metadata audit, load-evidence
+audit, lineage audit, release-boundary audit, authorization matrix, rejection
+report, and markdown report.
+
+The Stage 9 pass contract is
+`authorization_verdict=eligible_for_checkpoint_publication_package_preparation`,
+`checkpoint_publication_authorization_preflight_passed=true`, and
+`checkpoint_publication_package_preparation_approved=true`, with
+`next_required_change=checkpoint_publication_package_preparation`. It preserves
+the selected checkpoint identity: seed `0`, budget `epochs1_lr3e-6`, SHA-256
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`.
+Release actions remain explicitly closed:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`.
+Stage 9 does not copy the checkpoint to a publication path, publish a
+checkpoint, replace the default policy, connect a real executor, run PPO,
+modify network/action space/default A*, relax guards, claim Ackermann-feasible
+trajectory, or treat IRIS/GCS/path-planner diagnostics as release proof.
+
+Stage 10 `Checkpoint Publication Package Preparation v1` is now implemented by
+`scripts/run_checkpoint_publication_package_preparation.py` and
+`scripts/run_checkpoint_publication_package_preparation.sh`, with outputs in
+`outputs/path_feedback_batch_checkpoint_publication_package_preparation_v1/`.
+It prepares an isolated package under
+`outputs/path_feedback_batch_checkpoint_publication_package_preparation_v1/checkpoint-publication-package/`
+by copying the Stage 9-authorized selected experimental checkpoint and metadata
+into the package root, then freezing source/package SHA-256, size, metadata,
+lineage, rollback, and release-boundary audits.
+
+The Stage 10 pass contract is
+`package_preparation_verdict=prepared_for_checkpoint_publication_package_verification`,
+`checkpoint_publication_package_prepared=true`, source and package checkpoint
+SHA-256 both equal
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`, and
+`next_required_change=checkpoint_publication_package_verification`. Release
+actions remain explicitly closed:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. Stage 10
+does not publish a checkpoint, replace the default policy, connect a real
+executor, run PPO, modify network/action space/default A*, relax guards, claim
+Ackermann-feasible trajectory, or treat IRIS/GCS/path-planner diagnostics as
+release proof.
+
+Stage 11 `Checkpoint Publication Package Verification v1` is now implemented by
+`scripts/run_checkpoint_publication_package_verification.py` and
+`scripts/run_checkpoint_publication_package_verification.sh`, with outputs in
+`outputs/path_feedback_batch_checkpoint_publication_package_verification_v1/`.
+It independently verifies the Stage 10 package as a consumable artifact: the
+runner rereads the package manifest, recomputes package checkpoint SHA-256 and
+size, validates package metadata, performs a `torch.load` state-dict check, and
+rechecks lineage, rollback, and release-boundary evidence.
+
+The Stage 11 pass contract is
+`verification_verdict=verified_for_checkpoint_publication_sandbox_install_dry_run_preflight`,
+`checkpoint_publication_package_verification_passed=true`,
+`checkpoint_publication_sandbox_install_dry_run_preflight_approved=true`, and
+`next_required_change=checkpoint_publication_sandbox_install_dry_run_preflight`.
+The verified package checkpoint SHA-256 remains
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`.
+Release actions remain explicitly closed:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. Stage 11
+does not publish a checkpoint, replace the default policy, connect a real
+executor, run PPO, modify network/action space/default A*, relax guards, claim
+Ackermann-feasible trajectory, or treat IRIS/GCS/path-planner diagnostics as
+release proof.
+
+Stage 12 `Checkpoint Publication Sandbox Install Dry-Run Preflight v1` is now
+implemented by
+`scripts/run_checkpoint_publication_sandbox_install_dry_run_preflight.py` and
+`scripts/run_checkpoint_publication_sandbox_install_dry_run_preflight.sh`, with
+outputs in
+`outputs/path_feedback_batch_checkpoint_publication_sandbox_install_dry_run_preflight_v1/`.
+It is a preflight for a future sandbox install dry-run, not the dry-run itself.
+The runner reads the Stage 11 consumer manifest as the authoritative package
+path, recomputes package checkpoint SHA-256 and size, checks Stage 11 load
+verification evidence, declares only a future sandbox root and planned consumer
+checkpoint path, audits optional default-policy read-only boundaries, and
+rechecks lineage, rollback, path, and release boundaries.
+
+The Stage 12 pass contract is
+`preflight_verdict=eligible_for_checkpoint_publication_sandbox_install_dry_run`,
+`checkpoint_publication_sandbox_install_dry_run_preflight_passed=true`,
+`checkpoint_publication_sandbox_install_dry_run_approved=true`, and
+`next_required_change=checkpoint_publication_sandbox_install_dry_run`. The
+package checkpoint SHA-256 remains
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`, and the
+planned sandbox checkpoint path remains only a plan. Release actions remain
+explicitly closed: `checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. Stage 12
+does not copy checkpoint files into the sandbox, does not copy to publication,
+default, live, release, or executor paths, does not install a policy, does not
+run rollout/PPO, does not replace the default policy, does not connect a real
+executor, and does not claim Ackermann-feasible trajectory or real-world
+performance.
+
+Stage 13 `Checkpoint Publication Sandbox Install Dry-Run v1` is now implemented
+by `scripts/run_checkpoint_publication_sandbox_install_dry_run.py` and
+`scripts/run_checkpoint_publication_sandbox_install_dry_run.sh`, with outputs in
+`outputs/path_feedback_batch_checkpoint_publication_sandbox_install_dry_run_v1/`.
+It performs the sandbox install dry-run authorized by Stage 12: the runner
+copies the verified package checkpoint and metadata only into the Stage 12
+planned sandbox paths, recomputes source and sandbox SHA-256/size, loads the
+sandbox checkpoint through the consumer path, and rechecks default-policy,
+path, lineage, rollback, and release-boundary evidence.
+
+The Stage 13 pass contract is
+`install_dry_run_verdict=installed_in_sandbox_for_checkpoint_publication_sandbox_install_dry_run_verification`,
+`checkpoint_publication_sandbox_install_dry_run_passed=true`,
+`checkpoint_publication_sandbox_install_dry_run_verification_approved=true`,
+and `next_required_change=checkpoint_publication_sandbox_install_dry_run_verification`.
+The source and sandbox checkpoint SHA-256 both remain
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`.
+Release actions remain explicitly closed:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. Stage 13
+does not publish a checkpoint, does not copy to publication/default/live/release
+or executor paths, does not replace the default policy, does not connect a real
+executor, does not run rollout/PPO, and does not claim Ackermann-feasible
+trajectory or real-world performance.
+
+Stage 14 `Checkpoint Publication Sandbox Install Dry-Run Verification v1` is now
+implemented by
+`scripts/run_checkpoint_publication_sandbox_install_dry_run_verification.py` and
+`scripts/run_checkpoint_publication_sandbox_install_dry_run_verification.sh`,
+with outputs in
+`outputs/path_feedback_batch_checkpoint_publication_sandbox_install_dry_run_verification_v1/`.
+It is a read-only re-verification of the Stage 13 sandbox install result: the
+runner recomputes source and sandbox SHA-256/size, checks the install manifest,
+re-loads the sandbox checkpoint from the consumer path, verifies sandbox
+metadata, and rechecks lineage, rollback, and release-boundary evidence.
+
+The Stage 14 pass contract is
+`verification_verdict=verified_for_checkpoint_publication_sandbox_consumer_smoke_preflight`,
+`checkpoint_publication_sandbox_install_dry_run_verification_passed=true`,
+`checkpoint_publication_sandbox_consumer_smoke_preflight_approved=true`, and
+`next_required_change=checkpoint_publication_sandbox_consumer_smoke_preflight`.
+The source and sandbox checkpoint SHA-256 both remain
+`9d9539c685ab965739c91958bf9cbfe90329c460b4bdbcc35881875aa62f0aa2`.
+Release actions remain explicitly closed:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. Stage 14
+does not copy, overwrite, move, or delete checkpoint/metadata files, does not
+publish a checkpoint, does not replace the default policy, does not connect a
+real executor, does not run rollout/PPO, and does not claim Ackermann-feasible
+trajectory or real-world performance.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
