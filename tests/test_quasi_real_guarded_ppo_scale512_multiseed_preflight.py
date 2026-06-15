@@ -134,10 +134,49 @@ class QuasiRealGuardedPpoScale512MultiSeedPreflightTests(unittest.TestCase):
         )
 
         trainable_steps = [self._full_observation_step(index) for index in range(2)]
+        trainable_steps[0].update(
+            {
+                "initial_coverage_rate": 0.10,
+                "final_coverage_rate": 0.12,
+                "coverage_rate_delta": 0.02,
+                "cumulative_coverage_rate_delta": 0.02,
+                "coverage_gain_source": "path_feedback",
+                "coverage_gain_claimed_actor": "policy",
+            }
+        )
+        trainable_steps[1].update(
+            {
+                "initial_coverage_rate": 0.12,
+                "final_coverage_rate": 0.15,
+                "coverage_rate_delta": 0.03,
+                "cumulative_coverage_rate_delta": 0.05,
+                "coverage_gain_source": "path_feedback",
+                "coverage_gain_claimed_actor": "policy",
+            }
+        )
 
         def fake_update_runner(*, collector_root: Path, output_root: Path, **_kwargs) -> dict:
             self.assertTrue((collector_root / "ppo-rollout-episodes.jsonl").is_file())
             self.assertTrue((collector_root / "ppo-rollout-collector-summary.json").is_file())
+            episodes = [
+                json.loads(line)
+                for line in (collector_root / "ppo-rollout-episodes.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(episodes), 1)
+            self.assertEqual(episodes[0]["metrics"]["final_coverage_rate"], 0.15)
+            self.assertEqual(episodes[0]["metrics"]["cumulative_coverage_rate_delta"], 0.05)
+            infos = [transition["info"] for transition in episodes[0]["transitions"]]
+            self.assertEqual([info["coverage_rate_delta"] for info in infos], [0.02, 0.03])
+            self.assertEqual([info["initial_coverage_rate"] for info in infos], [0.10, 0.12])
+            self.assertEqual([info["final_coverage_rate"] for info in infos], [0.12, 0.15])
+            self.assertEqual(
+                [info["cumulative_coverage_rate_delta"] for info in infos],
+                [0.02, 0.05],
+            )
+            self.assertEqual({info["coverage_gain_source"] for info in infos}, {"path_feedback"})
             output_root.mkdir(parents=True, exist_ok=True)
             return {
                 "schema_version": "limited-ppo-update-smoke-summary/v1",

@@ -142,6 +142,11 @@ class QuasiRealTrainableContextExpansionTests(unittest.TestCase):
         self.assertTrue(all(row["observation"]["action_mask"] for row in rows))
         self.assertEqual({row["log_prob"] for row in rows}, {-0.25})
         self.assertEqual({row["value"] for row in rows}, {0.4})
+        self.assertEqual([row["coverage_rate_delta"] for row in rows], [0.02, 0.03])
+        self.assertEqual([row["initial_coverage_rate"] for row in rows], [0.0, 0.02])
+        self.assertEqual([row["final_coverage_rate"] for row in rows], [0.02, 0.05])
+        self.assertEqual([row["cumulative_coverage_rate_delta"] for row in rows], [0.02, 0.05])
+        self.assertEqual({row["coverage_gain_source"] for row in rows}, {"path_feedback"})
 
     def test_expansion_keeps_diagnostic_rows_out_of_trainable_pool(self) -> None:
         from scripts.run_quasi_real_trainable_context_expansion import (
@@ -337,6 +342,10 @@ class QuasiRealTrainableContextExpansionTests(unittest.TestCase):
                     "scenario_id": scenario_id,
                     "scenario_group": f"family-{index % 3}",
                     "scenario_seed": 20260612 + index,
+                    "coverage_rate_delta": 0.02 + 0.01 * index,
+                    "baseline_vs_feedback": {
+                        "coverage_rate_delta": 0.02 + 0.01 * index,
+                    },
                     "path_feedback": {
                         "candidates": [
                             self._candidate(action_index=1, context_id=source_context, path_cost=1.0),

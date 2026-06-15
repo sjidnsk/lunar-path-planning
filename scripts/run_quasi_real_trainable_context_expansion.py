@@ -293,6 +293,7 @@ def _materialized_distillation_rows(
         repo_root=repo_root,
     )
     rows: list[dict[str, Any]] = []
+    coverage_source_cache: dict[str, dict[str, Any]] = {}
     for dataset_root_value in materialization.get("dataset_roots", []):
         dataset_root = _resolve_path(Path(str(dataset_root_value)), repo_root)
         slices_path = dataset_root / str(
@@ -315,6 +316,8 @@ def _materialized_distillation_rows(
                 scenario=scenario_by_id.get(str(slice_row.get("scenario_id"))),
                 evaluator=evaluator,
                 source_file=slices_path,
+                repo_root=repo_root,
+                coverage_source_cache=coverage_source_cache,
             )
             if row is not None:
                 rows.append(row)
@@ -327,6 +330,8 @@ def _materialize_distillation_slice(
     scenario: dict[str, Any] | None,
     evaluator: Any,
     source_file: Path,
+    repo_root: Path,
+    coverage_source_cache: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     if slice_row.get("split") != "train" or not isinstance(scenario, dict):
         return None
@@ -363,7 +368,14 @@ def _materialize_distillation_slice(
         observation_payload = _observation_payload(observation)
     reward = 1.0
     value_for_advantage = _float(value)
-    return {
+    coverage_signal = _coverage_signal_from_distillation_source(
+        preferred=preferred,
+        scenario=scenario,
+        repo_root=repo_root,
+        source_file=source_file,
+        coverage_source_cache=coverage_source_cache,
+    )
+    row = {
         "schema_version": EXPANDED_HORIZON5_STEP_SCHEMA,
         "episode_id": f"materialized-{slice_row.get('scenario_id')}",
         "step_index": 0,
@@ -397,6 +409,97 @@ def _materialize_distillation_slice(
         "materialized_from": "quasi_real_teacher_distillation_slice",
         "_source_file": str(source_file),
     }
+    row.update(coverage_signal)
+    return row
+
+
+def _coverage_signal_from_distillation_source(
+    *,
+    preferred: dict[str, Any],
+    scenario: dict[str, Any],
+    repo_root: Path,
+    source_file: Path,
+    coverage_source_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    direct = _coverage_signal_from_mapping(scenario)
+    if direct:
+        direct.setdefault("coverage_source_artifact", str(source_file))
+        direct.setdefault("coverage_source_scenario_id", scenario.get("scenario_id"))
+        return direct
+
+    candidate = _coverage_signal_from_mapping(preferred)
+    if candidate:
+        candidate.setdefault("coverage_source_artifact", str(source_file))
+        candidate.setdefault("coverage_source_scenario_id", preferred.get("scenario_id") or scenario.get("scenario_id"))
+        return candidate
+
+    source_path = preferred.get("source_path")
+    source_scenario_id = preferred.get("scenario_id") or preferred.get("source_scenario_id")
+    if not source_path or not source_scenario_id:
+        return {}
+    resolved = _resolve_path(Path(str(source_path)), repo_root)
+    summary = coverage_source_cache.get(str(resolved))
+    if summary is None:
+        summary = _read_json_if_exists(resolved)
+        coverage_source_cache[str(resolved)] = summary
+    scenarios = summary.get("scenarios") if isinstance(summary.get("scenarios"), list) else []
+    for source_scenario in scenarios:
+        if not isinstance(source_scenario, dict):
+            continue
+        if str(source_scenario.get("scenario_id")) != str(source_scenario_id):
+            continue
+        signal = _coverage_signal_from_mapping(source_scenario)
+        if signal:
+            signal.setdefault("coverage_source_artifact", str(resolved))
+            signal.setdefault("coverage_source_scenario_id", source_scenario_id)
+        return signal
+    return {}
+
+
+def _coverage_signal_from_mapping(payload: dict[str, Any]) -> dict[str, Any]:
+    delta = _first_float(
+        payload,
+        (
+            ("coverage_rate_delta",),
+            ("actual_coverage_rate_delta",),
+            ("coverage_gain",),
+            ("actual_coverage_gain",),
+            ("baseline_vs_feedback", "coverage_rate_delta"),
+            ("path_feedback", "coverage_rate_delta"),
+        ),
+    )
+    if delta is None:
+        return {}
+    signal: dict[str, Any] = {
+        "coverage_rate_delta": delta,
+        "coverage_gain_source": "path_feedback",
+        "actual_coverage_gain_source": "path_feedback",
+        "coverage_signal_source": "path_feedback",
+        "coverage_gain_claimed_actor": "policy",
+    }
+    for field, candidates in {
+        "initial_coverage_rate": (("initial_coverage_rate",), ("coverage_rate_before",)),
+        "final_coverage_rate": (("final_coverage_rate",), ("coverage_rate_after",)),
+        "cumulative_coverage_rate_delta": (("cumulative_coverage_rate_delta",),),
+    }.items():
+        value = _first_float(payload, candidates)
+        if value is not None:
+            signal[field] = value
+    return signal
+
+
+def _first_float(payload: dict[str, Any], candidates: tuple[tuple[str, ...], ...]) -> float | None:
+    for path in candidates:
+        value: Any = payload
+        for key in path:
+            if not isinstance(value, dict) or key not in value:
+                value = None
+                break
+            value = value[key]
+        parsed = _float_or_none(value)
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _observation_payload(observation: Any) -> dict[str, Any]:
@@ -578,12 +681,38 @@ def _build_expanded_horizon5(
         episode_id = f"quasi-real-expanded-{episode_index:04d}"
         returns = _discounted_returns(source_episode_steps, discount_factor)
         episode_reward = 0.0
+        coverage_running: float | None = None
+        cumulative_coverage = 0.0
+        episode_final_coverage: float | None = None
         for step_index, (source, discounted_return) in enumerate(zip(source_episode_steps, returns)):
             step = dict(source)
             step.pop("_source_file", None)
             reward = _float(step.get("reward"))
             value = _float(step.get("value"))
             episode_reward += reward
+            coverage_delta = _float_or_none(step.get("coverage_rate_delta"))
+            if coverage_delta is not None:
+                if coverage_running is None:
+                    coverage_running = _float_or_none(step.get("initial_coverage_rate"))
+                    if coverage_running is None:
+                        coverage_running = 0.0
+                initial_coverage = coverage_running
+                final_coverage = round(initial_coverage + coverage_delta, 12)
+                cumulative_coverage = round(cumulative_coverage + coverage_delta, 12)
+                coverage_running = final_coverage
+                episode_final_coverage = final_coverage
+                step.update(
+                    {
+                        "initial_coverage_rate": round(initial_coverage, 12),
+                        "final_coverage_rate": final_coverage,
+                        "coverage_rate_delta": coverage_delta,
+                        "cumulative_coverage_rate_delta": cumulative_coverage,
+                        "coverage_gain_source": step.get("coverage_gain_source") or "path_feedback",
+                        "actual_coverage_gain_source": step.get("actual_coverage_gain_source") or "path_feedback",
+                        "coverage_signal_source": step.get("coverage_signal_source") or "path_feedback",
+                        "coverage_gain_claimed_actor": step.get("coverage_gain_claimed_actor") or "policy",
+                    }
+                )
             step.update(
                 {
                     "schema_version": EXPANDED_HORIZON5_STEP_SCHEMA,
@@ -605,6 +734,8 @@ def _build_expanded_horizon5(
                 "done": True,
                 "reward_sum": episode_reward,
                 "ppo_trainable_transition_count": len(source_episode_steps),
+                "final_coverage_rate": episode_final_coverage,
+                "cumulative_coverage_rate_delta": cumulative_coverage if episode_final_coverage is not None else None,
             }
         )
     return episodes, steps

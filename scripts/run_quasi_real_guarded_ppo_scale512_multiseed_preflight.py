@@ -356,18 +356,34 @@ def _write_seed_collector_artifacts(
                 "rejection_reason_codes": [],
                 "reward": step.get("reward"),
                 "reward_components": step.get("reward_components", {}),
+                "initial_coverage_rate": step.get("initial_coverage_rate"),
+                "final_coverage_rate": step.get("final_coverage_rate"),
+                "coverage_rate_delta": step.get("coverage_rate_delta"),
+                "cumulative_coverage_rate_delta": step.get("cumulative_coverage_rate_delta"),
+                "coverage_gain_source": step.get("coverage_gain_source"),
+                "coverage_gain_claimed_actor": step.get("coverage_gain_claimed_actor"),
             }
         )
     episodes = []
     for transitions in transitions_by_episode.values():
         total_path_cost = sum(float(item.info.path_cost) for item in transitions)
         average_risk = sum(float(item.info.risk) for item in transitions) / len(transitions)
+        cumulative_coverage = 0.0
+        final_coverage_rate = 0.0
+        for item in transitions:
+            cumulative_coverage += float(item.info.coverage_rate_delta)
+            if item.info.final_coverage_rate is not None:
+                final_coverage_rate = float(item.info.final_coverage_rate)
+        last_extra = transitions[-1].info.extra if transitions else {}
+        last_cumulative = _float_or_none(last_extra.get("cumulative_coverage_rate_delta"))
+        if last_cumulative is not None:
+            cumulative_coverage = last_cumulative
         episodes.append(
             RolloutEpisode(
                 transitions=tuple(transitions),
                 metrics=EpisodeMetrics(
-                    final_coverage_rate=0.0,
-                    cumulative_coverage_rate_delta=0.0,
+                    final_coverage_rate=final_coverage_rate,
+                    cumulative_coverage_rate_delta=cumulative_coverage,
                     total_path_cost=total_path_cost,
                     average_risk=average_risk,
                     failure_count=0,
@@ -524,6 +540,12 @@ def _transition_from_trainable_step(step: dict[str, Any], *, step_ordinal: int):
         "gate_reason_codes": [],
         "discounted_return": step.get("discounted_return"),
         "advantage": step.get("advantage"),
+        "initial_coverage_rate": step.get("initial_coverage_rate"),
+        "cumulative_coverage_rate_delta": step.get("cumulative_coverage_rate_delta"),
+        "coverage_gain_source": step.get("coverage_gain_source"),
+        "actual_coverage_gain_source": step.get("actual_coverage_gain_source"),
+        "coverage_signal_source": step.get("coverage_signal_source"),
+        "coverage_gain_claimed_actor": step.get("coverage_gain_claimed_actor"),
     }
     return RolloutTransition(
         observation=observation,
@@ -535,11 +557,11 @@ def _transition_from_trainable_step(step: dict[str, Any], *, step_ordinal: int):
         done=bool(step.get("done", False)),
         info=RolloutInfo(
             selected_cell=selected_cell,
-            coverage_rate_delta=0.0,
+            coverage_rate_delta=_float(step.get("coverage_rate_delta")),
             path_cost=abs(_float(step.get("path_cost_delta"))),
             risk=abs(_float(step.get("risk_delta"))),
             failure_reason=None,
-            final_coverage_rate=None,
+            final_coverage_rate=_float_or_none(step.get("final_coverage_rate")),
             total_cost=0.0,
             failure_count=0,
             replan_count=0,
@@ -1079,6 +1101,14 @@ def _float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return parsed if math.isfinite(parsed) else default
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _finite(value: Any) -> bool:
