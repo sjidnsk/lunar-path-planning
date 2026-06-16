@@ -1,0 +1,14 @@
+{
+  "schema_version": "global-99-default-policy-candidate-authorization-preflight-config/v1",
+  "source_multi_roi_root": "outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1",
+  "require_multi_roi_passed": true,
+  "require_default_policy_read_only": true,
+  "require_candidate_read_only": true,
+  "require_executor_isolated": true,
+  "require_path_planner_isolated": true,
+  "require_kill_switch": true,
+  "require_rollback": true,
+  "require_telemetry": true,
+  "authorization_preflight_only": true,
+  "canary_traffic_fraction": 0.0
+}

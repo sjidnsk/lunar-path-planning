@@ -4723,6 +4723,31 @@ jq '{status,reason_codes,real_map_multi_roi_generalization_verdict,next_required
   outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1/global-99-real-map-multi-roi-generalization-summary.json
 ```
 
+`Global 99 Default Policy Candidate Authorization Preflight v1` is implemented
+as a candidate authorization gate, not as installation. Its runner is
+`scripts/run_global_99_default_policy_candidate_authorization_preflight.py`,
+shell entrypoint is
+`scripts/run_global_99_default_policy_candidate_authorization_preflight.sh`,
+default config is
+`configs/global_99_default_policy_candidate_authorization_preflight_v1.json`,
+and output root is
+`outputs/path_feedback_batch_global_99_default_policy_candidate_authorization_preflight_v1/`.
+It consumes the Global 99 multi-ROI summary, verifies candidate/default-policy
+read-only boundaries, executor/path-planner isolation, kill-switch, rollback,
+telemetry, and release boundaries. Passing this stage only authorizes a sandbox
+dry run and sets `next_required_change=sandbox_candidate_installation_dry_run`.
+
+Run the seventeenth-stage authorization preflight with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_default_policy_candidate_authorization_preflight.py -q
+PYTHON=$PY bash scripts/run_global_99_default_policy_candidate_authorization_preflight.sh
+jq '{status,reason_codes,authorization_verdict,next_required_change,source_multi_roi_status,default_policy_candidate_authorization_preflight_passed,candidate_read_only_audit_passed,default_policy_read_only_audit_passed,executor_isolation_audit_passed,path_planner_isolation_audit_passed,kill_switch_audit_passed,rollback_audit_passed,telemetry_audit_passed,boundary_audit_passed,replaces_default_policy,connects_real_executor,default_policy_candidate_installation_approved}' \
+  outputs/path_feedback_batch_global_99_default_policy_candidate_authorization_preflight_v1/global-99-default-policy-candidate-authorization-preflight-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
