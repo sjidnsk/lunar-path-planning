@@ -3979,6 +3979,27 @@ publish a checkpoint, does not replace the default policy, does not connect a
 real executor, does not run rollout/PPO, and does not claim Ackermann-feasible
 trajectory or real-world performance.
 
+Stage 15 `Checkpoint Publication Sandbox Consumer Replay/Canary v1` consumes the
+Stage 14 verified sandbox checkpoint in an isolated consumer harness. It runs CPU
+load+forward on deterministic `PolicyObservation` replay rows, records
+step-level logits/masked logits/action-mask/selected-action/log-prob/value
+telemetry, and audits fallback, default-policy read-only boundary, lineage,
+rollback, and release boundary. Its output root is
+`outputs/path_feedback_batch_checkpoint_publication_sandbox_consumer_replay_canary_v1/`.
+The pass contract advances only to
+`default_policy_candidate_authorization_preflight`; checkpoint publication,
+default policy replacement, and real executor connection remain false.
+
+Stage 16 `Default Policy Candidate Authorization Preflight v1` reads the Stage
+15 consumer replay/canary evidence and checks kill-switch, rollback,
+default-policy boundary, path-planner isolation, lineage, and release boundary
+before allowing the next gate,
+`default_policy_candidate_sandbox_install_preflight`. It is not default policy
+replacement and keeps `checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
