@@ -1,0 +1,15 @@
+{
+  "schema_version": "global-99-real-map-preflight-config/v1",
+  "source_shadow_canary_replay_root": "outputs/path_feedback_batch_global_99_shadow_canary_replay_v1",
+  "source_quasi_real_domain_gap_root": "outputs/path_feedback_batch_quasi_real_map_domain_gap_v1",
+  "source_path_feedback_validation_root": "outputs/path_feedback_validation",
+  "target_coverage_rate": 0.99,
+  "min_real_map_slice_count": 12,
+  "min_real_map_roi_group_count": 4,
+  "max_policy_guard_fallback_rate": 0.05,
+  "require_domain_gap_acceptable": true,
+  "require_no_open_grid_fallback": true,
+  "require_context_ids": true,
+  "real_map_preflight_only": true,
+  "canary_traffic_fraction": 0.0
+}

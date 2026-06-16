@@ -4238,6 +4238,7 @@ Global 99% Coverage Benchmark v1
   -> Global 99 Shadow Canary Preflight v1
   -> Global 99 Shadow Canary Replay v1
   -> Global 99 Real Map Preflight v1
+  -> Global 99 Real Map Shadow Replay v1
   -> Network Architecture Upgrade v1 (only if evidence supports it)
   -> 99% Coverage Release Governance v1
 ```
@@ -4497,13 +4498,51 @@ jq '{status,reason_codes,shadow_replay_passed,offline_canary_replay_passed,sourc
   outputs/path_feedback_batch_global_99_shadow_canary_replay_v1/global-99-shadow-canary-replay-summary.json
 ```
 
+`Global 99 Real Map Preflight v1` is implemented as a quasi-real / real-map
+evidence preflight audit, not as a real-map takeover, online canary, executor
+connection, checkpoint publication, or default-policy installation. Its runner
+is `scripts/run_global_99_real_map_preflight.py`, shell entrypoint is
+`scripts/run_global_99_real_map_preflight.sh`, default config is
+`configs/global_99_real_map_preflight_v1.json`, and output root is
+`outputs/path_feedback_batch_global_99_real_map_preflight_v1/`. It consumes the
+synthetic shadow/canary replay summary plus existing LOLA quasi-real ROI,
+domain-gap, path-feedback, and sidecar evidence from
+`outputs/path_feedback_batch_quasi_real_map_domain_gap_v1/` and optional
+semi-real path-feedback validation context from
+`outputs/path_feedback_validation/`. It writes evidence-lineage, domain-gap,
+path-feedback, scope, boundary, kill-switch, rollback, telemetry, rejection,
+manifest, summary, and report artifacts. When the preflight evidence is stable,
+context IDs are present, no open-grid fallback or path-feedback regression is
+observed, and all publication/executor/online-canary boundaries stay closed, it
+sets `next_required_change=global_99_real_map_shadow_replay`.
+
+Run the tenth-stage real-map preflight with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py \
+  tests/test_network_architecture_upgrade_readiness_review.py \
+  tests/test_global_99_release_governance_preflight.py \
+  tests/test_global_99_shadow_canary_preflight.py \
+  tests/test_global_99_shadow_canary_replay.py \
+  tests/test_global_99_real_map_preflight.py -q
+PYTHON=$PY bash scripts/run_global_99_real_map_preflight.sh
+jq '{status,reason_codes,real_map_preflight_verdict,next_required_change,domain_gap_verdict,slice_count,roi_group_count,fallback_or_open_grid_count,boundary_audit_passed,real_world_release_approved,real_world_performance_claimed,replaces_default_policy,connects_real_executor,starts_online_canary,canary_traffic_fraction}' \
+  outputs/path_feedback_batch_global_99_real_map_preflight_v1/global-99-real-map-preflight-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
 MLP, gated MLP, candidate-set encoder, lightweight attention, and graph/region
 encoder variants. If the review does not recommend a network upgrade, the next
-step is `global_99_real_map_preflight`, not a direct default-policy
-replacement.
+step is real-map preflight / real-map shadow replay, not a direct
+default-policy replacement.
 `99% Coverage Release Governance v1` starts only after the 99% reachable
 coverage target is evidence-backed in shadow/canary form.
 

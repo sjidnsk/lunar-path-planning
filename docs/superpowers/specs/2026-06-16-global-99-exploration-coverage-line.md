@@ -370,7 +370,21 @@ Suggested failure reason codes:
      path-planner, use NPZ/sidecar maps, or claim real-world performance.
    - When valid, it sets `next_required_change=global_99_real_map_preflight`.
 
-10. `Network Architecture Upgrade v1`
+10. `Global 99 Real Map Preflight v1`
+   - Start only after synthetic shadow/canary replay passes.
+   - Audit existing LOLA quasi-real ROI, domain-gap, path-feedback sidecar, and
+     optional semi-real path-feedback validation evidence.
+   - Treat "real map" as quasi-real / sidecar evidence preflight only, not
+     physical rover execution, online canary traffic, or default-policy
+     installation.
+   - Normalize upstream null release/executor boundary fields into explicit
+     false values in the stage summary.
+   - Do not publish a checkpoint, replace default policy, connect a real
+     executor, run PPO, modify network/action space/default A*, call
+     path-planner, or claim real-world performance.
+   - When valid, it sets `next_required_change=global_99_real_map_shadow_replay`.
+
+11. `Network Architecture Upgrade v1`
    - Start only after the benchmark, baseline, replanning loop, and
      policy-guided coverage plus readiness review expose a clear network
      bottleneck.
@@ -379,7 +393,7 @@ Suggested failure reason codes:
    - Compare performance, parameter count, inference latency, and coverage
      generalization against the existing network.
 
-11. `99% Coverage Release Governance v1`
+12. `99% Coverage Release Governance v1`
    - Start only after 99% reachable coverage is evidence-backed in offline
      multi-map shadow/canary validation.
    - Keep it as release governance, not direct default-policy replacement.
@@ -650,6 +664,53 @@ Acceptance:
   `next_required_change=global_99_real_map_preflight`.
 - Project docs stay aligned with this development order.
 
+The tenth concrete implementation target for this line is:
+
+```text
+Global 99 Real Map Preflight v1
+```
+
+Acceptance:
+
+- Reads `configs/global_99_real_map_preflight_v1.json`.
+- Consumes existing shadow/canary replay summary from
+  `outputs/path_feedback_batch_global_99_shadow_canary_replay_v1/`.
+- Consumes existing LOLA quasi-real domain-gap, path-feedback, and bridge
+  summaries from `outputs/path_feedback_batch_quasi_real_map_domain_gap_v1/`,
+  plus optional semi-real path-feedback validation context from
+  `outputs/path_feedback_validation/`.
+- Writes summary, manifest, evidence-lineage audit, domain-gap audit,
+  path-feedback audit, scope audit, boundary audit, kill-switch audit, rollback
+  audit, telemetry audit, rejection report, and report artifacts under
+  `outputs/path_feedback_batch_global_99_real_map_preflight_v1/`.
+- Summary reports shadow replay status/next change, domain-gap status/verdict,
+  slice/ROI counts, context identity counters, open-grid/path-feedback
+  regression counters, shadow replay source-match and fallback-rate evidence,
+  audit pass/fail flags, `next_required_change`, and explicit normalized
+  boundary flags.
+- If shadow replay is missing, failed, or not pointing to
+  `global_99_real_map_preflight`, the summary fails and points to
+  `fix_global_99_shadow_canary_replay`.
+- If domain-gap evidence is missing, failed, or not
+  `acceptable_for_next_pilot`, the summary fails and points to
+  `fix_quasi_real_map_domain_gap_evidence`.
+- If slice count or ROI group count is below the configured minimum, the
+  summary fails and points to `expand_real_map_roi_coverage`.
+- If context IDs are missing or legacy identity fallback appears, the summary
+  fails and points to `fix_real_map_context_identity`.
+- If open-grid fallback, safety/contract/path-cost/risk/source-selection
+  regression, or path-feedback contract gaps appear, the summary fails and
+  points to `fix_real_map_path_feedback_contract`.
+- If shadow replay fallback rate exceeds threshold, the summary fails and
+  points to `fix_global_99_shadow_canary_guard_fallback`.
+- If any publication/default-policy/executor/online-canary boundary is open,
+  the summary fails and points to
+  `resolve_global_99_real_map_preflight_boundary_rejections`.
+- If evidence is stable and boundaries are closed, the summary passes with
+  `real_map_preflight_verdict=eligible_for_global_99_real_map_shadow_replay`
+  and `next_required_change=global_99_real_map_shadow_replay`.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -665,7 +726,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_network_architecture_upgrade_readiness_review.py \
   tests/test_global_99_release_governance_preflight.py \
   tests/test_global_99_shadow_canary_preflight.py \
-  tests/test_global_99_shadow_canary_replay.py -q
+  tests/test_global_99_shadow_canary_replay.py \
+  tests/test_global_99_real_map_preflight.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
@@ -675,6 +737,7 @@ PYTHON=$PY bash scripts/run_network_architecture_upgrade_readiness_review.sh
 PYTHON=$PY bash scripts/run_global_99_release_governance_preflight.sh
 PYTHON=$PY bash scripts/run_global_99_shadow_canary_preflight.sh
 PYTHON=$PY bash scripts/run_global_99_shadow_canary_replay.sh
+PYTHON=$PY bash scripts/run_global_99_real_map_preflight.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
@@ -693,7 +756,9 @@ jq '{status,reason_codes,shadow_canary_preflight_verdict,next_required_change,sh
   outputs/path_feedback_batch_global_99_shadow_canary_preflight_v1/global-99-shadow-canary-preflight-summary.json
 jq '{status,reason_codes,shadow_replay_passed,offline_canary_replay_passed,source_match_audit_passed,next_required_change,max_replay_coverage_delta,policy_guard_fallback_rate,publishes_checkpoint,replaces_default_policy,connects_real_executor,starts_online_canary,canary_traffic_fraction}' \
   outputs/path_feedback_batch_global_99_shadow_canary_replay_v1/global-99-shadow-canary-replay-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|Global 99 Shadow Canary Preflight v1|run_global_99_shadow_canary_preflight|Global 99 Shadow Canary Replay v1|run_global_99_shadow_canary_replay|global_99_real_map_preflight|network_architecture_upgrade_v1" \
+jq '{status,reason_codes,real_map_preflight_verdict,next_required_change,domain_gap_verdict,slice_count,roi_group_count,fallback_or_open_grid_count,boundary_audit_passed,real_world_release_approved,real_world_performance_claimed,replaces_default_policy,connects_real_executor,starts_online_canary,canary_traffic_fraction}' \
+  outputs/path_feedback_batch_global_99_real_map_preflight_v1/global-99-real-map-preflight-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|Global 99 Shadow Canary Preflight v1|run_global_99_shadow_canary_preflight|Global 99 Shadow Canary Replay v1|run_global_99_shadow_canary_replay|Global 99 Real Map Preflight v1|run_global_99_real_map_preflight|global_99_real_map_shadow_replay|network_architecture_upgrade_v1" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
@@ -709,4 +774,7 @@ Coverage v1` permits read-only experimental checkpoint inference only. `Global
 99 Shadow Canary Preflight v1` permits canary eligibility auditing only; it
 does not start online canary traffic. `Global 99 Shadow Canary Replay v1`
 permits offline synthetic replay only; it does not use real maps or real
-executors.
+executors. `Global 99 Real Map Preflight v1` audits existing LOLA quasi-real
+ROI and path-feedback sidecar evidence only; it does not perform real-map
+takeover, run online canary traffic, connect an executor, or claim real-world
+performance.
