@@ -17,6 +17,7 @@ for import_path in (SCRIPT_DIR, MODEL_EXPLORER_SRC):
 try:
     from git_provenance import git_snapshot
     from global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json, write_jsonl
+    from global_99_governance_common import merge_global_99_boundary_defaults
     from run_policy_guided_global_coverage import (
         _load_config as load_policy_guided_config,
         _load_frontier_config,
@@ -34,6 +35,7 @@ except ModuleNotFoundError:  # pragma: no cover
         write_json,
         write_jsonl,
     )
+    from scripts.global_99_governance_common import merge_global_99_boundary_defaults
     from scripts.run_policy_guided_global_coverage import (
         _load_config as load_policy_guided_config,
         _load_frontier_config,
@@ -192,7 +194,7 @@ def run_global_99_multi_map_generalization(
         "rejection_report": output_root / REJECTION_REPORT_FILE,
         "report": output_root / REPORT_FILE,
     }
-    summary = {
+    summary = merge_global_99_boundary_defaults({
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "generated_at": utc_now(),
         "status": status,
@@ -251,7 +253,7 @@ def run_global_99_multi_map_generalization(
         "uses_path_planner": False,
         "uses_npz_or_sidecar": False,
         "git_provenance": {"current": git_snapshot(repo_root), "current_matches_sources": True},
-    }
+    })
     rejection_report = _rejection_report(reason_codes, scenario_results)
     manifest = _manifest(config_path, output_root, paths, summary)
 

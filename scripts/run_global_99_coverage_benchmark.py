@@ -19,6 +19,7 @@ try:
         evaluate_static_coverage_scenario,
         load_global_99_config,
     )
+    from global_99_governance_common import merge_global_99_boundary_defaults
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.global_99_coverage_contract import (
@@ -26,6 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover
         evaluate_static_coverage_scenario,
         load_global_99_config,
     )
+    from scripts.global_99_governance_common import merge_global_99_boundary_defaults
 
 
 CONFIG_SCHEMA_VERSION = "global-99-coverage-benchmark-config/v1"
@@ -145,7 +147,7 @@ def run_global_99_coverage_benchmark(
     status = "passed" if not reason_codes else "failed"
     next_required_change = PASS_NEXT_REQUIRED_CHANGE if status == "passed" else FAIL_NEXT_REQUIRED_CHANGE
 
-    summary = {
+    summary = merge_global_99_boundary_defaults({
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "generated_at": _utc_now(),
         "status": status,
@@ -187,7 +189,7 @@ def run_global_99_coverage_benchmark(
         "performance_claimed": False,
         "real_world_performance_claimed": False,
         "git_provenance": {"current": git_snapshot(repo_root), "current_matches_sources": True},
-    }
+    })
     denominator_audit = _denominator_audit(config, scenario_results, total_denominator, total_covered)
     rejection_report = _rejection_report(reason_codes, scenario_results)
     manifest = _manifest(config_path, output_root, paths, summary, config)

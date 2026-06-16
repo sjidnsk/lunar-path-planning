@@ -15,9 +15,11 @@ if str(SCRIPT_DIR) not in sys.path:
 try:
     from git_provenance import git_snapshot
     from global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json
+    from global_99_governance_common import global_99_boundary_defaults
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json
+    from scripts.global_99_governance_common import global_99_boundary_defaults
 
 
 CONFIG_SCHEMA_VERSION = "global-99-release-governance-preflight-config/v1"
@@ -58,13 +60,7 @@ FIX_POLICY_NEXT_REQUIRED_CHANGE = "fix_policy_guided_global_coverage"
 BOUNDARY_REJECTION_NEXT_REQUIRED_CHANGE = "resolve_global_99_release_boundary_rejections"
 
 BOUNDARY_FIELDS = {
-    "publishes_checkpoint": False,
-    "replaces_default_policy": False,
-    "connects_real_executor": False,
-    "runs_new_ppo_update": False,
-    "modifies_network": False,
-    "modifies_action_space": False,
-    "modifies_default_astar": False,
+    **global_99_boundary_defaults(),
     "uses_path_planner": False,
     "uses_npz_or_sidecar": False,
     "real_world_release_approved": False,

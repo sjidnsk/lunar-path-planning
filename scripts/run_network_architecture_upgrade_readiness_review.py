@@ -49,6 +49,7 @@ BOUNDARY_FIELDS = {
     "publishes_checkpoint": False,
     "replaces_default_policy": False,
     "connects_real_executor": False,
+    "starts_online_canary": False,
     "modifies_network": False,
     "modifies_action_space": False,
     "modifies_default_astar": False,

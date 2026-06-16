@@ -52,6 +52,7 @@ class NetworkArchitectureUpgradeReadinessReviewTests(unittest.TestCase):
         self.assertFalse(summary["publishes_checkpoint"])
         self.assertFalse(summary["replaces_default_policy"])
         self.assertFalse(summary["connects_real_executor"])
+        self.assertFalse(summary["starts_online_canary"])
         self.assertFalse(summary["modifies_network"])
         self.assertFalse(summary["modifies_action_space"])
         self.assertFalse(summary["modifies_default_astar"])

@@ -209,6 +209,7 @@ def run_frontier_coverage_planner_baseline(
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
         "connects_real_executor": False,
+        "starts_online_canary": False,
         "runs_new_ppo_update": False,
         "modifies_network": False,
         "modifies_action_space": False,
@@ -610,6 +611,7 @@ def _manifest(
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
         "connects_real_executor": False,
+        "starts_online_canary": False,
     }
 
 
