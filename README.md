@@ -4509,6 +4509,23 @@ inside the output root, but `publishes_checkpoint=false`,
 `runs_new_ppo_update=false`, `ppo_update_executed=false`, and it does not replace
 default policy or connect an executor.
 
+`Xunce Post-Training Offline Evaluation v1` is the Stage 14 read-only evaluation
+gate. It loads the Stage 13 research checkpoint, compares trained metrics
+against a deterministic fresh `xunce_full_network_v1` model, and writes
+checkpoint-load and policy-delta audits. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_post_training_offline_evaluation.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_post_training_offline_evaluation_v1/`.
+Passing writes `next_required_change=shadow_replay_validation`. This stage is
+read-only with respect to the checkpoint: `checkpoint_read_only=true`,
+`runs_new_training_update=false`, `runs_new_ppo_update=false`, and
+`publishes_checkpoint=false`.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

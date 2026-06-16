@@ -377,8 +377,17 @@ artifacts. Each stage should be committed and pushed separately.
      `ppo_update_executed=false`, and must not replace default policy.
    - Passing next gate: `post_training_offline_evaluation`.
 14 训练后离线评测
-   - Re-run Global 99, multi-map, real-map replay, source-match, guard fallback,
-     parameter, and latency audits.
+   - Current implementation target:
+     `scripts/run_xunce_post_training_offline_evaluation.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_post_training_offline_evaluation_v1/`.
+   - Load the Stage 13 research checkpoint read-only and compare it with a
+     deterministic fresh `xunce_full_network_v1`.
+   - Audit target loss, target probability, target logit, latency, parameter
+     count, checkpoint schema, and boundary fields.
+   - It must not run new training or PPO update, and must not publish the
+     checkpoint.
+   - Passing next gate: `shadow_replay_validation`.
 15 Shadow / Replay 验证
    - Validate the trained candidate in offline shadow/replay only.
 16 Sandbox Candidate Preflight

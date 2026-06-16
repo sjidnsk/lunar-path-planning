@@ -627,6 +627,16 @@ research-only checkpoint under the output root, but it keeps
 `ppo_update_executed=false`, and does not replace default policy or connect an
 executor.
 
+The fifteenth gate is `Xunce Post-Training Offline Evaluation v1`, with runner
+`scripts/run_xunce_post_training_offline_evaluation.py`, config
+`configs/xunce_post_training_offline_evaluation_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_post_training_offline_evaluation_v1/`. It
+loads the Stage 13 research checkpoint read-only, compares trained metrics
+against a deterministic fresh model, and writes checkpoint-load and policy-delta
+audits. A passing summary writes
+`next_required_change=shadow_replay_validation`; it does not train, publish,
+install, replace default policy, or connect an executor.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world
