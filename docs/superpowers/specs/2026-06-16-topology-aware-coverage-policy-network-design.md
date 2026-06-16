@@ -358,6 +358,12 @@ artifacts. Each stage should be committed and pushed separately.
 12 Guarded Training Candidate Preflight
    - Permit controlled training only if the full network passes contrast,
      ablation, stress, and efficiency gates.
+   - Current implementation target:
+     `scripts/run_xunce_guarded_training_candidate_preflight.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_guarded_training_candidate_preflight_v1/`.
+   - Passing next gate: `controlled_training_candidate`.
+   - This gate authorizes the next stage only; it does not run PPO.
 13 受控训练候选
    - Run bounded training as a research candidate only.
    - Do not publish default policy.

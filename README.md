@@ -4475,6 +4475,22 @@ writes `next_required_change=guarded_training_candidate_preflight`. This is a
 stability gate only; it does not train, publish, install, or connect an
 executor.
 
+`Xunce Guarded Training Candidate Preflight v1` is the Stage 12 authorization
+gate. It reads the full-network, static-contract, ablation, and stress
+summaries and decides whether the next stage may run a controlled training
+candidate. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_guarded_training_candidate_preflight.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_guarded_training_candidate_preflight_v1/`.
+Passing writes `next_required_change=controlled_training_candidate`. This stage
+does not itself run PPO, write checkpoints, publish checkpoints, replace default
+policy, or connect an executor.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

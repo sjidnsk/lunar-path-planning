@@ -606,6 +606,15 @@ deterministic replay stability. A passing summary writes
 `next_required_change=guarded_training_candidate_preflight`; this is still not
 training or release approval.
 
+The thirteenth gate is `Xunce Guarded Training Candidate Preflight v1`, with
+runner `scripts/run_xunce_guarded_training_candidate_preflight.py`, config
+`configs/xunce_guarded_training_candidate_preflight_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_guarded_training_candidate_preflight_v1/`.
+It checks full-network, static-contract, ablation, and stress evidence before
+authorizing a controlled training candidate. A passing summary writes
+`next_required_change=controlled_training_candidate`; this gate does not run
+PPO, write or publish checkpoints, or alter default policy.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world
