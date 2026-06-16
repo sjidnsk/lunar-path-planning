@@ -4261,19 +4261,41 @@ jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_ta
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 ```
 
-`Frontier Coverage Planner Baseline v1` then provides a non-learning
-frontier/coverage-map/revisit-penalty/path-budget baseline. `Coverage Memory +
-Replanning Loop v1` adds global coverage memory and repeated frontier selection
-from still-uncovered reachable safe cells. `Policy-Guided Global Coverage v1`
-lets the current PPO policy participate in global frontier or waypoint ranking,
-while preserving the stable model-explorer/path-feedback/path-planner
-contracts. `99% Multi-Map Generalization v1` verifies the target across
-multiple maps, starts, ROI shapes, obstacle fields, and risk distributions.
-`Network Architecture Upgrade v1` starts only if those benchmarks show the
-policy network is the actual bottleneck; candidate upgrades include residual
-MLP, gated MLP, candidate-set encoder, lightweight attention, and graph/region
-encoder variants. `99% Coverage Release Governance v1` starts only after the
-99% reachable-coverage target is evidence-backed in shadow/canary form.
+`Frontier Coverage Planner Baseline v1` is implemented as a deterministic
+non-learning planner over the same synthetic Global 99 contract. Its runner is
+`scripts/run_frontier_coverage_planner_baseline.py`, with shell entrypoint
+`scripts/run_frontier_coverage_planner_baseline.sh`, default config
+`configs/frontier_coverage_planner_baseline_v1.json`, and output root
+`outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/`. It ignores
+source `coverage_events`, computes its own frontier/coverage-map/revisit
+penalty/path-budget plan, and writes plan, ledger, budget audit, rejection, and
+report artifacts. When the baseline closes cleanly, it sets
+`next_required_change=coverage_memory_replanning_loop`.
+
+Run the second-stage baseline with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py -q
+PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
+jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
+  outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/frontier-coverage-planner-baseline-summary.json
+```
+
+`Coverage Memory + Replanning Loop v1` adds persistent global coverage memory
+and repeated frontier selection from still-uncovered reachable safe cells.
+`Policy-Guided Global Coverage v1` lets the current PPO policy participate in
+global frontier or waypoint ranking, while preserving the stable
+model-explorer/path-feedback/path-planner contracts. `99% Multi-Map
+Generalization v1` verifies the target across multiple maps, starts, ROI
+shapes, obstacle fields, and risk distributions. `Network Architecture Upgrade
+v1` starts only if those benchmarks show the policy network is the actual
+bottleneck; candidate upgrades include residual MLP, gated MLP, candidate-set
+encoder, lightweight attention, and graph/region encoder variants. `99%
+Coverage Release Governance v1` starts only after the 99% reachable-coverage
+target is evidence-backed in shadow/canary form.
 
 This line must not disturb the family-balanced publication chain. It does not
 replace default policy, connect a real executor, relax guards, modify the

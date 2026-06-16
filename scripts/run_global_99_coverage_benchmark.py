@@ -14,8 +14,18 @@ if str(SCRIPT_DIR) not in sys.path:
 
 try:
     from git_provenance import git_snapshot
+    from global_99_coverage_contract import (
+        ConfigError as ContractConfigError,
+        evaluate_static_coverage_scenario,
+        load_global_99_config,
+    )
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
+    from scripts.global_99_coverage_contract import (
+        ConfigError as ContractConfigError,
+        evaluate_static_coverage_scenario,
+        load_global_99_config,
+    )
 
 
 CONFIG_SCHEMA_VERSION = "global-99-coverage-benchmark-config/v1"
@@ -60,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=_resolve_path(Path(args.output_root), repo_root),
             repo_root=repo_root,
         )
-    except ConfigError as exc:
+    except ContractConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
 
@@ -93,7 +103,7 @@ def run_global_99_coverage_benchmark(
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    config = _load_config(config_path)
+    config = load_global_99_config(config_path)
     paths = {
         "summary": output_root / SUMMARY_FILE,
         "manifest": output_root / MANIFEST_FILE,
@@ -106,7 +116,7 @@ def run_global_99_coverage_benchmark(
     target = float(config["target_coverage_rate"])
     path_budget_m = float(config["path_budget_m"])
     scenario_results = [
-        _evaluate_scenario(scenario, target_coverage_rate=target, path_budget_m=path_budget_m)
+        evaluate_static_coverage_scenario(scenario, target_coverage_rate=target, path_budget_m=path_budget_m)
         for scenario in config["scenarios"]
     ]
     ledger_rows = [row for result in scenario_results for row in result["ledger_rows"]]

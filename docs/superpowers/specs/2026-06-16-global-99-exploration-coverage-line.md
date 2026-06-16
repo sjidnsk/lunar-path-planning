@@ -42,6 +42,31 @@ The first-stage artifact names are:
 - `global-99-coverage-rejection-report.json`
 - `global-99-coverage-benchmark-report.md`
 
+The second-stage runner and config are:
+
+```text
+scripts/run_frontier_coverage_planner_baseline.py
+scripts/run_frontier_coverage_planner_baseline.sh
+configs/frontier_coverage_planner_baseline_v1.json
+tests/test_frontier_coverage_planner_baseline.py
+```
+
+The second-stage output root is:
+
+```text
+outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/
+```
+
+The second-stage artifact names are:
+
+- `frontier-coverage-planner-baseline-summary.json`
+- `frontier-coverage-planner-baseline-manifest.json`
+- `frontier-coverage-plan.jsonl`
+- `frontier-coverage-ledger.jsonl`
+- `frontier-coverage-budget-audit.json`
+- `frontier-coverage-rejection-report.json`
+- `frontier-coverage-planner-baseline-report.md`
+
 Expected summary fields:
 
 - `target_coverage_rate=0.99`
@@ -81,6 +106,7 @@ Suggested failure reason codes:
    - This is the "sweeping robot" reference that proves the task loop can run.
    - It should expose whether 99% coverage is blocked by planning, budget,
      map feasibility, or policy choice.
+   - When valid, it sets `next_required_change=coverage_memory_replanning_loop`.
 
 3. `Coverage Memory + Replanning Loop v1`
    - Maintain global coverage memory.
@@ -115,7 +141,7 @@ Suggested failure reason codes:
      multi-map shadow/canary validation.
    - Keep it as release governance, not direct default-policy replacement.
 
-## First Target
+## Implemented Targets
 
 The first concrete implementation target for this line is:
 
@@ -137,17 +163,44 @@ Acceptance:
   contract is valid.
 - Project docs stay aligned with this development order.
 
+The second concrete implementation target for this line is:
+
+```text
+Frontier Coverage Planner Baseline v1
+```
+
+Acceptance:
+
+- Reads `configs/frontier_coverage_planner_baseline_v1.json`.
+- Uses `configs/global_99_coverage_benchmark_v1.json` as the source synthetic
+  Global 99 contract but ignores source `coverage_events`.
+- Generates deterministic frontier baseline plan and ledger rows.
+- Writes summary, manifest, plan, ledger, budget audit, rejection report, and
+  report artifacts under
+  `outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/`.
+- Summary reports `coverage_target_met`, `generated_coverage_event_count`,
+  `planned_path_cost_m`, `frontier_plan_complete`, and all required boundary
+  flags.
+- `next_required_change=coverage_memory_replanning_loop` when the baseline
+  closes cleanly.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
 
 ```bash
 PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest tests/test_global_99_coverage_benchmark.py -q
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
+PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|frontier_coverage_planner_baseline" \
+jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
+  outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/frontier-coverage-planner-baseline-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|coverage_memory_replanning_loop" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
