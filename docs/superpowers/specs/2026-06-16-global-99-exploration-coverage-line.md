@@ -199,6 +199,34 @@ The seventh-stage artifact names are:
 - `global-99-release-rejection-report.json`
 - `global-99-release-governance-preflight-report.md`
 
+The eighth-stage shadow-canary-preflight runner and config are:
+
+```text
+scripts/run_global_99_shadow_canary_preflight.py
+scripts/run_global_99_shadow_canary_preflight.sh
+configs/global_99_shadow_canary_preflight_v1.json
+tests/test_global_99_shadow_canary_preflight.py
+```
+
+The eighth-stage output root is:
+
+```text
+outputs/path_feedback_batch_global_99_shadow_canary_preflight_v1/
+```
+
+The eighth-stage artifact names are:
+
+- `global-99-shadow-canary-preflight-summary.json`
+- `global-99-shadow-canary-manifest.json`
+- `global-99-shadow-replay-audit.json`
+- `global-99-canary-eligibility-audit.json`
+- `global-99-shadow-canary-boundary-audit.json`
+- `global-99-shadow-canary-kill-switch-audit.json`
+- `global-99-shadow-canary-rollback-audit.json`
+- `global-99-shadow-canary-telemetry-audit.json`
+- `global-99-shadow-canary-rejection-report.json`
+- `global-99-shadow-canary-preflight-report.md`
+
 Expected summary fields:
 
 - `target_coverage_rate=0.99`
@@ -291,8 +319,14 @@ Suggested failure reason codes:
 
 8. `Global 99 Shadow Canary Preflight v1`
    - Start only after release governance preflight passes.
-   - Keep the candidate in shadow/canary governance; do not install it as a
-     real default policy.
+   - Convert synthetic release-governance evidence into offline shadow/canary
+     replay eligibility.
+   - Keep `canary_traffic_fraction=0.0` and `starts_online_canary=false`.
+   - Do not publish a checkpoint, replace default policy, connect a real
+     executor, run PPO, modify network/action space/default A*, call
+     path-planner, use NPZ/sidecar maps, or claim real-world performance.
+   - When valid, it sets
+     `next_required_change=global_99_shadow_canary_replay`.
 
 9. `Network Architecture Upgrade v1`
    - Start only after the benchmark, baseline, replanning loop, and
@@ -498,6 +532,43 @@ Acceptance:
   and `next_required_change=global_99_shadow_canary_preflight`.
 - Project docs stay aligned with this development order.
 
+The eighth concrete implementation target for this line is:
+
+```text
+Global 99 Shadow Canary Preflight v1
+```
+
+Acceptance:
+
+- Reads `configs/global_99_shadow_canary_preflight_v1.json`.
+- Consumes existing release-governance, multi-map, and policy-guided summary
+  artifacts.
+- Writes summary, manifest, shadow replay audit, canary eligibility audit,
+  boundary audit, kill-switch audit, rollback audit, telemetry audit, rejection
+  report, and report artifacts under
+  `outputs/path_feedback_batch_global_99_shadow_canary_preflight_v1/`.
+- Summary reports release-governance status/verdict, required scenario counts,
+  aggregate and minimum coverage, policy guidance counters,
+  `policy_guard_fallback_rate`, audit pass/fail flags,
+  `shadow_canary_preflight_verdict`, `next_required_change`, and all required
+  boundary flags.
+- If release governance is missing, failed, or not pointing to
+  `global_99_shadow_canary_preflight`, the summary fails and points to
+  `fix_global_99_release_governance_preflight`.
+- If required multi-map scenarios are not healthy or coverage is below 0.99,
+  the summary fails and points to `fix_global_99_multi_map_generalization`.
+- If policy regression appears, the summary fails and points to
+  `fix_policy_guided_global_coverage`.
+- If policy guard fallback rate is above threshold, the summary fails and
+  points to `fix_global_99_shadow_canary_guard_fallback`.
+- If any checkpoint/default-policy/executor/online-canary/traffic boundary is
+  open, the summary fails and points to
+  `resolve_global_99_shadow_canary_boundary_rejections`.
+- If evidence is stable and boundaries are closed, the summary passes with
+  `shadow_canary_preflight_verdict=eligible_for_global_99_shadow_canary_replay`
+  and `next_required_change=global_99_shadow_canary_replay`.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -511,7 +582,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_policy_guided_global_coverage.py \
   tests/test_global_99_multi_map_generalization.py \
   tests/test_network_architecture_upgrade_readiness_review.py \
-  tests/test_global_99_release_governance_preflight.py -q
+  tests/test_global_99_release_governance_preflight.py \
+  tests/test_global_99_shadow_canary_preflight.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
@@ -519,6 +591,7 @@ PYTHON=$PY bash scripts/run_policy_guided_global_coverage.sh
 PYTHON=$PY bash scripts/run_global_99_multi_map_generalization.sh
 PYTHON=$PY bash scripts/run_network_architecture_upgrade_readiness_review.sh
 PYTHON=$PY bash scripts/run_global_99_release_governance_preflight.sh
+PYTHON=$PY bash scripts/run_global_99_shadow_canary_preflight.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
@@ -533,7 +606,9 @@ jq '{status,reason_codes,network_upgrade_recommended,network_upgrade_readiness_d
   outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/network-architecture-upgrade-readiness-summary.json
 jq '{status,reason_codes,release_governance_verdict,next_required_change,release_boundary_audit_passed,kill_switch_audit_passed,rollback_audit_passed,telemetry_audit_passed,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update,modifies_network}' \
   outputs/path_feedback_batch_global_99_release_governance_preflight_v1/global-99-release-governance-preflight-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|global_99_shadow_canary_preflight|network_architecture_upgrade_v1" \
+jq '{status,reason_codes,shadow_canary_preflight_verdict,next_required_change,shadow_replay_audit_passed,canary_eligibility_audit_passed,boundary_audit_passed,kill_switch_audit_passed,rollback_audit_passed,telemetry_audit_passed,publishes_checkpoint,replaces_default_policy,connects_real_executor,starts_online_canary,canary_traffic_fraction}' \
+  outputs/path_feedback_batch_global_99_shadow_canary_preflight_v1/global-99-shadow-canary-preflight-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|Global 99 Shadow Canary Preflight v1|run_global_99_shadow_canary_preflight|global_99_shadow_canary_replay|network_architecture_upgrade_v1" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
@@ -545,4 +620,6 @@ real executor connection, no guard relaxation, no default A* replacement, no
 action-space change, no network architecture change, no real-world performance
 claim, no Ackermann-feasible trajectory claim, and no treating
 IRIS/GCS/path-planner diagnostics as release proof. `Policy-Guided Global
-Coverage v1` permits read-only experimental checkpoint inference only.
+Coverage v1` permits read-only experimental checkpoint inference only. `Global
+99 Shadow Canary Preflight v1` permits canary eligibility auditing only; it
+does not start online canary traffic.

@@ -4431,13 +4431,44 @@ jq '{status,reason_codes,release_governance_verdict,next_required_change,release
   outputs/path_feedback_batch_global_99_release_governance_preflight_v1/global-99-release-governance-preflight-summary.json
 ```
 
+`Global 99 Shadow Canary Preflight v1` is implemented as an offline
+shadow/canary eligibility gate, not as an online canary or release. Its runner
+is `scripts/run_global_99_shadow_canary_preflight.py`, shell entrypoint is
+`scripts/run_global_99_shadow_canary_preflight.sh`, default config is
+`configs/global_99_shadow_canary_preflight_v1.json`, and output root is
+`outputs/path_feedback_batch_global_99_shadow_canary_preflight_v1/`. It
+consumes release-governance, multi-map, and policy-guided summaries, then
+writes shadow replay, canary eligibility, boundary, kill-switch, rollback,
+telemetry, rejection, manifest, summary, and report artifacts. `canary_mode`
+only means eligibility auditing; `canary_traffic_fraction` remains `0.0` and
+`starts_online_canary=false`. When this preflight passes, it sets
+`next_required_change=global_99_shadow_canary_replay`.
+
+Run the eighth-stage shadow/canary preflight with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py \
+  tests/test_network_architecture_upgrade_readiness_review.py \
+  tests/test_global_99_release_governance_preflight.py \
+  tests/test_global_99_shadow_canary_preflight.py -q
+PYTHON=$PY bash scripts/run_global_99_shadow_canary_preflight.sh
+jq '{status,reason_codes,shadow_canary_preflight_verdict,next_required_change,shadow_replay_audit_passed,canary_eligibility_audit_passed,boundary_audit_passed,kill_switch_audit_passed,rollback_audit_passed,telemetry_audit_passed,publishes_checkpoint,replaces_default_policy,connects_real_executor,starts_online_canary,canary_traffic_fraction}' \
+  outputs/path_feedback_batch_global_99_shadow_canary_preflight_v1/global-99-shadow-canary-preflight-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
 MLP, gated MLP, candidate-set encoder, lightweight attention, and graph/region
 encoder variants. If the review does not recommend a network upgrade, the next
-step is `global_99_release_governance_preflight` and then
-`global_99_shadow_canary_preflight`, not a direct default-policy replacement.
+step is `global_99_shadow_canary_replay`, not a direct default-policy
+replacement.
 `99% Coverage Release Governance v1` starts only after the 99% reachable
 coverage target is evidence-backed in shadow/canary form.
 
