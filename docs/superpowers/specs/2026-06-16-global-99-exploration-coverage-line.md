@@ -637,6 +637,16 @@ audits. A passing summary writes
 `next_required_change=shadow_replay_validation`; it does not train, publish,
 install, replace default policy, or connect an executor.
 
+The sixteenth gate is `Xunce Shadow Replay Validation v1`, with runner
+`scripts/run_xunce_shadow_replay_validation.py`, config
+`configs/xunce_shadow_replay_validation_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_shadow_replay_validation_v1/`. It reloads the
+research checkpoint read-only, replays deterministic Stage 14 cases, and checks
+source-match/determinism. A passing summary writes
+`next_required_change=sandbox_candidate_preflight`; it does not start online
+canary traffic, publish a checkpoint, replace default policy, or connect an
+executor.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

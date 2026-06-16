@@ -389,7 +389,15 @@ artifacts. Each stage should be committed and pushed separately.
      checkpoint.
    - Passing next gate: `shadow_replay_validation`.
 15 Shadow / Replay 验证
-   - Validate the trained candidate in offline shadow/replay only.
+   - Current implementation target:
+     `scripts/run_xunce_shadow_replay_validation.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_shadow_replay_validation_v1/`.
+   - Reload the Stage 13 research checkpoint read-only and replay the Stage 14
+     deterministic topology-contract cases.
+   - Verify source-match, determinism, finite outputs, and closed release /
+     executor / online-canary boundaries.
+   - Passing next gate: `sandbox_candidate_preflight`.
 16 Sandbox Candidate Preflight
    - Package and load as sandbox candidate with kill-switch, rollback,
      telemetry, read-only default-policy boundary, and executor isolation.

@@ -4526,6 +4526,22 @@ read-only with respect to the checkpoint: `checkpoint_read_only=true`,
 `runs_new_training_update=false`, `runs_new_ppo_update=false`, and
 `publishes_checkpoint=false`.
 
+`Xunce Shadow Replay Validation v1` is the Stage 15 offline replay gate. It
+reloads the Stage 13 research checkpoint, replays the same deterministic cases
+used by Stage 14, and verifies source-match/determinism before sandbox
+packaging. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_shadow_replay_validation.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_shadow_replay_validation_v1/`. Passing writes
+`next_required_change=sandbox_candidate_preflight`. This is still offline
+shadow/replay only: `starts_online_canary=false`, `connects_real_executor=false`,
+and `publishes_checkpoint=false`.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
