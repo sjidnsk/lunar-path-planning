@@ -4392,6 +4392,25 @@ writes `next_required_change=architecture_contrast_evaluation`. It is still a
 mechanism audit, not evidence that the prototype improves coverage and not
 approval to train or publish.
 
+`Xunce Architecture Contrast Evaluation v1` is the Stage 7 gate. It compares
+`mlp_v1`, `mlp_missing_v1`, `candidate_attention_v1`, and the research-only
+`topology_aware_coverage_graph_proto_v1` on the same deterministic topology
+fixture. The runner records each architecture's selected candidate, heuristic
+ranking quality, parameter count, latency, finite-output behavior, mask
+correctness, and closed release/training/executor boundaries. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_architecture_contrast_evaluation.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_architecture_contrast_evaluation_v1/`.
+Passing writes `next_required_change=full_xunce_network_v1_design`. This is a
+contrast audit only: it may justify designing the complete Xunce network v1, but
+it does not train, publish a checkpoint, register a production architecture,
+replace default policy, connect an executor, or claim real-world performance.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

@@ -1,0 +1,27 @@
+{
+  "schema_version": "xunce-architecture-contrast-evaluation-config/v1",
+  "source_proto_mechanism_validation_root": "outputs/path_feedback_batch_xunce_proto_mechanism_validation_v1",
+  "source_topology_feature_extraction_root": "outputs/path_feedback_batch_xunce_topology_feature_extraction_audit_v1",
+  "architectures": [
+    "mlp_v1",
+    "mlp_missing_v1",
+    "candidate_attention_v1",
+    "topology_aware_coverage_graph_proto_v1"
+  ],
+  "architecture_seeds": {
+    "mlp_v1": 1,
+    "mlp_missing_v1": 1,
+    "candidate_attention_v1": 1,
+    "topology_aware_coverage_graph_proto_v1": 1
+  },
+  "hidden_dim": 16,
+  "attention_heads": 1,
+  "message_passing_layers": 1,
+  "dropout": 0.0,
+  "latency_repeats": 3,
+  "max_parameter_ratio_vs_candidate_attention": 2.0,
+  "max_latency_ratio_vs_candidate_attention": 1000.0,
+  "max_forward_latency_ms": 1000.0,
+  "max_xunce_rank": 3,
+  "action_mask_override": [true, true, true, true, true]
+}

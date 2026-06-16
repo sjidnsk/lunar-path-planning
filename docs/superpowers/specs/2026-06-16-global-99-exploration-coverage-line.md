@@ -554,6 +554,19 @@ fallback safety, and closed release boundaries. A passing summary writes
 `next_required_change=architecture_contrast_evaluation`; this is a mechanism
 gate, not a performance or training claim.
 
+The eighth gate is `Xunce Architecture Contrast Evaluation v1`, with runner
+`scripts/run_xunce_architecture_contrast_evaluation.py`, config
+`configs/xunce_architecture_contrast_evaluation_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_architecture_contrast_evaluation_v1/`. It
+compares `mlp_v1`, `mlp_missing_v1`, `candidate_attention_v1`, and the
+research-only `topology_aware_coverage_graph_proto_v1` on the same deterministic
+topology feature fixture. It records selected candidates, heuristic ranking
+quality, parameter count, latency, finite-output and mask behavior, and release
+boundary closure. A passing summary writes
+`next_required_change=full_xunce_network_v1_design`; this only authorizes the
+complete Xunce network v1 design stage, not training, checkpoint publication, or
+default-policy installation.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

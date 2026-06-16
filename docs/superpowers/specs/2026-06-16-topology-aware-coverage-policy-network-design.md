@@ -310,6 +310,13 @@ artifacts. Each stage should be committed and pushed separately.
      巡策 prototype.
    - Track coverage, minimum scenario coverage, policy better/worse,
      controlled regression, fallback, path-budget efficiency, params, latency.
+   - Current implementation target:
+     `scripts/run_xunce_architecture_contrast_evaluation.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_architecture_contrast_evaluation_v1/`.
+   - Passing next gate: `full_xunce_network_v1_design`.
+   - This gate is a deterministic contrast audit, not training or performance
+     proof.
 8 完整巡策网络 v1
    - Build candidate graph encoder, topology-biased attention/message passing,
      coverage memory token, ROI/family/budget fusion, masked logits, value head,
