@@ -399,8 +399,15 @@ artifacts. Each stage should be committed and pushed separately.
      executor / online-canary boundaries.
    - Passing next gate: `sandbox_candidate_preflight`.
 16 Sandbox Candidate Preflight
-   - Package and load as sandbox candidate with kill-switch, rollback,
-     telemetry, read-only default-policy boundary, and executor isolation.
+   - Current implementation target:
+     `scripts/run_xunce_sandbox_candidate_preflight.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_sandbox_candidate_preflight_v1/`.
+   - Package and load as sandbox candidate with checkpoint hash verification,
+     kill-switch, rollback, telemetry, read-only default-policy boundary, and
+     executor isolation.
+   - This is not default-policy installation.
+   - Passing next gate: `xunce_release_governance_gate`.
 17 发布治理门禁
    - Only after all prior gates pass may it enter release governance.
    - This still does not directly replace default policy.

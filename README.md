@@ -4542,6 +4542,22 @@ The output root is
 shadow/replay only: `starts_online_canary=false`, `connects_real_executor=false`,
 and `publishes_checkpoint=false`.
 
+`Xunce Sandbox Candidate Preflight v1` is the Stage 16 sandbox packaging and
+load dry-run gate. It copies the research checkpoint into a sandbox-only output
+package, verifies checkpoint hash/load, and writes kill-switch, rollback,
+telemetry, and boundary audits. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_sandbox_candidate_preflight.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_sandbox_candidate_preflight_v1/`. Passing
+writes `next_required_change=xunce_release_governance_gate`. This stage creates
+a sandbox package only; `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

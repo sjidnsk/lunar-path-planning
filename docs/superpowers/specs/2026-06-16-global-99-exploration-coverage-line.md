@@ -647,6 +647,16 @@ source-match/determinism. A passing summary writes
 canary traffic, publish a checkpoint, replace default policy, or connect an
 executor.
 
+The seventeenth gate is `Xunce Sandbox Candidate Preflight v1`, with runner
+`scripts/run_xunce_sandbox_candidate_preflight.py`, config
+`configs/xunce_sandbox_candidate_preflight_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_sandbox_candidate_preflight_v1/`. It creates
+a sandbox-only package, verifies checkpoint hash/load, and writes kill-switch,
+rollback, telemetry, and boundary audits. A passing summary writes
+`next_required_change=xunce_release_governance_gate`; it does not publish,
+install, replace default policy, connect an executor, or start online canary
+traffic.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world
