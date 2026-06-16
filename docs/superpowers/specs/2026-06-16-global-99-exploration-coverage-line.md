@@ -507,6 +507,17 @@ release-blocking network bottleneck. A passing summary writes
 `next_required_change=topology_observation_contract`; this is an additive
 observation-contract gate, not a training approval.
 
+The fourth gate is `Xunce Topology Observation Contract v1`, with runner
+`scripts/run_xunce_topology_observation_contract.py`, config
+`configs/xunce_topology_observation_contract_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_topology_observation_contract_v1/`. It
+defines optional candidate topology fields, candidate-edge fields, and compact
+coverage-memory fields while preserving `policy-observation/v1.1`,
+`action_mask`, candidate order, missing indicators, old checkpoint/scorer
+compatibility, and all release boundaries. A passing summary writes
+`next_required_change=topology_feature_extraction_audit`; extraction and model
+implementation remain later stages.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

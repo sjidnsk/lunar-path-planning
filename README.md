@@ -4318,6 +4318,23 @@ The output root is
 Passing does not approve training; it writes
 `next_required_change=topology_observation_contract`.
 
+`Xunce Topology Observation Contract v1` is the Stage 3 gate. It defines an
+additive contract for candidate topology fields, candidate-edge fields, and a
+compact coverage-memory token while preserving `policy-observation/v1.1`,
+`action_mask`, candidate order, missing indicators, old checkpoint/scorer
+compatibility, and closed release boundaries. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_topology_observation_contract.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_topology_observation_contract_v1/`. Passing
+writes `next_required_change=topology_feature_extraction_audit`. It is still
+contract design only, not feature extraction, model implementation, training,
+or checkpoint publication.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

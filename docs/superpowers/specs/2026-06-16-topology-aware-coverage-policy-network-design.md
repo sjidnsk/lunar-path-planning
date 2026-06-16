@@ -273,6 +273,12 @@ artifacts. Each stage should be committed and pushed separately.
    - Design additive topology/edge/memory fields.
    - Preserve `policy-observation/v1.1`, candidate mask, old checkpoint loading,
      and scorer compatibility.
+   - Current implementation target:
+     `scripts/run_xunce_topology_observation_contract.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_topology_observation_contract_v1/`.
+   - Passing next gate: `topology_feature_extraction_audit`.
+   - This gate writes a contract only; field extraction starts in Stage 4.
 4 Topology Feature Extraction Audit
    - Verify stable generation of frontier cluster, ROI group, BFS distance,
      coverage overlap, revisit, budget, fallback risk, and missing indicators.
