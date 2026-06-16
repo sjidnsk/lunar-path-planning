@@ -4283,6 +4283,22 @@ The output root is
 is to refresh Current-HEAD evidence before any literature/bottleneck review or
 architecture prototype.
 
+`Xunce Current-HEAD Evidence Refresh v1` is the Stage 1 gate. It consumes the
+Stage 0 freeze summary plus Global 99 controlled-installation, real-map replay,
+real-map multi-ROI, and network-readiness summaries. It requires the active
+checkout to be clean, treats dirty or mismatched declared git provenance as a
+blocker, and records legacy missing provenance explicitly rather than silently
+claiming it is current. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_current_head_evidence_refresh.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_current_head_evidence_refresh_v1/`. A passing
+summary writes `next_required_change=network_literature_bottleneck_review`.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

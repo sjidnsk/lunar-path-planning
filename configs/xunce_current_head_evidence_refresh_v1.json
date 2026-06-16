@@ -1,0 +1,12 @@
+{
+  "schema_version": "xunce-current-head-evidence-refresh-config/v1",
+  "source_xunce_design_freeze_root": "outputs/path_feedback_batch_xunce_design_freeze_v1",
+  "source_controlled_installation_root": "outputs/path_feedback_batch_global_99_controlled_default_policy_candidate_installation_preflight_v1",
+  "source_real_map_shadow_replay_root": "outputs/path_feedback_batch_global_99_real_map_shadow_replay_v1",
+  "source_real_map_multi_roi_root": "outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1",
+  "source_network_readiness_root": "outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1",
+  "require_current_worktree_clean": true,
+  "require_stage0_passed": true,
+  "allow_legacy_missing_git_provenance": true,
+  "require_closed_boundaries": true
+}

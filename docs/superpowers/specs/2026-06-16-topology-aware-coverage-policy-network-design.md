@@ -253,6 +253,11 @@ artifacts. Each stage should be committed and pushed separately.
      default-policy candidate installation preflight.
    - If provenance is dirty or source-match fails, repair evidence before
      network research.
+   - Current implementation target:
+     `scripts/run_xunce_current_head_evidence_refresh.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_current_head_evidence_refresh_v1/`.
+   - Passing next gate: `network_literature_bottleneck_review`.
 2 文献与项目瓶颈审计
    - Map literature to actual project bottlenecks.
    - Decide whether the bottleneck is coverage, generalization, fallback,

@@ -485,6 +485,17 @@ executor / online-canary / PPO / network/action-space/default-A* boundaries.
 When it passes, its `next_required_change` is `current_head_evidence_refresh`,
 not architecture prototyping.
 
+The second gate is `Xunce Current-HEAD Evidence Refresh v1`, with runner
+`scripts/run_xunce_current_head_evidence_refresh.py`, config
+`configs/xunce_current_head_evidence_refresh_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_current_head_evidence_refresh_v1/`. It checks
+the Stage 0 freeze summary, controlled-installation evidence, real-map replay,
+real-map multi-ROI evidence, and network-readiness evidence against the current
+checkout. Declared dirty or mismatched git provenance blocks the research line;
+legacy summaries without provenance are counted explicitly and do not silently
+become Current-HEAD proof. A passing summary writes
+`next_required_change=network_literature_bottleneck_review`.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world
