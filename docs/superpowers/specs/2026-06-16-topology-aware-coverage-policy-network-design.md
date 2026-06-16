@@ -262,6 +262,13 @@ artifacts. Each stage should be committed and pushed separately.
    - Map literature to actual project bottlenecks.
    - Decide whether the bottleneck is coverage, generalization, fallback,
      latency, parameter count, or not currently network-related.
+   - Current implementation target:
+     `scripts/run_xunce_network_literature_bottleneck_review.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_network_literature_bottleneck_review_v1/`.
+   - Passing next gate: `topology_observation_contract`.
+   - Passing does not approve training; it only authorizes additive observation
+     contract design.
 3 Topology Observation Contract
    - Design additive topology/edge/memory fields.
    - Preserve `policy-observation/v1.1`, candidate mask, old checkpoint loading,

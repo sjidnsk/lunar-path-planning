@@ -496,6 +496,17 @@ legacy summaries without provenance are counted explicitly and do not silently
 become Current-HEAD proof. A passing summary writes
 `next_required_change=network_literature_bottleneck_review`.
 
+The third gate is `Xunce Network Literature Bottleneck Review v1`, with runner
+`scripts/run_xunce_network_literature_bottleneck_review.py`, config
+`configs/xunce_network_literature_bottleneck_review_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_network_literature_bottleneck_review_v1/`.
+It maps primary literature to actual project bottlenecks and reports whether
+the evidence indicates coverage/generalization, fallback/policy regression,
+latency/parameter evidence, topology representation, or no current
+release-blocking network bottleneck. A passing summary writes
+`next_required_change=topology_observation_contract`; this is an additive
+observation-contract gate, not a training approval.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

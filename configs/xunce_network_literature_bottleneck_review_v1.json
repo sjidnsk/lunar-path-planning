@@ -1,0 +1,71 @@
+{
+  "schema_version": "xunce-network-literature-bottleneck-review-config/v1",
+  "source_current_head_evidence_refresh_root": "outputs/path_feedback_batch_xunce_current_head_evidence_refresh_v1",
+  "source_network_readiness_root": "outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1",
+  "source_multi_map_root": "outputs/path_feedback_batch_global_99_multi_map_generalization_v1",
+  "source_real_map_multi_roi_root": "outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1",
+  "policy_architectures_path": "model-explorer/src/model_explorer/policy/architectures.py",
+  "policy_features_path": "model-explorer/src/model_explorer/policy/features.py",
+  "min_literature_reference_count": 6,
+  "max_policy_guard_fallback_rate": 0.05,
+  "require_current_head_refresh_passed": true,
+  "require_closed_boundaries": true,
+  "literature_references": [
+    {
+      "id": "deep_sets",
+      "title": "Deep Sets",
+      "url": "https://arxiv.org/abs/1703.06114",
+      "family": "set_representation",
+      "project_relevance": "candidate set permutation invariance"
+    },
+    {
+      "id": "set_transformer",
+      "title": "Set Transformer",
+      "url": "https://arxiv.org/abs/1810.00825",
+      "family": "set_attention",
+      "project_relevance": "candidate-set attention before topology edges"
+    },
+    {
+      "id": "attention_routing",
+      "title": "Attention, Learn to Solve Routing Problems!",
+      "url": "https://arxiv.org/abs/1803.08475",
+      "family": "routing_attention",
+      "project_relevance": "waypoint/frontier ranking inspiration"
+    },
+    {
+      "id": "graph_attention_networks",
+      "title": "Graph Attention Networks",
+      "url": "https://arxiv.org/abs/1710.10903",
+      "family": "graph_attention",
+      "project_relevance": "candidate topology and edge-biased message passing"
+    },
+    {
+      "id": "decision_transformer",
+      "title": "Decision Transformer",
+      "url": "https://arxiv.org/abs/2106.01345",
+      "family": "sequence_memory",
+      "project_relevance": "trajectory and coverage-history conditioning"
+    },
+    {
+      "id": "mamba",
+      "title": "Mamba",
+      "url": "https://arxiv.org/abs/2312.00752",
+      "family": "efficient_sequence_memory",
+      "project_relevance": "future lightweight memory token investigation"
+    },
+    {
+      "id": "active_neural_slam",
+      "title": "Active Neural SLAM",
+      "url": "https://arxiv.org/abs/2004.05155",
+      "family": "modular_exploration",
+      "project_relevance": "learning around planning boundaries without executor takeover"
+    },
+    {
+      "id": "neural_astar",
+      "title": "Neural A*",
+      "url": "https://arxiv.org/abs/2009.07476",
+      "family": "learned_planning_diagnostic",
+      "project_relevance": "diagnostic inspiration only; not path-planner release proof"
+    }
+  ]
+}

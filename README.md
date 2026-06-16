@@ -4299,6 +4299,25 @@ The output root is
 `outputs/path_feedback_batch_xunce_current_head_evidence_refresh_v1/`. A passing
 summary writes `next_required_change=network_literature_bottleneck_review`.
 
+`Xunce Network Literature Bottleneck Review v1` is the Stage 2 gate. It maps
+primary research sources for set ranking, graph attention, routing attention,
+sequence memory, modular exploration, and learned-planning diagnostics to the
+actual project evidence. It also reads the current architecture inventory
+(`mlp_v1`, `mlp_missing_v1`, `candidate_attention_v1`) and Global 99 evidence to
+decide whether the current bottleneck is coverage/generalization, fallback /
+policy regression, latency/parameter evidence, topology representation, or no
+current release-blocking network bottleneck. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_network_literature_bottleneck_review.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_network_literature_bottleneck_review_v1/`.
+Passing does not approve training; it writes
+`next_required_change=topology_observation_contract`.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
