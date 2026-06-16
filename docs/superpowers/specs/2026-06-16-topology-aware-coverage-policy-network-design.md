@@ -409,8 +409,16 @@ artifacts. Each stage should be committed and pushed separately.
    - This is not default-policy installation.
    - Passing next gate: `xunce_release_governance_gate`.
 17 发布治理门禁
-   - Only after all prior gates pass may it enter release governance.
-   - This still does not directly replace default policy.
+   - Current implementation target:
+     `scripts/run_xunce_release_governance_gate.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_release_governance_gate_v1/`.
+   - Audit evidence lineage, release scope, boundary fields, and final
+     governance verdict from the sandbox candidate evidence.
+   - Passing next gate: `xunce_research_track_complete`.
+   - This completes the research evidence chain only; it still does not approve
+     default-policy replacement, real-world release, executor connection, or
+     online canary traffic.
 
 ## Acceptance Criteria
 

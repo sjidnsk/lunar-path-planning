@@ -657,6 +657,17 @@ rollback, telemetry, and boundary audits. A passing summary writes
 install, replace default policy, connect an executor, or start online canary
 traffic.
 
+The eighteenth gate is `Xunce Release Governance Gate v1`, with runner
+`scripts/run_xunce_release_governance_gate.py`, config
+`configs/xunce_release_governance_gate_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_release_governance_gate_v1/`. It audits
+lineage, scope, and release boundaries from the sandbox candidate evidence. A
+passing summary writes `next_required_change=xunce_research_track_complete` and
+`release_governance_verdict=research_candidate_ready_for_human_governance_review`.
+This completes the 巡策 research evidence chain only; it does not approve
+default-policy replacement, real-world release, checkpoint publication, executor
+connection, or online canary traffic.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

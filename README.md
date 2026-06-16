@@ -4558,6 +4558,24 @@ writes `next_required_change=xunce_release_governance_gate`. This stage creates
 a sandbox package only; `publishes_checkpoint=false`,
 `replaces_default_policy=false`, and `connects_real_executor=false`.
 
+`Xunce Release Governance Gate v1` is the Stage 17 final research-chain
+governance gate. It consumes the sandbox candidate preflight summary, audits
+lineage, scope, and closed release boundaries, and writes the final 巡策 research
+verdict. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_release_governance_gate.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_release_governance_gate_v1/`. Passing writes
+`next_required_change=xunce_research_track_complete` and
+`release_governance_verdict=research_candidate_ready_for_human_governance_review`.
+This completes the research evidence chain only; it keeps
+`default_policy_replacement_approved=false`, `real_world_release_approved=false`,
+`publishes_checkpoint=false`, and `connects_real_executor=false`.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
