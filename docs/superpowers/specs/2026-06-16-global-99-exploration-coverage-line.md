@@ -531,6 +531,18 @@ ordering, and closed release/training/executor boundaries. A passing summary
 writes `next_required_change=topology_aware_coverage_graph_proto`; this
 authorizes only the small prototype stage, not training or release.
 
+The sixth gate is `Xunce Topology Graph Prototype v1`, with runner
+`scripts/run_xunce_topology_graph_proto.py`, config
+`configs/xunce_topology_graph_proto_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_topology_graph_proto_v1/`. It consumes Stage
+4 candidate, edge, and memory-token artifacts and runs a research-only
+`topology_aware_coverage_graph_proto_v1` PyTorch forward audit. It verifies
+finite masked logits, valid action probabilities, scalar value output, positive
+candidate graph and memory-token usage, parameter count, latency, and closed
+release boundaries. A passing summary writes
+`next_required_change=xunce_proto_mechanism_validation`; this is not training,
+checkpoint publication, or default-policy installation.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

@@ -4356,6 +4356,24 @@ authorizes only the small prototype stage; it is not a network implementation,
 training run, checkpoint publication, default-policy replacement, or executor
 connection.
 
+`Xunce Topology Graph Prototype v1` is the Stage 5 gate. It consumes Stage 4
+candidate, edge, and memory-token artifacts, builds a small research-only
+`topology_aware_coverage_graph_proto_v1` PyTorch module, and audits that the
+candidate graph plus memory token can produce finite masked logits, action
+probabilities, and a scalar value. The prototype is not registered as a
+production trainable/default-policy architecture. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_topology_graph_proto.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_topology_graph_proto_v1/`. Passing writes
+`next_required_change=xunce_proto_mechanism_validation`. It authorizes only
+Stage 6 mechanism validation; it does not train, write a checkpoint, publish a
+checkpoint, replace default policy, connect an executor, or claim performance.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

@@ -291,6 +291,11 @@ artifacts. Each stage should be committed and pushed separately.
 5 小型巡策原型
    - Implement `topology_aware_coverage_graph_proto_v1`.
    - Verify candidate graph plus memory token can output masked logits/value.
+   - Current implementation target:
+     `scripts/run_xunce_topology_graph_proto.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_topology_graph_proto_v1/`.
+   - Passing next gate: `xunce_proto_mechanism_validation`.
    - No checkpoint publication.
 6 原型机制验证
    - Prove topology/memory signals can alter ranking without breaking masks,
