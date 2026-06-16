@@ -4411,6 +4411,23 @@ contrast audit only: it may justify designing the complete Xunce network v1, but
 it does not train, publish a checkpoint, register a production architecture,
 replace default policy, connect an executor, or claim real-world performance.
 
+`Xunce Full Network v1` is the Stage 8 research-network gate. It implements a
+research-only `xunce_full_network_v1` PyTorch module with a candidate graph
+encoder, edge encoder, topology-biased message passing, coverage-memory token,
+ROI/budget context fusion, masked policy logits, and scalar value head. Run it
+with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_full_network_v1.sh
+```
+
+The output root is `outputs/path_feedback_batch_xunce_full_network_v1/`.
+Passing writes `next_required_change=full_network_static_contract_validation`.
+This implements the complete research network forward contract, but it still
+does not train, publish a checkpoint, register a production/default-policy
+architecture, replace default policy, connect an executor, or claim performance.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

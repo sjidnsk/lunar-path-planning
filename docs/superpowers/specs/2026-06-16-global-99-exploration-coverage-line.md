@@ -567,6 +567,17 @@ boundary closure. A passing summary writes
 complete Xunce network v1 design stage, not training, checkpoint publication, or
 default-policy installation.
 
+The ninth gate is `Xunce Full Network v1`, with runner
+`scripts/run_xunce_full_network_v1.py`, config
+`configs/xunce_full_network_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_full_network_v1/`. It implements the
+research-only `xunce_full_network_v1` forward module with candidate graph
+encoding, topology-biased message passing, coverage-memory token, ROI/budget
+fusion, masked logits, and value head. A passing summary writes
+`next_required_change=full_network_static_contract_validation`; this is still a
+research forward-contract gate, not training, checkpoint publication,
+production architecture registration, or default-policy installation.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

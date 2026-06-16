@@ -321,6 +321,13 @@ artifacts. Each stage should be committed and pushed separately.
    - Build candidate graph encoder, topology-biased attention/message passing,
      coverage memory token, ROI/family/budget fusion, masked logits, value head,
      and metadata compatibility.
+   - Current implementation target:
+     `scripts/run_xunce_full_network_v1.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_full_network_v1/`.
+   - Passing next gate: `full_network_static_contract_validation`.
+   - This implements a research-only forward module, not production architecture
+     registration or training.
 9 完整网络静态合同验证
    - Verify shape, mask, metadata, missing-field handling, and old-observation
      compatibility.
