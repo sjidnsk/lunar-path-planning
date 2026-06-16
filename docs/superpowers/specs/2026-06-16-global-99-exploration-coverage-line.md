@@ -587,6 +587,15 @@ and legacy/additive-observation compatibility. A passing summary writes
 `next_required_change=full_network_ablation_experiments`; this is a static
 contract gate only, not a performance proof or training approval.
 
+The eleventh gate is `Xunce Full Network Ablation Experiments v1`, with runner
+`scripts/run_xunce_full_network_ablation_experiments.py`, config
+`configs/xunce_full_network_ablation_experiments_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_full_network_ablation_experiments_v1/`. It
+audits module contribution by comparing full logits with topology, memory,
+context, and missing-indicator ablations. A passing summary writes
+`next_required_change=full_network_stress_evaluation`; this is not training or
+performance evidence.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

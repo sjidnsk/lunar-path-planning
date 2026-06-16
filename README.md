@@ -4443,6 +4443,22 @@ Passing writes `next_required_change=full_network_ablation_experiments`. This
 is a static contract gate only; it does not prove performance and does not
 train, publish, install, or connect an executor.
 
+`Xunce Full Network Ablation Experiments v1` is the Stage 10 gate. It compares a
+full `xunce_full_network_v1` forward pass with deterministic ablations for
+topology edges, coverage memory, ROI/budget context, and missing indicators.
+Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_full_network_ablation_experiments.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_full_network_ablation_experiments_v1/`.
+Passing writes `next_required_change=full_network_stress_evaluation`. This is a
+module-contribution audit only; it does not train, publish, install, or connect
+an executor.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

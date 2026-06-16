@@ -1,0 +1,18 @@
+{
+  "schema_version": "xunce-full-network-ablation-experiments-config/v1",
+  "source_static_contract_root": "outputs/path_feedback_batch_xunce_full_network_static_contract_validation_v1",
+  "architecture": "xunce_full_network_v1",
+  "candidate_count": 5,
+  "edge_count": 10,
+  "candidate_feature_count": 9,
+  "edge_feature_count": 6,
+  "memory_feature_count": 7,
+  "context_feature_count": 6,
+  "missing_indicator_count": 9,
+  "hidden_dim": 16,
+  "message_passing_layers": 2,
+  "dropout": 0.0,
+  "seed": 23,
+  "min_logit_delta": 1e-8,
+  "action_mask": [true, false, true, true, true]
+}

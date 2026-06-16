@@ -340,6 +340,12 @@ artifacts. Each stage should be committed and pushed separately.
 10 完整网络消融实验
    - Isolate candidate graph, topology bias, memory token, ROI/family context,
      and budget fusion contributions.
+   - Current implementation target:
+     `scripts/run_xunce_full_network_ablation_experiments.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_full_network_ablation_experiments_v1/`.
+   - Passing next gate: `full_network_stress_evaluation`.
+   - This gate verifies module contribution only, not performance.
 11 完整网络压力评测
    - Test candidate count, missing fields, no-NaN behavior, latency, parameters,
      fallback rate, and deterministic replay stability.
