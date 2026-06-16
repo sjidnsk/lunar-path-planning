@@ -4650,6 +4650,29 @@ jq '{status,reason_codes,real_map_shadow_canary_preflight_verdict,next_required_
   outputs/path_feedback_batch_global_99_real_map_shadow_canary_preflight_v1/global-99-real-map-shadow-canary-preflight-summary.json
 ```
 
+`Global 99 Real Map Shadow Canary Replay v1` is implemented as an offline
+real-map shadow/canary replay audit, not as an online canary. Its runner is
+`scripts/run_global_99_real_map_shadow_canary_replay.py`, shell entrypoint is
+`scripts/run_global_99_real_map_shadow_canary_replay.sh`, default config is
+`configs/global_99_real_map_shadow_canary_replay_v1.json`, and output root is
+`outputs/path_feedback_batch_global_99_real_map_shadow_canary_replay_v1/`. It
+consumes real-map shadow/canary preflight, real-map release-governance, and
+real-map shadow-replay summaries, compares deterministic source-match evidence,
+fallback, telemetry, rollback, and boundary state, and keeps online canary
+traffic at zero. When replay evidence is stable, it sets
+`next_required_change=global_99_real_map_evidence_refresh_drift_audit`.
+
+Run the fourteenth-stage real-map shadow/canary replay with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_real_map_shadow_canary_replay.py -q
+PYTHON=$PY bash scripts/run_global_99_real_map_shadow_canary_replay.sh
+jq '{status,reason_codes,real_map_shadow_canary_replay_verdict,next_required_change,source_match_audit_passed,scenario_mismatch_count,max_replay_coverage_delta,max_replay_path_cost_delta_m,open_grid_fallback_used,policy_guard_fallback_rate,boundary_audit_passed,starts_online_canary,canary_traffic_fraction,connects_real_executor,replaces_default_policy}' \
+  outputs/path_feedback_batch_global_99_real_map_shadow_canary_replay_v1/global-99-real-map-shadow-canary-replay-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
