@@ -4000,6 +4000,35 @@ replacement and keeps `checkpoint_publication_approved=false`,
 `real_executor_connection_approved=false`, `publishes_checkpoint=false`,
 `replaces_default_policy=false`, and `connects_real_executor=false`.
 
+The current Stage 16 result is `status=passed` with `reason_codes=[]`,
+`authorization_verdict=eligible_for_default_policy_candidate_sandbox_install_preflight`,
+`default_policy_candidate_authorization_preflight_passed=true`,
+`kill_switch_audit_passed=true`, `rollback_audit_passed=true`,
+`default_policy_boundary_audit_passed=true`,
+`path_planner_isolation_audit_passed=true`, and
+`release_boundary_audit_passed=true`. This closes the planned release-governance
+front half: the candidate checkpoint has passed sandbox install verification,
+sandbox consumer replay/canary, and default-policy-candidate authorization
+preflight. The project intentionally pauses further release governance here and
+does not proceed to `default_policy_candidate_sandbox_install_preflight` until
+the next algorithm gap-closure evidence is stronger.
+
+The next model-explorer mainline target is **Family-Balanced Algorithm Gap
+Closure v1**. It resumes algorithm work from the current 5B.7 cost-efficiency
+candidate and the Stage 16 sandbox/authorization evidence, but it does not
+publish checkpoints, replace the default policy, connect a real executor, run
+default-policy installation, relax guards, change network/action space/default
+A*, or claim real-world performance. The first gap is family balance:
+`low_observation_count` remains thin in the 5B.7 trainable set
+(`low_observation_count=9` versus `mixed_risk=231`,
+`rim_or_steep_slope=186`, and `smooth_high_confidence=195`). The next algorithm
+work should therefore improve low-observation candidate generation and
+source-backed counterfactual coverage, rerun coverage-driven PPO only after the
+family-balanced inputs are valid, and then validate exploration coverage,
+cost-efficiency, fallback contamination, controlled regression, and holdout /
+scenario / context-disjoint generalization before any further default-policy
+installation preflight.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
