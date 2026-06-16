@@ -4233,7 +4233,8 @@ Global 99% Coverage Benchmark v1
   -> Coverage Memory + Replanning Loop v1
   -> Policy-Guided Global Coverage v1
   -> 99% Multi-Map Generalization v1
-  -> Network Architecture Upgrade v1
+  -> Network Architecture Upgrade Readiness Review v1
+  -> Network Architecture Upgrade v1 (only if evidence supports it)
   -> 99% Coverage Release Governance v1
 ```
 
@@ -4364,12 +4365,47 @@ jq '{status,reason_codes,scenario_count,passed_scenario_count,failed_scenario_co
   outputs/path_feedback_batch_global_99_multi_map_generalization_v1/global-99-multi-map-generalization-summary.json
 ```
 
-`Network Architecture Upgrade v1` starts only if a readiness review of the
-multi-map evidence shows the policy network is the actual bottleneck; candidate
-upgrades include residual MLP, gated MLP, candidate-set encoder, lightweight
-attention, and graph/region encoder variants. `99% Coverage Release Governance
-v1` starts only after the 99% reachable-coverage target is evidence-backed in
-shadow/canary form.
+`Network Architecture Upgrade Readiness Review v1` is implemented as an audit
+gate, not a network upgrade. Its runner is
+`scripts/run_network_architecture_upgrade_readiness_review.py`, shell
+entrypoint is `scripts/run_network_architecture_upgrade_readiness_review.sh`,
+default config is
+`configs/network_architecture_upgrade_readiness_review_v1.json`, and output
+root is
+`outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/`.
+It consumes the multi-map summary, family summary, policy-vs-baseline audit,
+and scenario results, then writes readiness summary, evidence audit,
+bottleneck attribution, recommendation report, manifest, and rejection report
+artifacts. If the synthetic multi-map evidence remains stable, required
+scenarios all pass, policy has positive divergence, policy worse count is zero,
+controlled regression is zero, and fallback rate is low, the review defers
+network changes and sets
+`next_required_change=global_99_release_governance_preflight`.
+
+Run the sixth-stage readiness review with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py \
+  tests/test_network_architecture_upgrade_readiness_review.py -q
+PYTHON=$PY bash scripts/run_network_architecture_upgrade_readiness_review.sh
+jq '{status,reason_codes,network_upgrade_recommended,network_upgrade_readiness_decision,next_required_change,policy_guard_fallback_rate,baseline_agreement_rate,policy_better_than_baseline_count,policy_worse_than_baseline_count,controlled_regression_count,modifies_network,runs_new_ppo_update,publishes_checkpoint,replaces_default_policy}' \
+  outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/network-architecture-upgrade-readiness-summary.json
+```
+
+`Network Architecture Upgrade v1` starts only if the readiness review recommends
+it because the evidence points to policy regression, excessive guard fallback,
+or another network-expression bottleneck. Candidate upgrades include residual
+MLP, gated MLP, candidate-set encoder, lightweight attention, and graph/region
+encoder variants. If the review does not recommend a network upgrade, the next
+step is `global_99_release_governance_preflight` or a higher-fidelity real-map
+validation preflight. `99% Coverage Release Governance v1` starts only after the
+99% reachable-coverage target is evidence-backed in shadow/canary form.
 
 This line must not disturb the family-balanced publication chain. It does not
 replace default policy, connect a real executor, relax guards, modify the

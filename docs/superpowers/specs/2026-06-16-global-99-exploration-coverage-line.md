@@ -147,6 +147,30 @@ The fifth-stage artifact names are:
 - `global-99-multi-map-rejection-report.json`
 - `global-99-multi-map-generalization-report.md`
 
+The sixth-stage readiness-review runner and config are:
+
+```text
+scripts/run_network_architecture_upgrade_readiness_review.py
+scripts/run_network_architecture_upgrade_readiness_review.sh
+configs/network_architecture_upgrade_readiness_review_v1.json
+tests/test_network_architecture_upgrade_readiness_review.py
+```
+
+The sixth-stage output root is:
+
+```text
+outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/
+```
+
+The sixth-stage artifact names are:
+
+- `network-architecture-upgrade-readiness-summary.json`
+- `network-architecture-upgrade-evidence-audit.json`
+- `network-architecture-upgrade-bottleneck-attribution.json`
+- `network-architecture-upgrade-recommendation-report.md`
+- `network-architecture-upgrade-readiness-manifest.json`
+- `network-architecture-upgrade-rejection-report.json`
+
 Expected summary fields:
 
 - `target_coverage_rate=0.99`
@@ -213,15 +237,29 @@ Suggested failure reason codes:
    - When valid, it sets
      `next_required_change=network_architecture_upgrade_readiness_review`.
 
-6. `Network Architecture Upgrade v1`
+6. `Network Architecture Upgrade Readiness Review v1`
+   - Consume existing multi-map summary, family summary, policy-vs-baseline
+     audit, and scenario result artifacts.
+   - Decide whether the evidence actually points to a policy-network
+     bottleneck.
+   - Do not train PPO, add a new architecture, publish a checkpoint, replace
+     default policy, call path-planner, use NPZ/sidecar maps, or connect a real
+     executor.
+   - When evidence is healthy and no network bottleneck is detected, it sets
+     `next_required_change=global_99_release_governance_preflight`.
+   - When policy regression or excessive guard fallback is present, it may set
+     `next_required_change=network_architecture_upgrade_v1`.
+
+7. `Network Architecture Upgrade v1`
    - Start only after the benchmark, baseline, replanning loop, and
-     policy-guided coverage expose a clear network bottleneck.
+     policy-guided coverage plus readiness review expose a clear network
+     bottleneck.
    - Candidate upgrades include residual MLP, gated MLP, candidate-set encoder,
      lightweight attention, and graph/region encoder variants.
    - Compare performance, parameter count, inference latency, and coverage
      generalization against the existing network.
 
-7. `99% Coverage Release Governance v1`
+8. `99% Coverage Release Governance v1`
    - Start only after 99% reachable coverage is evidence-backed in offline
      multi-map shadow/canary validation.
    - Keep it as release governance, not direct default-policy replacement.
@@ -353,6 +391,36 @@ Acceptance:
   all required multi-map scenarios close cleanly.
 - Project docs stay aligned with this development order.
 
+The sixth concrete implementation target for this line is:
+
+```text
+Network Architecture Upgrade Readiness Review v1
+```
+
+Acceptance:
+
+- Reads `configs/network_architecture_upgrade_readiness_review_v1.json`.
+- Consumes existing Global 99 multi-map artifacts from
+  `outputs/path_feedback_batch_global_99_multi_map_generalization_v1/`.
+- Writes readiness summary, evidence audit, bottleneck attribution,
+  recommendation report, manifest, and rejection report artifacts under
+  `outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/`.
+- Summary reports source multi-map status, required scenario counts, aggregate
+  and minimum coverage, policy guidance counters, policy-vs-baseline counters,
+  `policy_guard_fallback_rate`, `network_upgrade_recommended`,
+  `network_upgrade_readiness_decision`, `network_upgrade_blockers`,
+  `bottleneck_attribution`, `candidate_architecture_inventory`, and all required
+  boundary flags.
+- If source multi-map failed or is missing, the review fails and points back to
+  `fix_global_99_multi_map_generalization`.
+- If required scenarios are healthy, policy better count is positive, policy
+  worse count and controlled regression are zero, and fallback rate is low, the
+  review does not recommend a network upgrade and sets
+  `next_required_change=global_99_release_governance_preflight`.
+- If policy regression or excessive guard fallback appears, the review may set
+  `next_required_change=network_architecture_upgrade_v1`.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -364,12 +432,14 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_frontier_coverage_planner_baseline.py \
   tests/test_coverage_memory_replanning_loop.py \
   tests/test_policy_guided_global_coverage.py \
-  tests/test_global_99_multi_map_generalization.py -q
+  tests/test_global_99_multi_map_generalization.py \
+  tests/test_network_architecture_upgrade_readiness_review.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
 PYTHON=$PY bash scripts/run_policy_guided_global_coverage.sh
 PYTHON=$PY bash scripts/run_global_99_multi_map_generalization.sh
+PYTHON=$PY bash scripts/run_network_architecture_upgrade_readiness_review.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
@@ -380,7 +450,9 @@ jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,policy_loade
   outputs/path_feedback_batch_policy_guided_global_coverage_v1/policy-guided-global-coverage-summary.json
 jq '{status,reason_codes,scenario_count,passed_scenario_count,failed_scenario_count,aggregate_achieved_coverage_rate,min_scenario_achieved_coverage_rate,policy_guidance_applied,policy_scored_candidate_count,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update}' \
   outputs/path_feedback_batch_global_99_multi_map_generalization_v1/global-99-multi-map-generalization-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|network_architecture_upgrade_readiness_review" \
+jq '{status,reason_codes,network_upgrade_recommended,network_upgrade_readiness_decision,next_required_change,policy_guard_fallback_rate,baseline_agreement_rate,policy_better_than_baseline_count,policy_worse_than_baseline_count,controlled_regression_count,modifies_network,runs_new_ppo_update,publishes_checkpoint,replaces_default_policy}' \
+  outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/network-architecture-upgrade-readiness-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|global_99_release_governance_preflight|network_architecture_upgrade_v1" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
