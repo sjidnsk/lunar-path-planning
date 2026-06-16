@@ -4336,13 +4336,40 @@ jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,policy_loade
   outputs/path_feedback_batch_policy_guided_global_coverage_v1/policy-guided-global-coverage-summary.json
 ```
 
-`99% Multi-Map Generalization v1` verifies the target across multiple maps,
-starts, ROI shapes, obstacle fields, and risk distributions. `Network
-Architecture Upgrade v1` starts only if those benchmarks show the policy
-network is the actual bottleneck; candidate upgrades include residual MLP,
-gated MLP, candidate-set encoder, lightweight attention, and graph/region
-encoder variants. `99% Coverage Release Governance v1` starts only after the
-99% reachable-coverage target is evidence-backed in shadow/canary form.
+`99% Multi-Map Generalization v1` is implemented as a deterministic synthetic
+multi-map validation matrix. Its runner is
+`scripts/run_global_99_multi_map_generalization.py`, shell entrypoint is
+`scripts/run_global_99_multi_map_generalization.sh`, default config is
+`configs/global_99_multi_map_generalization_v1.json`, and output root is
+`outputs/path_feedback_batch_global_99_multi_map_generalization_v1/`. It
+validates `open_field`, `corridor`, `rooms`, `blocked_roi`, `unsafe_patch`,
+`narrow_passage`, `cells_roi`, and expected-infeasible `budget_limited`
+families, then writes scenario, family, policy-vs-baseline, budget, rejection,
+manifest, summary, and report artifacts. When the required multi-map scenarios
+close cleanly, it sets
+`next_required_change=network_architecture_upgrade_readiness_review`.
+
+Run the fifth-stage multi-map validation with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py -q
+PYTHON=$PY bash scripts/run_global_99_multi_map_generalization.sh
+jq '{status,reason_codes,scenario_count,passed_scenario_count,failed_scenario_count,aggregate_achieved_coverage_rate,min_scenario_achieved_coverage_rate,policy_guidance_applied,policy_scored_candidate_count,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update}' \
+  outputs/path_feedback_batch_global_99_multi_map_generalization_v1/global-99-multi-map-generalization-summary.json
+```
+
+`Network Architecture Upgrade v1` starts only if a readiness review of the
+multi-map evidence shows the policy network is the actual bottleneck; candidate
+upgrades include residual MLP, gated MLP, candidate-set encoder, lightweight
+attention, and graph/region encoder variants. `99% Coverage Release Governance
+v1` starts only after the 99% reachable-coverage target is evidence-backed in
+shadow/canary form.
 
 This line must not disturb the family-balanced publication chain. It does not
 replace default policy, connect a real executor, relax guards, modify the

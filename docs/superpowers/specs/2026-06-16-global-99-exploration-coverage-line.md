@@ -121,6 +121,32 @@ The fourth-stage artifact names are:
 - `policy-guided-global-coverage-rejection-report.json`
 - `policy-guided-global-coverage-report.md`
 
+The fifth-stage runner and config are:
+
+```text
+scripts/run_global_99_multi_map_generalization.py
+scripts/run_global_99_multi_map_generalization.sh
+configs/global_99_multi_map_generalization_v1.json
+tests/test_global_99_multi_map_generalization.py
+```
+
+The fifth-stage output root is:
+
+```text
+outputs/path_feedback_batch_global_99_multi_map_generalization_v1/
+```
+
+The fifth-stage artifact names are:
+
+- `global-99-multi-map-generalization-summary.json`
+- `global-99-multi-map-generalization-manifest.json`
+- `global-99-multi-map-scenario-results.jsonl`
+- `global-99-multi-map-family-summary.json`
+- `global-99-multi-map-policy-vs-baseline-audit.json`
+- `global-99-multi-map-budget-audit.json`
+- `global-99-multi-map-rejection-report.json`
+- `global-99-multi-map-generalization-report.md`
+
 Expected summary fields:
 
 - `target_coverage_rate=0.99`
@@ -184,6 +210,8 @@ Suggested failure reason codes:
      fields, and budget settings.
    - Report per-family and aggregate coverage, budget usage, fallback,
      controlled regression, and infeasibility rates.
+   - When valid, it sets
+     `next_required_change=network_architecture_upgrade_readiness_review`.
 
 6. `Network Architecture Upgrade v1`
    - Start only after the benchmark, baseline, replanning loop, and
@@ -298,6 +326,33 @@ Acceptance:
   policy-guided loop closes cleanly.
 - Project docs stay aligned with this development order.
 
+The fifth concrete implementation target for this line is:
+
+```text
+Global 99 Multi-Map Generalization v1
+```
+
+Acceptance:
+
+- Reads `configs/global_99_multi_map_generalization_v1.json`.
+- Uses deterministic synthetic scenario families:
+  `open_field`, `corridor`, `rooms`, `blocked_roi`, `unsafe_patch`,
+  `narrow_passage`, `cells_roi`, and expected-infeasible `budget_limited`.
+- Reuses the Policy-Guided Global Coverage runner internals for read-only
+  checkpoint loading, frontier candidate scoring, and guarded blended ranking.
+- Writes summary, manifest, scenario results, family summary, policy-vs-baseline
+  audit, budget audit, rejection report, and report artifacts under
+  `outputs/path_feedback_batch_global_99_multi_map_generalization_v1/`.
+- Summary reports scenario/family counts, aggregate and minimum required
+  scenario coverage, policy guidance counters, policy-vs-baseline counters,
+  infeasibility reason codes, and all required boundary flags.
+- Expected-infeasible `budget_limited` scenarios may fail with
+  `insufficient_budget` / `coverage_target_not_met` without failing the overall
+  required-scenario gate.
+- `next_required_change=network_architecture_upgrade_readiness_review` when
+  all required multi-map scenarios close cleanly.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -308,11 +363,13 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
   tests/test_coverage_memory_replanning_loop.py \
-  tests/test_policy_guided_global_coverage.py -q
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
 PYTHON=$PY bash scripts/run_policy_guided_global_coverage.sh
+PYTHON=$PY bash scripts/run_global_99_multi_map_generalization.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
@@ -321,7 +378,9 @@ jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_require
   outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/coverage-memory-replanning-loop-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,policy_loaded,policy_guidance_applied,policy_scored_candidate_count,policy_guard_fallback_count,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update}' \
   outputs/path_feedback_batch_policy_guided_global_coverage_v1/policy-guided-global-coverage-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|global_99_multi_map_generalization" \
+jq '{status,reason_codes,scenario_count,passed_scenario_count,failed_scenario_count,aggregate_achieved_coverage_rate,min_scenario_achieved_coverage_rate,policy_guidance_applied,policy_scored_candidate_count,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update}' \
+  outputs/path_feedback_batch_global_99_multi_map_generalization_v1/global-99-multi-map-generalization-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|network_architecture_upgrade_readiness_review" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
