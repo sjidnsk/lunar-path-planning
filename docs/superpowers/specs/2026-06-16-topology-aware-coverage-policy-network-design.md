@@ -300,6 +300,11 @@ artifacts. Each stage should be committed and pushed separately.
 6 原型机制验证
    - Prove topology/memory signals can alter ranking without breaking masks,
      guarded ranking, or fallback boundaries.
+   - Current implementation target:
+     `scripts/run_xunce_proto_mechanism_validation.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_proto_mechanism_validation_v1/`.
+   - Passing next gate: `architecture_contrast_evaluation`.
 7 架构对比评测
    - Compare `mlp_v1`, `mlp_missing_v1`, `candidate_attention_v1`, and the
      巡策 prototype.

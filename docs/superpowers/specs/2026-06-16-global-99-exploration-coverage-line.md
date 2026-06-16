@@ -543,6 +543,17 @@ release boundaries. A passing summary writes
 `next_required_change=xunce_proto_mechanism_validation`; this is not training,
 checkpoint publication, or default-policy installation.
 
+The seventh gate is `Xunce Prototype Mechanism Validation v1`, with runner
+`scripts/run_xunce_proto_mechanism_validation.py`, config
+`configs/xunce_proto_mechanism_validation_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_proto_mechanism_validation_v1/`. It rebuilds
+the Stage 5 prototype and compares full-signal logits with edge-ablated and
+memory-ablated forward passes. It verifies that topology edges and memory-token
+signals can change candidate ranking while preserving masks, finite outputs,
+fallback safety, and closed release boundaries. A passing summary writes
+`next_required_change=architecture_contrast_evaluation`; this is a mechanism
+gate, not a performance or training claim.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

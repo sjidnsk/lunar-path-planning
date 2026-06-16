@@ -4374,6 +4374,24 @@ The output root is
 Stage 6 mechanism validation; it does not train, write a checkpoint, publish a
 checkpoint, replace default policy, connect an executor, or claim performance.
 
+`Xunce Prototype Mechanism Validation v1` is the Stage 6 gate. It rebuilds the
+Stage 5 research prototype and compares full-signal logits against
+edge-ablated and memory-ablated forward passes. The audit proves that topology
+edges and the memory token can change candidate ranking while preserving action
+masking, finite outputs, fallback safety, and closed release/training/executor
+boundaries. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_proto_mechanism_validation.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_proto_mechanism_validation_v1/`. Passing
+writes `next_required_change=architecture_contrast_evaluation`. It is still a
+mechanism audit, not evidence that the prototype improves coverage and not
+approval to train or publish.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
