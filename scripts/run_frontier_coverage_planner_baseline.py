@@ -13,15 +13,17 @@ if str(SCRIPT_DIR) not in sys.path:
 
 try:
     from git_provenance import git_snapshot
+    from frontier_coverage_planner_common import (
+        coverage_rate,
+        frontier_cells,
+        score_frontier_candidate,
+        select_frontier_candidate,
+    )
     from global_99_coverage_contract import (
         ConfigError,
         TOLERANCE,
-        bfs_tree,
-        connected_components,
         coverage_footprint,
         load_global_99_config,
-        neighbors4,
-        reconstruct_path,
         resolve_path,
         scenario_geometry,
         unique_sorted,
@@ -31,15 +33,17 @@ try:
     )
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
+    from scripts.frontier_coverage_planner_common import (
+        coverage_rate,
+        frontier_cells,
+        score_frontier_candidate,
+        select_frontier_candidate,
+    )
     from scripts.global_99_coverage_contract import (
         ConfigError,
         TOLERANCE,
-        bfs_tree,
-        connected_components,
         coverage_footprint,
         load_global_99_config,
-        neighbors4,
-        reconstruct_path,
         resolve_path,
         scenario_geometry,
         unique_sorted,
@@ -232,21 +236,6 @@ def run_frontier_coverage_planner_baseline(
     return summary
 
 
-def score_frontier_candidate(
-    *,
-    path_cost_m: float,
-    revisited_path_cell_count: int,
-    new_covered_cell_count: int,
-    revisit_penalty_weight: float,
-    new_coverage_weight: float,
-) -> float:
-    return (
-        path_cost_m
-        + revisit_penalty_weight * revisited_path_cell_count
-        - new_coverage_weight * new_covered_cell_count
-    )
-
-
 def _run_frontier_scenario(
     scenario: dict[str, Any],
     *,
@@ -301,15 +290,15 @@ def _run_frontier_scenario(
     )
 
     step_index = 1
-    while _coverage_rate(covered_target_cells, target_cells) + TOLERANCE < target_coverage_rate:
+    while coverage_rate(covered_target_cells, target_cells) + TOLERANCE < target_coverage_rate:
         if step_index > frontier_step_limit:
             frontier_step_limit_exhausted = True
             break
-        frontier = _frontier_cells(coverage_map_cells, navigation_cells)
+        frontier = frontier_cells(coverage_map_cells, navigation_cells)
         if not frontier:
             frontier_exhausted = True
             break
-        candidate = _select_frontier_candidate(
+        candidate = select_frontier_candidate(
             current_cell=current_cell,
             frontier=frontier,
             navigation_cells=navigation_cells,
@@ -384,7 +373,7 @@ def _run_frontier_scenario(
         )
         step_index += 1
 
-    target_met = bool(target_cells) and _coverage_rate(covered_target_cells, target_cells) + TOLERANCE >= target_coverage_rate
+    target_met = bool(target_cells) and coverage_rate(covered_target_cells, target_cells) + TOLERANCE >= target_coverage_rate
     if not target_cells:
         reason_codes.append("coverage_denominator_invalid")
     if not target_met and target_cells:
@@ -410,7 +399,7 @@ def _run_frontier_scenario(
     if target_cells and not target_met:
         infeasible_reason_codes.append("coverage_target_not_met")
 
-    achieved = _coverage_rate(covered_target_cells, target_cells)
+    achieved = coverage_rate(covered_target_cells, target_cells)
     return {
         "scenario_id": scenario_id,
         "status": "passed" if not reason_codes else "failed",
@@ -438,89 +427,6 @@ def _run_frontier_scenario(
     }
 
 
-def _select_frontier_candidate(
-    *,
-    current_cell: Cell,
-    frontier: set[Cell],
-    navigation_cells: set[Cell],
-    target_cells: set[Cell],
-    covered_target_cells: set[Cell],
-    coverage_map_cells: set[Cell],
-    width: int,
-    height: int,
-    resolution_m: float,
-    coverage_radius_cells: int,
-    revisit_penalty_weight: float,
-    new_coverage_weight: float,
-) -> dict[str, Any] | None:
-    distance, parent = bfs_tree(current_cell, navigation_cells)
-    components = connected_components(frontier)
-    cluster_candidates: list[dict[str, Any]] = []
-    for cluster_index, component in enumerate(components):
-        component_candidates: list[dict[str, Any]] = []
-        for cell in sorted(component, key=lambda item: (item[1], item[0])):
-            if cell not in distance:
-                continue
-            path = reconstruct_path(parent, cell)
-            path_cells = set(path)
-            footprint = coverage_footprint(cell, width, height, coverage_radius_cells) & navigation_cells
-            event_cells = footprint | path_cells
-            new_target_cells = (event_cells & target_cells) - covered_target_cells
-            revisited_path_cell_count = sum(1 for path_cell in path if path_cell in coverage_map_cells)
-            path_cost_m = distance[cell] * resolution_m
-            score = score_frontier_candidate(
-                path_cost_m=path_cost_m,
-                revisited_path_cell_count=revisited_path_cell_count,
-                new_covered_cell_count=len(new_target_cells),
-                revisit_penalty_weight=revisit_penalty_weight,
-                new_coverage_weight=new_coverage_weight,
-            )
-            component_candidates.append(
-                {
-                    "cluster_index": cluster_index,
-                    "selected_waypoint": cell,
-                    "path": path,
-                    "event_cells": event_cells,
-                    "new_target_cell_count": len(new_target_cells),
-                    "revisited_path_cell_count": revisited_path_cell_count,
-                    "path_cost_m": path_cost_m,
-                    "score": score,
-                    "frontier_cluster_count": len(components),
-                }
-            )
-        if component_candidates:
-            component_candidates.sort(
-                key=lambda candidate: (
-                    -candidate["new_target_cell_count"],
-                    candidate["path_cost_m"],
-                    candidate["selected_waypoint"][1],
-                    candidate["selected_waypoint"][0],
-                )
-            )
-            cluster_candidates.append(component_candidates[0])
-    if not cluster_candidates:
-        return None
-    cluster_candidates.sort(
-        key=lambda candidate: (
-            candidate["score"],
-            -candidate["new_target_cell_count"],
-            candidate["path_cost_m"],
-            candidate["selected_waypoint"][1],
-            candidate["selected_waypoint"][0],
-        )
-    )
-    return cluster_candidates[0]
-
-
-def _frontier_cells(coverage_map_cells: set[Cell], navigation_cells: set[Cell]) -> set[Cell]:
-    uncovered_navigation = navigation_cells - coverage_map_cells
-    return {
-        cell
-        for cell in uncovered_navigation
-        if any(neighbor in coverage_map_cells for neighbor in neighbors4(cell))
-    }
-
-
 def _append_plan_and_ledger_row(
     *,
     plan_rows: list[dict[str, Any]],
@@ -544,7 +450,7 @@ def _append_plan_and_ledger_row(
     frontier_cluster_count: int,
     choice_reason: str,
 ) -> None:
-    achieved = _coverage_rate(covered_target_cells, target_cells)
+    achieved = coverage_rate(covered_target_cells, target_cells)
     plan_rows.append(
         {
             "schema_version": PLAN_ROW_SCHEMA_VERSION,
@@ -783,10 +689,6 @@ def _render_report(summary: dict[str, Any], rejection_report: dict[str, Any]) ->
         ]
     )
     return "\n".join(lines)
-
-
-def _coverage_rate(covered_cells: set[Cell], target_cells: set[Cell]) -> float:
-    return len(covered_cells) / len(target_cells) if target_cells else 0.0
 
 
 def _int(value: Any, label: str) -> int:

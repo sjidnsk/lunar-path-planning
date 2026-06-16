@@ -4284,8 +4284,30 @@ jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_require
   outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/frontier-coverage-planner-baseline-summary.json
 ```
 
-`Coverage Memory + Replanning Loop v1` adds persistent global coverage memory
-and repeated frontier selection from still-uncovered reachable safe cells.
+`Coverage Memory + Replanning Loop v1` is implemented as a deterministic
+memory-backed replanning loop over the same synthetic contract. Its runner is
+`scripts/run_coverage_memory_replanning_loop.py`, shell entrypoint is
+`scripts/run_coverage_memory_replanning_loop.sh`, default config is
+`configs/coverage_memory_replanning_loop_v1.json`, and output root is
+`outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/`. It persists
+coverage memory snapshots, replans toward still-uncovered frontier cells, writes
+trace, snapshot, ledger, budget audit, rejection, and report artifacts, and
+sets `next_required_change=policy_guided_global_coverage` when the memory loop
+closes cleanly.
+
+Run the third-stage replanning loop with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py -q
+PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
+jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,memory_resume_verified,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
+  outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/coverage-memory-replanning-loop-summary.json
+```
+
 `Policy-Guided Global Coverage v1` lets the current PPO policy participate in
 global frontier or waypoint ranking, while preserving the stable
 model-explorer/path-feedback/path-planner contracts. `99% Multi-Map

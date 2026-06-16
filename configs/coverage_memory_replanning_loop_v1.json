@@ -1,0 +1,12 @@
+{
+  "schema_version": "coverage-memory-replanning-loop-config/v1",
+  "source_frontier_baseline_config": "configs/frontier_coverage_planner_baseline_v1.json",
+  "source_global_99_config": "configs/global_99_coverage_benchmark_v1.json",
+  "target_coverage_rate": 0.99,
+  "path_budget_m": 5000.0,
+  "coverage_radius_cells": 30,
+  "replanning_cycle_limit": 64,
+  "segment_step_limit": 64,
+  "memory_snapshot_interval": 1,
+  "resume_from_memory_snapshot": null
+}

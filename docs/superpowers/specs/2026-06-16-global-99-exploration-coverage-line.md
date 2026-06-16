@@ -67,6 +67,32 @@ The second-stage artifact names are:
 - `frontier-coverage-rejection-report.json`
 - `frontier-coverage-planner-baseline-report.md`
 
+The third-stage runner and config are:
+
+```text
+scripts/run_coverage_memory_replanning_loop.py
+scripts/run_coverage_memory_replanning_loop.sh
+configs/coverage_memory_replanning_loop_v1.json
+tests/test_coverage_memory_replanning_loop.py
+```
+
+The third-stage output root is:
+
+```text
+outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/
+```
+
+The third-stage artifact names are:
+
+- `coverage-memory-replanning-loop-summary.json`
+- `coverage-memory-replanning-loop-manifest.json`
+- `coverage-memory-replanning-trace.jsonl`
+- `coverage-memory-snapshots.jsonl`
+- `coverage-memory-ledger.jsonl`
+- `coverage-memory-budget-audit.json`
+- `coverage-memory-rejection-report.json`
+- `coverage-memory-replanning-loop-report.md`
+
 Expected summary fields:
 
 - `target_coverage_rate=0.99`
@@ -113,6 +139,7 @@ Suggested failure reason codes:
    - Update covered cells after each simulated step or route segment.
    - Replan toward the next uncovered reachable safe frontier until target,
      budget exhaustion, or infeasibility.
+   - When valid, it sets `next_required_change=policy_guided_global_coverage`.
 
 4. `Policy-Guided Global Coverage v1`
    - Let the current PPO policy rank frontiers or waypoints at the global
@@ -185,6 +212,30 @@ Acceptance:
   closes cleanly.
 - Project docs stay aligned with this development order.
 
+The third concrete implementation target for this line is:
+
+```text
+Coverage Memory + Replanning Loop v1
+```
+
+Acceptance:
+
+- Reads `configs/coverage_memory_replanning_loop_v1.json`.
+- Uses the synthetic Global 99 source config and Frontier baseline scoring
+  weights, but still does not use PPO, path-planner, NPZ/sidecar maps, or a real
+  executor.
+- Maintains persistent coverage memory, writes monotonic memory snapshots, and
+  supports deterministic resume from a snapshot.
+- Writes summary, manifest, trace, snapshots, ledger, budget audit, rejection
+  report, and report artifacts under
+  `outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/`.
+- Summary reports `replanning_cycle_count`, `memory_snapshot_count`,
+  `memory_resume_supported`, `memory_resume_verified`,
+  `coverage_memory_complete`, and all required boundary flags.
+- `next_required_change=policy_guided_global_coverage` when the memory loop
+  closes cleanly.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -193,14 +244,18 @@ Implementation validation:
 PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
-  tests/test_frontier_coverage_planner_baseline.py -q
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
+PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
   outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/frontier-coverage-planner-baseline-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|coverage_memory_replanning_loop" \
+jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,memory_resume_verified,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
+  outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/coverage-memory-replanning-loop-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|policy_guided_global_coverage" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
