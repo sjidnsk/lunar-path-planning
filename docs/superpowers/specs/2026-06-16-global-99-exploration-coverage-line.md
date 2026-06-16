@@ -171,6 +171,34 @@ The sixth-stage artifact names are:
 - `network-architecture-upgrade-readiness-manifest.json`
 - `network-architecture-upgrade-rejection-report.json`
 
+The seventh-stage release-governance-preflight runner and config are:
+
+```text
+scripts/run_global_99_release_governance_preflight.py
+scripts/run_global_99_release_governance_preflight.sh
+configs/global_99_release_governance_preflight_v1.json
+tests/test_global_99_release_governance_preflight.py
+```
+
+The seventh-stage output root is:
+
+```text
+outputs/path_feedback_batch_global_99_release_governance_preflight_v1/
+```
+
+The seventh-stage artifact names are:
+
+- `global-99-release-governance-preflight-summary.json`
+- `global-99-release-governance-manifest.json`
+- `global-99-release-evidence-lineage-audit.json`
+- `global-99-release-scope-audit.json`
+- `global-99-release-boundary-audit.json`
+- `global-99-release-kill-switch-audit.json`
+- `global-99-release-rollback-audit.json`
+- `global-99-release-telemetry-audit.json`
+- `global-99-release-rejection-report.json`
+- `global-99-release-governance-preflight-report.md`
+
 Expected summary fields:
 
 - `target_coverage_rate=0.99`
@@ -250,7 +278,23 @@ Suggested failure reason codes:
    - When policy regression or excessive guard fallback is present, it may set
      `next_required_change=network_architecture_upgrade_v1`.
 
-7. `Network Architecture Upgrade v1`
+7. `Global 99 Release Governance Preflight v1`
+   - Consume existing network-readiness, multi-map, and policy-guided summary
+     artifacts.
+   - Decide whether the synthetic Global 99 evidence is eligible for a
+     shadow/canary preflight.
+   - Do not publish a checkpoint, replace default policy, connect a real
+     executor, run PPO, modify network/action space/default A*, call
+     path-planner, or use NPZ/sidecar maps.
+   - When valid, it sets
+     `next_required_change=global_99_shadow_canary_preflight`.
+
+8. `Global 99 Shadow Canary Preflight v1`
+   - Start only after release governance preflight passes.
+   - Keep the candidate in shadow/canary governance; do not install it as a
+     real default policy.
+
+9. `Network Architecture Upgrade v1`
    - Start only after the benchmark, baseline, replanning loop, and
      policy-guided coverage plus readiness review expose a clear network
      bottleneck.
@@ -259,7 +303,7 @@ Suggested failure reason codes:
    - Compare performance, parameter count, inference latency, and coverage
      generalization against the existing network.
 
-8. `99% Coverage Release Governance v1`
+10. `99% Coverage Release Governance v1`
    - Start only after 99% reachable coverage is evidence-backed in offline
      multi-map shadow/canary validation.
    - Keep it as release governance, not direct default-policy replacement.
@@ -421,6 +465,39 @@ Acceptance:
   `next_required_change=network_architecture_upgrade_v1`.
 - Project docs stay aligned with this development order.
 
+The seventh concrete implementation target for this line is:
+
+```text
+Global 99 Release Governance Preflight v1
+```
+
+Acceptance:
+
+- Reads `configs/global_99_release_governance_preflight_v1.json`.
+- Consumes existing network-readiness, multi-map, and policy-guided summary
+  artifacts.
+- Writes summary, manifest, evidence-lineage audit, scope audit, release
+  boundary audit, kill-switch audit, rollback audit, telemetry audit, rejection
+  report, and report artifacts under
+  `outputs/path_feedback_batch_global_99_release_governance_preflight_v1/`.
+- Summary reports source statuses, required scenario counts, aggregate and
+  minimum coverage, policy guidance counters, `policy_guard_fallback_rate`,
+  `network_upgrade_recommended`, audit pass/fail flags, governance verdict,
+  `next_required_change`, and all required boundary flags.
+- If network readiness is missing, failed, or not pointing to
+  `global_99_release_governance_preflight`, the summary fails and points to
+  `fix_network_architecture_upgrade_readiness_review`.
+- If required multi-map scenarios are not healthy or coverage is below 0.99,
+  the summary fails and points to `fix_global_99_multi_map_generalization`.
+- If policy regression appears, the summary fails and points to
+  `fix_policy_guided_global_coverage`.
+- If any release/default-policy/executor boundary is open, the summary fails
+  and points to `resolve_global_99_release_boundary_rejections`.
+- If evidence is stable and boundaries are closed, the summary passes with
+  `release_governance_verdict=eligible_for_global_99_shadow_canary_preflight`
+  and `next_required_change=global_99_shadow_canary_preflight`.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -433,13 +510,15 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_coverage_memory_replanning_loop.py \
   tests/test_policy_guided_global_coverage.py \
   tests/test_global_99_multi_map_generalization.py \
-  tests/test_network_architecture_upgrade_readiness_review.py -q
+  tests/test_network_architecture_upgrade_readiness_review.py \
+  tests/test_global_99_release_governance_preflight.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
 PYTHON=$PY bash scripts/run_policy_guided_global_coverage.sh
 PYTHON=$PY bash scripts/run_global_99_multi_map_generalization.sh
 PYTHON=$PY bash scripts/run_network_architecture_upgrade_readiness_review.sh
+PYTHON=$PY bash scripts/run_global_99_release_governance_preflight.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
@@ -452,7 +531,9 @@ jq '{status,reason_codes,scenario_count,passed_scenario_count,failed_scenario_co
   outputs/path_feedback_batch_global_99_multi_map_generalization_v1/global-99-multi-map-generalization-summary.json
 jq '{status,reason_codes,network_upgrade_recommended,network_upgrade_readiness_decision,next_required_change,policy_guard_fallback_rate,baseline_agreement_rate,policy_better_than_baseline_count,policy_worse_than_baseline_count,controlled_regression_count,modifies_network,runs_new_ppo_update,publishes_checkpoint,replaces_default_policy}' \
   outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/network-architecture-upgrade-readiness-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|global_99_release_governance_preflight|network_architecture_upgrade_v1" \
+jq '{status,reason_codes,release_governance_verdict,next_required_change,release_boundary_audit_passed,kill_switch_audit_passed,rollback_audit_passed,telemetry_audit_passed,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update,modifies_network}' \
+  outputs/path_feedback_batch_global_99_release_governance_preflight_v1/global-99-release-governance-preflight-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|global_99_shadow_canary_preflight|network_architecture_upgrade_v1" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```

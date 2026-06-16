@@ -4234,6 +4234,8 @@ Global 99% Coverage Benchmark v1
   -> Policy-Guided Global Coverage v1
   -> 99% Multi-Map Generalization v1
   -> Network Architecture Upgrade Readiness Review v1
+  -> Global 99 Release Governance Preflight v1
+  -> Global 99 Shadow Canary Preflight v1
   -> Network Architecture Upgrade v1 (only if evidence supports it)
   -> 99% Coverage Release Governance v1
 ```
@@ -4398,14 +4400,46 @@ jq '{status,reason_codes,network_upgrade_recommended,network_upgrade_readiness_d
   outputs/path_feedback_batch_network_architecture_upgrade_readiness_review_v1/network-architecture-upgrade-readiness-summary.json
 ```
 
+`Global 99 Release Governance Preflight v1` is implemented as a release
+governance audit over the synthetic Global 99 evidence. Its runner is
+`scripts/run_global_99_release_governance_preflight.py`, shell entrypoint is
+`scripts/run_global_99_release_governance_preflight.sh`, default config is
+`configs/global_99_release_governance_preflight_v1.json`, and output root is
+`outputs/path_feedback_batch_global_99_release_governance_preflight_v1/`. It
+consumes network-readiness, multi-map, and policy-guided summaries, then writes
+lineage, scope, boundary, kill-switch, rollback, telemetry, rejection, manifest,
+summary, and report artifacts. This stage does not publish a checkpoint, install
+or replace default policy, connect an executor, run PPO, modify
+network/action-space/default A*, call path-planner, or use NPZ/sidecar maps.
+When the governance preflight passes, it sets
+`next_required_change=global_99_shadow_canary_preflight`.
+
+Run the seventh-stage release governance preflight with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py \
+  tests/test_network_architecture_upgrade_readiness_review.py \
+  tests/test_global_99_release_governance_preflight.py -q
+PYTHON=$PY bash scripts/run_global_99_release_governance_preflight.sh
+jq '{status,reason_codes,release_governance_verdict,next_required_change,release_boundary_audit_passed,kill_switch_audit_passed,rollback_audit_passed,telemetry_audit_passed,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update,modifies_network}' \
+  outputs/path_feedback_batch_global_99_release_governance_preflight_v1/global-99-release-governance-preflight-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
 MLP, gated MLP, candidate-set encoder, lightweight attention, and graph/region
 encoder variants. If the review does not recommend a network upgrade, the next
-step is `global_99_release_governance_preflight` or a higher-fidelity real-map
-validation preflight. `99% Coverage Release Governance v1` starts only after the
-99% reachable-coverage target is evidence-backed in shadow/canary form.
+step is `global_99_release_governance_preflight` and then
+`global_99_shadow_canary_preflight`, not a direct default-policy replacement.
+`99% Coverage Release Governance v1` starts only after the 99% reachable
+coverage target is evidence-backed in shadow/canary form.
 
 This line must not disturb the family-balanced publication chain. It does not
 replace default policy, connect a real executor, relax guards, modify the
