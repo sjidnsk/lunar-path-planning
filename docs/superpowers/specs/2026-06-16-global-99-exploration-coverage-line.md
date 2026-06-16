@@ -1040,6 +1040,36 @@ Acceptance:
   and `next_required_change=sandbox_candidate_installation_dry_run`.
 - Project docs stay aligned with this development order.
 
+The eighteenth concrete implementation target for this line is:
+
+```text
+Global 99 Sandbox Candidate Installation Dry Run v1
+```
+
+Acceptance:
+
+- Reads `configs/global_99_sandbox_candidate_installation_dry_run_v1.json`.
+- Consumes Global 99 default-policy candidate authorization preflight summary.
+- Writes a sandbox-only candidate descriptor and verifies provenance, SHA-256,
+  load, rollback, kill-switch, telemetry, and boundary state.
+- Writes summary, manifest, provenance audit, hash audit, load audit, rollback
+  audit, kill-switch audit, telemetry audit, boundary audit, rejection report,
+  and report artifacts under
+  `outputs/path_feedback_batch_global_99_sandbox_candidate_installation_dry_run_v1/`.
+- Summary reports source authorization status/next change, candidate hash/size,
+  audit pass/fail flags, `default_policy_candidate_installation_approved=false`,
+  `next_required_change`, and all required boundary flags.
+- If authorization evidence is missing, failed, or not pointing to this stage,
+  it points to `fix_default_policy_candidate_authorization_preflight`.
+- If sandbox hash/provenance/load/rollback/kill-switch/telemetry fail, it
+  points to `fix_sandbox_candidate_installation_dry_run`.
+- If boundaries open, it points to
+  `resolve_sandbox_candidate_installation_boundary_rejections`.
+- If the sandbox dry run is stable and boundaries are closed, the summary
+  passes with `sandbox_installation_verdict=eligible_for_sandbox_consumer_replay_canary`
+  and `next_required_change=sandbox_consumer_replay_canary`.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -1063,7 +1093,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_real_map_shadow_canary_replay.py \
   tests/test_global_99_real_map_evidence_refresh_drift_audit.py \
   tests/test_global_99_real_map_multi_roi_generalization.py \
-  tests/test_global_99_default_policy_candidate_authorization_preflight.py -q
+  tests/test_global_99_default_policy_candidate_authorization_preflight.py \
+  tests/test_global_99_sandbox_candidate_installation_dry_run.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
@@ -1081,6 +1112,7 @@ PYTHON=$PY bash scripts/run_global_99_real_map_shadow_canary_replay.sh
 PYTHON=$PY bash scripts/run_global_99_real_map_evidence_refresh_drift_audit.sh
 PYTHON=$PY bash scripts/run_global_99_real_map_multi_roi_generalization.sh
 PYTHON=$PY bash scripts/run_global_99_default_policy_candidate_authorization_preflight.sh
+PYTHON=$PY bash scripts/run_global_99_sandbox_candidate_installation_dry_run.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
@@ -1115,7 +1147,9 @@ jq '{status,reason_codes,real_map_multi_roi_generalization_verdict,next_required
   outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1/global-99-real-map-multi-roi-generalization-summary.json
 jq '{status,reason_codes,authorization_verdict,next_required_change,source_multi_roi_status,default_policy_candidate_authorization_preflight_passed,candidate_read_only_audit_passed,default_policy_read_only_audit_passed,executor_isolation_audit_passed,path_planner_isolation_audit_passed,kill_switch_audit_passed,rollback_audit_passed,telemetry_audit_passed,boundary_audit_passed,replaces_default_policy,connects_real_executor,default_policy_candidate_installation_approved}' \
   outputs/path_feedback_batch_global_99_default_policy_candidate_authorization_preflight_v1/global-99-default-policy-candidate-authorization-preflight-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|Global 99 Shadow Canary Preflight v1|run_global_99_shadow_canary_preflight|Global 99 Shadow Canary Replay v1|run_global_99_shadow_canary_replay|Global 99 Real Map Preflight v1|run_global_99_real_map_preflight|Global 99 Real Map Shadow Replay v1|run_global_99_real_map_shadow_replay|Global 99 Real Map Release Governance Preflight v1|run_global_99_real_map_release_governance_preflight|Global 99 Real Map Shadow Canary Preflight v1|run_global_99_real_map_shadow_canary_preflight|Global 99 Real Map Shadow Canary Replay v1|run_global_99_real_map_shadow_canary_replay|Global 99 Real Map Evidence Refresh / Drift Audit v1|run_global_99_real_map_evidence_refresh_drift_audit|Global 99 Real Map Multi-ROI Generalization v1|run_global_99_real_map_multi_roi_generalization|Global 99 Default Policy Candidate Authorization Preflight v1|run_global_99_default_policy_candidate_authorization_preflight|sandbox_candidate_installation_dry_run|network_architecture_upgrade_v1" \
+jq '{status,reason_codes,sandbox_installation_verdict,next_required_change,source_authorization_status,sandbox_candidate_installation_dry_run_passed,sandbox_candidate_hash_audit_passed,sandbox_candidate_load_audit_passed,rollback_audit_passed,kill_switch_audit_passed,telemetry_audit_passed,boundary_audit_passed,replaces_default_policy,connects_real_executor,default_policy_candidate_installation_approved}' \
+  outputs/path_feedback_batch_global_99_sandbox_candidate_installation_dry_run_v1/global-99-sandbox-candidate-installation-dry-run-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|Global 99 Shadow Canary Preflight v1|run_global_99_shadow_canary_preflight|Global 99 Shadow Canary Replay v1|run_global_99_shadow_canary_replay|Global 99 Real Map Preflight v1|run_global_99_real_map_preflight|Global 99 Real Map Shadow Replay v1|run_global_99_real_map_shadow_replay|Global 99 Real Map Release Governance Preflight v1|run_global_99_real_map_release_governance_preflight|Global 99 Real Map Shadow Canary Preflight v1|run_global_99_real_map_shadow_canary_preflight|Global 99 Real Map Shadow Canary Replay v1|run_global_99_real_map_shadow_canary_replay|Global 99 Real Map Evidence Refresh / Drift Audit v1|run_global_99_real_map_evidence_refresh_drift_audit|Global 99 Real Map Multi-ROI Generalization v1|run_global_99_real_map_multi_roi_generalization|Global 99 Default Policy Candidate Authorization Preflight v1|run_global_99_default_policy_candidate_authorization_preflight|Global 99 Sandbox Candidate Installation Dry Run v1|run_global_99_sandbox_candidate_installation_dry_run|sandbox_consumer_replay_canary|network_architecture_upgrade_v1" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
@@ -1156,4 +1190,6 @@ executor, start online canary traffic, or claim real-world performance. `Global
 99 Default Policy Candidate Authorization Preflight v1` authorizes only a
 sandbox dry-run candidate path; it does not install the candidate, replace
 default policy, connect an executor, publish a checkpoint, or claim real-world
-performance.
+performance. `Global 99 Sandbox Candidate Installation Dry Run v1` writes and
+loads a sandbox-only descriptor; it does not touch default policy, connect an
+executor, publish a checkpoint, or start online canary traffic.

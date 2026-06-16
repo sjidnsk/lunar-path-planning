@@ -4748,6 +4748,29 @@ jq '{status,reason_codes,authorization_verdict,next_required_change,source_multi
   outputs/path_feedback_batch_global_99_default_policy_candidate_authorization_preflight_v1/global-99-default-policy-candidate-authorization-preflight-summary.json
 ```
 
+`Global 99 Sandbox Candidate Installation Dry Run v1` is implemented as a
+sandbox-only install rehearsal. Its runner is
+`scripts/run_global_99_sandbox_candidate_installation_dry_run.py`, shell
+entrypoint is `scripts/run_global_99_sandbox_candidate_installation_dry_run.sh`,
+default config is `configs/global_99_sandbox_candidate_installation_dry_run_v1.json`,
+and output root is
+`outputs/path_feedback_batch_global_99_sandbox_candidate_installation_dry_run_v1/`.
+It consumes the Global 99 authorization preflight, writes a sandbox-only
+candidate descriptor, verifies hash/provenance/load/rollback/kill-switch and
+telemetry, and keeps default policy untouched. Passing this stage sets
+`next_required_change=sandbox_consumer_replay_canary`.
+
+Run the eighteenth-stage sandbox installation dry run with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_sandbox_candidate_installation_dry_run.py -q
+PYTHON=$PY bash scripts/run_global_99_sandbox_candidate_installation_dry_run.sh
+jq '{status,reason_codes,sandbox_installation_verdict,next_required_change,source_authorization_status,sandbox_candidate_installation_dry_run_passed,sandbox_candidate_hash_audit_passed,sandbox_candidate_load_audit_passed,rollback_audit_passed,kill_switch_audit_passed,telemetry_audit_passed,boundary_audit_passed,replaces_default_policy,connects_real_executor,default_policy_candidate_installation_approved}' \
+  outputs/path_feedback_batch_global_99_sandbox_candidate_installation_dry_run_v1/global-99-sandbox-candidate-installation-dry-run-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
