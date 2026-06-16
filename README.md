@@ -4491,6 +4491,24 @@ Passing writes `next_required_change=controlled_training_candidate`. This stage
 does not itself run PPO, write checkpoints, publish checkpoints, replace default
 policy, or connect an executor.
 
+`Xunce Controlled Training Candidate v1` is the Stage 13 research-training
+candidate gate. It reads the Stage 12 preflight summary and runs a tiny,
+deterministic, bounded supervised surrogate update for `xunce_full_network_v1`.
+Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_controlled_training_candidate.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_controlled_training_candidate_v1/`. Passing
+writes `next_required_change=post_training_offline_evaluation`. This stage may
+write `xunce-controlled-training-candidate.pt` as a research-only checkpoint
+inside the output root, but `publishes_checkpoint=false`,
+`runs_new_ppo_update=false`, `ppo_update_executed=false`, and it does not replace
+default policy or connect an executor.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

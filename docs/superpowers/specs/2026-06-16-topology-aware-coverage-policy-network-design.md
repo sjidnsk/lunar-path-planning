@@ -365,8 +365,17 @@ artifacts. Each stage should be committed and pushed separately.
    - Passing next gate: `controlled_training_candidate`.
    - This gate authorizes the next stage only; it does not run PPO.
 13 受控训练候选
-   - Run bounded training as a research candidate only.
-   - Do not publish default policy.
+   - Current implementation target:
+     `scripts/run_xunce_controlled_training_candidate.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_controlled_training_candidate_v1/`.
+   - Run bounded deterministic supervised surrogate training as a research
+     candidate only, after Stage 12 authorization.
+   - It may write `xunce-controlled-training-candidate.pt` as a research-only
+     checkpoint under the output root.
+   - It must keep `publishes_checkpoint=false`, `runs_new_ppo_update=false`,
+     `ppo_update_executed=false`, and must not replace default policy.
+   - Passing next gate: `post_training_offline_evaluation`.
 14 训练后离线评测
    - Re-run Global 99, multi-map, real-map replay, source-match, guard fallback,
      parameter, and latency audits.

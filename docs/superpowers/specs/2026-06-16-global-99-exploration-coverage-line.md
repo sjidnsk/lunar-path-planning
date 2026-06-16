@@ -615,6 +615,18 @@ authorizing a controlled training candidate. A passing summary writes
 `next_required_change=controlled_training_candidate`; this gate does not run
 PPO, write or publish checkpoints, or alter default policy.
 
+The fourteenth gate is `Xunce Controlled Training Candidate v1`, with runner
+`scripts/run_xunce_controlled_training_candidate.py`, config
+`configs/xunce_controlled_training_candidate_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_controlled_training_candidate_v1/`. It runs a
+bounded deterministic supervised surrogate update for `xunce_full_network_v1`
+only after the guarded preflight authorizes it. A passing summary writes
+`next_required_change=post_training_offline_evaluation`. It may write a
+research-only checkpoint under the output root, but it keeps
+`publishes_checkpoint=false`, `runs_new_ppo_update=false`,
+`ppo_update_executed=false`, and does not replace default policy or connect an
+executor.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world
