@@ -1,0 +1,17 @@
+{
+  "schema_version": "global-99-real-map-multi-roi-generalization-config/v1",
+  "source_evidence_refresh_drift_root": "outputs/path_feedback_batch_global_99_real_map_evidence_refresh_drift_audit_v1",
+  "source_quasi_real_domain_gap_root": "outputs/path_feedback_batch_quasi_real_map_domain_gap_v1",
+  "min_slice_count": 12,
+  "min_roi_group_count": 4,
+  "min_slices_per_roi_group": 3,
+  "required_splits": ["train", "validation", "test"],
+  "require_evidence_refresh_drift_passed": true,
+  "require_domain_gap_acceptable": true,
+  "require_context_ids": true,
+  "require_no_legacy_identity_fallback": true,
+  "require_no_open_grid_fallback": true,
+  "require_all_contract_and_sidecar_paths": true,
+  "multi_roi_generalization_only": true,
+  "canary_traffic_fraction": 0.0
+}

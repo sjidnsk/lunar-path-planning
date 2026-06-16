@@ -4699,6 +4699,30 @@ jq '{status,reason_codes,evidence_refresh_drift_verdict,next_required_change,sou
   outputs/path_feedback_batch_global_99_real_map_evidence_refresh_drift_audit_v1/global-99-real-map-evidence-refresh-drift-audit-summary.json
 ```
 
+`Global 99 Real Map Multi-ROI Generalization v1` is implemented as a
+quasi-real ROI/slice/split matrix audit, not as a policy installation. Its
+runner is `scripts/run_global_99_real_map_multi_roi_generalization.py`, shell
+entrypoint is `scripts/run_global_99_real_map_multi_roi_generalization.sh`,
+default config is `configs/global_99_real_map_multi_roi_generalization_v1.json`,
+and output root is
+`outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1/`.
+It consumes the evidence drift audit and quasi-real domain-gap slices, checks
+ROI-group coverage, train/validation/test split coverage, context IDs,
+contract/sidecar availability, fallback/regression counters, and boundary
+state. When all required ROI groups pass, it sets
+`next_required_change=default_policy_candidate_authorization_preflight`.
+
+Run the sixteenth-stage real-map multi-ROI audit with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_real_map_multi_roi_generalization.py -q
+PYTHON=$PY bash scripts/run_global_99_real_map_multi_roi_generalization.sh
+jq '{status,reason_codes,real_map_multi_roi_generalization_verdict,next_required_change,slice_count,roi_group_count,passed_roi_group_count,failed_roi_group_count,passed_required_scenario_count,failed_required_scenario_count,split_coverage_complete,context_id_missing_count,missing_contract_count,missing_sidecar_count,boundary_audit_passed,connects_real_executor,starts_online_canary,replaces_default_policy}' \
+  outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1/global-99-real-map-multi-roi-generalization-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual

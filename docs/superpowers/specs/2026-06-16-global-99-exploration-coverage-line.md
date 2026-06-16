@@ -968,6 +968,46 @@ Acceptance:
   and `next_required_change=global_99_real_map_multi_roi_generalization`.
 - Project docs stay aligned with this development order.
 
+The sixteenth concrete implementation target for this line is:
+
+```text
+Global 99 Real Map Multi-ROI Generalization v1
+```
+
+Acceptance:
+
+- Reads `configs/global_99_real_map_multi_roi_generalization_v1.json`.
+- Consumes evidence refresh/drift audit and quasi-real domain-gap slice
+  artifacts.
+- Audits ROI group coverage, per-ROI split coverage, required scenarios,
+  context IDs, legacy identity fallback, contract/sidecar availability,
+  fallback/regression counters, and boundary state.
+- Writes summary, manifest, scenario results JSONL, ROI-family summary,
+  lineage audit, scenario matrix audit, boundary audit, kill-switch audit,
+  rollback audit, telemetry audit, rejection report, and report artifacts under
+  `outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1/`.
+- Summary reports source statuses/next changes, domain-gap verdict, slice/ROI
+  counts, passed/failed ROI group counts, passed/failed required scenario
+  counts, split coverage, context counters, missing contract/sidecar counters,
+  fallback/regression counters, audit pass/fail flags, `next_required_change`,
+  and all required boundary flags.
+- If drift evidence is missing, failed, or not pointing to this stage, it
+  points to `fix_global_99_real_map_evidence_refresh_drift_audit`.
+- If domain-gap evidence is missing or unacceptable, it points to
+  `fix_quasi_real_map_domain_gap_evidence`.
+- If ROI/slice/split coverage is insufficient, it points to
+  `expand_real_map_roi_coverage`.
+- If context IDs are missing or legacy fallback appears, it points to
+  `fix_real_map_context_identity`.
+- If contract/sidecar paths, open-grid fallback, or path-feedback regression
+  fail, it points to `fix_real_map_path_feedback_contract`.
+- If boundaries open, it points to
+  `resolve_global_99_real_map_multi_roi_boundary_rejections`.
+- If all required ROI groups and scenarios pass, the summary passes with
+  `real_map_multi_roi_generalization_verdict=eligible_for_default_policy_candidate_authorization_preflight`
+  and `next_required_change=default_policy_candidate_authorization_preflight`.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -989,7 +1029,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_real_map_release_governance_preflight.py \
   tests/test_global_99_real_map_shadow_canary_preflight.py \
   tests/test_global_99_real_map_shadow_canary_replay.py \
-  tests/test_global_99_real_map_evidence_refresh_drift_audit.py -q
+  tests/test_global_99_real_map_evidence_refresh_drift_audit.py \
+  tests/test_global_99_real_map_multi_roi_generalization.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
@@ -1005,6 +1046,7 @@ PYTHON=$PY bash scripts/run_global_99_real_map_release_governance_preflight.sh
 PYTHON=$PY bash scripts/run_global_99_real_map_shadow_canary_preflight.sh
 PYTHON=$PY bash scripts/run_global_99_real_map_shadow_canary_replay.sh
 PYTHON=$PY bash scripts/run_global_99_real_map_evidence_refresh_drift_audit.sh
+PYTHON=$PY bash scripts/run_global_99_real_map_multi_roi_generalization.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
@@ -1035,7 +1077,9 @@ jq '{status,reason_codes,real_map_shadow_canary_replay_verdict,next_required_cha
   outputs/path_feedback_batch_global_99_real_map_shadow_canary_replay_v1/global-99-real-map-shadow-canary-replay-summary.json
 jq '{status,reason_codes,evidence_refresh_drift_verdict,next_required_change,source_domain_gap_status,domain_gap_verdict,slice_count,roi_group_count,scenario_id_mismatch_count,missing_contract_count,missing_sidecar_count,context_id_missing_count,legacy_identity_fallback_count,boundary_audit_passed,connects_real_executor,starts_online_canary,replaces_default_policy,uses_path_planner}' \
   outputs/path_feedback_batch_global_99_real_map_evidence_refresh_drift_audit_v1/global-99-real-map-evidence-refresh-drift-audit-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|Global 99 Shadow Canary Preflight v1|run_global_99_shadow_canary_preflight|Global 99 Shadow Canary Replay v1|run_global_99_shadow_canary_replay|Global 99 Real Map Preflight v1|run_global_99_real_map_preflight|Global 99 Real Map Shadow Replay v1|run_global_99_real_map_shadow_replay|Global 99 Real Map Release Governance Preflight v1|run_global_99_real_map_release_governance_preflight|Global 99 Real Map Shadow Canary Preflight v1|run_global_99_real_map_shadow_canary_preflight|Global 99 Real Map Shadow Canary Replay v1|run_global_99_real_map_shadow_canary_replay|Global 99 Real Map Evidence Refresh / Drift Audit v1|run_global_99_real_map_evidence_refresh_drift_audit|global_99_real_map_multi_roi_generalization|network_architecture_upgrade_v1" \
+jq '{status,reason_codes,real_map_multi_roi_generalization_verdict,next_required_change,slice_count,roi_group_count,passed_roi_group_count,failed_roi_group_count,passed_required_scenario_count,failed_required_scenario_count,split_coverage_complete,context_id_missing_count,missing_contract_count,missing_sidecar_count,boundary_audit_passed,connects_real_executor,starts_online_canary,replaces_default_policy}' \
+  outputs/path_feedback_batch_global_99_real_map_multi_roi_generalization_v1/global-99-real-map-multi-roi-generalization-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|Global 99 Multi-Map Generalization v1|run_global_99_multi_map_generalization|Network Architecture Upgrade Readiness Review v1|run_network_architecture_upgrade_readiness_review|Global 99 Release Governance Preflight v1|run_global_99_release_governance_preflight|Global 99 Shadow Canary Preflight v1|run_global_99_shadow_canary_preflight|Global 99 Shadow Canary Replay v1|run_global_99_shadow_canary_replay|Global 99 Real Map Preflight v1|run_global_99_real_map_preflight|Global 99 Real Map Shadow Replay v1|run_global_99_real_map_shadow_replay|Global 99 Real Map Release Governance Preflight v1|run_global_99_real_map_release_governance_preflight|Global 99 Real Map Shadow Canary Preflight v1|run_global_99_real_map_shadow_canary_preflight|Global 99 Real Map Shadow Canary Replay v1|run_global_99_real_map_shadow_canary_replay|Global 99 Real Map Evidence Refresh / Drift Audit v1|run_global_99_real_map_evidence_refresh_drift_audit|Global 99 Real Map Multi-ROI Generalization v1|run_global_99_real_map_multi_roi_generalization|default_policy_candidate_authorization_preflight|network_architecture_upgrade_v1" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
@@ -1069,4 +1113,7 @@ an executor, install default policy, publish a checkpoint, or claim real-world
 performance. `Global 99 Real Map Evidence Refresh / Drift Audit v1` re-audits
 manifest, sidecar, context ID, fingerprint, and source-match evidence only; it
 does not rerun path-planner, connect an executor, start online canary traffic,
-install default policy, or claim real-world performance.
+install default policy, or claim real-world performance. `Global 99 Real Map
+Multi-ROI Generalization v1` audits quasi-real ROI/slice/split coverage only;
+it does not install or authorize default-policy replacement, connect an
+executor, start online canary traffic, or claim real-world performance.
