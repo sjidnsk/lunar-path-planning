@@ -331,6 +331,12 @@ artifacts. Each stage should be committed and pushed separately.
 9 完整网络静态合同验证
    - Verify shape, mask, metadata, missing-field handling, and old-observation
      compatibility.
+   - Current implementation target:
+     `scripts/run_xunce_full_network_static_contract_validation.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_full_network_static_contract_validation_v1/`.
+   - Passing next gate: `full_network_ablation_experiments`.
+   - This gate checks static compatibility only, not performance.
 10 完整网络消融实验
    - Isolate candidate graph, topology bias, memory token, ROI/family context,
      and budget fusion contributions.

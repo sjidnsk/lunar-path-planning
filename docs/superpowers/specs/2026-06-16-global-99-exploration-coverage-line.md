@@ -578,6 +578,15 @@ fusion, masked logits, and value head. A passing summary writes
 research forward-contract gate, not training, checkpoint publication,
 production architecture registration, or default-policy installation.
 
+The tenth gate is `Xunce Full Network Static Contract Validation v1`, with
+runner `scripts/run_xunce_full_network_static_contract_validation.py`, config
+`configs/xunce_full_network_static_contract_validation_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_full_network_static_contract_validation_v1/`.
+It verifies shape, mask, metadata, missing-indicator defaults, finite outputs,
+and legacy/additive-observation compatibility. A passing summary writes
+`next_required_change=full_network_ablation_experiments`; this is a static
+contract gate only, not a performance proof or training approval.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

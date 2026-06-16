@@ -4428,6 +4428,21 @@ This implements the complete research network forward contract, but it still
 does not train, publish a checkpoint, register a production/default-policy
 architecture, replace default policy, connect an executor, or claim performance.
 
+`Xunce Full Network Static Contract Validation v1` is the Stage 9 gate. It runs
+deterministic forward cases for shape, action masks, metadata, missing-indicator
+defaults, and legacy/additive-observation compatibility. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_full_network_static_contract_validation.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_full_network_static_contract_validation_v1/`.
+Passing writes `next_required_change=full_network_ablation_experiments`. This
+is a static contract gate only; it does not prove performance and does not
+train, publish, install, or connect an executor.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
