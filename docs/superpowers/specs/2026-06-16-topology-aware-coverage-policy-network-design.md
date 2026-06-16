@@ -349,6 +349,12 @@ artifacts. Each stage should be committed and pushed separately.
 11 完整网络压力评测
    - Test candidate count, missing fields, no-NaN behavior, latency, parameters,
      fallback rate, and deterministic replay stability.
+   - Current implementation target:
+     `scripts/run_xunce_full_network_stress_evaluation.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_full_network_stress_evaluation_v1/`.
+   - Passing next gate: `guarded_training_candidate_preflight`.
+   - This gate validates stability only, not training readiness by itself.
 12 Guarded Training Candidate Preflight
    - Permit controlled training only if the full network passes contrast,
      ablation, stress, and efficiency gates.

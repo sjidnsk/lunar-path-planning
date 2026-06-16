@@ -1,0 +1,18 @@
+{
+  "schema_version": "xunce-full-network-stress-evaluation-config/v1",
+  "source_ablation_root": "outputs/path_feedback_batch_xunce_full_network_ablation_experiments_v1",
+  "architecture": "xunce_full_network_v1",
+  "candidate_counts": [2, 5, 16],
+  "candidate_feature_count": 9,
+  "edge_feature_count": 6,
+  "memory_feature_count": 7,
+  "context_feature_count": 6,
+  "missing_indicator_count": 9,
+  "hidden_dim": 16,
+  "message_passing_layers": 2,
+  "dropout": 0.0,
+  "seed": 31,
+  "max_parameter_count": 50000,
+  "max_forward_latency_ms": 1000.0,
+  "deterministic_tolerance": 1e-12
+}

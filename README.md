@@ -4459,6 +4459,22 @@ Passing writes `next_required_change=full_network_stress_evaluation`. This is a
 module-contribution audit only; it does not train, publish, install, or connect
 an executor.
 
+`Xunce Full Network Stress Evaluation v1` is the Stage 11 gate. It stress-tests
+candidate count, edge density, missing indicators, numeric range, finite output,
+mask preservation, parameter budget, latency budget, and deterministic replay.
+Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_full_network_stress_evaluation.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_full_network_stress_evaluation_v1/`. Passing
+writes `next_required_change=guarded_training_candidate_preflight`. This is a
+stability gate only; it does not train, publish, install, or connect an
+executor.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

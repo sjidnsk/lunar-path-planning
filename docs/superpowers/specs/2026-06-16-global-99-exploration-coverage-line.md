@@ -596,6 +596,16 @@ context, and missing-indicator ablations. A passing summary writes
 `next_required_change=full_network_stress_evaluation`; this is not training or
 performance evidence.
 
+The twelfth gate is `Xunce Full Network Stress Evaluation v1`, with runner
+`scripts/run_xunce_full_network_stress_evaluation.py`, config
+`configs/xunce_full_network_stress_evaluation_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_full_network_stress_evaluation_v1/`. It
+audits candidate-count scaling, edge density, missing indicators, finite
+outputs, mask preservation, parameter/latency budgets, fallback rate, and
+deterministic replay stability. A passing summary writes
+`next_required_change=guarded_training_candidate_preflight`; this is still not
+training or release approval.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world
