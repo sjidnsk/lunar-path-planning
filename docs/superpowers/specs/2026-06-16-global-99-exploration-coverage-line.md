@@ -456,6 +456,40 @@ Suggested failure reason codes:
      multi-map shadow/canary validation.
    - Keep it as release governance, not direct default-policy replacement.
 
+### Parallel Network Research Track
+
+`巡策` is the short code name for `Topology-Aware Coverage Policy Network
+Design`, documented separately in
+`docs/superpowers/specs/2026-06-16-topology-aware-coverage-policy-network-design.md`.
+It is a research track for a future architecture breakthrough, not a release
+gate and not a replacement for the Global 99 governance chain. The primary goal
+is higher exploration coverage and stronger generalization; lower parameter
+count and faster inference are hard constraints; novelty is a research goal.
+
+The proposed direction is coverage-memory-aware candidate graph ranking. It
+keeps the existing candidate action set and guarded policy interface, while
+adding topology and memory signals such as frontier cluster, BFS distance, ROI
+relation, bottleneck risk, coverage overlap, revisit cost, remaining budget,
+and recent coverage-memory trend. The first required stages are
+`Network Literature & Project Bottleneck Review v1` and
+`Topology-Aware Observation Contract v1`; architecture prototyping and any
+training must remain separate gated stages.
+
+The first gate for this parallel track is `Xunce Design Freeze Audit v1`, with
+runner `scripts/run_xunce_design_freeze_audit.py`, config
+`configs/xunce_design_freeze_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_design_freeze_v1/`. It checks that the
+formal 巡策 spec records the full 0-17 plan-first stage chain and that current
+Global 99 evidence remains compatible with closed checkpoint/default-policy /
+executor / online-canary / PPO / network/action-space/default-A* boundaries.
+When it passes, its `next_required_change` is `current_head_evidence_refresh`,
+not architecture prototyping.
+
+This research track must not publish a checkpoint, replace default policy,
+connect a real executor, start online canary traffic, run PPO update in the
+design/audit stages, modify action space/default A*, claim real-world
+performance, or treat path-planner/IRIS/GCS diagnostics as release proof.
+
 ## Implemented Targets
 
 The first concrete implementation target for this line is:

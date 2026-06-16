@@ -4252,6 +4252,37 @@ Global 99% Coverage Benchmark v1
   -> 99% Coverage Release Governance v1
 ```
 
+`巡策` is the short code name for `Topology-Aware Coverage Policy Network
+Design`, a separate research track for a future network architecture
+breakthrough. Its primary goal is higher exploration coverage and stronger
+generalization, with lower parameter count and faster inference as hard
+constraints. The design is documented in
+`docs/superpowers/specs/2026-06-16-topology-aware-coverage-policy-network-design.md`.
+It proposes coverage-memory-aware candidate graph ranking: frontier/waypoint
+candidates remain the action set, but candidate relations such as frontier
+cluster, BFS distance, ROI overlap, bottleneck risk, revisit cost, budget
+fraction, and coverage-memory state can bias a lightweight graph/attention
+network. This line is not a default-policy installation path, not a checkpoint
+publication path, and not a real-executor path. It should begin with literature
+and bottleneck auditing, then an additive observation-contract review, before
+any architecture prototype or training attempt.
+
+`Xunce Design Freeze Audit v1` is the Stage 0 evidence gate for this research
+line. It verifies that the design documents declare the `巡策` name, the full
+0-17 plan-first stage chain, the Global 99 separation, and closed release /
+executor / PPO / network-modification boundaries. Run it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_design_freeze_audit.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_design_freeze_v1/`. A passing summary writes
+`next_required_change=current_head_evidence_refresh`, which means the next step
+is to refresh Current-HEAD evidence before any literature/bottleneck review or
+architecture prototype.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
