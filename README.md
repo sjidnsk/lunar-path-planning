@@ -4210,6 +4210,61 @@ space/default A*, relax guards, claim real-world performance, claim
 Ackermann-feasible trajectory, or treat IRIS/GCS/path-planner diagnostics as
 release proof.
 
+## Global 99% Exploration Coverage Line
+
+`Global 99% Exploration Coverage Line` is a new exploration-performance
+roadmap. It is not a current capability claim for the family-balanced policy or
+the existing default-policy candidate. The line starts by defining a measurable
+contract for 1km x 1km maps and arbitrary ROIs, then adds non-learning and
+policy-guided coverage loops before any network architecture upgrade is
+justified.
+
+The target metric is 99% coverage of
+`reachable_safe_exploration_cells` inside the requested ROI, not 99% of all raw
+map cells. If the requested ROI contains unreachable, unsafe, or budget-limited
+cells, the benchmark must report explicit infeasibility reason codes instead
+of treating the run as a policy success or failure without context.
+
+The development order is:
+
+```text
+Global 99% Coverage Benchmark v1
+  -> Frontier Coverage Planner Baseline v1
+  -> Coverage Memory + Replanning Loop v1
+  -> Policy-Guided Global Coverage v1
+  -> 99% Multi-Map Generalization v1
+  -> Network Architecture Upgrade v1
+  -> 99% Coverage Release Governance v1
+```
+
+The first implementation target is `Global 99% Coverage Benchmark v1`, with
+output root
+`outputs/path_feedback_batch_global_99_coverage_benchmark_v1/`. It should
+define the ROI contract, coverage denominator, reachable/safe cell ledger,
+budget model, failure reason taxonomy, and summary fields such as
+`target_coverage_rate=0.99`, `achieved_coverage_rate`,
+`reachable_safe_cell_count`, `covered_reachable_safe_cell_count`,
+`coverage_target_met`, and `infeasible_reason_codes`.
+
+`Frontier Coverage Planner Baseline v1` then provides a non-learning
+frontier/coverage-map/revisit-penalty/path-budget baseline. `Coverage Memory +
+Replanning Loop v1` adds global coverage memory and repeated frontier selection
+from still-uncovered reachable safe cells. `Policy-Guided Global Coverage v1`
+lets the current PPO policy participate in global frontier or waypoint ranking,
+while preserving the stable model-explorer/path-feedback/path-planner
+contracts. `99% Multi-Map Generalization v1` verifies the target across
+multiple maps, starts, ROI shapes, obstacle fields, and risk distributions.
+`Network Architecture Upgrade v1` starts only if those benchmarks show the
+policy network is the actual bottleneck; candidate upgrades include residual
+MLP, gated MLP, candidate-set encoder, lightweight attention, and graph/region
+encoder variants. `99% Coverage Release Governance v1` starts only after the
+99% reachable-coverage target is evidence-backed in shadow/canary form.
+
+This line must not disturb the family-balanced publication chain. It does not
+replace default policy, connect a real executor, relax guards, modify the
+default A* path, change action space, claim Ackermann-feasible trajectory, or
+treat IRIS/GCS/path-planner diagnostics as release proof.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
