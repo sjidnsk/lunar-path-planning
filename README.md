@@ -4029,6 +4029,187 @@ cost-efficiency, fallback contamination, controlled regression, and holdout /
 scenario / context-disjoint generalization before any further default-policy
 installation preflight.
 
+Stage `Family-Balanced Algorithm Gap Closure v1` materializes this pause as an
+auditable bridge. Its runner is
+`scripts/run_family_balanced_algorithm_gap_closure.py`, with shell entrypoint
+`scripts/run_family_balanced_algorithm_gap_closure.sh` and output root
+`outputs/path_feedback_batch_family_balanced_algorithm_gap_closure_v1/`. It
+reads Stage 16, Stage 5B.7 cost-efficiency, low-observation geometry, and
+Stage 5B.3 four-family safe-better evidence; recomputes family counts from
+json/jsonl sources; replaces the thin 5B.7 low-observation slice with
+source-backed low-observation geometry supplements; and writes
+`family-balanced-safe-better-pairs.jsonl`,
+`family-balanced-counterfactual-rollouts.jsonl`, plus a coverage-driven input
+manifest. The pass contract is `family_balanced_algorithm_gap_closure_passed=true`,
+`low_observation_gap_closed=true`, `family_balance_audit_passed=true`,
+`source_backed_counterfactual_audit_passed=true`, and
+`next_required_change=family_balanced_coverage_driven_ppo_rerun`.
+
+This stage keeps the release boundary closed:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. It does
+not run a PPO update, publish a checkpoint, replace the default policy, connect
+a real executor, relax guards, modify network/action space/default A*, or claim
+Ackermann-feasible trajectory or real-world performance.
+
+Stage `Family-Balanced Coverage-Driven PPO Rerun v1` is the next algorithm
+step after the gap-closure bridge. Its runner is
+`scripts/run_family_balanced_coverage_driven_ppo_rerun.py`, with shell
+entrypoint `scripts/run_family_balanced_coverage_driven_ppo_rerun.sh` and
+output root
+`outputs/path_feedback_batch_family_balanced_coverage_driven_ppo_rerun_v1/`.
+It reads the 720 family-balanced pairs and 720 counterfactual rows from
+`outputs/path_feedback_batch_family_balanced_algorithm_gap_closure_v1/`,
+materializes a `family-balanced-compatible-stage5a2-input/`, builds a
+`family-balanced-compatible-coverage-driven-input/`, synthesizes missing
+old-policy transitions with finite old log-prob/value, and then runs an offline
+guarded PPO rerun through the refined coverage-driven PPO path using
+`family_balanced_ppo_advantage`.
+
+The pass contract is
+`family_balanced_coverage_driven_ppo_rerun_passed=true`,
+`family_balanced_shadow_canary_preflight_approved=true`,
+`family_balanced_input_audit_passed=true`,
+`old_transition_materialization_audit_passed=true`,
+`ppo_update_status=passed`, `guard_replay_audit_passed=true`,
+positive `coverage_return_improvement`,
+positive `cumulative_coverage_rate_delta_improvement`,
+positive `valuable_area_covered_improvement`,
+`coverage_efficiency_regression=false`,
+`policy_argmax_changed_count>0`, `fallback_rate<0.5`,
+`fallback_gain_contamination_count=0`, `controlled_regression_count=0`,
+`safe_better_training_family_count=4`,
+`low_observation_trainable_transition_count>=32`, and
+`next_required_change=family_balanced_shadow_canary_preflight`.
+
+This rerun writes an experimental checkpoint for subsequent offline replay and
+shadow/canary preflight only. It keeps
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. It does
+not resume Stage 17 default-policy installation, publish a checkpoint, replace
+the default policy, connect a real executor, relax guards, modify
+network/action space/default A*, claim Ackermann-feasible trajectory, or claim
+real-world performance.
+
+Stage `Family-Balanced Shadow/Canary Preflight v1` consumes that rerun evidence
+without running another PPO update. Its runner is
+`scripts/run_family_balanced_shadow_canary_preflight.py`, with shell entrypoint
+`scripts/run_family_balanced_shadow_canary_preflight.sh` and output root
+`outputs/path_feedback_batch_family_balanced_shadow_canary_preflight_v1/`.
+It reads the rerun summary, guard replay audit, refined performance metrics,
+same-input compatible performance baseline, family-balanced pair ledger, gap
+closure summary, and upstream formal/replay/selected-candidate summaries. It
+then writes a long-horizon shadow validation, family generalization audit,
+coverage efficiency audit, guard/fallback audit, kill-switch audit, rollback
+audit, telemetry audit, lineage audit, and release-boundary audit.
+
+The pass contract is `family_balanced_shadow_canary_preflight_passed=true`,
+`family_balanced_formal_performance_claim_release_decision_approved=true`,
+`long_horizon_shadow_passed=true`, positive coverage/cumulative/valuable
+improvements, `coverage_efficiency_regression=false`,
+`family_generalization_audit_passed=true`,
+`low_observation_shadow_passed=true`, `fallback_rate<0.5`,
+`fallback_gain_contamination_count=0`, `controlled_regression_count=0`,
+`kill_switch_audit_passed=true`, `rollback_audit_passed=true`,
+`telemetry_audit_passed=true`, `shadow_policy_takes_control=false`,
+`experimental_control_activation_count=0`, and
+`next_required_change=family_balanced_formal_performance_claim_release_decision`.
+
+This stage remains an offline shadow/canary preflight. It does not publish a
+checkpoint, replace the default policy, connect a real executor, continue Stage
+17 default-policy installation, relax guards, modify network/action
+space/default A*, claim Ackermann-feasible trajectory, or claim real-world
+performance.
+
+Stage `Family-Balanced Formal Performance Claim / Release Decision v1` is the
+next decision layer after the family-balanced shadow/canary preflight. Its
+runner is
+`scripts/run_family_balanced_formal_performance_claim_release_decision.py`,
+with shell entrypoint
+`scripts/run_family_balanced_formal_performance_claim_release_decision.sh` and
+output root
+`outputs/path_feedback_batch_family_balanced_formal_performance_claim_release_decision_v1/`.
+It reads the passed shadow/canary summary plus long-horizon,
+family-generalization, coverage-efficiency, guard/fallback, kill-switch,
+rollback, telemetry, lineage, and release-boundary audits; then it cross-checks
+the family-balanced rerun, gap-closure, formal training, post-training replay,
+and selected-candidate evidence.
+
+The pass contract is
+`family_balanced_formal_performance_claim_release_decision_passed=true`,
+`family_balanced_scoped_offline_performance_claim_approved=true`,
+`decision_verdict=approved_for_family_balanced_scoped_offline_performance_claim`,
+`allowed_claim_scope=scoped_offline_family_balanced_guarded_shadow_canary_only`,
+positive aggregate coverage/cumulative/valuable improvements,
+`coverage_efficiency_regression=false`, `fallback_rate<0.5`,
+`fallback_gain_contamination_count=0`, `controlled_regression_count=0`,
+`family_generalization_audit_passed=true`,
+`low_observation_shadow_passed=true`,
+`low_observation_limitation_acknowledged=true`, and
+`next_required_change=family_balanced_scoped_claim_publication_evidence_freeze`.
+The claim statement must explicitly state the low-observation limitation:
+current low-observation shadow evidence passes, but low-observation coverage
+return does not outperform teacher in the audited evidence set.
+
+This decision stage still keeps the release boundary closed:
+`checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. It does
+not publish a checkpoint, replace the default policy, connect a real executor,
+continue Stage 17 default-policy installation, relax guards, modify
+network/action space/default A*, claim Ackermann-feasible trajectory, claim
+real-world performance, or turn IRIS/GCS/path-planner diagnostics into release
+proof.
+
+## Family-Balanced Publication Governance Back Half v1
+
+After `Family-Balanced Formal Performance Claim / Release Decision v1` passes,
+model-explorer can resume the release-governance mainline, but only as a
+family-balanced evidence chain. The terminal gate for this recovery segment is
+the **family-balanced default-policy candidate sandbox install preflight**; it
+is not default-policy installation, not checkpoint publication, and not real
+executor integration.
+
+The back-half chain is:
+
+```text
+family_balanced_scoped_claim_publication_evidence_freeze
+  -> family_balanced_checkpoint_publication_authorization_preflight
+  -> family_balanced_checkpoint_publication_package_preparation
+  -> family_balanced_checkpoint_publication_package_verification
+  -> family_balanced_checkpoint_publication_sandbox_install_dry_run_preflight
+  -> family_balanced_checkpoint_publication_sandbox_install_dry_run
+  -> family_balanced_checkpoint_publication_sandbox_install_dry_run_verification
+  -> family_balanced_checkpoint_publication_sandbox_consumer_replay_canary
+  -> family_balanced_default_policy_candidate_authorization_preflight
+  -> family_balanced_default_policy_candidate_sandbox_install_preflight
+```
+
+Each stage writes its own
+`outputs/path_feedback_batch_family_balanced_*_v1/` root with summary,
+manifest, audit, rejection report, and report artifacts. The chain freezes the
+family-balanced scoped claim, authorizes and packages the family-balanced
+checkpoint candidate, verifies package identity and loadability, performs only
+sandbox dry-run copy/verification, runs isolated consumer replay/canary
+telemetry, and then audits kill-switch, rollback, default-policy read-only
+boundary, and path-planner isolation for the candidate sandbox install
+preflight.
+
+This recovery segment must continue to state 不替换 default policy and 不连接真实执行器.
+All summaries keep `checkpoint_publication_approved=false`,
+`default_policy_replacement_approved=false`,
+`real_executor_connection_approved=false`, `publishes_checkpoint=false`,
+`replaces_default_policy=false`, and `connects_real_executor=false`. It does
+not run PPO, expand rollout, modify reward, change network/action
+space/default A*, relax guards, claim real-world performance, claim
+Ackermann-feasible trajectory, or treat IRIS/GCS/path-planner diagnostics as
+release proof.
+
 ## Core Algorithm Development Chain
 
 The next implementation stages should follow:
