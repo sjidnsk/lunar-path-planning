@@ -4237,14 +4237,29 @@ Global 99% Coverage Benchmark v1
   -> 99% Coverage Release Governance v1
 ```
 
-The first implementation target is `Global 99% Coverage Benchmark v1`, with
-output root
-`outputs/path_feedback_batch_global_99_coverage_benchmark_v1/`. It should
-define the ROI contract, coverage denominator, reachable/safe cell ledger,
-budget model, failure reason taxonomy, and summary fields such as
+The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
+deterministic contract benchmark, not as a frontier planner. Its runner is
+`scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
+`scripts/run_global_99_coverage_benchmark.sh`, default config
+`configs/global_99_coverage_benchmark_v1.json`, and output root
+`outputs/path_feedback_batch_global_99_coverage_benchmark_v1/`. It defines the
+ROI contract, coverage denominator, reachable/safe cell ledger, budget model,
+failure reason taxonomy, and summary fields such as
 `target_coverage_rate=0.99`, `achieved_coverage_rate`,
 `reachable_safe_cell_count`, `covered_reachable_safe_cell_count`,
-`coverage_target_met`, and `infeasible_reason_codes`.
+`coverage_target_met`, and `infeasible_reason_codes`. When the benchmark
+contract is valid, it sets
+`next_required_change=frontier_coverage_planner_baseline`.
+
+Run the first-stage benchmark with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest tests/test_global_99_coverage_benchmark.py -q
+PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
+jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
+  outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
+```
 
 `Frontier Coverage Planner Baseline v1` then provides a non-learning
 frontier/coverage-map/revisit-penalty/path-budget baseline. `Coverage Memory +

@@ -18,11 +18,29 @@ not all raw map cells. Cells that are unreachable, unsafe, or impossible within
 the configured path budget must be reported explicitly through reason codes.
 The benchmark must separate policy performance from map infeasibility.
 
-The first output root should be:
+The first output root is:
 
 ```text
 outputs/path_feedback_batch_global_99_coverage_benchmark_v1/
 ```
+
+The first-stage runner and config are:
+
+```text
+scripts/run_global_99_coverage_benchmark.py
+scripts/run_global_99_coverage_benchmark.sh
+configs/global_99_coverage_benchmark_v1.json
+tests/test_global_99_coverage_benchmark.py
+```
+
+The first-stage artifact names are:
+
+- `global-99-coverage-benchmark-summary.json`
+- `global-99-coverage-benchmark-manifest.json`
+- `global-99-coverage-ledger.jsonl`
+- `global-99-coverage-denominator-audit.json`
+- `global-99-coverage-rejection-report.json`
+- `global-99-coverage-benchmark-report.md`
 
 Expected summary fields:
 
@@ -99,7 +117,7 @@ Suggested failure reason codes:
 
 ## First Target
 
-The next concrete implementation target for this line is:
+The first concrete implementation target for this line is:
 
 ```text
 Global 99% Coverage Benchmark v1
@@ -109,7 +127,8 @@ Acceptance:
 
 - Defines ROI, reachable safe denominator, coverage ledger, budget model, and
   infeasibility taxonomy.
-- Writes summary, manifest, audit, rejection report, and report artifacts under
+- Writes summary, manifest, ledger, denominator audit, rejection report, and
+  report artifacts under
   `outputs/path_feedback_batch_global_99_coverage_benchmark_v1/`.
 - Produces deterministic sample fixtures for at least one 1km x 1km map and
   one arbitrary ROI task.
@@ -120,23 +139,17 @@ Acceptance:
 
 ## Validation
 
-Initial documentation validation:
-
-```bash
-rg -n "Global 99% Exploration Coverage Line|Global 99% Coverage Benchmark v1|reachable_safe_exploration_cells|frontier_coverage_planner_baseline" \
-  README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
-git diff --check
-```
-
-Future implementation validation should add a benchmark runner and tests, for
-example:
+Implementation validation:
 
 ```bash
 PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
-$PY -m pytest tests/test_global_99_coverage_benchmark.py -q
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest tests/test_global_99_coverage_benchmark.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
-jq '{status, target_coverage_rate, achieved_coverage_rate, coverage_target_met, next_required_change}' \
+jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|frontier_coverage_planner_baseline" \
+  README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
+git diff --check
 ```
 
 ## Non-Goals
