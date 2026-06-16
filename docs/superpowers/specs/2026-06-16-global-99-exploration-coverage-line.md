@@ -93,6 +93,34 @@ The third-stage artifact names are:
 - `coverage-memory-rejection-report.json`
 - `coverage-memory-replanning-loop-report.md`
 
+The fourth-stage runner and config are:
+
+```text
+scripts/run_policy_guided_global_coverage.py
+scripts/run_policy_guided_global_coverage.sh
+configs/policy_guided_global_coverage_v1.json
+tests/test_policy_guided_global_coverage.py
+```
+
+The fourth-stage output root is:
+
+```text
+outputs/path_feedback_batch_policy_guided_global_coverage_v1/
+```
+
+The fourth-stage artifact names are:
+
+- `policy-guided-global-coverage-summary.json`
+- `policy-guided-global-coverage-manifest.json`
+- `policy-guided-global-coverage-decisions.jsonl`
+- `policy-guided-global-coverage-ledger.jsonl`
+- `policy-guided-global-coverage-memory-snapshots.jsonl`
+- `policy-guided-global-coverage-policy-score-audit.json`
+- `policy-guided-global-coverage-guard-audit.json`
+- `policy-guided-global-coverage-budget-audit.json`
+- `policy-guided-global-coverage-rejection-report.json`
+- `policy-guided-global-coverage-report.md`
+
 Expected summary fields:
 
 - `target_coverage_rate=0.99`
@@ -144,10 +172,12 @@ Suggested failure reason codes:
 4. `Policy-Guided Global Coverage v1`
    - Let the current PPO policy rank frontiers or waypoints at the global
      coverage level.
-   - Preserve stable contracts such as `model-explorer-contract/v1`,
-     `path-feedback-summary/v1`, and `path-planner-route/v1`.
-   - The policy assists global ordering; it does not replace release
-     governance or connect a real executor.
+   - Use read-only checkpoint inference through `ModelExplorerContract` /
+     `GoalCandidate` mapping and guarded blended ranking.
+   - The policy assists global ordering; it does not run PPO update, publish a
+     checkpoint, replace default policy, call path-planner, use NPZ/sidecar
+     maps, or connect a real executor.
+   - When valid, it sets `next_required_change=global_99_multi_map_generalization`.
 
 5. `99% Multi-Map Generalization v1`
    - Validate across multiple maps, starts, ROI shapes, obstacle layouts, risk
@@ -236,6 +266,38 @@ Acceptance:
   closes cleanly.
 - Project docs stay aligned with this development order.
 
+The fourth concrete implementation target for this line is:
+
+```text
+Policy-Guided Global Coverage v1
+```
+
+Acceptance:
+
+- Reads `configs/policy_guided_global_coverage_v1.json`.
+- Uses deterministic synthetic Global 99 scenarios and the existing Frontier /
+  Coverage Memory helper stack.
+- Loads the experimental policy candidate checkpoint from
+  `outputs/path_feedback_batch_value_stability_candidate_v1/` in read-only
+  inference mode.
+- Maps frontier candidates into `ModelExplorerContract` / `GoalCandidate`,
+  scores candidates with `TorchPolicyScorer`, and blends baseline score with
+  normalized policy logits under guard checks.
+- Falls back to the baseline candidate when policy scoring is invalid, action
+  masks are invalid, policy choices exceed budget, are unreachable, or make no
+  coverage progress.
+- Writes summary, manifest, decisions, ledger, memory snapshots, policy score
+  audit, guard audit, budget audit, rejection report, and report artifacts under
+  `outputs/path_feedback_batch_policy_guided_global_coverage_v1/`.
+- Summary reports `policy_loaded`, `policy_guidance_applied`,
+  `policy_scored_candidate_count`, `policy_guided_decision_count`,
+  `policy_selected_decision_count`, `policy_guard_fallback_count`,
+  `baseline_agreement_rate`, `controlled_regression_count`, and all required
+  boundary flags.
+- `next_required_change=global_99_multi_map_generalization` when the guarded
+  policy-guided loop closes cleanly.
+- Project docs stay aligned with this development order.
+
 ## Validation
 
 Implementation validation:
@@ -245,26 +307,30 @@ PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
-  tests/test_coverage_memory_replanning_loop.py -q
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 PYTHON=$PY bash scripts/run_frontier_coverage_planner_baseline.sh
 PYTHON=$PY bash scripts/run_coverage_memory_replanning_loop.sh
+PYTHON=$PY bash scripts/run_policy_guided_global_coverage.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
   outputs/path_feedback_batch_global_99_coverage_benchmark_v1/global-99-coverage-benchmark-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
   outputs/path_feedback_batch_frontier_coverage_planner_baseline_v1/frontier-coverage-planner-baseline-summary.json
 jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_required_change,memory_resume_verified,publishes_checkpoint,replaces_default_policy,connects_real_executor}' \
   outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/coverage-memory-replanning-loop-summary.json
-rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|policy_guided_global_coverage" \
+jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,policy_loaded,policy_guidance_applied,policy_scored_candidate_count,policy_guard_fallback_count,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update}' \
+  outputs/path_feedback_batch_policy_guided_global_coverage_v1/policy-guided-global-coverage-summary.json
+rg -n "Global 99% Coverage Benchmark v1|run_global_99_coverage_benchmark|Frontier Coverage Planner Baseline v1|run_frontier_coverage_planner_baseline|Coverage Memory \\+ Replanning Loop v1|run_coverage_memory_replanning_loop|Policy-Guided Global Coverage v1|run_policy_guided_global_coverage|global_99_multi_map_generalization" \
   README.md docs/算法设计与系统架构报告.md docs/superpowers/specs/2026-06-16-global-99-exploration-coverage-line.md
 git diff --check
 ```
 
 ## Non-Goals
 
-No PPO training in benchmark v1, no checkpoint publication, no default policy
-replacement, no real executor connection, no guard relaxation, no default A*
-replacement, no action-space change, no network architecture change in the
-first benchmark stage, no real-world performance claim, no
-Ackermann-feasible trajectory claim, and no treating IRIS/GCS/path-planner
-diagnostics as release proof.
+No PPO training, no checkpoint publication, no default policy replacement, no
+real executor connection, no guard relaxation, no default A* replacement, no
+action-space change, no network architecture change, no real-world performance
+claim, no Ackermann-feasible trajectory claim, and no treating
+IRIS/GCS/path-planner diagnostics as release proof. `Policy-Guided Global
+Coverage v1` permits read-only experimental checkpoint inference only.

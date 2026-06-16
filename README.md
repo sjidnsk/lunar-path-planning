@@ -4308,16 +4308,41 @@ jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,next_require
   outputs/path_feedback_batch_coverage_memory_replanning_loop_v1/coverage-memory-replanning-loop-summary.json
 ```
 
-`Policy-Guided Global Coverage v1` lets the current PPO policy participate in
-global frontier or waypoint ranking, while preserving the stable
-model-explorer/path-feedback/path-planner contracts. `99% Multi-Map
-Generalization v1` verifies the target across multiple maps, starts, ROI
-shapes, obstacle fields, and risk distributions. `Network Architecture Upgrade
-v1` starts only if those benchmarks show the policy network is the actual
-bottleneck; candidate upgrades include residual MLP, gated MLP, candidate-set
-encoder, lightweight attention, and graph/region encoder variants. `99%
-Coverage Release Governance v1` starts only after the 99% reachable-coverage
-target is evidence-backed in shadow/canary form.
+`Policy-Guided Global Coverage v1` is implemented as a guarded, read-only
+policy inference stage over the deterministic synthetic Global 99 contract. Its
+runner is `scripts/run_policy_guided_global_coverage.py`, shell entrypoint is
+`scripts/run_policy_guided_global_coverage.sh`, default config is
+`configs/policy_guided_global_coverage_v1.json`, and output root is
+`outputs/path_feedback_batch_policy_guided_global_coverage_v1/`. It loads the
+current experimental checkpoint from
+`outputs/path_feedback_batch_value_stability_candidate_v1/`, maps frontier
+candidates into the `ModelExplorerContract` / `GoalCandidate` policy interface,
+blends baseline frontier score with normalized policy logits, and records
+policy-score, guard, budget, decision, ledger, memory snapshot, rejection, and
+report artifacts. When the guarded policy-guided loop closes cleanly, it sets
+`next_required_change=global_99_multi_map_generalization`.
+
+Run the fourth-stage policy-guided loop with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py -q
+PYTHON=$PY bash scripts/run_policy_guided_global_coverage.sh
+jq '{status,reason_codes,achieved_coverage_rate,coverage_target_met,policy_loaded,policy_guidance_applied,policy_scored_candidate_count,policy_guard_fallback_count,next_required_change,publishes_checkpoint,replaces_default_policy,connects_real_executor,runs_new_ppo_update}' \
+  outputs/path_feedback_batch_policy_guided_global_coverage_v1/policy-guided-global-coverage-summary.json
+```
+
+`99% Multi-Map Generalization v1` verifies the target across multiple maps,
+starts, ROI shapes, obstacle fields, and risk distributions. `Network
+Architecture Upgrade v1` starts only if those benchmarks show the policy
+network is the actual bottleneck; candidate upgrades include residual MLP,
+gated MLP, candidate-set encoder, lightweight attention, and graph/region
+encoder variants. `99% Coverage Release Governance v1` starts only after the
+99% reachable-coverage target is evidence-backed in shadow/canary form.
 
 This line must not disturb the family-balanced publication chain. It does not
 replace default policy, connect a real executor, relax guards, modify the

@@ -65,9 +65,43 @@ def select_frontier_candidate(
     revisit_penalty_weight: float,
     new_coverage_weight: float,
 ) -> dict[str, Any] | None:
+    candidates = enumerate_frontier_candidates(
+        current_cell=current_cell,
+        frontier=frontier,
+        navigation_cells=navigation_cells,
+        target_cells=target_cells,
+        covered_target_cells=covered_target_cells,
+        coverage_map_cells=coverage_map_cells,
+        width=width,
+        height=height,
+        resolution_m=resolution_m,
+        coverage_radius_cells=coverage_radius_cells,
+        revisit_penalty_weight=revisit_penalty_weight,
+        new_coverage_weight=new_coverage_weight,
+        component_best_only=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def enumerate_frontier_candidates(
+    *,
+    current_cell: Cell,
+    frontier: set[Cell],
+    navigation_cells: set[Cell],
+    target_cells: set[Cell],
+    covered_target_cells: set[Cell],
+    coverage_map_cells: set[Cell],
+    width: int,
+    height: int,
+    resolution_m: float,
+    coverage_radius_cells: int,
+    revisit_penalty_weight: float,
+    new_coverage_weight: float,
+    component_best_only: bool = False,
+) -> list[dict[str, Any]]:
     distance, parent = bfs_tree(current_cell, navigation_cells)
     components = connected_components(frontier)
-    cluster_candidates: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     for cluster_index, component in enumerate(components):
         component_candidates: list[dict[str, Any]] = []
         for cell in sorted(component, key=lambda item: (item[1], item[0])):
@@ -109,10 +143,10 @@ def select_frontier_candidate(
                     candidate["selected_waypoint"][0],
                 )
             )
-            cluster_candidates.append(component_candidates[0])
-    if not cluster_candidates:
-        return None
-    cluster_candidates.sort(
+            if component_best_only:
+                component_candidates = component_candidates[:1]
+            candidates.extend(component_candidates)
+    candidates.sort(
         key=lambda candidate: (
             candidate["score"],
             -candidate["new_target_cell_count"],
@@ -121,4 +155,6 @@ def select_frontier_candidate(
             candidate["selected_waypoint"][0],
         )
     )
-    return cluster_candidates[0]
+    for rank, candidate in enumerate(candidates):
+        candidate["baseline_rank"] = rank
+    return candidates
