@@ -4239,6 +4239,15 @@ Global 99% Coverage Benchmark v1
   -> Global 99 Shadow Canary Replay v1
   -> Global 99 Real Map Preflight v1
   -> Global 99 Real Map Shadow Replay v1
+  -> Global 99 Real Map Release Governance Preflight v1
+  -> Global 99 Real Map Shadow Canary Preflight v1
+  -> Global 99 Real Map Shadow Canary Replay v1
+  -> Global 99 Real Map Evidence Refresh / Drift Audit v1
+  -> Global 99 Real Map Multi-ROI Generalization v1
+  -> Default Policy Candidate Authorization Preflight
+  -> Sandbox Candidate Installation Dry Run
+  -> Sandbox Consumer Replay / Canary
+  -> Controlled Default Policy Candidate Installation Preflight
   -> Network Architecture Upgrade v1 (only if evidence supports it)
   -> 99% Coverage Release Governance v1
 ```
@@ -4576,6 +4585,46 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
 PYTHON=$PY bash scripts/run_global_99_real_map_shadow_replay.sh
 jq '{status,reason_codes,real_map_shadow_replay_verdict,next_required_change,source_match_audit_passed,scenario_mismatch_count,max_replay_coverage_delta,max_replay_path_cost_delta_m,open_grid_fallback_used,connects_real_executor,starts_online_canary,canary_traffic_fraction,replaces_default_policy}' \
   outputs/path_feedback_batch_global_99_real_map_shadow_replay_v1/global-99-real-map-shadow-replay-summary.json
+```
+
+`Global 99 Real Map Release Governance Preflight v1` is implemented as a
+governance audit over quasi-real real-map replay evidence, not as a release or
+installation. Its runner is
+`scripts/run_global_99_real_map_release_governance_preflight.py`, shell
+entrypoint is
+`scripts/run_global_99_real_map_release_governance_preflight.sh`, default config
+is `configs/global_99_real_map_release_governance_preflight_v1.json`, and
+output root is
+`outputs/path_feedback_batch_global_99_real_map_release_governance_preflight_v1/`.
+It consumes Real Map Shadow Replay, Real Map Preflight, and quasi-real
+domain-gap/path-feedback evidence, then writes lineage, shadow replay,
+preflight, domain-gap, path-feedback, scope, boundary, kill-switch, rollback,
+telemetry, rejection, manifest, summary, and report artifacts. This stage does
+not invoke path-planner; it audits the upstream offline route replay scope as
+`offline_path_feedback_replay_only`. When governance evidence and boundaries
+are valid, it sets
+`next_required_change=global_99_real_map_shadow_canary_preflight`.
+
+Run the twelfth-stage real-map release governance preflight with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py \
+  tests/test_network_architecture_upgrade_readiness_review.py \
+  tests/test_global_99_release_governance_preflight.py \
+  tests/test_global_99_shadow_canary_preflight.py \
+  tests/test_global_99_shadow_canary_replay.py \
+  tests/test_global_99_real_map_preflight.py \
+  tests/test_global_99_real_map_shadow_replay.py \
+  tests/test_global_99_real_map_release_governance_preflight.py -q
+PYTHON=$PY bash scripts/run_global_99_real_map_release_governance_preflight.sh
+jq '{status,reason_codes,real_map_release_governance_verdict,next_required_change,source_match_audit_passed,scenario_mismatch_count,open_grid_fallback_used,policy_guard_fallback_rate,release_boundary_audit_passed,connects_real_executor,starts_online_canary,replaces_default_policy,uses_path_planner,audited_path_planner_use_scope}' \
+  outputs/path_feedback_batch_global_99_real_map_release_governance_preflight_v1/global-99-real-map-release-governance-preflight-summary.json
 ```
 
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
