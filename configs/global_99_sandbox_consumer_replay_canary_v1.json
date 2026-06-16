@@ -1,0 +1,13 @@
+{
+  "schema_version": "global-99-sandbox-consumer-replay-canary-config/v1",
+  "source_sandbox_install_root": "outputs/path_feedback_batch_global_99_sandbox_candidate_installation_dry_run_v1",
+  "consumer_step_count": 64,
+  "max_fallback_rate": 0.05,
+  "require_sandbox_install_passed": true,
+  "require_candidate_load": true,
+  "require_fallback_available": true,
+  "require_telemetry": true,
+  "require_rollback": true,
+  "sandbox_consumer_only": true,
+  "canary_traffic_fraction": 0.0
+}

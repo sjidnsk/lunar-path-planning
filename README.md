@@ -4771,6 +4771,28 @@ jq '{status,reason_codes,sandbox_installation_verdict,next_required_change,sourc
   outputs/path_feedback_batch_global_99_sandbox_candidate_installation_dry_run_v1/global-99-sandbox-candidate-installation-dry-run-summary.json
 ```
 
+`Global 99 Sandbox Consumer Replay / Canary v1` is implemented as offline
+sandbox consumer validation, not an online canary. Its runner is
+`scripts/run_global_99_sandbox_consumer_replay_canary.py`, shell entrypoint is
+`scripts/run_global_99_sandbox_consumer_replay_canary.sh`, default config is
+`configs/global_99_sandbox_consumer_replay_canary_v1.json`, and output root is
+`outputs/path_feedback_batch_global_99_sandbox_consumer_replay_canary_v1/`.
+It consumes the sandbox installation dry run, generates a sandbox replay trace,
+checks candidate load, fallback availability, telemetry, rollback, and boundary
+state. Passing this stage sets
+`next_required_change=controlled_default_policy_candidate_installation_preflight`.
+
+Run the nineteenth-stage sandbox consumer replay/canary with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_sandbox_consumer_replay_canary.py -q
+PYTHON=$PY bash scripts/run_global_99_sandbox_consumer_replay_canary.sh
+jq '{status,reason_codes,sandbox_consumer_verdict,next_required_change,source_sandbox_install_status,sandbox_consumer_replay_canary_passed,consumer_step_count,fallback_rate,controlled_regression_count,candidate_load_audit_passed,fallback_audit_passed,telemetry_audit_passed,rollback_audit_passed,boundary_audit_passed,replaces_default_policy,connects_real_executor,starts_online_canary,default_policy_candidate_installation_approved}' \
+  outputs/path_feedback_batch_global_99_sandbox_consumer_replay_canary_v1/global-99-sandbox-consumer-replay-canary-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
