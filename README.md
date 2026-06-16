@@ -4673,6 +4673,32 @@ jq '{status,reason_codes,real_map_shadow_canary_replay_verdict,next_required_cha
   outputs/path_feedback_batch_global_99_real_map_shadow_canary_replay_v1/global-99-real-map-shadow-canary-replay-summary.json
 ```
 
+`Global 99 Real Map Evidence Refresh / Drift Audit v1` is implemented as an
+evidence refresh and drift gate, not as a new planner run. Its runner is
+`scripts/run_global_99_real_map_evidence_refresh_drift_audit.py`, shell
+entrypoint is `scripts/run_global_99_real_map_evidence_refresh_drift_audit.sh`,
+default config is `configs/global_99_real_map_evidence_refresh_drift_audit_v1.json`,
+and output root is
+`outputs/path_feedback_batch_global_99_real_map_evidence_refresh_drift_audit_v1/`.
+It audits the approved shadow/canary replay summary plus quasi-real
+domain-gap/path-feedback manifest, slices, contracts, sidecars, context IDs,
+source-match deltas, fingerprints, fallback counters, and boundary state. It
+does not rerun PPO, publish checkpoints, replace default policy, connect a real
+executor, or call path-planner; the only accepted path-planner evidence is the
+upstream offline replay scope. When stable, it sets
+`next_required_change=global_99_real_map_multi_roi_generalization`.
+
+Run the fifteenth-stage real-map evidence drift audit with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_real_map_evidence_refresh_drift_audit.py -q
+PYTHON=$PY bash scripts/run_global_99_real_map_evidence_refresh_drift_audit.sh
+jq '{status,reason_codes,evidence_refresh_drift_verdict,next_required_change,source_domain_gap_status,domain_gap_verdict,slice_count,roi_group_count,scenario_id_mismatch_count,missing_contract_count,missing_sidecar_count,context_id_missing_count,legacy_identity_fallback_count,boundary_audit_passed,connects_real_executor,starts_online_canary,replaces_default_policy,uses_path_planner}' \
+  outputs/path_feedback_batch_global_99_real_map_evidence_refresh_drift_audit_v1/global-99-real-map-evidence-refresh-drift-audit-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
