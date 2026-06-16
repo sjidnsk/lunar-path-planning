@@ -1,0 +1,60 @@
+{
+  "schema_version": "xunce-topology-feature-extraction-audit-config/v1",
+  "source_topology_observation_contract_root": "outputs/path_feedback_batch_xunce_topology_observation_contract_v1",
+  "target_coverage_rate": 0.99,
+  "path_budget_m": 1000.0,
+  "coverage_radius_cells": 1,
+  "revisit_penalty_weight": 1.0,
+  "new_coverage_weight": 4.0,
+  "scenario": {
+    "scenario_id": "xunce_feature_extraction_contract_fixture",
+    "grid": {
+      "width": 8,
+      "height": 6,
+      "resolution_m": 10.0,
+      "origin": [0.0, 0.0]
+    },
+    "start_cell": [0, 0],
+    "current_cell": [2, 1],
+    "roi": {
+      "kind": "rect",
+      "x0": 0,
+      "y0": 0,
+      "x1": 8,
+      "y1": 6
+    },
+    "blocked_rectangles": [
+      {"x0": 3, "y0": 2, "x1": 4, "y1": 5}
+    ],
+    "unsafe_rectangles": [
+      {"x0": 7, "y0": 5, "x1": 8, "y1": 6}
+    ],
+    "current_covered_cells": [
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [0, 1],
+      [1, 1],
+      [2, 1],
+      [1, 2]
+    ],
+    "previous_path_cells": [
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [2, 1]
+    ],
+    "recent_history": [
+      {
+        "path_cost_m": 20.0,
+        "new_coverage_cell_count": 4,
+        "fallback_used": false
+      },
+      {
+        "path_cost_m": 30.0,
+        "new_coverage_cell_count": 3,
+        "fallback_used": false
+      }
+    ]
+  }
+}

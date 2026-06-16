@@ -282,6 +282,11 @@ artifacts. Each stage should be committed and pushed separately.
 4 Topology Feature Extraction Audit
    - Verify stable generation of frontier cluster, ROI group, BFS distance,
      coverage overlap, revisit, budget, fallback risk, and missing indicators.
+   - Current implementation target:
+     `scripts/run_xunce_topology_feature_extraction_audit.py`.
+   - Output root:
+     `outputs/path_feedback_batch_xunce_topology_feature_extraction_audit_v1/`.
+   - Passing next gate: `topology_aware_coverage_graph_proto`.
    - No training.
 5 小型巡策原型
    - Implement `topology_aware_coverage_graph_proto_v1`.

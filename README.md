@@ -4335,6 +4335,27 @@ writes `next_required_change=topology_feature_extraction_audit`. It is still
 contract design only, not feature extraction, model implementation, training,
 or checkpoint publication.
 
+`Xunce Topology Feature Extraction Audit v1` is the Stage 4 gate. It consumes
+the Stage 3 contract and a deterministic synthetic coverage fixture, then
+extracts candidate topology fields, candidate-edge fields, and the compact
+coverage-memory token using existing Global 99 geometry and frontier helpers.
+It audits frontier cluster, ROI group, BFS distance, coverage overlap, revisit,
+budget fraction, fallback risk, pairwise candidate relations, memory-token
+values, missing indicators, deterministic ordering, and closed boundaries. Run
+it with:
+
+```bash
+PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+  bash scripts/run_xunce_topology_feature_extraction_audit.sh
+```
+
+The output root is
+`outputs/path_feedback_batch_xunce_topology_feature_extraction_audit_v1/`.
+Passing writes `next_required_change=topology_aware_coverage_graph_proto`. It
+authorizes only the small prototype stage; it is not a network implementation,
+training run, checkpoint publication, default-policy replacement, or executor
+connection.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint

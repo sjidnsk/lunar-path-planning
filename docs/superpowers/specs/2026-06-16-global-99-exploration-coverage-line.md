@@ -518,6 +518,19 @@ compatibility, and all release boundaries. A passing summary writes
 `next_required_change=topology_feature_extraction_audit`; extraction and model
 implementation remain later stages.
 
+The fifth gate is `Xunce Topology Feature Extraction Audit v1`, with runner
+`scripts/run_xunce_topology_feature_extraction_audit.py`, config
+`configs/xunce_topology_feature_extraction_audit_v1.json`, and output root
+`outputs/path_feedback_batch_xunce_topology_feature_extraction_audit_v1/`. It
+uses a deterministic synthetic coverage fixture plus existing Global 99
+geometry/frontier helpers to populate the Stage 3 candidate topology,
+candidate-edge, and compact coverage-memory fields. It audits frontier cluster,
+ROI group, BFS distance, coverage overlap, revisit, budget fraction, fallback
+risk, pairwise candidate relations, memory values, missing indicators, stable
+ordering, and closed release/training/executor boundaries. A passing summary
+writes `next_required_change=topology_aware_coverage_graph_proto`; this
+authorizes only the small prototype stage, not training or release.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world
