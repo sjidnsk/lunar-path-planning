@@ -4627,6 +4627,29 @@ jq '{status,reason_codes,real_map_release_governance_verdict,next_required_chang
   outputs/path_feedback_batch_global_99_real_map_release_governance_preflight_v1/global-99-real-map-release-governance-preflight-summary.json
 ```
 
+`Global 99 Real Map Shadow Canary Preflight v1` is implemented as an offline
+real-map shadow/canary eligibility gate, not as an online canary. Its runner is
+`scripts/run_global_99_real_map_shadow_canary_preflight.py`, shell entrypoint is
+`scripts/run_global_99_real_map_shadow_canary_preflight.sh`, default config is
+`configs/global_99_real_map_shadow_canary_preflight_v1.json`, and output root
+is `outputs/path_feedback_batch_global_99_real_map_shadow_canary_preflight_v1/`.
+It consumes real-map release-governance and real-map shadow-replay summaries,
+requires source-match evidence, guard fallback, and release boundaries to stay
+valid, and keeps `canary_traffic_fraction=0.0` plus
+`starts_online_canary=false`. When eligible, it sets
+`next_required_change=global_99_real_map_shadow_canary_replay`.
+
+Run the thirteenth-stage real-map shadow/canary preflight with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_real_map_shadow_canary_preflight.py -q
+PYTHON=$PY bash scripts/run_global_99_real_map_shadow_canary_preflight.sh
+jq '{status,reason_codes,real_map_shadow_canary_preflight_verdict,next_required_change,source_match_audit_passed,scenario_mismatch_count,open_grid_fallback_used,policy_guard_fallback_rate,boundary_audit_passed,starts_online_canary,canary_traffic_fraction,connects_real_executor,replaces_default_policy}' \
+  outputs/path_feedback_batch_global_99_real_map_shadow_canary_preflight_v1/global-99-real-map-shadow-canary-preflight-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
