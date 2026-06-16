@@ -4793,6 +4793,32 @@ jq '{status,reason_codes,sandbox_consumer_verdict,next_required_change,source_sa
   outputs/path_feedback_batch_global_99_sandbox_consumer_replay_canary_v1/global-99-sandbox-consumer-replay-canary-summary.json
 ```
 
+`Global 99 Controlled Default Policy Candidate Installation Preflight v1` is
+implemented as the final controlled-installation review gate. Its runner is
+`scripts/run_global_99_controlled_default_policy_candidate_installation_preflight.py`,
+shell entrypoint is
+`scripts/run_global_99_controlled_default_policy_candidate_installation_preflight.sh`,
+default config is
+`configs/global_99_controlled_default_policy_candidate_installation_preflight_v1.json`,
+and output root is
+`outputs/path_feedback_batch_global_99_controlled_default_policy_candidate_installation_preflight_v1/`.
+It consumes sandbox consumer replay/canary evidence and audits review scope,
+default-policy read-only status, executor isolation, online-canary disabled
+state, kill-switch, rollback, telemetry, and release boundaries. Passing this
+stage means the candidate is eligible for controlled installation review only;
+`controlled_installation_executed=false` and default policy is not replaced.
+
+Run the final controlled installation preflight with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_controlled_default_policy_candidate_installation_preflight.py -q
+PYTHON=$PY bash scripts/run_global_99_controlled_default_policy_candidate_installation_preflight.sh
+jq '{status,reason_codes,controlled_installation_verdict,next_required_change,source_sandbox_consumer_status,controlled_default_policy_candidate_installation_preflight_passed,review_scope_audit_passed,default_policy_read_only_audit_passed,executor_isolation_audit_passed,online_canary_audit_passed,controlled_installation_executed,replaces_default_policy,connects_real_executor,starts_online_canary}' \
+  outputs/path_feedback_batch_global_99_controlled_default_policy_candidate_installation_preflight_v1/global-99-controlled-default-policy-candidate-installation-preflight-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
