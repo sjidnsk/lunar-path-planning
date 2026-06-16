@@ -4536,6 +4536,48 @@ jq '{status,reason_codes,real_map_preflight_verdict,next_required_change,domain_
   outputs/path_feedback_batch_global_99_real_map_preflight_v1/global-99-real-map-preflight-summary.json
 ```
 
+`Global 99 Real Map Shadow Replay v1` is implemented as an offline quasi-real
+shadow replay over existing LOLA path-feedback evidence, not as an online
+canary, executor connection, checkpoint publication, or default-policy
+installation. Its runner is
+`scripts/run_global_99_real_map_shadow_replay.py`, shell entrypoint is
+`scripts/run_global_99_real_map_shadow_replay.sh`, default config is
+`configs/global_99_real_map_shadow_replay_v1.json`, and output root is
+`outputs/path_feedback_batch_global_99_real_map_shadow_replay_v1/`. It consumes
+the real-map preflight summary and the frozen quasi-real path-feedback
+manifest, summary, slices, contracts, and sidecars from
+`outputs/path_feedback_batch_quasi_real_map_domain_gap_v1/`; it rewrites replay
+outputs into the isolated replay root, validates and runs `model_explorer
+path-feedback` in offline replay mode, then compares replay and source
+scenario evidence by `scenario_id`. This stage permits offline path-feedback /
+path-planner route replay only under `path_planner_use_scope =
+offline_path_feedback_replay_only`; it keeps `connects_real_executor=false`,
+`starts_online_canary=false`, `real_world_release_approved=false`, and
+`real_world_performance_claimed=false`. When source-match, context, path
+feedback, and boundary audits pass, it sets
+`next_required_change=global_99_real_map_release_governance_preflight`.
+
+Run the eleventh-stage real-map shadow replay with:
+
+```bash
+PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
+  tests/test_global_99_coverage_benchmark.py \
+  tests/test_frontier_coverage_planner_baseline.py \
+  tests/test_coverage_memory_replanning_loop.py \
+  tests/test_policy_guided_global_coverage.py \
+  tests/test_global_99_multi_map_generalization.py \
+  tests/test_network_architecture_upgrade_readiness_review.py \
+  tests/test_global_99_release_governance_preflight.py \
+  tests/test_global_99_shadow_canary_preflight.py \
+  tests/test_global_99_shadow_canary_replay.py \
+  tests/test_global_99_real_map_preflight.py \
+  tests/test_global_99_real_map_shadow_replay.py -q
+PYTHON=$PY bash scripts/run_global_99_real_map_shadow_replay.sh
+jq '{status,reason_codes,real_map_shadow_replay_verdict,next_required_change,source_match_audit_passed,scenario_mismatch_count,max_replay_coverage_delta,max_replay_path_cost_delta_m,open_grid_fallback_used,connects_real_executor,starts_online_canary,canary_traffic_fraction,replaces_default_policy}' \
+  outputs/path_feedback_batch_global_99_real_map_shadow_replay_v1/global-99-real-map-shadow-replay-summary.json
+```
+
 `Network Architecture Upgrade v1` starts only if the readiness review recommends
 it because the evidence points to policy regression, excessive guard fallback,
 or another network-expression bottleneck. Candidate upgrades include residual
