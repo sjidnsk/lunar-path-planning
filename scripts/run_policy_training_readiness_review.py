@@ -12572,7 +12572,7 @@ def _resolve_path(value: str | Path, repo_root: Path) -> Path:
 
 def _display_path(path: Path, repo_root: Path) -> str:
     try:
-        return str(path.relative_to(repo_root))
+        return path.relative_to(repo_root).as_posix()
     except ValueError:
         return str(path)
 

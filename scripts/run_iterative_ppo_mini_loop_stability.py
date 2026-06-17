@@ -17,6 +17,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from git_provenance import git_snapshot as _git_snapshot
+from platform_command import python_script_command
 
 
 CONFIG_SCHEMA_VERSION = "iterative-ppo-mini-loop-stability-config/v1"
@@ -143,9 +144,8 @@ def run_iterative_ppo_mini_loop_stability(
         round_index = int(step["round_index"])
         try:
             _run_command(
-                [
-                    "bash",
-                    str(repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.sh"),
+                python_script_command(
+                    repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.py",
                     "--source-root",
                     str(source_root),
                     "--candidate-root",
@@ -154,14 +154,13 @@ def run_iterative_ppo_mini_loop_stability(
                     str(step["sequential_root"]),
                     "--config",
                     str(repo_root / config["config_paths"]["sequential_canary_config"]),
-                ],
+                ),
                 cwd=repo_root,
                 env=env,
             )
             _run_command(
-                [
-                    "bash",
-                    str(repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.sh"),
+                python_script_command(
+                    repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.py",
                     "--sequential-root",
                     str(step["sequential_root"]),
                     "--candidate-root",
@@ -170,14 +169,13 @@ def run_iterative_ppo_mini_loop_stability(
                     str(step["collector_root"]),
                     "--config",
                     str(repo_root / config["config_paths"]["collector_config"]),
-                ],
+                ),
                 cwd=repo_root,
                 env=env,
             )
             _run_command(
-                [
-                    "bash",
-                    str(repo_root / "scripts" / "run_limited_ppo_update_smoke.sh"),
+                python_script_command(
+                    repo_root / "scripts" / "run_limited_ppo_update_smoke.py",
                     "--source-root",
                     str(source_root),
                     "--base-candidate-root",
@@ -188,14 +186,13 @@ def run_iterative_ppo_mini_loop_stability(
                     str(step["update_root"]),
                     "--config",
                     str(repo_root / config["config_paths"]["update_step_config"]),
-                ],
+                ),
                 cwd=repo_root,
                 env=env,
             )
             _run_command(
-                [
-                    "bash",
-                    str(repo_root / "scripts" / "run_raw_policy_generalization_evaluation.sh"),
+                python_script_command(
+                    repo_root / "scripts" / "run_raw_policy_generalization_evaluation.py",
                     "--source-root",
                     str(source_root),
                     "--dev-root",
@@ -210,14 +207,13 @@ def run_iterative_ppo_mini_loop_stability(
                     str(step["update_root"]),
                     "--config",
                     str(repo_root / config["config_paths"]["raw_generalization_config"]),
-                ],
+                ),
                 cwd=repo_root,
                 env=env,
             )
             _run_command(
-                [
-                    "bash",
-                    str(repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.sh"),
+                python_script_command(
+                    repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.py",
                     "--source-root",
                     str(source_root),
                     "--candidate-root",
@@ -226,14 +222,13 @@ def run_iterative_ppo_mini_loop_stability(
                     str(step["post_sequential_root"]),
                     "--config",
                     str(repo_root / config["config_paths"]["sequential_canary_config"]),
-                ],
+                ),
                 cwd=repo_root,
                 env=env,
             )
             _run_command(
-                [
-                    "bash",
-                    str(repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.sh"),
+                python_script_command(
+                    repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.py",
                     "--sequential-root",
                     str(step["post_sequential_root"]),
                     "--candidate-root",
@@ -242,7 +237,7 @@ def run_iterative_ppo_mini_loop_stability(
                     str(step["post_collector_root"]),
                     "--config",
                     str(repo_root / config["config_paths"]["collector_config"]),
-                ],
+                ),
                 cwd=repo_root,
                 env=env,
             )

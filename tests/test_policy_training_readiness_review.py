@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +11,7 @@ from pathlib import Path
 class PolicyTrainingReadinessReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repo_root = Path(__file__).resolve().parents[1]
-        self.script = self.repo_root / "scripts" / "run_policy_training_readiness_review.sh"
+        self.script = self.repo_root / "scripts" / "run_policy_training_readiness_review.py"
         self.config = self.repo_root / "configs" / "policy_training_readiness_review_v1.json"
         self.temp_dir = Path(tempfile.mkdtemp(prefix="policy-training-readiness-"))
         self.batch_root = self.temp_dir / "batch"
@@ -22,9 +23,8 @@ class PolicyTrainingReadinessReviewTests(unittest.TestCase):
 
     def _run_review(self, *args: str) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
-        env["PYTHON"] = str(Path("/home/kai/anaconda3/envs/lunar-explorer/bin/python"))
         return subprocess.run(
-            ["bash", str(self.script), *args],
+            [sys.executable, str(self.script), *args],
             cwd=self.repo_root,
             env=env,
             text=True,

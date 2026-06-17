@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,8 @@ from pathlib import Path
 
 class BatchPathFeedbackValidationTests(unittest.TestCase):
     def setUp(self) -> None:
+        if shutil.which("bash") is None:
+            self.skipTest("legacy Bash wrapper batch validation requires bash")
         self.repo_root = Path(__file__).resolve().parents[1]
         self.script = self.repo_root / "scripts" / "run_batch_path_feedback_validation.sh"
         self.temp_dir = Path(tempfile.mkdtemp(prefix="path-feedback-batch-"))
@@ -1645,10 +1648,10 @@ class BatchPathFeedbackValidationTests(unittest.TestCase):
 class PathFeedbackSingleRunCompatibilityTests(unittest.TestCase):
     def test_single_run_default_dry_run_behavior_is_unchanged(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
 
         completed = subprocess.run(
-            ["bash", str(script), "--dry-run"],
+            [sys.executable, str(script), "--dry-run"],
             cwd=repo_root,
             text=True,
             stdout=subprocess.PIPE,
@@ -1664,10 +1667,10 @@ class PathFeedbackSingleRunCompatibilityTests(unittest.TestCase):
 
     def test_single_run_accepts_policy_canary_diversity_scenario_set(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
 
         completed = subprocess.run(
-            ["bash", str(script), "--dry-run", "--scenario-set", "policy_canary_diversity"],
+            [sys.executable, str(script), "--dry-run", "--scenario-set", "policy_canary_diversity"],
             cwd=repo_root,
             text=True,
             stdout=subprocess.PIPE,
@@ -1679,10 +1682,10 @@ class PathFeedbackSingleRunCompatibilityTests(unittest.TestCase):
 
     def test_single_run_accepts_policy_canary_opportunity_quality_scenario_set(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
 
         completed = subprocess.run(
-            ["bash", str(script), "--dry-run", "--scenario-set", "policy_canary_opportunity_quality"],
+            [sys.executable, str(script), "--dry-run", "--scenario-set", "policy_canary_opportunity_quality"],
             cwd=repo_root,
             text=True,
             stdout=subprocess.PIPE,
@@ -1694,11 +1697,11 @@ class PathFeedbackSingleRunCompatibilityTests(unittest.TestCase):
 
     def test_single_run_accepts_policy_canary_dense_choke_opportunity_scenario_set(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--scenario-set",

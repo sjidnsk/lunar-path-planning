@@ -12,8 +12,10 @@ from typing import Any, Callable
 
 try:
     from git_provenance import git_snapshot
+    from platform_command import python_script_command
 except ModuleNotFoundError:  # pragma: no cover - import path used by unit tests
     from scripts.git_provenance import git_snapshot
+    from scripts.platform_command import python_script_command
 
 
 CONFIG_SCHEMA_VERSION = "quasi-real-guarded-ppo-stability-replay-config/v1"
@@ -296,9 +298,8 @@ def _run_pilot_replay(
     quasi_real_root: Path,
     config_path: Path,
 ) -> dict[str, Any]:
-    command = [
-        "bash",
-        str(repo_root / "scripts" / "run_quasi_real_guarded_ppo_rollout_pilot.sh"),
+    command = python_script_command(
+        repo_root / "scripts" / "run_quasi_real_guarded_ppo_rollout_pilot.py",
         "--update-smoke-root",
         str(update_smoke_root),
         "--candidate-root",
@@ -309,7 +310,7 @@ def _run_pilot_replay(
         str(output_root),
         "--config",
         str(config_path),
-    ]
+    )
     completed = subprocess.run(
         command,
         cwd=repo_root,
@@ -344,8 +345,8 @@ def _run_readiness_validate_only(
     config_path: Path,
 ) -> dict[str, Any]:
     command = [
-        "bash",
-        str(repo_root / "scripts" / "run_policy_training_readiness_review.sh"),
+        sys.executable,
+        str(repo_root / "scripts" / "run_policy_training_readiness_review.py"),
         "--batch-root",
         str(batch_root),
         "--config",

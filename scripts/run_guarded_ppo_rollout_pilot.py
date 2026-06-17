@@ -17,6 +17,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from git_provenance import git_snapshot as _git_snapshot
+from platform_command import python_script_command
 from training_progress import (
     add_progress_argument,
     collector_progress_metrics,
@@ -167,9 +168,8 @@ def run_guarded_ppo_rollout_pilot(
         summary_path=plan["sequential_root"] / "policy-gated-sequential-canary-rollout-summary.json",
         repo_root=repo_root,
         metrics_loader=sequential_progress_metrics,
-        command=[
-            "bash",
-            str(repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.sh"),
+        command=python_script_command(
+            repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.py",
             "--source-root",
             str(source_root),
             "--candidate-root",
@@ -178,7 +178,7 @@ def run_guarded_ppo_rollout_pilot(
             str(plan["sequential_root"]),
             "--config",
             str(repo_root / paths["sequential_canary_config"]),
-        ],
+        ),
         cwd=repo_root,
         env=env,
         check=False,
@@ -191,9 +191,8 @@ def run_guarded_ppo_rollout_pilot(
         summary_path=plan["collector_root"] / "ppo-rollout-collector-summary.json",
         repo_root=repo_root,
         metrics_loader=collector_progress_metrics,
-        command=[
-            "bash",
-            str(repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.sh"),
+        command=python_script_command(
+            repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.py",
             "--sequential-root",
             str(plan["sequential_root"]),
             "--candidate-root",
@@ -202,7 +201,7 @@ def run_guarded_ppo_rollout_pilot(
             str(plan["collector_root"]),
             "--config",
             str(repo_root / paths["collector_config"]),
-        ],
+        ),
         cwd=repo_root,
         env=env,
     )
@@ -214,9 +213,8 @@ def run_guarded_ppo_rollout_pilot(
         summary_path=plan["update_root"] / "limited-ppo-update-smoke-summary.json",
         repo_root=repo_root,
         metrics_loader=ppo_update_progress_metrics,
-        command=[
-            "bash",
-            str(repo_root / "scripts" / "run_limited_ppo_update_smoke.sh"),
+        command=python_script_command(
+            repo_root / "scripts" / "run_limited_ppo_update_smoke.py",
             "--source-root",
             str(source_root),
             "--base-candidate-root",
@@ -229,7 +227,7 @@ def run_guarded_ppo_rollout_pilot(
             str(repo_root / paths["update_config"]),
             "--progress",
             progress.mode,
-        ],
+        ),
         cwd=repo_root,
         env=env,
     )
@@ -241,9 +239,8 @@ def run_guarded_ppo_rollout_pilot(
         summary_path=plan["update_root"] / "raw-policy-generalization-evaluation-summary.json",
         repo_root=repo_root,
         metrics_loader=_raw_generalization_progress_metrics,
-        command=[
-            "bash",
-            str(repo_root / "scripts" / "run_raw_policy_generalization_evaluation.sh"),
+        command=python_script_command(
+            repo_root / "scripts" / "run_raw_policy_generalization_evaluation.py",
             "--source-root",
             str(source_root),
             "--dev-root",
@@ -258,7 +255,7 @@ def run_guarded_ppo_rollout_pilot(
             str(plan["update_root"]),
             "--config",
             str(repo_root / paths["raw_generalization_config"]),
-        ],
+        ),
         cwd=repo_root,
         env=env,
         check=False,
@@ -271,9 +268,8 @@ def run_guarded_ppo_rollout_pilot(
         summary_path=plan["post_sequential_root"] / "policy-gated-sequential-canary-rollout-summary.json",
         repo_root=repo_root,
         metrics_loader=sequential_progress_metrics,
-        command=[
-            "bash",
-            str(repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.sh"),
+        command=python_script_command(
+            repo_root / "scripts" / "run_policy_gated_sequential_canary_rollout.py",
             "--source-root",
             str(source_root),
             "--candidate-root",
@@ -282,7 +278,7 @@ def run_guarded_ppo_rollout_pilot(
             str(plan["post_sequential_root"]),
             "--config",
             str(repo_root / paths["sequential_canary_config"]),
-        ],
+        ),
         cwd=repo_root,
         env=env,
         check=False,
@@ -295,9 +291,8 @@ def run_guarded_ppo_rollout_pilot(
         summary_path=plan["post_collector_root"] / "ppo-rollout-collector-summary.json",
         repo_root=repo_root,
         metrics_loader=collector_progress_metrics,
-        command=[
-            "bash",
-            str(repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.sh"),
+        command=python_script_command(
+            repo_root / "scripts" / "run_ppo_rollout_collector_dry_run.py",
             "--sequential-root",
             str(plan["post_sequential_root"]),
             "--candidate-root",
@@ -306,7 +301,7 @@ def run_guarded_ppo_rollout_pilot(
             str(plan["post_collector_root"]),
             "--config",
             str(repo_root / paths["collector_config"]),
-        ],
+        ),
         cwd=repo_root,
         env=env,
     )
@@ -325,9 +320,8 @@ def run_guarded_ppo_rollout_pilot(
             ),
             repo_root=repo_root,
             metrics_loader=_quasi_teacher_progress_metrics,
-            command=[
-                "bash",
-                str(repo_root / "scripts" / "run_quasi_real_guarded_teacher_following_pilot.sh"),
+            command=python_script_command(
+                repo_root / "scripts" / "run_quasi_real_guarded_teacher_following_pilot.py",
                 "--source-root",
                 str(source_root),
                 "--candidate-root",
@@ -338,7 +332,7 @@ def run_guarded_ppo_rollout_pilot(
                 str(plan["post_quasi_real_teacher_following_root"]),
                 "--config",
                 str(repo_root / paths["quasi_real_teacher_following_config"]),
-            ],
+            ),
             cwd=repo_root,
             env=env,
         )
@@ -350,9 +344,8 @@ def run_guarded_ppo_rollout_pilot(
             summary_path=plan["post_quasi_real_collector_root"] / "ppo-rollout-collector-summary.json",
             repo_root=repo_root,
             metrics_loader=collector_progress_metrics,
-            command=[
-                "bash",
-                str(repo_root / "scripts" / "run_quasi_real_ppo_collector_dry_run.sh"),
+            command=python_script_command(
+                repo_root / "scripts" / "run_quasi_real_ppo_collector_dry_run.py",
                 "--guarded-teacher-following-root",
                 str(plan["post_quasi_real_teacher_following_root"]),
                 "--candidate-root",
@@ -363,7 +356,7 @@ def run_guarded_ppo_rollout_pilot(
                 str(plan["post_quasi_real_collector_root"]),
                 "--config",
                 str(repo_root / paths["quasi_real_collector_config"]),
-            ],
+            ),
             cwd=repo_root,
             env=env,
         )

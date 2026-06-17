@@ -1,8 +1,10 @@
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
@@ -283,6 +285,30 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
         self.assertEqual(episodes["seq-dense_choke_safe_bypass-b"]["initial_start_cell"], [1, 8])
         self.assertEqual(episodes["seq-channel_contrast-b"]["initial_start_cell"], [1, 6])
 
+    def test_step_path_feedback_uses_python_runner_without_bash(self) -> None:
+        from scripts.run_policy_gated_sequential_canary_rollout import _run_step_path_feedback
+
+        repo_root = Path(__file__).resolve().parents[1]
+        root = Path(tempfile.mkdtemp(prefix="seq-path-feedback-command-"))
+        spec_path = root / "spec.json"
+        step_root = root / "step"
+        spec_path.write_text("{}", encoding="utf-8")
+        completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+        with patch("scripts.run_policy_gated_sequential_canary_rollout.subprocess.run", return_value=completed) as run:
+            _run_step_path_feedback(
+                spec_path=spec_path,
+                step_root=step_root,
+                config={"generation": {"scenario_set": "stress", "top_k": 3}},
+                repo_root=repo_root,
+            )
+
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], sys.executable)
+        self.assertTrue(command[1].endswith("run_path_feedback_validation.py"))
+        self.assertNotIn("bash", command)
+        self.assertTrue(all(not str(part).endswith(".sh") for part in command))
+
     def test_summary_attributes_safe_single_step_coverage_gap_to_opportunity_distribution(self) -> None:
         from scripts.run_policy_gated_sequential_canary_rollout import summarize_sequential_steps
 
@@ -388,12 +414,12 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
 
         completed = subprocess.run(
             [
-                "bash",
-                str(repo_root / "scripts" / "run_policy_training_readiness_review.sh"),
+                sys.executable,
+                str(repo_root / "scripts" / "run_policy_training_readiness_review.py"),
                 "--batch-root",
                 str(source_root),
                 "--config",
-                str(repo_root / "configs" / "policy_training_readiness_review_v1.json"),
+                str(self._write_readiness_config_without_git_match(root, repo_root)),
                 "--raw-policy-generalization-evaluation-summary",
                 str(candidate_root / "raw-policy-generalization-evaluation-summary.json"),
                 "--policy-gated-sequential-canary-rollout-summary",
@@ -464,12 +490,12 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
 
         completed = subprocess.run(
             [
-                "bash",
-                str(repo_root / "scripts" / "run_policy_training_readiness_review.sh"),
+                sys.executable,
+                str(repo_root / "scripts" / "run_policy_training_readiness_review.py"),
                 "--batch-root",
                 str(source_root),
                 "--config",
-                str(repo_root / "configs" / "policy_training_readiness_review_v1.json"),
+                str(self._write_readiness_config_without_git_match(root, repo_root)),
                 "--raw-policy-generalization-evaluation-summary",
                 str(candidate_root / "raw-policy-generalization-evaluation-summary.json"),
                 "--policy-gated-sequential-canary-rollout-summary",
@@ -541,12 +567,12 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
 
         completed = subprocess.run(
             [
-                "bash",
-                str(repo_root / "scripts" / "run_policy_training_readiness_review.sh"),
+                sys.executable,
+                str(repo_root / "scripts" / "run_policy_training_readiness_review.py"),
                 "--batch-root",
                 str(source_root),
                 "--config",
-                str(repo_root / "configs" / "policy_training_readiness_review_v1.json"),
+                str(self._write_readiness_config_without_git_match(root, repo_root)),
                 "--raw-policy-generalization-evaluation-summary",
                 str(candidate_root / "raw-policy-generalization-evaluation-summary.json"),
                 "--policy-gated-sequential-canary-rollout-summary",
@@ -721,6 +747,13 @@ class PolicyGatedSequentialCanaryRolloutTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def _write_readiness_config_without_git_match(self, root: Path, repo_root: Path) -> Path:
+        config = json.loads((repo_root / "configs" / "policy_training_readiness_review_v1.json").read_text())
+        config.setdefault("validation", {})["require_current_git_match"] = False
+        path = root / "policy_training_readiness_review_no_git_match.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        return path
 
 
 if __name__ == "__main__":

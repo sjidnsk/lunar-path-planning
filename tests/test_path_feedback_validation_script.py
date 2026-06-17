@@ -9,12 +9,12 @@ from pathlib import Path
 class PathFeedbackValidationScriptTests(unittest.TestCase):
     def test_primary_acceptance_chain_is_labeled_in_dry_run(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-acceptance-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--scenario-set",
@@ -49,12 +49,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_control_point_gcs_candidate_is_explicit_opt_in(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-control-point-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--scenario-set",
@@ -79,12 +79,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_anchor_projection_candidate_generation_is_explicit_opt_in(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-anchor-projection-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--anchor-projection-candidate-generation",
@@ -104,12 +104,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_anchor_projection_selection_bonus_is_manifest_only_opt_in(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-anchor-selection-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--anchor-projection-candidate-generation",
@@ -141,12 +141,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_control_point_calibration_args_are_explicitly_forwarded(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-control-point-calibration-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--scenario-set",
@@ -189,12 +189,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_control_point_high_cost_proxy_arg_requires_control_point_candidate(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-high-cost-proxy-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--scenario-set",
@@ -220,12 +220,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_diagnostic_profiles_are_reflected_in_dry_run_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-profile-")) / "out"
 
         iris = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--scenario-set",
@@ -253,7 +253,7 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
         execution = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--diagnostic-profile",
@@ -273,12 +273,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_region_graph_guided_backend_is_reflected_in_dry_run_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-backend-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--planning-backend",
@@ -298,12 +298,12 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_channel_aware_astar_backend_is_reflected_in_dry_run_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-channel-aware-")) / "out"
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--planning-backend",
@@ -329,7 +329,7 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_mixed_stress_gate_accepts_sampled_region_decision_diagnostics(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         content = script.read_text(encoding="utf-8")
 
         self.assertIn("mixed_sampled_region_decision_diagnostics", content)
@@ -338,7 +338,7 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_stress_gate_accepts_sampled_region_decision_diagnostics(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         content = script.read_text(encoding="utf-8")
 
         self.assertIn("stress_sampled_region_decision_diagnostics", content)
@@ -347,14 +347,14 @@ class PathFeedbackValidationScriptTests(unittest.TestCase):
 
     def test_dry_run_uses_auditable_python_executable_for_all_python_commands(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        script = repo_root / "scripts" / "run_path_feedback_validation.sh"
+        script = repo_root / "scripts" / "run_path_feedback_validation.py"
         output_root = Path(tempfile.mkdtemp(prefix="path-feedback-python-")) / "out"
         env = os.environ.copy()
         env["PYTHON"] = sys.executable
 
         completed = subprocess.run(
             [
-                "bash",
+                sys.executable,
                 str(script),
                 "--dry-run",
                 "--diagnostic-profile",

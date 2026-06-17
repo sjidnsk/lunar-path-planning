@@ -1,0 +1,116 @@
+name: Platform Compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      run_ubuntu_drake:
+        description: "Run optional Ubuntu Drake profile if pydrake is already available"
+        required: false
+        default: "false"
+
+jobs:
+  non-drake:
+    name: ${{ matrix.os }} non-Drake
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            profile: windows-non-drake
+          - os: ubuntu-latest
+            profile: ubuntu-non-drake
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python test dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest numpy pydantic
+          python -m pip install -e dev-platform-constraints
+          python -m pip install -e path-planner
+          python -m pip install -e "model-explorer[training]"
+          python -m pip install -e visual-workbench
+
+      - name: Platform compatibility tests
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          python -m pytest \
+            tests/test_platform_stage_runner.py \
+            tests/test_bootstrap_env.py \
+            tests/test_path_feedback_windows_compat.py \
+            tests/test_no_new_python_bash_dependencies.py \
+            tests/test_platform_validation_matrix.py \
+            -q
+
+      - name: Xunce Stage 15-18 tests
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          python -m pytest \
+            tests/test_xunce_release_governance_gate.py \
+            tests/test_xunce_high_fidelity_real_map_roi_expansion.py \
+            tests/test_xunce_high_fidelity_real_map_comparison.py \
+            -q
+
+      - name: Stage runner dry-runs
+        shell: bash
+        run: |
+          python scripts/run_stage.py --stage xunce-shadow-replay-validation --dry-run
+          python scripts/run_stage.py --stage guarded-ppo-rollout-pilot --dry-run
+          python scripts/run_stage.py --stage iterative-ppo-mini-loop-stability --dry-run
+          python scripts/run_stage.py --stage quasi-real-guarded-ppo-stability-replay --dry-run
+
+      - name: Platform matrix dry-run
+        shell: bash
+        run: python scripts/run_platform_validation_matrix.py --profile "${{ matrix.profile }}" --dry-run
+
+      - name: Visual Workbench frontend
+        shell: bash
+        working-directory: visual-workbench/web
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+  ubuntu-drake:
+    name: ubuntu-latest Drake optional
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ubuntu_drake == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Probe Drake runtime
+        run: python -c "import pydrake; print('pydrake ok')"
+
+      - name: Run optional Drake profile
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: python scripts/run_platform_validation_matrix.py --profile ubuntu-drake

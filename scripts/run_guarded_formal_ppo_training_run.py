@@ -310,8 +310,8 @@ def _run_readiness_validate_only(
     config_path: Path,
 ) -> dict[str, Any]:
     command = [
-        "bash",
-        str(repo_root / "scripts" / "run_policy_training_readiness_review.sh"),
+        sys.executable,
+        str(repo_root / "scripts" / "run_policy_training_readiness_review.py"),
         "--batch-root",
         str(batch_root),
         "--config",

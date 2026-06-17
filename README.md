@@ -24,6 +24,37 @@ The three subprojects now form a staged research prototype:
 | `path-planner` | Path execution evaluation | Rebuilt from scratch through Phase 8: platform-aware A*, postprocess corridors, smoothing, curvature checks, trackable path, tracking simulation, fixed-corridor optimization, execution-aware metrics, and optional Drake IRIS/region graph diagnostics. |
 | `visual-workbench` | Evidence visualization | Local fourth-subproject candidate providing a React + FastAPI artifact workbench. It indexes allowlisted `outputs/` roots, renders evidence browser / map-route / path-feedback / experiment views, and only permits dry-run/validate commands. It is not yet wired as a Git submodule because no remote is configured. |
 
+## Windows and Ubuntu Support
+
+The supported cross-platform execution layer is Python-first. Use
+`python scripts/run_stage.py ...`, `python scripts/run_path_feedback_validation.py ...`,
+`python scripts/run_platform_validation_matrix.py ...`, and
+`python scripts/bootstrap_env.py ...` as canonical entrypoints. Bash and
+PowerShell scripts are convenience wrappers only.
+
+Supported profiles:
+
+- Windows non-Drake: core offline pipelines, Xunce Stage 15-18, path-feedback
+  batch, supported policy/rollout dry-run orchestration, model-explorer, and
+  visual-workbench checks.
+- Ubuntu non-Drake: same runtime surface as Windows.
+- Ubuntu Drake optional: runs `pydrake` IRIS/GCS backend tests only when Drake is
+  installed.
+
+Windows does not require Drake in the current profile. Large downloads and raw
+data should stay outside Git, preferably under
+`D:\CodexDownloads\lunar-path-planning` on Windows. See
+`docs/platform/windows-ubuntu-setup.md` and
+`docs/platform/windows-ubuntu-compatibility-audit.md`.
+
+The supported stage registry currently covers Xunce Stage 15-18,
+path-feedback validation, policy training readiness review, policy-gated
+sequential canary rollout, guarded PPO rollout pilot, iterative PPO mini-loop
+stability, and quasi-real guarded PPO stability replay. Use `--dry-run` first
+for PPO/rollout research stages; they remain offline evidence paths and do not
+publish checkpoints, replace default policy, connect executors, or start
+online canary traffic.
+
 Near-term integration focuses on the `dev-platform-constraints -> model-explorer
 -> path-planner` JSON loop: generate `model-explorer-contract/v1`, select Top-K
 goals, emit `path-planner-request/v1`, consume `path-planner-route/v1`, then feed
@@ -78,14 +109,14 @@ The parent repository provides a reproducible validation entrypoint for the
 current semi-real loop:
 
 ```bash
-bash scripts/run_path_feedback_validation.sh --dry-run
-bash scripts/run_path_feedback_validation.sh --top-k 3
-bash scripts/run_path_feedback_validation.sh --scenario-set stress --top-k 3
-bash scripts/run_path_feedback_validation.sh --scenario-set all --simulate-tracking
-bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile iris
-bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3
-bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3 --output-root outputs/path_feedback_validation_next_stage
-bash scripts/run_path_feedback_validation.sh --scenario-set all --diagnostic-profile all --top-k 3 --gcs-control-point-candidate --output-root outputs/path_feedback_gcs_control_point_current
+python scripts/run_path_feedback_validation.py --dry-run
+python scripts/run_path_feedback_validation.py --top-k 3
+python scripts/run_path_feedback_validation.py --scenario-set stress --top-k 3
+python scripts/run_path_feedback_validation.py --scenario-set all --simulate-tracking
+python scripts/run_path_feedback_validation.py --scenario-set all --diagnostic-profile iris
+python scripts/run_path_feedback_validation.py --scenario-set all --diagnostic-profile all --top-k 3
+python scripts/run_path_feedback_validation.py --scenario-set all --diagnostic-profile all --top-k 3 --output-root outputs/path_feedback_validation_next_stage
+python scripts/run_path_feedback_validation.py --scenario-set all --diagnostic-profile all --top-k 3 --gcs-control-point-candidate --output-root outputs/path_feedback_gcs_control_point_current
 ```
 
 The standard acceptance gate is
@@ -97,14 +128,14 @@ the control-point terrain-cost GCS candidate unless
 `--gcs-control-point-candidate` is supplied, and it does not claim a rover
 motion-feasibility solver or Ackermann-feasible trajectory.
 
-The script initializes/checks the three submodules, generates the fixed `.npz`
+The Python entrypoint initializes/checks the three submodules, generates the fixed `.npz`
 validation maps, exports paired `model-explorer-contract/v1` and
 `path-planner-sidecar/v1` JSON files, writes a `path-feedback-manifest/v1`
 with `scenario_set`, `diagnostic_profile`, `acceptance_gate`, `top_k`,
 planner extra args, and open-grid fallback gate metadata, and runs:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTHONPATH=src $PY -m model_explorer path-feedback validate <manifest>
 PYTHONPATH=src $PY -m model_explorer path-feedback run <manifest>
 ```
@@ -112,10 +143,10 @@ PYTHONPATH=src $PY -m model_explorer path-feedback run <manifest>
 The `path-feedback run` command prints a compact stdout summary and writes the
 full experiment JSON plus Markdown report to the configured output files. The
 JSON summary repeats the same `acceptance_metadata` and records the actual
-`open_grid_fallback_used_gate` result. The root script defaults to the shared
-Conda Python and can be overridden with `PYTHON=/path/to/python`; the chosen
+`open_grid_fallback_used_gate` result. The Python entrypoint defaults to the
+current interpreter and can be overridden with `PYTHON=/path/to/python`; the chosen
 interpreter is recorded in the manifest, summary metadata, and batch index.
-The root script can forward optional execution diagnostics with
+The entrypoint can forward optional execution diagnostics with
 `--simulate-tracking`, `--optimize-trajectory`, and `--drake-iris-regions`; the
 default remains lightweight and Drake-free. `--diagnostic-profile execution`
 forwards tracking simulation plus fixed-corridor optimization, `iris` forwards
@@ -4281,7 +4312,7 @@ line. It verifies that the design documents declare the `巡策` name, the full
 executor / PPO / network-modification boundaries. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_design_freeze_audit.sh
 ```
 
@@ -4299,7 +4330,7 @@ blocker, and records legacy missing provenance explicitly rather than silently
 claiming it is current. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_current_head_evidence_refresh.sh
 ```
 
@@ -4317,7 +4348,7 @@ policy regression, latency/parameter evidence, topology representation, or no
 current release-blocking network bottleneck. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_network_literature_bottleneck_review.sh
 ```
 
@@ -4333,7 +4364,7 @@ compact coverage-memory token while preserving `policy-observation/v1.1`,
 compatibility, and closed release boundaries. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_topology_observation_contract.sh
 ```
 
@@ -4353,7 +4384,7 @@ values, missing indicators, deterministic ordering, and closed boundaries. Run
 it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_topology_feature_extraction_audit.sh
 ```
 
@@ -4372,7 +4403,7 @@ probabilities, and a scalar value. The prototype is not registered as a
 production trainable/default-policy architecture. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_topology_graph_proto.sh
 ```
 
@@ -4390,7 +4421,7 @@ masking, finite outputs, fallback safety, and closed release/training/executor
 boundaries. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_proto_mechanism_validation.sh
 ```
 
@@ -4408,7 +4439,7 @@ ranking quality, parameter count, latency, finite-output behavior, mask
 correctness, and closed release/training/executor boundaries. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_architecture_contrast_evaluation.sh
 ```
 
@@ -4426,7 +4457,7 @@ ROI/budget context fusion, masked policy logits, and scalar value head. Run it
 with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_full_network_v1.sh
 ```
 
@@ -4441,7 +4472,7 @@ deterministic forward cases for shape, action masks, metadata, missing-indicator
 defaults, and legacy/additive-observation compatibility. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_full_network_static_contract_validation.sh
 ```
 
@@ -4457,7 +4488,7 @@ topology edges, coverage memory, ROI/budget context, and missing indicators.
 Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_full_network_ablation_experiments.sh
 ```
 
@@ -4473,7 +4504,7 @@ mask preservation, parameter budget, latency budget, and deterministic replay.
 Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_full_network_stress_evaluation.sh
 ```
 
@@ -4489,7 +4520,7 @@ summaries and decides whether the next stage may run a controlled training
 candidate. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_guarded_training_candidate_preflight.sh
 ```
 
@@ -4505,7 +4536,7 @@ deterministic, bounded supervised surrogate update for `xunce_full_network_v1`.
 Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_controlled_training_candidate.sh
 ```
 
@@ -4523,7 +4554,7 @@ against a deterministic fresh `xunce_full_network_v1` model, and writes
 checkpoint-load and policy-delta audits. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
+PYTHON=python \
   bash scripts/run_xunce_post_training_offline_evaluation.sh
 ```
 
@@ -4540,8 +4571,7 @@ used by Stage 14, and verifies source-match/determinism before sandbox
 packaging. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
-  bash scripts/run_xunce_shadow_replay_validation.sh
+python scripts/run_stage.py --stage xunce-shadow-replay-validation --dry-run
 ```
 
 The output root is
@@ -4556,8 +4586,7 @@ package, verifies checkpoint hash/load, and writes kill-switch, rollback,
 telemetry, and boundary audits. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
-  bash scripts/run_xunce_sandbox_candidate_preflight.sh
+python scripts/run_stage.py --stage xunce-sandbox-candidate-preflight --dry-run
 ```
 
 The output root is
@@ -4572,8 +4601,7 @@ lineage, scope, and closed release boundaries, and writes the final 巡策 resea
 verdict. Run it with:
 
 ```bash
-PYTHON=/home/kai/anaconda3/envs/lunar-explorer/bin/python \
-  bash scripts/run_xunce_release_governance_gate.sh
+python scripts/run_stage.py --stage xunce-release-governance-gate --dry-run
 ```
 
 The output root is
@@ -4595,18 +4623,41 @@ It expands the evidence matrix from 12 slices / 4 ROI groups to 24 slices / 8
 ROI groups, keeps context IDs and sidecar/contract paths auditable, and passes
 with `next_required_change=xunce_high_fidelity_real_map_policy_comparison`.
 
+Registered dry-run entrypoints:
+
+```bash
+python scripts/run_stage.py --stage xunce-high-fidelity-real-map-roi-expansion --dry-run
+python scripts/run_stage.py --stage xunce-high-fidelity-real-map-comparison --dry-run
+```
+
 The comparison runner is
 `scripts/run_xunce_high_fidelity_real_map_comparison.py`, with config
 `configs/xunce_high_fidelity_real_map_comparison_v1.json` and output root
 `outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/`. It
 compares the 巡策 sandbox candidate checkpoint against the incumbent
-experimental policy checkpoint in read-only mode. When the expanded evidence is
-valid and 巡策 has no worse/regression/fallback blocker while meeting efficiency
-budgets, it writes
+experimental policy checkpoint in read-only mode by loading both checkpoints and
+running the same high-fidelity observation/candidate batch through the real
+models. The comparison writes
+`xunce-high-fidelity-model-inference-audit.json` and
+`xunce-high-fidelity-model-inference-results.jsonl` with logits, masked logits,
+action probabilities, selected action/rank, value, latency, checkpoint load
+status, and actual parameter counts. Path-feedback candidate rows remain input
+evidence only; they must not be used as a proxy for Xunce model selection.
+Unsupported or missing checkpoints fail explicitly instead of falling back to
+path cost. If the expanded evidence is valid but real inference does not
+establish advantage, it writes `next_required_change=xunce_research_iteration_required`.
+When the expanded evidence is valid and Xunce has true-inference advantage with
+no worse/regression/fallback blocker while meeting efficiency budgets, it writes
 `next_required_change=xunce_default_policy_candidate_authorization_preflight`.
 This still does not approve default-policy replacement, checkpoint publication,
 real executor connection, online canary traffic, PPO training, or real-world
 performance claims.
+
+Stage 18 v1 uses the existing LOLA LDEM/LDEC quasi-real dataset by default. It
+does not require downloading additional map products unless the 24-slice /
+8-ROI-group expansion still has low path/risk/value spread or the next research
+question explicitly needs illumination/shadow-specific evidence. Large raw map
+downloads should stay outside the repo, preferably under `D:\CodexDownloads`.
 
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
@@ -4625,7 +4676,7 @@ contract is valid, it sets
 Run the first-stage benchmark with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest tests/test_global_99_coverage_benchmark.py -q
 PYTHON=$PY bash scripts/run_global_99_coverage_benchmark.sh
 jq '{status,reason_codes,target_coverage_rate,achieved_coverage_rate,coverage_target_met,next_required_change,default_policy_replacement_approved,real_executor_connection_approved}' \
@@ -4646,7 +4697,7 @@ report artifacts. When the baseline closes cleanly, it sets
 Run the second-stage baseline with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py -q
@@ -4669,7 +4720,7 @@ closes cleanly.
 Run the third-stage replanning loop with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4696,7 +4747,7 @@ report artifacts. When the guarded policy-guided loop closes cleanly, it sets
 Run the fourth-stage policy-guided loop with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4723,7 +4774,7 @@ close cleanly, it sets
 Run the fifth-stage multi-map validation with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4755,7 +4806,7 @@ network changes and sets
 Run the sixth-stage readiness review with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4785,7 +4836,7 @@ When the governance preflight passes, it sets
 Run the seventh-stage release governance preflight with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4815,7 +4866,7 @@ only means eligibility auditing; `canary_traffic_fraction` remains `0.0` and
 Run the eighth-stage shadow/canary preflight with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4847,7 +4898,7 @@ the offline replay is deterministic and boundaries stay closed, it sets
 Run the ninth-stage shadow/canary replay with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4884,7 +4935,7 @@ sets `next_required_change=global_99_real_map_shadow_replay`.
 Run the tenth-stage real-map preflight with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4925,7 +4976,7 @@ feedback, and boundary audits pass, it sets
 Run the eleventh-stage real-map shadow replay with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4964,7 +5015,7 @@ are valid, it sets
 Run the twelfth-stage real-map release governance preflight with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_coverage_benchmark.py \
   tests/test_frontier_coverage_planner_baseline.py \
@@ -4998,7 +5049,7 @@ valid, and keeps `canary_traffic_fraction=0.0` plus
 Run the thirteenth-stage real-map shadow/canary preflight with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_real_map_shadow_canary_preflight.py -q
 PYTHON=$PY bash scripts/run_global_99_real_map_shadow_canary_preflight.sh
@@ -5021,7 +5072,7 @@ traffic at zero. When replay evidence is stable, it sets
 Run the fourteenth-stage real-map shadow/canary replay with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_real_map_shadow_canary_replay.py -q
 PYTHON=$PY bash scripts/run_global_99_real_map_shadow_canary_replay.sh
@@ -5047,7 +5098,7 @@ upstream offline replay scope. When stable, it sets
 Run the fifteenth-stage real-map evidence drift audit with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_real_map_evidence_refresh_drift_audit.py -q
 PYTHON=$PY bash scripts/run_global_99_real_map_evidence_refresh_drift_audit.sh
@@ -5071,7 +5122,7 @@ state. When all required ROI groups pass, it sets
 Run the sixteenth-stage real-map multi-ROI audit with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_real_map_multi_roi_generalization.py -q
 PYTHON=$PY bash scripts/run_global_99_real_map_multi_roi_generalization.sh
@@ -5096,7 +5147,7 @@ dry run and sets `next_required_change=sandbox_candidate_installation_dry_run`.
 Run the seventeenth-stage authorization preflight with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_default_policy_candidate_authorization_preflight.py -q
 PYTHON=$PY bash scripts/run_global_99_default_policy_candidate_authorization_preflight.sh
@@ -5119,7 +5170,7 @@ telemetry, and keeps default policy untouched. Passing this stage sets
 Run the eighteenth-stage sandbox installation dry run with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_sandbox_candidate_installation_dry_run.py -q
 PYTHON=$PY bash scripts/run_global_99_sandbox_candidate_installation_dry_run.sh
@@ -5141,7 +5192,7 @@ state. Passing this stage sets
 Run the nineteenth-stage sandbox consumer replay/canary with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_sandbox_consumer_replay_canary.py -q
 PYTHON=$PY bash scripts/run_global_99_sandbox_consumer_replay_canary.sh
@@ -5167,7 +5218,7 @@ stage means the candidate is eligible for controlled installation review only;
 Run the final controlled installation preflight with:
 
 ```bash
-PY=/home/kai/anaconda3/envs/lunar-explorer/bin/python
+PY=python
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $PY -m pytest \
   tests/test_global_99_controlled_default_policy_candidate_installation_preflight.py -q
 PYTHON=$PY bash scripts/run_global_99_controlled_default_policy_candidate_installation_preflight.sh
@@ -5217,7 +5268,39 @@ for a seed path whose surrounding corridor/channel is lower risk. It must keep
 `path-planner-route/v1`, the default A* baseline, `trajectory_kind=geometric_path`,
 PPO, network architecture, and candidate-list action space stable.
 
-## Ubuntu One-Click Conda Setup
+## Cross-Platform Conda Setup
+
+Recommended Windows setup:
+
+```powershell
+python scripts\bootstrap_env.py --platform windows --dry-run
+python scripts\bootstrap_env.py --platform windows --install-editable --with-training --with-visual-workbench --run-validation
+```
+
+Recommended Ubuntu setup:
+
+```bash
+python scripts/bootstrap_env.py --platform ubuntu --dry-run
+python scripts/bootstrap_env.py --platform ubuntu --env-name lunar-explorer --install-editable --with-training --with-visual-workbench --run-validation
+```
+
+The bootstrap runner creates or updates a Python 3.12 Conda environment, runs
+import smoke checks, and uses the non-Drake validation profile by default.
+Windows defaults to `D:\conda_envs\lunar-explorer` for the environment and
+`D:\CodexDownloads\lunar-path-planning` for downloads/data.
+
+Cross-platform validation matrix:
+
+```powershell
+python scripts\run_platform_validation_matrix.py --profile windows-non-drake --dry-run
+```
+
+```bash
+python scripts/run_platform_validation_matrix.py --profile ubuntu-non-drake --dry-run
+python scripts/run_platform_validation_matrix.py --profile ubuntu-drake --dry-run
+```
+
+## Ubuntu Legacy Conda Setup
 
 Target environment:
 

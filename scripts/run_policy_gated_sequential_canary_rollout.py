@@ -14,6 +14,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from git_provenance import git_snapshot as _git_snapshot
+from platform_command import python_script_command
 from training_progress import add_progress_argument, make_progress_reporter, sequential_progress_metrics
 
 try:  # Imported as scripts.run_policy_gated_sequential_canary_rollout in tests.
@@ -655,10 +656,9 @@ def _run_step_path_feedback(
     repo_root: Path,
 ) -> subprocess.CompletedProcess[str]:
     generation = config.get("generation", {})
-    script = repo_root / "scripts" / "run_path_feedback_validation.sh"
-    argv = [
-        "bash",
-        str(script),
+    script = repo_root / "scripts" / "run_path_feedback_validation.py"
+    argv = python_script_command(
+        script,
         "--scenario-set",
         str(generation.get("scenario_set", "policy_canary_value_stability")),
         "--scenario-spec-json",
@@ -674,7 +674,7 @@ def _run_step_path_feedback(
         "--anchor-projection-prefer-contract-safe-trainable-targets",
         "--anchor-projection-planner-validated-trainable-target-mining",
         "--anchor-projection-allow-planner-validated-distance-exception",
-    ]
+    )
     argv.extend(str(item) for item in generation.get("planner_extra_args", []))
     return subprocess.run(
         argv,

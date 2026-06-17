@@ -1,7 +1,10 @@
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class QuasiRealGuardedPpoStabilityReplayTests(unittest.TestCase):
@@ -125,6 +128,31 @@ class QuasiRealGuardedPpoStabilityReplayTests(unittest.TestCase):
         self.assertEqual(readiness["training_blockers"], [])
         self.assertEqual(readiness["replay_count"], 3)
         self.assertEqual(readiness["passed_replay_count"], 3)
+
+    def test_default_pilot_replay_uses_python_runner_without_bash(self) -> None:
+        from scripts.run_quasi_real_guarded_ppo_stability_replay import _run_pilot_replay
+
+        replay_root = self.temp_dir / "replay-python-command"
+
+        with patch(
+            "scripts.run_quasi_real_guarded_ppo_stability_replay.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ):
+            summary = _run_pilot_replay(
+                output_root=replay_root,
+                replay_index=0,
+                repo_root=self.repo_root,
+                update_smoke_root=self.temp_dir / "update",
+                candidate_root=self.temp_dir / "candidate",
+                quasi_real_root=self.temp_dir / "quasi-real",
+                config_path=self.repo_root / "configs" / "quasi_real_guarded_ppo_rollout_pilot_v1.json",
+            )
+
+        command = summary["command"]
+        self.assertEqual(command[0], sys.executable)
+        self.assertTrue(command[1].endswith("run_quasi_real_guarded_ppo_rollout_pilot.py"))
+        self.assertNotIn("bash", command)
+        self.assertTrue(all(not str(part).endswith(".sh") for part in command))
 
     def _config(self) -> dict:
         return {

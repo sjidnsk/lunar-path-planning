@@ -15,6 +15,26 @@ coverage-memory-aware candidate graph ranking. It does not replace the planner,
 change the action space, install default policy, connect a real executor,
 publish checkpoints, or claim real-world performance.
 
+## Platform Boundary
+
+The Xunce research chain must use the Python-first cross-platform runner for
+new offline evidence refreshes. `scripts/run_stage.py` is the canonical entry
+for registered Stage 15-18 commands and the adjacent supported path-feedback /
+guarded research orchestration stages. Bash/PowerShell files are wrappers only.
+Windows support is scoped to the non-Drake offline profile; `pydrake` IRIS/GCS
+backends remain Ubuntu/Linux optional diagnostics and must not block Windows
+validation.
+
+Full platform validation uses `scripts/run_platform_validation_matrix.py`.
+Windows and Ubuntu non-Drake profiles cover platform tests, Xunce Stage 15-18,
+path-feedback, model-explorer, path-planner non-Drake, and visual-workbench
+backend/frontend checks. Ubuntu Drake is optional and only runs when `pydrake`
+imports successfully.
+
+Do not write `/home/kai/...` or machine-local `C:\Users\...` paths into tracked
+configs. Large downloads and raw map products stay outside Git, with Windows
+defaults under `D:\CodexDownloads\lunar-path-planning`.
+
 ## Current Fit
 
 The existing policy path is already shaped as a candidate-set scorer:
@@ -429,13 +449,24 @@ artifacts. Each stage should be committed and pushed separately.
    - Expand quasi-real LOLA evidence from 12 slices / 4 ROI groups to 24 slices
      / 8 ROI groups while auditing context IDs, contract/sidecar paths,
      path-feedback evidence, and open-grid fallback.
+   - Use the existing LOLA LDEM/LDEC quasi-real data by default; do not download
+     additional map products unless the 24/8 expansion remains low-spread or a
+     later illumination/shadow-specific question requires it.
    - Passing next gate: `xunce_high_fidelity_real_map_policy_comparison`.
    - Policy comparison target:
      `scripts/run_xunce_high_fidelity_real_map_comparison.py`.
    - Policy comparison output root:
      `outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/`.
-   - Compare the 巡策 sandbox candidate and incumbent experimental policy in
-     read-only mode on the expanded ROI evidence.
+   - Compare the Xunce sandbox candidate and incumbent experimental policy in
+     read-only mode on the expanded ROI evidence by loading both checkpoints and
+     running the same observation/candidate batch through real model inference.
+   - The comparison must write
+     `xunce-high-fidelity-model-inference-audit.json` and
+     `xunce-high-fidelity-model-inference-results.jsonl`, including logits,
+     masked logits, probabilities, selected action/rank, value, latency,
+     checkpoint load state, and actual parameter counts.
+   - Path-feedback candidate rows are observation/evidence inputs only; they
+     must not be used as a proxy for Xunce model selection.
    - If evidence is valid but advantage is not established, next gate:
      `xunce_research_iteration_required`.
    - If advantage is established without worse/regression/fallback/efficiency

@@ -11,7 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from git_provenance import git_snapshot as _git_snapshot
+from platform_command import is_windows, python_script_command
 
 
 MATRIX_SCHEMA_VERSION = "path-feedback-batch-matrix/v1"
@@ -96,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--validate-only", action="store_true", help="Validate the matrix and exit without running commands.")
     parser.add_argument(
         "--single-run-script",
-        help="Single-run validation script to orchestrate. Defaults to scripts/run_path_feedback_validation.sh.",
+        help="Single-run validation script to orchestrate. Defaults to scripts/run_path_feedback_validation.py.",
     )
     args = parser.parse_args(argv)
 
@@ -105,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     single_run_script = (
         _resolve_path(args.single_run_script, repo_root)
         if args.single_run_script
-        else repo_root / "scripts" / "run_path_feedback_validation.sh"
+        else repo_root / "scripts" / "run_path_feedback_validation.py"
     )
 
     try:
@@ -128,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
                 "matrix": _display_path(matrix_path, repo_root),
                 "run_count": len(batch_plan["runs"]),
                 "output_root": _display_path(batch_plan["output_root"], repo_root),
+                "command_launchers": sorted({run["command_launcher"] for run in batch_plan["runs"]}),
             },
             ensure_ascii=False,
         )
@@ -138,7 +144,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         for run in batch_plan["runs"]:
-            print(f"[DRY RUN] {run['run_id']}: (cd {repo_root} && {shlex.join(run['argv'])})")
+            print(
+                f"[DRY RUN] {run['run_id']} command_launcher={run['command_launcher']}: "
+                f"(cd {repo_root} && {shlex.join(run['argv'])})"
+            )
         return 0
 
     git_snapshot = _git_snapshot(repo_root)
@@ -248,9 +257,7 @@ def _build_batch_plan(
         else:
             run_output_root = batch_output_root / run_id
 
-        argv = [
-            "bash",
-            str(single_run_script),
+        command_args = [
             "--scenario-set",
             scenario_set,
             "--diagnostic-profile",
@@ -261,8 +268,9 @@ def _build_batch_plan(
             str(run_output_root),
         ]
         optional_cli_args = _optional_cli_args(merged, index=index)
-        argv.extend(optional_cli_args)
-        argv.extend(planner_extra_args)
+        command_args.extend(optional_cli_args)
+        command_args.extend(planner_extra_args)
+        argv, command_launcher = _single_run_command(single_run_script, command_args)
         runs.append(
             {
                 "run_id": run_id,
@@ -274,6 +282,7 @@ def _build_batch_plan(
                 "planner_extra_args": planner_extra_args,
                 "output_root": run_output_root,
                 "argv": argv,
+                "command_launcher": command_launcher,
             }
         )
 
@@ -284,6 +293,17 @@ def _build_batch_plan(
         "single_run_script": single_run_script,
         "runs": runs,
     }
+
+
+def _single_run_command(single_run_script: Path, command_args: list[str]) -> tuple[list[str], str]:
+    suffix = single_run_script.suffix.lower()
+    if suffix == ".py":
+        return python_script_command(single_run_script, *command_args), "python"
+    if suffix == ".sh":
+        if is_windows():
+            raise MatrixError("bash_single_run_script_unsupported_on_windows")
+        return ["bash", str(single_run_script), *command_args], "bash_legacy"
+    raise MatrixError(f"single-run script must be a .py or .sh file: {single_run_script}")
 
 
 def _require_run_id(value: Any, index: int) -> str:
@@ -430,6 +450,7 @@ def _record_run_result(
         "return_code": return_code,
         "reason_codes": reason_codes,
         "command_argv": list(run["argv"]),
+        "command_launcher": run["command_launcher"],
         "command_args": {
             "scenario_set": run["scenario_set"],
             "diagnostic_profile": run["diagnostic_profile"],
@@ -500,6 +521,7 @@ def _build_run_index(
         "matrix_path": _display_path(batch_plan["matrix_path"], repo_root),
         "output_root": _display_path(batch_plan["output_root"], repo_root),
         "single_run_script": _display_path(batch_plan["single_run_script"], repo_root),
+        "command_launchers": sorted({run["command_launcher"] for run in batch_plan["runs"]}),
         "run_count": len(public_runs),
         "passed_count": len(public_runs) - len(failed_run_ids),
         "failed_count": len(failed_run_ids),
@@ -546,6 +568,7 @@ def _build_evaluation_summary(
         "generated_at": _utc_now(),
         "matrix_path": _display_path(batch_plan["matrix_path"], repo_root),
         "output_root": _display_path(batch_plan["output_root"], repo_root),
+        "command_launchers": sorted({record["command_launcher"] for record in run_records}),
         "run_count": len(run_records),
         "passed_count": len(run_records) - len(failed_run_ids),
         "failed_count": len(failed_run_ids),
@@ -1146,6 +1169,7 @@ def _summary_run_record(record: dict[str, Any]) -> dict[str, Any]:
         "run_id": record["run_id"],
         "status": record["status"],
         "reason_codes": list(record["reason_codes"]),
+        "command_launcher": record["command_launcher"],
         "command_args": dict(record["command_args"]),
         "sample_quality_profile": record["sample_quality_profile"],
         "summary_path": record["summary_path"],
