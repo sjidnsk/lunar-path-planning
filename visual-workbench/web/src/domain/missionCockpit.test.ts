@@ -212,7 +212,12 @@ describe("missionCockpit", () => {
     expect(chain.nextSafeAction).toContain("dry-run");
     expect(chain.nextSafeAction).toContain("validate");
     expect(chain.forbiddenActions).toEqual(["full run", "PPO", "training"]);
-    expect(DEFAULT_MAP_LAYERS.optimizedPath).toBe(true);
+    expect(DEFAULT_MAP_LAYERS).toEqual({
+      rawPath: true,
+      smoothedPath: true,
+      optimizedPath: true,
+      blocked: true,
+    });
   });
 
   test("buildEvidenceChain adds selected schemaVersion to schema flow", () => {
@@ -261,5 +266,32 @@ describe("missionCockpit", () => {
       { schema: "path-feedback-summary/v1", status: "missing" },
     ]);
     expect(chain.missingSchemas).not.toContain("route-1");
+  });
+
+  test("buildEvidenceChain resolves a real artifactId to its schema without leaking artifactId as schema", () => {
+    const routeArtifact = {
+      ...artifact("path-planner-route/v1", "reachable", "route.json"),
+      artifact_id: "route-real",
+    };
+    const allArtifacts = [routeArtifact, artifact("path-feedback-manifest/v1", "passed", "manifest.json")];
+    const reachabilityStage = deriveMissionStages(allArtifacts).find((stage) => stage.id === "reachability-confirmation");
+    const selected = {
+      objectType: "mission-stage" as const,
+      frameId: "t0",
+      label: "任务阶段",
+      artifactId: "route-real",
+    };
+
+    expect(reachabilityStage).toBeDefined();
+
+    const chain = buildEvidenceChain(reachabilityStage!, allArtifacts, selected);
+
+    expect(chain.schemaFlow).toEqual([
+      { schema: "path-feedback-manifest/v1", status: "present" },
+      { schema: "path-feedback-summary/v1", status: "missing" },
+      { schema: "path-planner-route/v1", status: "present" },
+    ]);
+    expect(chain.schemaFlow.map((item) => item.schema)).not.toContain("route-real");
+    expect(chain.missingSchemas).not.toContain("route-real");
   });
 });
