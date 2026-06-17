@@ -205,6 +205,12 @@ button:focus-visible {
   padding: 22px;
 }
 
+.h1-cockpit-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
 .mission-status-header {
   position: relative;
   justify-content: space-between;

@@ -228,6 +228,17 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  test("renders the complete H1 cockpit structure", async () => {
+    const { container } = render(<App />);
+
+    expect(await screen.findByLabelText("任务阶段导航")).toBeInTheDocument();
+    expect(screen.getByLabelText("任务态势摘要")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "地图回放主交互" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "证据链抽屉" })).toBeInTheDocument();
+    expect(container.querySelector(".h1-cockpit-main")).toBeInTheDocument();
+    expect(container.querySelector(".mission-shell > .mission-map-stack + .mission-evidence-panel")).toBeInTheDocument();
+  });
+
   test("evidence chain drawer follows the selected replay object", async () => {
     const user = userEvent.setup();
     render(<App />);

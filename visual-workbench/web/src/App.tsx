@@ -125,8 +125,11 @@ export function App() {
 
   function selectStage(stageId: MissionStageId) {
     userSelectedStage.current = true;
+    userSelectedFrame.current = false;
     setSelectedStageId(stageId);
     setActiveTool(null);
+    setSelectedFrameId(undefined);
+    setSelectedMapObject({ objectType: "mission-stage", frameId: "t0", label: "任务阶段" });
   }
 
   function toggleStageTool(toolId: StageToolId) {
@@ -150,7 +153,7 @@ export function App() {
     <div className="app-shell mission-control-app">
       <MissionStageRail stages={missionStages} selectedStageId={selectedStage.id} onSelectStage={selectStage} />
 
-      <main className="mission-main">
+      <main className="mission-main h1-cockpit-main">
         <MissionStatusHeader
           stage={selectedStage}
           health={health}
