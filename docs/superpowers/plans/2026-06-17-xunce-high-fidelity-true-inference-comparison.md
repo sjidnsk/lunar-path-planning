@@ -38,3 +38,49 @@ This plan does not approve default-policy replacement, checkpoint publication, r
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/test_xunce_high_fidelity_real_map_comparison.py -q
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest model-explorer/tests/test_model_explorer.py::TorchPolicyNetworkTests model-explorer/tests/test_model_explorer.py::PolicyTrainingTests -q
 ```
+
+## Execution Result - 2026-06-17
+
+The full offline evidence chain was refreshed on Windows with
+`D:\conda_envs\lunar-explorer\python.exe`. Stage 18A passed with 24 LOLA
+quasi-real slices and 8 ROI groups. Stage 18B then executed true checkpoint
+inference for both models on the same high-fidelity scenario batch.
+
+Key artifacts:
+
+- `outputs/path_feedback_batch_xunce_high_fidelity_real_map_roi_expansion_v1/xunce-high-fidelity-real-map-roi-expansion-summary.json`
+- `outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/xunce-high-fidelity-real-map-comparison-summary.json`
+- `outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/xunce-high-fidelity-model-inference-audit.json`
+- `outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/xunce-high-fidelity-model-inference-results.jsonl`
+- `outputs/path_feedback_batch_value_stability_candidate_v1/experimental-hybrid-policy-candidate-standardization-audit.json`
+
+Observed result:
+
+- `true_model_inference_executed=true`
+- `proxy_selection_used=false`
+- `xunce_checkpoint_loaded=true`
+- `incumbent_checkpoint_loaded=true`
+- `model_inference_finite_output_count=48`
+- `model_inference_mask_violation_count=0`
+- `xunce_model_selected_count=24`
+- `incumbent_model_selected_count=24`
+- `xunce_better_than_incumbent_count=0`
+- `xunce_worse_than_incumbent_count=16`
+- `controlled_regression_count=16`
+- `xunce_parameter_count=19171`
+- `incumbent_parameter_count=2066`
+- `latency_ratio_vs_incumbent=2.8214`
+- `next_required_change=xunce_research_iteration_required`
+
+The incumbent value-stability checkpoint was generated upstream as a
+`controlled-hybrid-policy-candidate-checkpoint/v1`. For Stage 18B loading it was
+standardized in-place to the `model-explorer-masked-policy/v2` wrapper using the
+same trained `model_state_dict`; the original controlled-hybrid file was backed
+up in the same ignored output root. This did not run a new training update and
+did not publish or replace any checkpoint.
+
+Conclusion: Stage 18B produced real model inference evidence, but did not
+establish Xunce advantage. The next research step is data/evaluation iteration,
+especially ROI spread, candidate discrimination, and mask-safety versus
+performance-evidence separation. This remains offline research evidence only,
+not real lunar release evidence.
