@@ -49,3 +49,39 @@ export type RoutePayload = {
   reachable?: boolean;
   path_cost?: number;
 };
+
+export type MapLayerState = {
+  rawPath: boolean;
+  smoothedPath: boolean;
+  optimizedPath: boolean;
+  blocked: boolean;
+};
+
+export type SelectedMapObject = {
+  objectType: "mission-stage" | "goal" | "path-segment";
+  frameId: string;
+  label: string;
+  pathIndex?: number;
+  cell?: [number, number];
+  artifactId?: string;
+};
+
+export type ReplayFrame = SelectedMapObject & {
+  timeLabel: string;
+};
+
+export type MissionCockpitKpis = {
+  evidenceCompletenessLabel: string;
+  keyArtifactCount: number;
+  replayFrameLabel: string;
+  riskLabel: string;
+};
+
+export type EvidenceChain = {
+  selected: SelectedMapObject | ReplayFrame | null;
+  supportingArtifacts: Artifact[];
+  schemaFlow: Array<{ schema: string; status: "present" | "missing" }>;
+  missingSchemas: string[];
+  nextSafeAction: string;
+  forbiddenActions: string[];
+};
