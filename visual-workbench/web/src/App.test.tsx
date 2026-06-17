@@ -226,6 +226,18 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  test("renders H1 mission status header and cockpit KPIs", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("H1 任务驾驶舱")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "当前月面巡视任务走到哪里了？" })).toBeInTheDocument();
+    expect(screen.getByText("证据完整度")).toBeInTheDocument();
+    expect(screen.getByText("关键 artifact")).toBeInTheDocument();
+    expect(screen.getByText("回放帧")).toBeInTheDocument();
+    expect(screen.getByText("剩余风险")).toBeInTheDocument();
+    expect(screen.getByLabelText("API 状态：ok")).toHaveClass("connection-status");
+  });
+
   test("follows the derived current stage after async artifacts load before manual selection", async () => {
     render(<App />);
 
@@ -303,8 +315,8 @@ describe("App", () => {
     const { container } = render(<App />);
 
     expect(await screen.findByLabelText("API 状态：ok")).toHaveClass("connection-status");
-    expect(container.querySelector(".mission-topbar > .connection-status")).toBeInTheDocument();
-    expect(container.querySelector(".mission-topbar-actions .connection-status")).not.toBeInTheDocument();
+    expect(container.querySelector(".mission-status-header > .connection-status")).toBeInTheDocument();
+    expect(container.querySelector(".mission-status-actions .connection-status")).not.toBeInTheDocument();
   });
 
   test("shows mission judgment first and expands raw evidence on demand", async () => {

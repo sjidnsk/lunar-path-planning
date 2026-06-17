@@ -69,6 +69,8 @@ button:focus-visible {
 
 .mission-brand,
 .mission-stage-button,
+.mission-status-header,
+.mission-status-actions,
 .mission-topbar,
 .mission-topbar-actions,
 .mode-pill,
@@ -203,6 +205,43 @@ button:focus-visible {
   padding: 22px;
 }
 
+.mission-status-header {
+  position: relative;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding-right: 112px;
+}
+
+.mission-status-copy {
+  min-width: 0;
+  max-width: 760px;
+}
+
+.cockpit-label {
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.mission-status-header h1 {
+  margin: 4px 0 6px;
+  color: var(--ink);
+  font-size: 36px;
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.mission-status-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding-top: 34px;
+}
+
 .mission-topbar {
   position: relative;
   justify-content: space-between;
@@ -254,6 +293,40 @@ button:focus-visible {
   font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.mission-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.mission-kpi-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.mission-kpi-card span,
+.mission-kpi-card strong {
+  display: block;
+}
+
+.mission-kpi-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mission-kpi-card strong {
+  margin-top: 7px;
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .connection-status {
@@ -616,6 +689,34 @@ button:focus-visible {
   }
 }
 
+@media (max-width: 760px) {
+  .mission-status-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding-top: 38px;
+    padding-right: 0;
+  }
+
+  .mission-status-header > .connection-status {
+    right: auto;
+    left: 0;
+  }
+
+  .mission-status-header h1 {
+    font-size: 30px;
+  }
+
+  .mission-status-actions {
+    justify-content: flex-start;
+    width: 100%;
+    padding-top: 0;
+  }
+
+  .mission-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 640px) {
   .mission-main {
     padding: 14px;
@@ -626,6 +727,7 @@ button:focus-visible {
   }
 
   .mission-topbar-actions,
+  .mission-status-actions,
   .button,
   .mode-pill,
   .stage-tool-button {
@@ -634,6 +736,10 @@ button:focus-visible {
   }
 
   .raw-evidence li {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-kpi-strip {
     grid-template-columns: 1fr;
   }
 }

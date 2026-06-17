@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PanelLeft, Presentation, Signal } from "lucide-react";
 
 import { fetchRawJson, getJson } from "./api";
 import { EvidenceTraceView, ValidateView } from "./components/LegacyWorkbenchViews";
 import { MissionEvidencePanel } from "./components/MissionEvidencePanel";
+import { MissionKpiStrip } from "./components/MissionKpiStrip";
 import { MissionMap } from "./components/MissionMap";
-import {
-  getStageDescription,
-  getStageLabel,
-  MissionStageRail,
-} from "./components/MissionStageRail";
+import { MissionStageRail } from "./components/MissionStageRail";
+import { MissionStatusHeader } from "./components/MissionStatusHeader";
 import { StageTools, type StageToolId } from "./components/StageTools";
+import { buildMissionCockpitKpis } from "./domain/missionCockpit";
 import { deriveMissionStages, getCurrentStage, type DerivedMissionStage, type MissionStageId } from "./domain/missionStages";
 import type { Artifact, ProjectStatus, RoutePayload, SidecarPayload } from "./types";
 
@@ -89,6 +87,10 @@ export function App() {
     missionStages.find((stage) => stage.id === fallbackStageId) ??
     missionStages[0];
   const evidenceStage = useMemo(() => enrichStageEvidence(selectedStage, artifacts), [artifacts, selectedStage]);
+  const cockpitKpis = useMemo(
+    () => buildMissionCockpitKpis(evidenceStage, artifacts, route),
+    [artifacts, evidenceStage, route],
+  );
 
   function selectStage(stageId: MissionStageId) {
     userSelectedStage.current = true;
@@ -105,34 +107,13 @@ export function App() {
       <MissionStageRail stages={missionStages} selectedStageId={selectedStage.id} onSelectStage={selectStage} />
 
       <main className="mission-main">
-        <header className="mission-topbar">
-          <span className={health === "ok" ? "connection-status ok" : "connection-status"} aria-label={`API 状态：${health}`}>
-            <Signal size={14} aria-hidden="true" />
-            API {health}
-          </span>
-          <div>
-            <p className="section-label">lunar-path-planning / visual-workbench</p>
-            <h1>当前月面巡视任务走到哪里了？</h1>
-            <p className="mission-summary">
-              {getStageLabel(selectedStage.id)}：{getStageDescription(selectedStage.id)}
-            </p>
-          </div>
-          <div className="mission-topbar-actions">
-            <span className={presentationMode ? "mode-pill presentation" : "mode-pill research"}>
-              <Presentation size={16} aria-hidden="true" />
-              {presentationMode ? "演示模式" : "研发模式"}
-            </span>
-            <button
-              className="button secondary"
-              type="button"
-              aria-label={presentationMode ? "切换到研发模式" : "切换到演示模式"}
-              onClick={() => setPresentationMode((value) => !value)}
-            >
-              <PanelLeft size={16} aria-hidden="true" />
-              {presentationMode ? "研发视图" : "演示视图"}
-            </button>
-          </div>
-        </header>
+        <MissionStatusHeader
+          stage={selectedStage}
+          health={health}
+          presentationMode={presentationMode}
+          onTogglePresentationMode={() => setPresentationMode((value) => !value)}
+        />
+        <MissionKpiStrip kpis={cockpitKpis} />
 
         {loadError ? <ErrorState title="无法连接后端 API" detail={loadError} /> : null}
 
