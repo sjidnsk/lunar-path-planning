@@ -1,0 +1,9 @@
+{
+  "schema_version": "path-feedback-summary/v1",
+  "status": "passed",
+  "scenario_count": 2,
+  "reachable_count": 2,
+  "path_planning_failure_count": 0,
+  "open_grid_fallback_used": false,
+  "reason_codes": []
+}

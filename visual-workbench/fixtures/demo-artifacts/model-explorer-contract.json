@@ -1,0 +1,20 @@
+{
+  "schema_version": "model-explorer-contract/v1",
+  "status": "passed",
+  "grid": {
+    "width": 5,
+    "height": 5
+  },
+  "top_goals": [
+    {
+      "cell": [4, 4],
+      "utility": 0.92,
+      "reachable": true
+    },
+    {
+      "cell": [3, 1],
+      "utility": 0.73,
+      "reachable": true
+    }
+  ]
+}

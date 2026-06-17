@@ -2,11 +2,12 @@
 
 System-level repository for lunar rover autonomous exploration and path planning.
 
-This parent repository coordinates three Git submodules:
+This parent repository coordinates three Git submodules and one local fourth-subproject candidate:
 
 - `path-planner`
 - `model-explorer`
 - `dev-platform-constraints`
+- `visual-workbench` (local artifact-first frontend/backend workbench; pending a fourth-submodule remote)
 
 `path-planner` is the active in-repository replacement for the former
 `a_gcs_ws-2.0.1` execution-layer reference. The old project is intentionally
@@ -21,12 +22,19 @@ The three subprojects now form a staged research prototype:
 | `dev-platform-constraints` | Modeling foundation | P0/P1/P2 are runnable: map contracts, terrain features, platform configs, hard constraints, confidence update, coverage-aware goal candidates, sequence scoring, and `model-explorer-contract/v1` reports. |
 | `model-explorer` | Decision orchestration | Runnable synthetic decision/benchmark stack exists: contract loading, goal selection, loop/replan reasons, policy experiments, planning-result feedback, CLI-backed `path-planner` route evaluation, and optional system-level semi-real calibration that gates v5 distillation runs with path-feedback diagnostics. |
 | `path-planner` | Path execution evaluation | Rebuilt from scratch through Phase 8: platform-aware A*, postprocess corridors, smoothing, curvature checks, trackable path, tracking simulation, fixed-corridor optimization, execution-aware metrics, and optional Drake IRIS/region graph diagnostics. |
+| `visual-workbench` | Evidence visualization | Local fourth-subproject candidate providing a React + FastAPI artifact workbench. It indexes allowlisted `outputs/` roots, renders evidence browser / map-route / path-feedback / experiment views, and only permits dry-run/validate commands. It is not yet wired as a Git submodule because no remote is configured. |
 
 Near-term integration focuses on the `dev-platform-constraints -> model-explorer
 -> path-planner` JSON loop: generate `model-explorer-contract/v1`, select Top-K
 goals, emit `path-planner-request/v1`, consume `path-planner-route/v1`, then feed
 reachability, cost, safety, and fallback diagnostics back into goal ranking,
 replanning triggers, and smoke/stress experiment reports.
+
+`visual-workbench` sits outside that algorithmic loop. It consumes existing
+artifacts through file/JSON boundaries and keeps IRIS/GCS/path-planner
+diagnostics as display-only evidence. The first version does not run PPO,
+training, staged release, or full experiment `run` commands, and it does not
+modify network/action-space/default A* behavior.
 
 `model-explorer` now has a `path_planner_route` planning backend for this loop.
 It runs `path-planner` through the CLI/JSON boundary by default and keeps direct

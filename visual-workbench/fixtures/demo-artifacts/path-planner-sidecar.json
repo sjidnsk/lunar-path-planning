@@ -1,0 +1,29 @@
+{
+  "schema_version": "path-planner-sidecar/v1",
+  "status": "passed",
+  "grid": {
+    "width": 5,
+    "height": 5
+  },
+  "cost": [
+    [1, 2, 3, 5, 8],
+    [1, 3, 8, 6, 5],
+    [1, 2, 3, 4, 4],
+    [4, 5, 3, 2, 2],
+    [8, 6, 4, 2, 1]
+  ],
+  "passable_mask": [
+    [true, true, true, true, true],
+    [true, true, false, true, true],
+    [true, true, true, true, true],
+    [true, false, true, true, true],
+    [true, true, true, true, true]
+  ],
+  "top_goals": [
+    {
+      "cell": [4, 4],
+      "utility": 0.92,
+      "reachable": true
+    }
+  ]
+}

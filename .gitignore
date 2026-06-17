@@ -6,6 +6,13 @@
 __pycache__/
 *.py[cod]
 
+# Visual workbench local dependencies and generated artifacts.
+/visual-workbench/*.egg-info/
+/visual-workbench/.pytest_cache/
+/visual-workbench/web/node_modules/
+/visual-workbench/web/dist/
+/visual-workbench/web/tsconfig.tsbuildinfo
+
 # Generated validation outputs.
 /outputs/
 

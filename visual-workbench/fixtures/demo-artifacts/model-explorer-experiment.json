@@ -1,0 +1,27 @@
+{
+  "schema_version": "model-explorer-experiment/v1",
+  "status": "passed",
+  "policy_ranking": [
+    {
+      "policy_id": "teacher",
+      "rank": 1,
+      "score": 0.87
+    },
+    {
+      "policy_id": "candidate",
+      "rank": 2,
+      "score": 0.81
+    }
+  ],
+  "gate_summary": {
+    "readiness": "display-only",
+    "training_approved": false
+  },
+  "per_group_winners": [
+    {
+      "group": "demo",
+      "winner": "teacher"
+    }
+  ],
+  "failure_scenarios": []
+}

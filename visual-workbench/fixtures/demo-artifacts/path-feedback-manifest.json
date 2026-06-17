@@ -1,0 +1,15 @@
+{
+  "schema_version": "path-feedback-manifest/v1",
+  "status": "ready",
+  "top_k": 2,
+  "scenarios": [
+    {
+      "scenario_id": "demo-open-grid",
+      "route_artifact": "path-planner-route.json"
+    },
+    {
+      "scenario_id": "demo-fallback",
+      "route_artifact": "path-planner-route.json"
+    }
+  ]
+}

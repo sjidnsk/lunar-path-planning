@@ -1,0 +1,648 @@
+:root {
+  color-scheme: light;
+  font-family: "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #eef2f6;
+  color: #172033;
+  --ink: #172033;
+  --muted: #64748b;
+  --line: #d7dee8;
+  --surface: #ffffff;
+  --surface-soft: #f8fafc;
+  --map-bg: #0b1017;
+  --map-panel: #111820;
+  --green: #15803d;
+  --green-soft: #dcfce7;
+  --amber: #b45309;
+  --amber-soft: #fef3c7;
+  --red: #b91c1c;
+  --red-soft: #fee2e2;
+  --cyan: #0891b2;
+  --orange: #ea580c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+  background: #eef2f6;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 3px solid rgba(8, 145, 178, 0.36);
+  outline-offset: 2px;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.mission-control-app {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+}
+
+.mission-rail {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: 18px 14px;
+  overflow-y: auto;
+  color: #e5edf6;
+  background: linear-gradient(180deg, #151a20 0%, #0b1017 100%);
+  border-right: 1px solid #263241;
+}
+
+.mission-brand,
+.mission-stage-button,
+.mission-topbar,
+.mission-topbar-actions,
+.mode-pill,
+.connection-status,
+.button,
+.evidence-kicker,
+.evidence-expand,
+.presentation-note,
+.stage-tools,
+.stage-tool-button,
+.map-panel-header,
+.mission-map-legend,
+.map-legend-item {
+  display: flex;
+  align-items: center;
+}
+
+.mission-brand {
+  gap: 12px;
+  min-height: 64px;
+  padding: 8px 8px 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.14);
+}
+
+.mission-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  color: #67e8f9;
+  background: #102027;
+  border: 1px solid #164e63;
+}
+
+.mission-brand strong,
+.mission-brand span {
+  display: block;
+}
+
+.mission-brand strong {
+  font-size: 16px;
+}
+
+.mission-brand span {
+  margin-top: 3px;
+  color: #9fb0c3;
+  font-size: 13px;
+}
+
+.mission-stage-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mission-stage-button {
+  width: 100%;
+  min-height: 70px;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #d6dee9;
+  text-align: left;
+}
+
+.mission-stage-button:hover,
+.mission-stage-button.selected {
+  background: #18212c;
+  border-color: #334155;
+}
+
+.mission-stage-button.selected {
+  box-shadow: inset 3px 0 0 #06b6d4;
+}
+
+.stage-index {
+  color: #9fb0c3;
+  font-family: "Fira Code", "Consolas", monospace;
+  font-size: 12px;
+}
+
+.stage-button-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.stage-label {
+  color: inherit;
+  font-weight: 700;
+}
+
+.stage-button-copy span:last-child:not(.stage-label) {
+  color: #9fb0c3;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.stage-state {
+  min-width: 48px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #d6dee9;
+  background: #263241;
+  font-size: 12px;
+  text-align: center;
+}
+
+.state-passed .stage-state {
+  color: #bbf7d0;
+  background: rgba(21, 128, 61, 0.26);
+}
+
+.state-current .stage-state {
+  color: #a5f3fc;
+  background: rgba(8, 145, 178, 0.26);
+}
+
+.state-blocked .stage-state {
+  color: #fecaca;
+  background: rgba(185, 28, 28, 0.26);
+}
+
+.mission-main {
+  min-width: 0;
+  padding: 22px;
+}
+
+.mission-topbar {
+  position: relative;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding-right: 112px;
+}
+
+.mission-topbar h1 {
+  margin: 4px 0 6px;
+  color: var(--ink);
+  font-size: clamp(26px, 3.4vw, 42px);
+  line-height: 1.12;
+  letter-spacing: 0;
+}
+
+.mission-summary {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.section-label {
+  margin: 0;
+  color: var(--cyan);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.mission-topbar-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 34px;
+}
+
+.mode-pill,
+.button {
+  min-height: 40px;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.connection-status {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-height: 28px;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  background: #f0f9ff;
+  color: #075985;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.connection-status.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.mode-pill.research {
+  color: #075985;
+  background: #e0f2fe;
+  border-color: #38bdf8;
+  box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.14);
+}
+
+.mode-pill.presentation {
+  color: #78350f;
+  background: var(--amber-soft);
+  border-color: #fbbf24;
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.18);
+}
+
+.button.secondary:hover {
+  background: #ecfeff;
+  border-color: #67e8f9;
+}
+
+.error-state {
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+}
+
+.error-state p {
+  margin: 6px 0 0;
+  color: var(--red);
+}
+
+.mission-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.mission-map-panel,
+.mission-evidence-panel,
+.stage-tool-panel,
+.legacy-tool-view {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.mission-map-stack {
+  display: grid;
+  align-self: start;
+  min-width: 0;
+  gap: 14px;
+}
+
+.mission-map-panel {
+  align-self: start;
+  min-width: 0;
+  padding: 16px;
+  color: #e5edf6;
+  background: var(--map-panel);
+  border-color: #263241;
+}
+
+.map-panel-header {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.map-panel-header h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.map-panel-header > span {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: #bbf7d0;
+  background: rgba(21, 128, 61, 0.25);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.map-canvas-wrap {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #263241;
+  border-radius: 8px;
+  background: var(--map-bg);
+  aspect-ratio: 12 / 7;
+}
+
+.map-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.mission-map-legend {
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.map-legend-item {
+  gap: 8px;
+  min-height: 30px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.map-legend-item span {
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.35);
+  border-radius: 4px;
+}
+
+.mission-evidence-panel {
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface);
+}
+
+.evidence-kicker {
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.evidence-kicker span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.evidence-kicker strong {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #14532d;
+  background: var(--green-soft);
+  font-size: 12px;
+}
+
+.evidence-primary {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.evidence-primary h2 {
+  margin: 4px 0 8px;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.evidence-primary p:last-child {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.evidence-facts {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.evidence-facts div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.evidence-facts dt {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.evidence-facts dd {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.evidence-expand {
+  justify-content: center;
+  width: 100%;
+  min-height: 42px;
+  gap: 8px;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  color: #075985;
+  background: #f0f9ff;
+  font-weight: 800;
+}
+
+.presentation-note {
+  gap: 8px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  color: #166534;
+  background: #f0fdf4;
+  font-weight: 700;
+}
+
+.raw-evidence {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.raw-evidence h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.raw-evidence ul {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.raw-evidence li {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.1fr) minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.raw-evidence code {
+  grid-column: 1 / -1;
+  color: #334155;
+  overflow-wrap: anywhere;
+  font-family: "Fira Code", "Consolas", monospace;
+  font-size: 12px;
+}
+
+.stage-tools {
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+}
+
+.stage-tool-button {
+  min-height: 44px;
+  gap: 8px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--surface);
+  font-weight: 800;
+}
+
+.stage-tool-button:hover {
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.stage-tool-button.active,
+.stage-tool-button[aria-expanded="true"] {
+  border-color: #0ea5e9;
+  color: #075985;
+  background: #e0f2fe;
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.18);
+}
+
+.stage-tool-panel {
+  padding: 14px;
+  background: var(--surface);
+}
+
+.legacy-tool-view {
+  padding: 14px;
+  background: var(--surface-soft);
+}
+
+.legacy-tool-view h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.legacy-tool-view p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.legacy-tool-view p:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1180px) {
+  .mission-control-app {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-rail {
+    position: static;
+    height: auto;
+  }
+
+  .mission-stage-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .mission-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .mission-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-right: 94px;
+  }
+
+  .mission-topbar-actions {
+    justify-content: flex-start;
+    padding-top: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .mission-main {
+    padding: 14px;
+  }
+
+  .mission-stage-list {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-topbar-actions,
+  .button,
+  .mode-pill,
+  .stage-tool-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .raw-evidence li {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mission-stage-button,
+  .button,
+  .evidence-expand,
+  .stage-tool-button {
+    transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+  }
+}
