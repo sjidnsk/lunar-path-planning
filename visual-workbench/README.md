@@ -27,6 +27,19 @@ existing parent repository pattern.
 
 ## Mission-Control Direction
 
+### H1 Mission Cockpit
+
+H1 mission cockpit is the next concrete UI architecture. It is a
+mission-first interactive evidence cockpit: the left rail keeps mission stages
+visible, the center uses `MissionMapReplay` for map replay and layer toggles,
+the right side keeps mission judgement close to the active stage, and
+`EvidenceChainDrawer` preserves the artifact-first trace.
+
+The cockpit keeps display and interaction on the same screen. Evidence Trace,
+Map Replay, and Validate remain stage-local entry points; Validate still permits
+only `dry-run` and `validate`. It must not trigger `full run`, `PPO`, or
+`training`.
+
 The current UI direction is mission-first, not tool-first. The primary
 navigation stages are, in order: 环境测绘, 目标捕获, 路线制导, 可达确认,
 风险复核, 任务简报.

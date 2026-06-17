@@ -24,6 +24,7 @@ def test_visual_workbench_structure_and_documented_boundaries() -> None:
             _read(REPO_ROOT / "README.md"),
             _read(REPO_ROOT / "docs" / "算法设计与系统架构报告.md"),
             _read(REPO_ROOT / "docs" / "superpowers" / "specs" / "2026-06-17-visual-workbench-design.md"),
+            _read(REPO_ROOT / "docs" / "superpowers" / "specs" / "2026-06-17-visual-workbench-h1-mission-cockpit-design.md"),
             _read(VISUAL_WORKBENCH_ROOT / "README.md"),
         ]
     )
@@ -39,6 +40,10 @@ def test_visual_workbench_structure_and_documented_boundaries() -> None:
         "Ackermann-feasible",
         "IRIS/GCS/path-planner",
         "mission-first",
+        "H1 mission cockpit",
+        "mission-first interactive evidence cockpit",
+        "MissionMapReplay",
+        "EvidenceChainDrawer",
         "环境测绘",
         "目标捕获",
         "路线制导",
@@ -51,6 +56,9 @@ def test_visual_workbench_structure_and_documented_boundaries() -> None:
         "Validate",
         "dry-run 或 validate",
         "完整 run 不会",
+        "full run",
+        "PPO",
+        "training",
     ):
         assert required in docs
 
