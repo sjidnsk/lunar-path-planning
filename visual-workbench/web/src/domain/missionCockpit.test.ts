@@ -241,4 +241,25 @@ describe("missionCockpit", () => {
       { schema: "path-planner-route/v1", status: "present" },
     ]);
   });
+
+  test("buildEvidenceChain ignores unknown artifactId instead of treating it as a schema", () => {
+    const allArtifacts = [artifact("path-feedback-manifest/v1", "passed", "manifest.json")];
+    const reachabilityStage = deriveMissionStages(allArtifacts).find((stage) => stage.id === "reachability-confirmation");
+    const selected = {
+      objectType: "mission-stage" as const,
+      frameId: "t0",
+      label: "任务阶段",
+      artifactId: "route-1",
+    };
+
+    expect(reachabilityStage).toBeDefined();
+
+    const chain = buildEvidenceChain(reachabilityStage!, allArtifacts, selected);
+
+    expect(chain.schemaFlow).toEqual([
+      { schema: "path-feedback-manifest/v1", status: "present" },
+      { schema: "path-feedback-summary/v1", status: "missing" },
+    ]);
+    expect(chain.missingSchemas).not.toContain("route-1");
+  });
 });

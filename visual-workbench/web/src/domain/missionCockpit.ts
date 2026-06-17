@@ -178,7 +178,7 @@ function resolveSelectedSchema(selected: SelectedMapObject | ReplayFrame | null,
   }
 
   const selectedArtifact = allArtifacts.find((artifact) => artifact.artifact_id === selected.artifactId);
-  return selectedArtifact?.schema_version ?? selected.artifactId;
+  return selectedArtifact?.schema_version ?? undefined;
 }
 
 function hasSchemaArtifact(artifacts: Artifact[], schema: string): boolean {
