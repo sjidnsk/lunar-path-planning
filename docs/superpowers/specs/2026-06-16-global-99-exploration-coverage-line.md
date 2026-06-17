@@ -668,6 +668,23 @@ This completes the 巡策 research evidence chain only; it does not approve
 default-policy replacement, real-world release, checkpoint publication, executor
 connection, or online canary traffic.
 
+The post-chain high-fidelity extension is `Xunce High-Fidelity Real-Map ROI
+Expansion v1` followed by `Xunce High-Fidelity Real-Map Policy Comparison v1`.
+The expansion runner `scripts/run_xunce_high_fidelity_real_map_roi_expansion.py`
+uses config `configs/xunce_high_fidelity_real_map_roi_expansion_v1.json` and
+writes to
+`outputs/path_feedback_batch_xunce_high_fidelity_real_map_roi_expansion_v1/`;
+it expands the quasi-real LOLA matrix to 24 slices / 8 ROI groups and passes
+with `next_required_change=xunce_high_fidelity_real_map_policy_comparison`.
+The comparison runner `scripts/run_xunce_high_fidelity_real_map_comparison.py`
+uses config `configs/xunce_high_fidelity_real_map_comparison_v1.json` and writes
+to `outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/`.
+It only performs read-only comparison of 巡策 versus the incumbent experimental
+policy; if advantage is established, the next gate is
+`xunce_default_policy_candidate_authorization_preflight`. This extension remains
+outside Global 99 release approval and keeps checkpoint/default-policy/executor /
+online-canary boundaries closed.
+
 This research track must not publish a checkpoint, replace default policy,
 connect a real executor, start online canary traffic, run PPO update in the
 design/audit stages, modify action space/default A*, claim real-world

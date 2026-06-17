@@ -420,6 +420,31 @@ artifacts. Each stage should be committed and pushed separately.
      default-policy replacement, real-world release, executor connection, or
      online canary traffic.
 
+18 高保真真实地图对比延伸
+   - This is a post-research-chain extension, not a mandatory release stage.
+   - ROI expansion target:
+     `scripts/run_xunce_high_fidelity_real_map_roi_expansion.py`.
+   - ROI expansion output root:
+     `outputs/path_feedback_batch_xunce_high_fidelity_real_map_roi_expansion_v1/`.
+   - Expand quasi-real LOLA evidence from 12 slices / 4 ROI groups to 24 slices
+     / 8 ROI groups while auditing context IDs, contract/sidecar paths,
+     path-feedback evidence, and open-grid fallback.
+   - Passing next gate: `xunce_high_fidelity_real_map_policy_comparison`.
+   - Policy comparison target:
+     `scripts/run_xunce_high_fidelity_real_map_comparison.py`.
+   - Policy comparison output root:
+     `outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/`.
+   - Compare the 巡策 sandbox candidate and incumbent experimental policy in
+     read-only mode on the expanded ROI evidence.
+   - If evidence is valid but advantage is not established, next gate:
+     `xunce_research_iteration_required`.
+   - If advantage is established without worse/regression/fallback/efficiency
+     blockers, next gate:
+     `xunce_default_policy_candidate_authorization_preflight`.
+   - This still does not publish checkpoints, replace default policy, train PPO,
+     modify network/action space/default A*, connect a real executor, start
+     online canary traffic, or claim real-world performance.
+
 ## Acceptance Criteria
 
 The design is ready for implementation planning when:

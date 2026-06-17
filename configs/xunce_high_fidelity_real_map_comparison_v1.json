@@ -1,0 +1,12 @@
+{
+  "schema_version": "xunce-high-fidelity-real-map-comparison-config/v1",
+  "source_roi_expansion_root": "outputs/path_feedback_batch_xunce_high_fidelity_real_map_roi_expansion_v1",
+  "xunce_candidate_checkpoint": "outputs/path_feedback_batch_xunce_sandbox_candidate_preflight_v1/sandbox_package/xunce-controlled-training-candidate.pt",
+  "incumbent_policy_checkpoint": "outputs/path_feedback_batch_value_stability_candidate_v1/experimental-hybrid-policy-candidate.pt",
+  "required_scenario_count": 24,
+  "max_xunce_guard_fallback_rate": 0.05,
+  "max_xunce_parameter_count": 10000000,
+  "max_latency_ratio_vs_candidate_attention": 1.5,
+  "max_median_inference_latency_ms": 5.0,
+  "canary_traffic_fraction": 0.0
+}

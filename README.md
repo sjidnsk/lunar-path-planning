@@ -4576,6 +4576,30 @@ This completes the research evidence chain only; it keeps
 `default_policy_replacement_approved=false`, `real_world_release_approved=false`,
 `publishes_checkpoint=false`, and `connects_real_executor=false`.
 
+`Xunce High-Fidelity Real-Map ROI Expansion v1` and
+`Xunce High-Fidelity Real-Map Policy Comparison v1` extend the completed 巡策
+research chain with a larger quasi-real LOLA comparison, not a release. The ROI
+expansion runner is `scripts/run_xunce_high_fidelity_real_map_roi_expansion.py`,
+with config `configs/xunce_high_fidelity_real_map_roi_expansion_v1.json` and
+output root
+`outputs/path_feedback_batch_xunce_high_fidelity_real_map_roi_expansion_v1/`.
+It expands the evidence matrix from 12 slices / 4 ROI groups to 24 slices / 8
+ROI groups, keeps context IDs and sidecar/contract paths auditable, and passes
+with `next_required_change=xunce_high_fidelity_real_map_policy_comparison`.
+
+The comparison runner is
+`scripts/run_xunce_high_fidelity_real_map_comparison.py`, with config
+`configs/xunce_high_fidelity_real_map_comparison_v1.json` and output root
+`outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1/`. It
+compares the 巡策 sandbox candidate checkpoint against the incumbent
+experimental policy checkpoint in read-only mode. When the expanded evidence is
+valid and 巡策 has no worse/regression/fallback blocker while meeting efficiency
+budgets, it writes
+`next_required_change=xunce_default_policy_candidate_authorization_preflight`.
+This still does not approve default-policy replacement, checkpoint publication,
+real executor connection, online canary traffic, PPO training, or real-world
+performance claims.
+
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is
 `scripts/run_global_99_coverage_benchmark.py`, with shell entrypoint
