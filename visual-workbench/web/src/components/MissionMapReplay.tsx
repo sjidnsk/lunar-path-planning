@@ -9,7 +9,7 @@ type MissionMapReplayProps = {
   sidecar: SidecarPayload | null;
   route: RoutePayload | null;
   frames: ReplayFrame[];
-  selectedFrameId: string;
+  selectedFrameId?: string;
   layers: MapLayerState;
   onToggleLayer: (layer: keyof MapLayerState) => void;
   onSelectFrame: (frame: ReplayFrame) => void;
@@ -118,7 +118,7 @@ function drawMissionMap(
   const cols = Math.max(maxRowLength(cost), safeDimension(sidecar?.grid?.width), matrixWidth(passableMask), 1);
   const cellWidth = safeWidth / cols;
   const cellHeight = safeHeight / rows;
-  const maxCost = Math.max(...cost.flat().filter(Number.isFinite), 1);
+  const maxCost = maxMatrixValue(cost);
 
   ctx.clearRect(0, 0, safeWidth, safeHeight);
   ctx.fillStyle = "#0b1017";
@@ -268,6 +268,18 @@ function matrixWidth(value: unknown): number {
 
 function maxRowLength(rows: unknown[][]): number {
   return rows.reduce((max, row) => Math.max(max, row.length), 0);
+}
+
+function maxMatrixValue(rows: number[][]): number {
+  let max = 1;
+  for (const row of rows) {
+    for (const value of row) {
+      if (Number.isFinite(value) && value > max) {
+        max = value;
+      }
+    }
+  }
+  return max;
 }
 
 function isBlocked(mask: unknown, row: number, col: number): boolean {

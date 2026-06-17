@@ -28,10 +28,11 @@ export function App() {
   const [sidecar, setSidecar] = useState<SidecarPayload | null>(null);
   const [route, setRoute] = useState<RoutePayload | null>(null);
   const [mapLayers, setMapLayers] = useState<MapLayerState>(DEFAULT_MAP_LAYERS);
-  const [selectedFrameId, setSelectedFrameId] = useState("t0");
+  const [selectedFrameId, setSelectedFrameId] = useState<string | undefined>();
   const [selectedMapObject, setSelectedMapObject] = useState<SelectedMapObject | null>(null);
   const autoSelectedStageId = useRef<MissionStageId | undefined>(undefined);
   const userSelectedStage = useRef(false);
+  const userSelectedFrame = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,8 +103,10 @@ export function App() {
   const replayFrames = useMemo(() => buildReplayFrames(sidecar, route), [sidecar, route]);
 
   useEffect(() => {
-    const currentFrame = replayFrames.find((frame) => frame.frameId === selectedFrameId);
-    const fallbackFrame = currentFrame ?? firstReplaySelection(replayFrames) ?? null;
+    const currentFrame = selectedFrameId ? replayFrames.find((frame) => frame.frameId === selectedFrameId) : undefined;
+    const fallbackFrame = userSelectedFrame.current
+      ? currentFrame ?? firstReplaySelection(replayFrames) ?? null
+      : firstReplaySelection(replayFrames) ?? null;
     const nextFrameId = fallbackFrame?.frameId ?? "t0";
 
     if (selectedFrameId !== nextFrameId) {
@@ -132,6 +135,7 @@ export function App() {
   }
 
   function selectReplayFrame(frame: ReplayFrame) {
+    userSelectedFrame.current = true;
     setSelectedFrameId(frame.frameId);
     setSelectedMapObject(frame);
   }

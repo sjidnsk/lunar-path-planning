@@ -438,6 +438,13 @@ describe("App", () => {
     expect(await screen.findByLabelText("月面任务地图")).toBeInTheDocument();
   });
 
+  test("mission map replay defaults to the first replay selection after route load", async () => {
+    render(<App />);
+
+    expect(await screen.findByText(/当前对象：目标接近/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /t2/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("mission map replay exposes layer toggles and timeline selection", async () => {
     const user = userEvent.setup();
     render(<App />);
