@@ -405,6 +405,23 @@ describe("App", () => {
     expect(stageToolPanel.getByText(/full run|完整 run/)).toBeInTheDocument();
   });
 
+  test("stage selection keeps the mission-stage fallback selected and closes active tools", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const drawer = within(await screen.findByRole("region", { name: "证据链抽屉" }));
+    expect(await drawer.findByText(/当前对象：目标接近/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Evidence Trace" }));
+    expect(screen.getByRole("region", { name: "阶段工具面板" })).toBeInTheDocument();
+
+    await user.click(firstStageButton("环境测绘"));
+
+    expect(screen.queryByRole("region", { name: "阶段工具面板" })).not.toBeInTheDocument();
+    expect(drawer.getByText(/当前对象：任务阶段/)).toBeInTheDocument();
+    expect(drawer.getByText("mission-stage")).toBeInTheDocument();
+  });
+
   test("toggles a stage-local tool panel closed when the active tool is clicked again", async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -211,6 +211,10 @@ button:focus-visible {
   min-width: 0;
 }
 
+.h1-cockpit-main .mission-shell {
+  align-items: start;
+}
+
 .mission-status-header {
   position: relative;
   justify-content: space-between;

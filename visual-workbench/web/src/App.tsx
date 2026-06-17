@@ -35,6 +35,7 @@ export function App() {
   const autoSelectedStageId = useRef<MissionStageId | undefined>(undefined);
   const userSelectedStage = useRef(false);
   const userSelectedFrame = useRef(false);
+  const stageResetSelection = useRef<SelectedMapObject | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,6 +110,17 @@ export function App() {
   const replayFrames = useMemo(() => buildReplayFrames(sidecar, route), [sidecar, route]);
 
   useEffect(() => {
+    const stageResetObject = stageResetSelection.current;
+    if (stageResetObject) {
+      if (selectedFrameId !== stageResetObject.frameId) {
+        setSelectedFrameId(stageResetObject.frameId);
+      }
+      if (selectedMapObject !== stageResetObject) {
+        setSelectedMapObject(stageResetObject);
+      }
+      return;
+    }
+
     const currentFrame = selectedFrameId ? replayFrames.find((frame) => frame.frameId === selectedFrameId) : undefined;
     const fallbackFrame = userSelectedFrame.current
       ? currentFrame ?? firstReplaySelection(replayFrames) ?? null
@@ -124,12 +136,14 @@ export function App() {
   }, [replayFrames, selectedFrameId, selectedMapObject]);
 
   function selectStage(stageId: MissionStageId) {
+    const stageFallbackSelection: SelectedMapObject = { objectType: "mission-stage", frameId: "t0", label: "任务阶段" };
+    stageResetSelection.current = stageFallbackSelection;
     userSelectedStage.current = true;
     userSelectedFrame.current = false;
     setSelectedStageId(stageId);
     setActiveTool(null);
-    setSelectedFrameId(undefined);
-    setSelectedMapObject({ objectType: "mission-stage", frameId: "t0", label: "任务阶段" });
+    setSelectedFrameId(stageFallbackSelection.frameId);
+    setSelectedMapObject(stageFallbackSelection);
   }
 
   function toggleStageTool(toolId: StageToolId) {
@@ -144,6 +158,7 @@ export function App() {
   }
 
   function selectReplayFrame(frame: ReplayFrame) {
+    stageResetSelection.current = null;
     userSelectedFrame.current = true;
     setSelectedFrameId(frame.frameId);
     setSelectedMapObject(frame);
