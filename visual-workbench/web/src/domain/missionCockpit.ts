@@ -23,12 +23,12 @@ export const DEFAULT_MAP_LAYERS: MapLayerState = {
 
 export function buildMissionCockpitKpis(
   stage: DerivedMissionStage,
-  _allArtifacts: Artifact[],
+  allArtifacts: Artifact[],
   route: RoutePayload | null,
 ): MissionCockpitKpis {
   const requiredSchemas = uniqueStrings(stage.schemas);
   const presentSchemaCount = requiredSchemas.filter((schema) =>
-    stage.artifacts.some((artifact) => artifact.schema_version === schema),
+    allArtifacts.some((artifact) => artifact.schema_version === schema),
   ).length;
   const completeness = requiredSchemas.length > 0 ? Math.round((presentSchemaCount / requiredSchemas.length) * 100) : 0;
   const replayFrameLabel = buildReplayFrameLabel(route);
@@ -52,7 +52,7 @@ export function buildReplayFrames(sidecar: SidecarPayload | null, route: RoutePa
       label: buildPathFrameLabel(index, routePath.length),
       pathIndex: index,
       cell,
-      artifactId: "path-planner-route/v1",
+      schemaVersion: "path-planner-route/v1",
     }));
   }
 
@@ -65,7 +65,7 @@ export function buildReplayFrames(sidecar: SidecarPayload | null, route: RoutePa
         timeLabel: "t0",
         label: "候选目标",
         cell: goalCell,
-        artifactId: "path-planner-sidecar/v1",
+        schemaVersion: "path-planner-sidecar/v1",
       },
     ];
   }
@@ -115,7 +115,7 @@ function normalizePath(value: unknown): Array<[number, number]> {
   }
 
   return value.flatMap((point) => {
-    if (!Array.isArray(point) || point.length !== 2) {
+    if (!Array.isArray(point) || point.length < 2) {
       return [];
     }
     const [x, y] = point;
@@ -167,7 +167,13 @@ function firstValidGoalCell(sidecar: SidecarPayload | null): [number, number] | 
 }
 
 function resolveSelectedSchema(selected: SelectedMapObject | ReplayFrame | null, allArtifacts: Artifact[]): string | undefined {
-  if (!selected?.artifactId) {
+  if (!selected) {
+    return undefined;
+  }
+  if (selected.schemaVersion) {
+    return selected.schemaVersion;
+  }
+  if (!selected.artifactId) {
     return undefined;
   }
 

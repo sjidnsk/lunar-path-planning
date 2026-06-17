@@ -69,6 +69,19 @@ describe("missionCockpit", () => {
     expect(kpis.riskLabel).toBe("证据不足");
   });
 
+  test("buildMissionCockpitKpis uses all artifacts for completeness without changing selected risk", () => {
+    const allArtifacts = [artifact("path-planner-route/v1", "reachable", "route.json")];
+    const routeStage = deriveMissionStages(allArtifacts).find((stage) => stage.id === "route-guidance");
+
+    expect(routeStage).toBeDefined();
+
+    const kpis = buildMissionCockpitKpis({ ...routeStage!, artifacts: [] }, allArtifacts, null);
+
+    expect(kpis.evidenceCompletenessLabel).toBe("100%");
+    expect(kpis.keyArtifactCount).toBe(0);
+    expect(kpis.riskLabel).toBe("证据不足");
+  });
+
   test("buildReplayFrames derives route frames from geometric path and returns the last frame as first selection", () => {
     const sidecar: SidecarPayload = {
       schema_version: "path-planner-sidecar/v1",
@@ -94,7 +107,7 @@ describe("missionCockpit", () => {
         label: "起点",
         pathIndex: 0,
         cell: [0, 0],
-        artifactId: "path-planner-route/v1",
+        schemaVersion: "path-planner-route/v1",
       },
       {
         objectType: "path-segment",
@@ -103,7 +116,7 @@ describe("missionCockpit", () => {
         label: "路径段",
         pathIndex: 1,
         cell: [2, 1],
-        artifactId: "path-planner-route/v1",
+        schemaVersion: "path-planner-route/v1",
       },
       {
         objectType: "path-segment",
@@ -112,9 +125,10 @@ describe("missionCockpit", () => {
         label: "目标接近",
         pathIndex: 2,
         cell: [8, 8],
-        artifactId: "path-planner-route/v1",
+        schemaVersion: "path-planner-route/v1",
       },
     ]);
+    expect(frames[0]).not.toHaveProperty("artifactId");
     expect(firstReplaySelection(frames)).toEqual(frames[2]);
   });
 
@@ -140,7 +154,26 @@ describe("missionCockpit", () => {
         timeLabel: "t0",
         label: "候选目标",
         cell: [8, 8],
-        artifactId: "path-planner-sidecar/v1",
+        schemaVersion: "path-planner-sidecar/v1",
+      },
+    ]);
+    expect(frames[0]).not.toHaveProperty("artifactId");
+  });
+
+  test("buildReplayFrames falls back to a mission-stage frame when route and goals are unavailable", () => {
+    const sidecar: SidecarPayload = {
+      schema_version: "path-planner-sidecar/v1",
+      top_goals: [],
+    };
+
+    const frames = buildReplayFrames(sidecar, null);
+
+    expect(frames).toEqual([
+      {
+        objectType: "mission-stage",
+        frameId: "t0",
+        timeLabel: "t0",
+        label: "任务阶段",
       },
     ]);
   });
@@ -158,7 +191,7 @@ describe("missionCockpit", () => {
       label: "路径段",
       pathIndex: 1,
       cell: [2, 1] as [number, number],
-      artifactId: "path-planner-route/v1",
+      schemaVersion: "path-planner-route/v1" as const,
     };
 
     expect(routeStage).toBeDefined();
@@ -180,5 +213,32 @@ describe("missionCockpit", () => {
     expect(chain.nextSafeAction).toContain("validate");
     expect(chain.forbiddenActions).toEqual(["full run", "PPO", "training"]);
     expect(DEFAULT_MAP_LAYERS.optimizedPath).toBe(true);
+  });
+
+  test("buildEvidenceChain adds selected schemaVersion to schema flow", () => {
+    const allArtifacts = [
+      artifact("path-planner-route/v1", "reachable", "route.json"),
+      artifact("path-feedback-manifest/v1", "passed", "manifest.json"),
+    ];
+    const reachabilityStage = deriveMissionStages(allArtifacts).find((stage) => stage.id === "reachability-confirmation");
+    const selected = {
+      objectType: "path-segment" as const,
+      frameId: "t2",
+      timeLabel: "t2",
+      label: "目标接近",
+      pathIndex: 2,
+      cell: [8, 8] as [number, number],
+      schemaVersion: "path-planner-route/v1" as const,
+    };
+
+    expect(reachabilityStage).toBeDefined();
+
+    const chain = buildEvidenceChain(reachabilityStage!, allArtifacts, selected);
+
+    expect(chain.schemaFlow).toEqual([
+      { schema: "path-feedback-manifest/v1", status: "present" },
+      { schema: "path-feedback-summary/v1", status: "missing" },
+      { schema: "path-planner-route/v1", status: "present" },
+    ]);
   });
 });

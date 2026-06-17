@@ -57,14 +57,31 @@ export type MapLayerState = {
   blocked: boolean;
 };
 
-export type SelectedMapObject = {
-  objectType: "mission-stage" | "goal" | "path-segment";
+type BaseSelectedMapObject = {
   frameId: string;
   label: string;
-  pathIndex?: number;
-  cell?: [number, number];
   artifactId?: string;
 };
+
+export type SelectedMapObject =
+  | (BaseSelectedMapObject & {
+      objectType: "mission-stage";
+      schemaVersion?: string;
+      pathIndex?: never;
+      cell?: never;
+    })
+  | (BaseSelectedMapObject & {
+      objectType: "goal";
+      schemaVersion: "path-planner-sidecar/v1";
+      cell: [number, number];
+      pathIndex?: never;
+    })
+  | (BaseSelectedMapObject & {
+      objectType: "path-segment";
+      schemaVersion: "path-planner-route/v1";
+      pathIndex: number;
+      cell: [number, number];
+    });
 
 export type ReplayFrame = SelectedMapObject & {
   timeLabel: string;
