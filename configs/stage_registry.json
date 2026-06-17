@@ -1,6 +1,101 @@
 {
   "schema_version": "lunar-stage-registry/v1",
   "stages": {
+    "xunce-model-comparison-input-readiness": {
+      "script": "scripts/run_xunce_model_comparison_input_readiness.py",
+      "default_output_root": "outputs/xunce_model_comparison_input_readiness_v1",
+      "args": ["--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-design-freeze-audit": {
+      "script": "scripts/run_xunce_design_freeze_audit.py",
+      "default_config": "configs/xunce_design_freeze_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_design_freeze_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-current-head-evidence-refresh": {
+      "script": "scripts/run_xunce_current_head_evidence_refresh.py",
+      "default_config": "configs/xunce_current_head_evidence_refresh_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_current_head_evidence_refresh_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-network-literature-bottleneck-review": {
+      "script": "scripts/run_xunce_network_literature_bottleneck_review.py",
+      "default_config": "configs/xunce_network_literature_bottleneck_review_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_network_literature_bottleneck_review_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-topology-observation-contract": {
+      "script": "scripts/run_xunce_topology_observation_contract.py",
+      "default_config": "configs/xunce_topology_observation_contract_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_topology_observation_contract_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-topology-feature-extraction-audit": {
+      "script": "scripts/run_xunce_topology_feature_extraction_audit.py",
+      "default_config": "configs/xunce_topology_feature_extraction_audit_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_topology_feature_extraction_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-topology-graph-proto": {
+      "script": "scripts/run_xunce_topology_graph_proto.py",
+      "default_config": "configs/xunce_topology_graph_proto_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_topology_graph_proto_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-proto-mechanism-validation": {
+      "script": "scripts/run_xunce_proto_mechanism_validation.py",
+      "default_config": "configs/xunce_proto_mechanism_validation_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_proto_mechanism_validation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-architecture-contrast-evaluation": {
+      "script": "scripts/run_xunce_architecture_contrast_evaluation.py",
+      "default_config": "configs/xunce_architecture_contrast_evaluation_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_architecture_contrast_evaluation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-full-network-v1": {
+      "script": "scripts/run_xunce_full_network_v1.py",
+      "default_config": "configs/xunce_full_network_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_full_network_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-full-network-static-contract-validation": {
+      "script": "scripts/run_xunce_full_network_static_contract_validation.py",
+      "default_config": "configs/xunce_full_network_static_contract_validation_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_full_network_static_contract_validation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-full-network-ablation-experiments": {
+      "script": "scripts/run_xunce_full_network_ablation_experiments.py",
+      "default_config": "configs/xunce_full_network_ablation_experiments_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_full_network_ablation_experiments_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-full-network-stress-evaluation": {
+      "script": "scripts/run_xunce_full_network_stress_evaluation.py",
+      "default_config": "configs/xunce_full_network_stress_evaluation_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_full_network_stress_evaluation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-guarded-training-candidate-preflight": {
+      "script": "scripts/run_xunce_guarded_training_candidate_preflight.py",
+      "default_config": "configs/xunce_guarded_training_candidate_preflight_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_guarded_training_candidate_preflight_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-controlled-training-candidate": {
+      "script": "scripts/run_xunce_controlled_training_candidate.py",
+      "default_config": "configs/xunce_controlled_training_candidate_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_controlled_training_candidate_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-post-training-offline-evaluation": {
+      "script": "scripts/run_xunce_post_training_offline_evaluation.py",
+      "default_config": "configs/xunce_post_training_offline_evaluation_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_post_training_offline_evaluation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-shadow-replay-validation": {
       "script": "scripts/run_xunce_shadow_replay_validation.py",
       "default_config": "configs/xunce_shadow_replay_validation_v1.json",

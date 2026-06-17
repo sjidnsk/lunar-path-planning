@@ -96,13 +96,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--repo-root")
+    parser.add_argument("--source-xunce-release-governance-root")
+    parser.add_argument("--source-quasi-real-domain-gap-root")
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[1]
+    overrides = {
+        key: value
+        for key, value in {
+            "source_xunce_release_governance_root": args.source_xunce_release_governance_root,
+            "source_quasi_real_domain_gap_root": args.source_quasi_real_domain_gap_root,
+        }.items()
+        if value is not None
+    }
     try:
         summary = run_xunce_high_fidelity_real_map_roi_expansion(
             config_path=resolve_path(Path(args.config), repo_root),
             output_root=resolve_path(Path(args.output_root), repo_root),
             repo_root=repo_root,
+            config_overrides=overrides,
         )
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
@@ -111,9 +122,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if summary["status"] == "passed" else 1
 
 
-def run_xunce_high_fidelity_real_map_roi_expansion(*, config_path: Path, output_root: Path, repo_root: Path) -> dict[str, Any]:
+def run_xunce_high_fidelity_real_map_roi_expansion(*, config_path: Path, output_root: Path, repo_root: Path, config_overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     repo_root = Path(repo_root)
-    config = _load_config(config_path, repo_root)
+    config = _load_config(config_path, repo_root, config_overrides=config_overrides)
     output_root.mkdir(parents=True, exist_ok=True)
     paths = _artifact_paths(output_root)
     source = _load_source_evidence(config, repo_root)
@@ -182,7 +193,7 @@ def run_xunce_high_fidelity_real_map_roi_expansion(*, config_path: Path, output_
     return summary
 
 
-def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
+def _load_config(path: Path, repo_root: Path, *, config_overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     if not path.is_file():
         raise ConfigError(f"config file does not exist: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -190,6 +201,8 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         raise ConfigError("config root must be an object")
     if payload.get("schema_version") != CONFIG_SCHEMA_VERSION:
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION!r}")
+    if config_overrides:
+        payload = {**payload, **config_overrides}
     normalized = dict(payload)
     for key in ("source_xunce_release_governance_root", "source_quasi_real_domain_gap_root"):
         if not isinstance(payload.get(key), str) or not payload[key].strip():

@@ -12,6 +12,22 @@ SUPPORTED_STAGE_IDS = {
     "guarded-ppo-rollout-pilot",
     "iterative-ppo-mini-loop-stability",
     "quasi-real-guarded-ppo-stability-replay",
+    "xunce-model-comparison-input-readiness",
+    "xunce-design-freeze-audit",
+    "xunce-current-head-evidence-refresh",
+    "xunce-network-literature-bottleneck-review",
+    "xunce-topology-observation-contract",
+    "xunce-topology-feature-extraction-audit",
+    "xunce-topology-graph-proto",
+    "xunce-proto-mechanism-validation",
+    "xunce-architecture-contrast-evaluation",
+    "xunce-full-network-v1",
+    "xunce-full-network-static-contract-validation",
+    "xunce-full-network-ablation-experiments",
+    "xunce-full-network-stress-evaluation",
+    "xunce-guarded-training-candidate-preflight",
+    "xunce-controlled-training-candidate",
+    "xunce-post-training-offline-evaluation",
 }
 
 

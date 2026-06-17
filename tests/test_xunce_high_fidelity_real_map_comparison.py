@@ -104,6 +104,38 @@ class XunceHighFidelityRealMapComparisonTests(unittest.TestCase):
         self.assertIn("value", result_rows[0]["incumbent"])
         self.assertIn("selected_action_index", result_rows[0]["incumbent"])
 
+    def test_runtime_input_overrides_allow_external_evidence_bundle(self) -> None:
+        from scripts.run_xunce_high_fidelity_real_map_comparison import run_xunce_high_fidelity_real_map_comparison
+
+        bad_config = {
+            "schema_version": "xunce-high-fidelity-real-map-comparison-config/v1",
+            "source_roi_expansion_root": "outputs/missing-roi-expansion",
+            "xunce_candidate_checkpoint": "outputs/missing-xunce.pt",
+            "incumbent_policy_checkpoint": "outputs/missing-incumbent.pt",
+            "required_scenario_count": 24,
+            "max_xunce_guard_fallback_rate": 0.05,
+            "max_xunce_parameter_count": 10_000_000,
+            "max_latency_ratio_vs_candidate_attention": 1.5,
+            "max_median_inference_latency_ms": 5.0,
+            "canary_traffic_fraction": 0.0,
+        }
+        self.config_path.write_text(json.dumps(bad_config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = run_xunce_high_fidelity_real_map_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            config_overrides={
+                "source_roi_expansion_root": str(self.expansion_root),
+                "xunce_candidate_checkpoint": str(self.xunce_checkpoint),
+                "incumbent_policy_checkpoint": str(self.incumbent_checkpoint),
+            },
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(summary["true_model_inference_executed"])
+        self.assertFalse(summary["proxy_selection_used"])
+
     def test_missing_xunce_checkpoint_routes_to_sandbox_candidate_fix(self) -> None:
         from scripts.run_xunce_high_fidelity_real_map_comparison import run_xunce_high_fidelity_real_map_comparison
 

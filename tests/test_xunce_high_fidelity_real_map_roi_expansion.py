@@ -63,6 +63,35 @@ class XunceHighFidelityRealMapRoiExpansionTests(unittest.TestCase):
         ):
             self.assertTrue((self.output_root / filename).is_file(), filename)
 
+    def test_runtime_source_overrides_allow_external_evidence_bundle(self) -> None:
+        from scripts.run_xunce_high_fidelity_real_map_roi_expansion import run_xunce_high_fidelity_real_map_roi_expansion
+
+        bad_config = {
+            "schema_version": "xunce-high-fidelity-real-map-roi-expansion-config/v1",
+            "source_xunce_release_governance_root": "outputs/missing-release",
+            "source_quasi_real_domain_gap_root": "outputs/missing-domain-gap",
+            "target_slice_count": 24,
+            "target_roi_group_count": 8,
+            "required_splits": ["train", "validation", "test"],
+            "run_bridge": False,
+            "run_path_feedback": False,
+            "canary_traffic_fraction": 0.0,
+        }
+        self.config_path.write_text(json.dumps(bad_config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = run_xunce_high_fidelity_real_map_roi_expansion(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            config_overrides={
+                "source_xunce_release_governance_root": str(self.release_root),
+                "source_quasi_real_domain_gap_root": str(self.domain_gap_root),
+            },
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["next_required_change"], "xunce_high_fidelity_real_map_policy_comparison")
+
     def test_context_identity_failure_routes_to_context_fix(self) -> None:
         from scripts.run_xunce_high_fidelity_real_map_roi_expansion import run_xunce_high_fidelity_real_map_roi_expansion
 
