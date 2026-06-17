@@ -438,6 +438,22 @@ describe("App", () => {
     expect(await screen.findByLabelText("月面任务地图")).toBeInTheDocument();
   });
 
+  test("mission map replay exposes layer toggles and timeline selection", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByRole("region", { name: "地图回放主交互" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "raw path" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "smoothed path" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "optimized path" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: "raw path" }));
+    expect(screen.getByRole("button", { name: "raw path" })).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(await screen.findByRole("button", { name: /t2/ }));
+    expect(screen.getByText(/当前对象：目标接近/)).toBeInTheDocument();
+  });
+
   test("renders mission map with malformed sidecar and route payloads without non-finite canvas coordinates", async () => {
     vi.stubGlobal(
       "fetch",

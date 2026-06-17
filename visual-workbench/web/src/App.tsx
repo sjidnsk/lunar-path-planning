@@ -4,13 +4,18 @@ import { fetchRawJson, getJson } from "./api";
 import { EvidenceTraceView, ValidateView } from "./components/LegacyWorkbenchViews";
 import { MissionEvidencePanel } from "./components/MissionEvidencePanel";
 import { MissionKpiStrip } from "./components/MissionKpiStrip";
-import { MissionMap } from "./components/MissionMap";
+import { MissionMapReplay } from "./components/MissionMapReplay";
 import { MissionStageRail } from "./components/MissionStageRail";
 import { MissionStatusHeader } from "./components/MissionStatusHeader";
 import { StageTools, type StageToolId } from "./components/StageTools";
-import { buildMissionCockpitKpis } from "./domain/missionCockpit";
+import {
+  DEFAULT_MAP_LAYERS,
+  buildMissionCockpitKpis,
+  buildReplayFrames,
+  firstReplaySelection,
+} from "./domain/missionCockpit";
 import { deriveMissionStages, getCurrentStage, type DerivedMissionStage, type MissionStageId } from "./domain/missionStages";
-import type { Artifact, ProjectStatus, RoutePayload, SidecarPayload } from "./types";
+import type { Artifact, MapLayerState, ProjectStatus, ReplayFrame, RoutePayload, SelectedMapObject, SidecarPayload } from "./types";
 
 export function App() {
   const [presentationMode, setPresentationMode] = useState(false);
@@ -22,6 +27,9 @@ export function App() {
   const [activeTool, setActiveTool] = useState<StageToolId | null>(null);
   const [sidecar, setSidecar] = useState<SidecarPayload | null>(null);
   const [route, setRoute] = useState<RoutePayload | null>(null);
+  const [mapLayers, setMapLayers] = useState<MapLayerState>(DEFAULT_MAP_LAYERS);
+  const [selectedFrameId, setSelectedFrameId] = useState("t0");
+  const [selectedMapObject, setSelectedMapObject] = useState<SelectedMapObject | null>(null);
   const autoSelectedStageId = useRef<MissionStageId | undefined>(undefined);
   const userSelectedStage = useRef(false);
 
@@ -91,6 +99,20 @@ export function App() {
     () => buildMissionCockpitKpis(evidenceStage, artifacts, route),
     [artifacts, evidenceStage, route],
   );
+  const replayFrames = useMemo(() => buildReplayFrames(sidecar, route), [sidecar, route]);
+
+  useEffect(() => {
+    const currentFrame = replayFrames.find((frame) => frame.frameId === selectedFrameId);
+    const fallbackFrame = currentFrame ?? firstReplaySelection(replayFrames) ?? null;
+    const nextFrameId = fallbackFrame?.frameId ?? "t0";
+
+    if (selectedFrameId !== nextFrameId) {
+      setSelectedFrameId(nextFrameId);
+    }
+    if (selectedMapObject !== fallbackFrame) {
+      setSelectedMapObject(fallbackFrame);
+    }
+  }, [replayFrames, selectedFrameId, selectedMapObject]);
 
   function selectStage(stageId: MissionStageId) {
     userSelectedStage.current = true;
@@ -100,6 +122,18 @@ export function App() {
 
   function toggleStageTool(toolId: StageToolId) {
     setActiveTool((currentTool) => (currentTool === toolId ? null : toolId));
+  }
+
+  function toggleMapLayer(layer: keyof MapLayerState) {
+    setMapLayers((currentLayers) => ({
+      ...currentLayers,
+      [layer]: !currentLayers[layer],
+    }));
+  }
+
+  function selectReplayFrame(frame: ReplayFrame) {
+    setSelectedFrameId(frame.frameId);
+    setSelectedMapObject(frame);
   }
 
   return (
@@ -119,7 +153,16 @@ export function App() {
 
         <section className="mission-shell" aria-label="任务控制台">
           <div className="mission-map-stack">
-            <MissionMap stage={selectedStage} sidecar={sidecar} route={route} />
+            <MissionMapReplay
+              stage={selectedStage}
+              sidecar={sidecar}
+              route={route}
+              frames={replayFrames}
+              selectedFrameId={selectedFrameId}
+              layers={mapLayers}
+              onToggleLayer={toggleMapLayer}
+              onSelectFrame={selectReplayFrame}
+            />
             <StageTools stage={selectedStage} activeTool={activeTool} onOpenTool={toggleStageTool} />
             {activeTool ? <StageToolPanel toolId={activeTool} stage={evidenceStage} status={status} /> : null}
           </div>

@@ -472,6 +472,100 @@ button:focus-visible {
   border-radius: 4px;
 }
 
+.mission-map-replay {
+  display: grid;
+  gap: 12px;
+}
+
+.mission-map-replay .map-panel-header,
+.mission-map-replay .map-canvas-wrap {
+  margin-bottom: 0;
+}
+
+.map-layer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.map-layer-button {
+  min-height: 36px;
+  flex: 1 1 140px;
+  padding: 8px 10px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #cbd5e1;
+  background: #17212d;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.map-layer-button:hover,
+.map-layer-button[aria-pressed="true"] {
+  color: #ecfeff;
+  border-color: #0891b2;
+  background: #164e63;
+}
+
+.map-layer-button[aria-pressed="false"] {
+  color: #94a3b8;
+  background: #0f172a;
+}
+
+.replay-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.replay-frame {
+  display: grid;
+  min-width: 88px;
+  min-height: 52px;
+  flex: 1 1 92px;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #d6dee9;
+  background: #111827;
+  text-align: left;
+}
+
+.replay-frame span {
+  color: #67e8f9;
+  font-family: "Fira Code", "Consolas", monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.replay-frame strong {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.replay-frame:hover,
+.replay-frame[aria-pressed="true"] {
+  border-color: #facc15;
+  background: #2a2412;
+  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.18);
+}
+
+.selected-map-object {
+  min-height: 34px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #263241;
+  border-radius: 8px;
+  color: #e5edf6;
+  background: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .mission-evidence-panel {
   min-width: 0;
   padding: 16px;
@@ -730,6 +824,8 @@ button:focus-visible {
   .mission-status-actions,
   .button,
   .mode-pill,
+  .map-layer-button,
+  .replay-frame,
   .stage-tool-button {
     width: 100%;
     justify-content: center;
@@ -748,6 +844,8 @@ button:focus-visible {
   .mission-stage-button,
   .button,
   .evidence-expand,
+  .map-layer-button,
+  .replay-frame,
   .stage-tool-button {
     transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
   }
