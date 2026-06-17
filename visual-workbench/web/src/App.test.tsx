@@ -373,6 +373,27 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Evidence Browser" })).not.toBeInTheDocument();
   });
 
+  test("stage tools expose H1-specific evidence, replay, and validate panels", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Evidence Trace" }));
+    let stageToolPanel = within(screen.getByRole("region", { name: "阶段工具面板" }));
+    expect(stageToolPanel.getByRole("heading", { name: "Evidence Trace" })).toBeInTheDocument();
+    expect(stageToolPanel.getByText(/schema coverage/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Map Replay" }));
+    stageToolPanel = within(screen.getByRole("region", { name: "阶段工具面板" }));
+    expect(stageToolPanel.getByRole("heading", { name: "Map Replay" })).toBeInTheDocument();
+    expect(stageToolPanel.getByText(/图层|时间轴/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Validate" }));
+    stageToolPanel = within(screen.getByRole("region", { name: "阶段工具面板" }));
+    expect(stageToolPanel.getByRole("heading", { name: "Validate" })).toBeInTheDocument();
+    expect(stageToolPanel.getByText(/dry-run 或 validate/)).toBeInTheDocument();
+    expect(stageToolPanel.getByText(/full run|完整 run/)).toBeInTheDocument();
+  });
+
   test("toggles a stage-local tool panel closed when the active tool is clicked again", async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchRawJson, getJson } from "./api";
 import { EvidenceChainDrawer } from "./components/EvidenceChainDrawer";
-import { EvidenceTraceView, ValidateView } from "./components/LegacyWorkbenchViews";
 import { MissionEvidencePanel } from "./components/MissionEvidencePanel";
 import { MissionKpiStrip } from "./components/MissionKpiStrip";
 import { MissionMapReplay } from "./components/MissionMapReplay";
 import { MissionStageRail } from "./components/MissionStageRail";
 import { MissionStatusHeader } from "./components/MissionStatusHeader";
+import { StageToolPanel } from "./components/StageToolPanel";
 import { StageTools, type StageToolId } from "./components/StageTools";
 import {
   DEFAULT_MAP_LAYERS,
@@ -174,7 +174,9 @@ export function App() {
               onSelectFrame={selectReplayFrame}
             />
             <StageTools stage={selectedStage} activeTool={activeTool} onOpenTool={toggleStageTool} />
-            {activeTool ? <StageToolPanel toolId={activeTool} stage={evidenceStage} status={status} /> : null}
+            {activeTool ? (
+              <StageToolPanel toolId={activeTool} stage={evidenceStage} status={status} chain={evidenceChain} />
+            ) : null}
           </div>
           <MissionEvidencePanel stage={evidenceStage} presentationMode={presentationMode} />
         </section>
@@ -196,30 +198,6 @@ function enrichStageEvidence(stage: DerivedMissionStage, artifacts: Artifact[]):
     ...stage,
     artifacts: deduped,
   };
-}
-
-function StageToolPanel({
-  toolId,
-  stage,
-  status,
-}: {
-  toolId: StageToolId;
-  stage: DerivedMissionStage;
-  status: ProjectStatus | null;
-}) {
-  return (
-    <section className="stage-tool-panel" aria-label="阶段工具面板">
-      {toolId === "evidence-trace" ? <EvidenceTraceView artifacts={stage.artifacts} /> : null}
-      {toolId === "map-replay" ? (
-        <div className="legacy-tool-view">
-          <h3>Map Replay</h3>
-          <p>地图回放使用当前已加载的 sidecar 与 route artifact；缺失数据时保留默认月面网格。</p>
-          <p>Repo root: {status?.repo_root ?? "加载中"}</p>
-        </div>
-      ) : null}
-      {toolId === "validate" ? <ValidateView /> : null}
-    </section>
-  );
 }
 
 function ErrorState({ title, detail }: { title: string; detail: string }) {
