@@ -130,7 +130,7 @@ function drawMissionMap(
       const value = cost[row]?.[col] ?? 1;
       const intensity = Math.min(1, Math.max(0, value / maxCost));
       ctx.fillStyle = blocked ? "#111827" : blend("#d9f99d", "#334155", intensity);
-      ctx.fillRect(col * cellWidth, row * cellHeight, Math.ceil(cellWidth) - 1, Math.ceil(cellHeight) - 1);
+      ctx.fillRect(col * cellWidth, row * cellHeight, visibleCellSize(cellWidth), visibleCellSize(cellHeight));
     }
   }
 
@@ -280,6 +280,13 @@ function maxMatrixValue(rows: number[][]): number {
     }
   }
   return max;
+}
+
+function visibleCellSize(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+  return value > 2 ? value - 1 : value;
 }
 
 function isBlocked(mask: unknown, row: number, col: number): boolean {

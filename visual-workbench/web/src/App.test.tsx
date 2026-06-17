@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { App } from "./App";
+import { MissionMapReplay } from "./components/MissionMapReplay";
+import type { DerivedMissionStage } from "./domain/missionStages";
 import type { Artifact } from "./types";
 
 test("shared Artifact type remains importable", () => {
@@ -461,6 +463,52 @@ describe("App", () => {
     expect(screen.getByText(/当前对象：目标接近/)).toBeInTheDocument();
   });
 
+  test("mission map replay keeps large grid cells visible with positive finite fill rectangles", async () => {
+    let invalidFillRect = false;
+    let fillRectCount = 0;
+    const context = {
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      fill: vi.fn(),
+      fillRect: vi.fn((_x: number, _y: number, width: number, height: number) => {
+        fillRectCount += 1;
+        if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+          invalidFillRect = true;
+        }
+      }),
+      lineTo: vi.fn(),
+      moveTo: vi.fn(),
+      restore: vi.fn(),
+      save: vi.fn(),
+      stroke: vi.fn(),
+      arc: vi.fn(),
+      set fillStyle(_value: string) {},
+      set strokeStyle(_value: string) {},
+      set lineWidth(_value: number) {},
+      set lineCap(_value: CanvasLineCap) {},
+      set lineJoin(_value: CanvasLineJoin) {},
+      set shadowColor(_value: string) {},
+      set shadowBlur(_value: number) {},
+    } as unknown as CanvasRenderingContext2D;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => context);
+
+    render(
+      <MissionMapReplay
+        stage={routeGuidanceStage}
+        sidecar={{ schema_version: "path-planner-sidecar/v1", grid: { width: 961, height: 561 }, cost: [[1]] }}
+        route={null}
+        frames={[{ frameId: "t0", timeLabel: "t0", label: "任务阶段", objectType: "mission-stage" }]}
+        selectedFrameId="t0"
+        layers={{ rawPath: true, smoothedPath: true, optimizedPath: true, blocked: true }}
+        onToggleLayer={vi.fn()}
+        onSelectFrame={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(fillRectCount).toBeGreaterThan(961 * 561));
+    expect(invalidFillRect).toBe(false);
+  });
+
   test("renders mission map with malformed sidecar and route payloads without non-finite canvas coordinates", async () => {
     vi.stubGlobal(
       "fetch",
@@ -526,3 +574,16 @@ describe("App", () => {
     }
   });
 });
+
+const routeGuidanceStage: DerivedMissionStage = {
+  id: "route-guidance",
+  label: "路线制导",
+  description: "读取路径规划结果，判断是否已有可执行路线证据。",
+  schemas: ["path-planner-route/v1"],
+  state: "current",
+  artifacts: [],
+  judgment: "路线制导是当前任务叙事焦点。",
+  credibility: "测试阶段对象。",
+  risk: "测试阶段对象。",
+  nextAction: "测试阶段对象。",
+};
