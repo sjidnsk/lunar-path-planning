@@ -136,7 +136,7 @@ export function App() {
   }, [replayFrames, selectedFrameId, selectedMapObject]);
 
   function selectStage(stageId: MissionStageId) {
-    const stageFallbackSelection: SelectedMapObject = { objectType: "mission-stage", frameId: "t0", label: "任务阶段" };
+    const stageFallbackSelection: SelectedMapObject = { objectType: "mission-stage", frameId: "stage-reset", label: "任务阶段" };
     stageResetSelection.current = stageFallbackSelection;
     userSelectedStage.current = true;
     userSelectedFrame.current = false;
@@ -187,6 +187,7 @@ export function App() {
               route={route}
               frames={replayFrames}
               selectedFrameId={selectedFrameId}
+              selectedObject={selectedMapObject}
               layers={mapLayers}
               onToggleLayer={toggleMapLayer}
               onSelectFrame={selectReplayFrame}

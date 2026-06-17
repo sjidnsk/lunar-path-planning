@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { DerivedMissionStage } from "../domain/missionStages";
-import type { MapLayerState, ReplayFrame, RoutePayload, SidecarPayload } from "../types";
+import type { MapLayerState, ReplayFrame, RoutePayload, SelectedMapObject, SidecarPayload } from "../types";
 import { getStageLabel } from "./MissionStageRail";
 
 type MissionMapReplayProps = {
@@ -10,6 +10,7 @@ type MissionMapReplayProps = {
   route: RoutePayload | null;
   frames: ReplayFrame[];
   selectedFrameId?: string;
+  selectedObject: SelectedMapObject | ReplayFrame | null;
   layers: MapLayerState;
   onToggleLayer: (layer: keyof MapLayerState) => void;
   onSelectFrame: (frame: ReplayFrame) => void;
@@ -37,12 +38,14 @@ export function MissionMapReplay({
   route,
   frames,
   selectedFrameId,
+  selectedObject,
   layers,
   onToggleLayer,
   onSelectFrame,
 }: MissionMapReplayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const selectedFrame = frames.find((frame) => frame.frameId === selectedFrameId) ?? frames[0];
+  const selectedFrame = frames.find((frame) => frame.frameId === selectedFrameId);
+  const selectedObjectLabel = selectedObject?.label ?? selectedFrame?.label ?? "任务阶段";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -87,7 +90,7 @@ export function MissionMapReplay({
             key={frame.frameId}
             type="button"
             className="replay-frame"
-            aria-pressed={frame.frameId === selectedFrame?.frameId}
+            aria-pressed={frame.frameId === selectedFrameId}
             onClick={() => onSelectFrame(frame)}
           >
             <span>{frame.timeLabel}</span>
@@ -96,7 +99,7 @@ export function MissionMapReplay({
         ))}
       </div>
 
-      <p className="selected-map-object">当前对象：{selectedFrame?.label ?? "任务阶段"}</p>
+      <p className="selected-map-object">当前对象：{selectedObjectLabel}</p>
     </section>
   );
 }

@@ -410,7 +410,9 @@ describe("App", () => {
     render(<App />);
 
     const drawer = within(await screen.findByRole("region", { name: "证据链抽屉" }));
+    const replay = within(await screen.findByRole("region", { name: "地图回放主交互" }));
     expect(await drawer.findByText(/当前对象：目标接近/)).toBeInTheDocument();
+    expect(await replay.findByText(/当前对象：目标接近/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Evidence Trace" }));
     expect(screen.getByRole("region", { name: "阶段工具面板" })).toBeInTheDocument();
@@ -420,6 +422,9 @@ describe("App", () => {
     expect(screen.queryByRole("region", { name: "阶段工具面板" })).not.toBeInTheDocument();
     expect(drawer.getByText(/当前对象：任务阶段/)).toBeInTheDocument();
     expect(drawer.getByText("mission-stage")).toBeInTheDocument();
+    expect(replay.getByText(/当前对象：任务阶段/)).toBeInTheDocument();
+    expect(replay.queryByText(/当前对象：起点/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /t0/ })).toHaveAttribute("aria-pressed", "false");
   });
 
   test("toggles a stage-local tool panel closed when the active tool is clicked again", async () => {
@@ -547,6 +552,10 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: /t2/ }));
     const replay = within(screen.getByRole("region", { name: "地图回放主交互" }));
     expect(replay.getByText(/当前对象：目标接近/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /t0/ }));
+    expect(replay.getByText(/当前对象：起点/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /t0/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   test("mission map replay keeps large grid cells visible with positive finite fill rectangles", async () => {
@@ -585,6 +594,7 @@ describe("App", () => {
         route={null}
         frames={[{ frameId: "t0", timeLabel: "t0", label: "任务阶段", objectType: "mission-stage" }]}
         selectedFrameId="t0"
+        selectedObject={{ frameId: "t0", label: "任务阶段", objectType: "mission-stage" }}
         layers={{ rawPath: true, smoothedPath: true, optimizedPath: true, blocked: true }}
         onToggleLayer={vi.fn()}
         onSelectFrame={vi.fn()}
