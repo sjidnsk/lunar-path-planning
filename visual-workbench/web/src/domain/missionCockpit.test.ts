@@ -52,6 +52,23 @@ describe("missionCockpit", () => {
     });
   });
 
+  test("buildMissionCockpitKpis keeps risk scoped to the selected stage artifacts", () => {
+    const allArtifacts = [artifact("path-feedback-summary/v1", "failed", "summary.json")];
+    const route: RoutePayload = {
+      schema_version: "path-planner-route/v1",
+      geometric_path: [],
+      reachable: true,
+    };
+    const routeStage = deriveMissionStages(allArtifacts).find((stage) => stage.id === "route-guidance");
+
+    expect(routeStage).toBeDefined();
+
+    const kpis = buildMissionCockpitKpis(routeStage!, allArtifacts, route);
+
+    expect(routeStage!.artifacts).toEqual([]);
+    expect(kpis.riskLabel).toBe("证据不足");
+  });
+
   test("buildReplayFrames derives route frames from geometric path and returns the last frame as first selection", () => {
     const sidecar: SidecarPayload = {
       schema_version: "path-planner-sidecar/v1",
@@ -99,6 +116,33 @@ describe("missionCockpit", () => {
       },
     ]);
     expect(firstReplaySelection(frames)).toEqual(frames[2]);
+  });
+
+  test("buildReplayFrames falls back to the first sidecar goal when route has no valid geometric path", () => {
+    const sidecar: SidecarPayload = {
+      schema_version: "path-planner-sidecar/v1",
+      top_goals: [
+        { cell: [8, 8], utility: 0.92, reachable: true },
+        { cell: [9, 9], utility: 0.7, reachable: true },
+      ],
+    };
+    const route: RoutePayload = {
+      schema_version: "path-planner-route/v1",
+      geometric_path: [],
+    };
+
+    const frames = buildReplayFrames(sidecar, route);
+
+    expect(frames).toEqual([
+      {
+        objectType: "goal",
+        frameId: "t0",
+        timeLabel: "t0",
+        label: "候选目标",
+        cell: [8, 8],
+        artifactId: "path-planner-sidecar/v1",
+      },
+    ]);
   });
 
   test("buildEvidenceChain reports supporting artifacts, missing feedback summary, safe action, forbidden actions, and default layers", () => {

@@ -23,7 +23,7 @@ export const DEFAULT_MAP_LAYERS: MapLayerState = {
 
 export function buildMissionCockpitKpis(
   stage: DerivedMissionStage,
-  allArtifacts: Artifact[],
+  _allArtifacts: Artifact[],
   route: RoutePayload | null,
 ): MissionCockpitKpis {
   const requiredSchemas = uniqueStrings(stage.schemas);
@@ -32,13 +32,12 @@ export function buildMissionCockpitKpis(
   ).length;
   const completeness = requiredSchemas.length > 0 ? Math.round((presentSchemaCount / requiredSchemas.length) * 100) : 0;
   const replayFrameLabel = buildReplayFrameLabel(route);
-  const riskArtifacts = stage.artifacts.length > 0 ? stage.artifacts : allArtifacts;
 
   return {
     evidenceCompletenessLabel: `${completeness}%`,
     keyArtifactCount: stage.artifacts.length,
     replayFrameLabel,
-    riskLabel: buildRiskLabel(stage, riskArtifacts, route),
+    riskLabel: buildRiskLabel(stage.artifacts, route),
   };
 }
 
@@ -140,9 +139,8 @@ function buildReplayFrameLabel(route: RoutePayload | null): string {
   return routePath.length > 0 ? `t${routePath.length - 1}` : "t0";
 }
 
-function buildRiskLabel(stage: DerivedMissionStage, artifacts: Artifact[], route: RoutePayload | null): string {
+function buildRiskLabel(artifacts: Artifact[], route: RoutePayload | null): string {
   if (
-    stage.state === "blocked" ||
     artifacts.some((artifact) => BLOCKED_STATUSES.has(artifact.status.trim().toLowerCase())) ||
     route?.reachable === false
   ) {
