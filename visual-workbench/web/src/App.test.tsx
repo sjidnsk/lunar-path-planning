@@ -228,6 +228,23 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  test("evidence chain drawer follows the selected replay object", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const drawer = within(await screen.findByRole("region", { name: "证据链抽屉" }));
+    expect(drawer.getByText("Selected Map Object")).toBeInTheDocument();
+    expect(await drawer.findByText(/目标接近/)).toBeInTheDocument();
+    expect(drawer.getByText("Schema Flow")).toBeInTheDocument();
+    expect(await drawer.findByText("path-planner-route/v1")).toBeInTheDocument();
+    expect(drawer.getByText("path-feedback-summary/v1")).toBeInTheDocument();
+    expect(drawer.getByText(/禁止：full run \/ PPO \/ training/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /t0/ }));
+    expect(drawer.getByText(/当前对象：起点/)).toBeInTheDocument();
+    expect(drawer.getByText(/起点/)).toBeInTheDocument();
+  });
+
   test("renders H1 mission status header and cockpit KPIs", async () => {
     render(<App />);
 
@@ -443,7 +460,8 @@ describe("App", () => {
   test("mission map replay defaults to the first replay selection after route load", async () => {
     render(<App />);
 
-    expect(await screen.findByText(/当前对象：目标接近/)).toBeInTheDocument();
+    const replay = within(await screen.findByRole("region", { name: "地图回放主交互" }));
+    expect(await replay.findByText(/当前对象：目标接近/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /t2/ })).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -460,7 +478,8 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "raw path" })).toHaveAttribute("aria-pressed", "false");
 
     await user.click(await screen.findByRole("button", { name: /t2/ }));
-    expect(screen.getByText(/当前对象：目标接近/)).toBeInTheDocument();
+    const replay = within(screen.getByRole("region", { name: "地图回放主交互" }));
+    expect(replay.getByText(/当前对象：目标接近/)).toBeInTheDocument();
   });
 
   test("mission map replay keeps large grid cells visible with positive finite fill rectangles", async () => {

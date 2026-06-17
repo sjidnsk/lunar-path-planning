@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchRawJson, getJson } from "./api";
+import { EvidenceChainDrawer } from "./components/EvidenceChainDrawer";
 import { EvidenceTraceView, ValidateView } from "./components/LegacyWorkbenchViews";
 import { MissionEvidencePanel } from "./components/MissionEvidencePanel";
 import { MissionKpiStrip } from "./components/MissionKpiStrip";
@@ -10,6 +11,7 @@ import { MissionStatusHeader } from "./components/MissionStatusHeader";
 import { StageTools, type StageToolId } from "./components/StageTools";
 import {
   DEFAULT_MAP_LAYERS,
+  buildEvidenceChain,
   buildMissionCockpitKpis,
   buildReplayFrames,
   firstReplaySelection,
@@ -96,6 +98,10 @@ export function App() {
     missionStages.find((stage) => stage.id === fallbackStageId) ??
     missionStages[0];
   const evidenceStage = useMemo(() => enrichStageEvidence(selectedStage, artifacts), [artifacts, selectedStage]);
+  const evidenceChain = useMemo(
+    () => buildEvidenceChain(evidenceStage, artifacts, selectedMapObject),
+    [artifacts, evidenceStage, selectedMapObject],
+  );
   const cockpitKpis = useMemo(
     () => buildMissionCockpitKpis(evidenceStage, artifacts, route),
     [artifacts, evidenceStage, route],
@@ -172,6 +178,7 @@ export function App() {
           </div>
           <MissionEvidencePanel stage={evidenceStage} presentationMode={presentationMode} />
         </section>
+        <EvidenceChainDrawer chain={evidenceChain} presentationMode={presentationMode} />
       </main>
     </div>
   );
