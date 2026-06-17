@@ -758,12 +758,36 @@ button:focus-visible {
 }
 
 .schema-node,
-.drawer-artifact-list li {
+.drawer-artifact-list li,
+.drawer-summary-card {
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+}
+
+.drawer-summary-card {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.drawer-summary-card strong {
+  color: var(--ink);
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.drawer-summary-card span {
+  color: var(--amber);
+  font-weight: 800;
+}
+
+.drawer-summary-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .schema-node {

@@ -432,6 +432,24 @@ describe("App", () => {
     expect(screen.getByText("研发模式")).toHaveClass("research");
   });
 
+  test("presentation mode hides evidence chain drawer schema and path details", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const drawerRegion = await screen.findByRole("region", { name: "证据链抽屉" });
+    const drawer = within(drawerRegion);
+    expect(await drawer.findByText("path-planner-route/v1")).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "切换到演示模式" }));
+
+    expect(screen.getByText("演示模式")).toBeInTheDocument();
+    expect(drawer.queryByText("path-planner-route/v1")).not.toBeInTheDocument();
+    expect(drawer.queryByText("path-feedback-summary/v1")).not.toBeInTheDocument();
+    expect(drawer.queryByText(/outputs\//)).not.toBeInTheDocument();
+    expect(drawer.getByText(/演示模式隐藏 schema 细节/)).toBeInTheDocument();
+    expect(drawer.getByText(/禁止：full run \/ PPO \/ training/)).toBeInTheDocument();
+  });
+
   test("presentation mode hides raw evidence after it was expanded", async () => {
     const user = userEvent.setup();
     render(<App />);
