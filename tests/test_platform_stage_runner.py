@@ -30,6 +30,14 @@ SUPPORTED_STAGE_IDS = {
     "xunce-post-training-offline-evaluation",
     "xunce-high-fidelity-exploration-coverage-comparison",
     "xunce-coverage-discriminability-audit",
+    "xunce-candidate-level-coverage-opportunity-materialization",
+    "xunce-cost-efficient-coverage-opportunity-refinement",
+    "xunce-oracle-separability-benchmark",
+    "xunce-true-incumbent-selection-binding",
+    "xunce-safe-efficient-opportunity-root-cause-audit",
+    "xunce-safe-efficient-candidate-repair",
+    "xunce-risk-coverage-cost-quantization-audit",
+    "xunce-risk-constrained-frontier-nbv-candidate-generation",
 }
 
 

@@ -1,0 +1,15 @@
+{
+  "schema_version": "xunce-oracle-separability-benchmark-config/v1",
+  "source_materialized_coverage_root": "outputs/path_feedback_batch_xunce_candidate_level_coverage_opportunity_materialization_v1",
+  "xunce_candidate_checkpoint": "outputs/path_feedback_batch_xunce_sandbox_candidate_preflight_v1/sandbox_package/xunce-controlled-training-candidate.pt",
+  "incumbent_policy_checkpoint": "outputs/path_feedback_batch_value_stability_candidate_v1/experimental-hybrid-policy-candidate.pt",
+  "scenario_count": 24,
+  "rollout_steps": 10,
+  "oracle_better_scenario_fraction_threshold": 0.6,
+  "oracle_better_roi_group_count_threshold": 3,
+  "candidate_refresh_mode": "dynamic_from_coverage_memory",
+  "coverage_metric_mode": "path_line_plus_endpoint",
+  "include_oracle_baselines": true,
+  "include_roi_weighted_coverage": true,
+  "canary_traffic_fraction": 0.0
+}

@@ -515,6 +515,80 @@ artifacts. Each stage should be committed and pushed separately.
      reward, and candidate materialization iteration. Neither case authorizes
      checkpoint publication, default-policy replacement, executor connection,
      online canary traffic, or network complexity increases by default.
+   - Stage 18E target:
+     `scripts/run_xunce_candidate_level_coverage_opportunity_materialization.py`.
+   - Stage 18E output root:
+     `outputs/path_feedback_batch_xunce_candidate_level_coverage_opportunity_materialization_v1/`.
+   - Stage 18E materializes endpoint, path-line, expected, ROI-weighted,
+     revisit, cost/risk-efficiency, and opportunity-rank fields for every
+     candidate, then writes an enriched Stage 18A-compatible ROI expansion root.
+     The source label is
+     `geometric_counterfactual_from_stage18a_candidate/v1`; it is offline
+     counterfactual evidence, not real executor evidence.
+   - Stage 18F target:
+     `scripts/run_xunce_oracle_separability_benchmark.py`.
+   - Stage 18F output root:
+     `outputs/path_feedback_batch_xunce_oracle_separability_benchmark_v1/`.
+   - Stage 18F verifies whether greedy and cost-aware coverage oracles can beat
+     incumbent on Stage 18E materialized candidates without mask, fallback, or
+     cost-aware efficiency regressions. If oracle cannot separate, expand ROI or
+     map complexity. If oracle separates but Xunce does not, iterate adapter,
+     reward, candidate materialization, or training objective. Oracle remains a
+     diagnostic baseline and must not become the default policy.
+   - Stage 18F.1 target:
+     `scripts/run_xunce_cost_efficient_coverage_opportunity_refinement.py`.
+   - Stage 18F.1 output root:
+     `outputs/path_feedback_batch_xunce_cost_efficient_coverage_opportunity_refinement_v1/`.
+   - Stage 18F.1 refines Stage 18E candidates into a cost-efficient coverage
+     root by adding cost-, risk-, and budget-adjusted coverage fields,
+     Pareto/dominance status, and `safe_efficient_opportunity`. The cost-aware
+     oracle in Stage 18F must use only safe-efficient candidates when that field
+     exists. If no safe-efficient opportunity exists, the route is ROI/map
+     complexity or cost-efficient materialization repair. If such opportunities
+     exist but Xunce cannot exploit them, the route is adapter, reward, and
+     training-objective iteration. This remains offline counterfactual evidence
+     and does not authorize checkpoint publication, default-policy replacement,
+     executor connection, or online canary.
+   - Stage 18G targets:
+     `scripts/run_xunce_true_incumbent_selection_binding.py`,
+     `scripts/run_xunce_safe_efficient_opportunity_root_cause_audit.py`, and
+     `scripts/run_xunce_safe_efficient_candidate_repair.py`.
+   - Stage 18G removes `fallback_action_index_0` from safe-efficient decisions
+     by binding true incumbent checkpoint inference back to Stage 18E
+     candidates, audits why safe-efficient opportunities are absent, and writes
+     a repaired candidate root. Only path-feedback-validated candidates can
+     count as safe-efficient opportunities; interpolation proposals without
+     validation stay diagnostic-only. If safe-efficient opportunities remain
+     absent after true binding and repair, the next route is ROI/map or
+     candidate-generation complexity, not actor/critic training.
+   - Stage 18H.0 target:
+     `scripts/run_xunce_risk_coverage_cost_quantization_audit.py`.
+   - Stage 18H.0 output root:
+     `outputs/path_feedback_batch_xunce_risk_coverage_cost_quantization_audit_v1/`.
+   - Stage 18H.0 separates coverage, risk, and cost into atomic candidate
+     vectors before any guard, Pareto, reward, or critic target is considered.
+     Coverage carries provenance fields for source, cell-set kind, and dedupe
+     scope; risk uses the existing candidate risk scalar as a path-risk proxy in
+     v1 and records that source explicitly; cost stays lightweight with path
+     cost, budget ratio, and planning latency only. This stage is a diagnostic
+     and label-standardization gate, not actor/critic training.
+   - Stage 18H.0 can route to Stage 18F rerun only when path-feedback-validated
+     safe-efficient candidates exist across enough ROI groups. Otherwise it
+     routes to risk calibration, risk-aware candidate generation,
+     path-feedback validation, or ROI/map complexity repair.
+   - Stage 18I target:
+     `scripts/run_xunce_risk_constrained_frontier_nbv_candidate_generation.py`.
+   - Stage 18I output root:
+     `outputs/path_feedback_batch_xunce_risk_constrained_frontier_nbv_candidate_generation_v1/`.
+   - Stage 18I introduces an offline risk-constrained frontier-guided NBV
+     candidate generator. Frontier logic proposes where to explore, NBV-style
+     estimates measure endpoint/path-line/ROI coverage opportunity, risk/cost
+     guards decide which path-feedback-validated proposals are admissible, and
+     Pareto compression produces a small stable action set. The output root is
+     unbound; it must pass Stage 18B true checkpoint inference and Stage 18G.0
+     true incumbent binding before Stage 18H.0 quantization. Stage 18I is not
+     actor/critic training, checkpoint publication, default-policy replacement,
+     executor connection, online canary traffic, or a new map download.
 
 ## Acceptance Criteria
 

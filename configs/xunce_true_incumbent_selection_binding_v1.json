@@ -1,0 +1,10 @@
+{
+  "schema_version": "xunce-true-incumbent-selection-binding-config/v1",
+  "source_materialized_coverage_root": "outputs/path_feedback_batch_xunce_candidate_level_coverage_opportunity_materialization_v1",
+  "source_model_inference_root": "outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1",
+  "required_scenario_count": 24,
+  "require_true_model_inference": true,
+  "require_candidate_cell_match": true,
+  "allow_fallback_action_index": false,
+  "canary_traffic_fraction": 0.0
+}

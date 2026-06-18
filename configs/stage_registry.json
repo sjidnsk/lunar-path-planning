@@ -138,6 +138,54 @@
       "default_output_root": "outputs/path_feedback_batch_xunce_coverage_discriminability_audit_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-candidate-level-coverage-opportunity-materialization": {
+      "script": "scripts/run_xunce_candidate_level_coverage_opportunity_materialization.py",
+      "default_config": "configs/xunce_candidate_level_coverage_opportunity_materialization_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_candidate_level_coverage_opportunity_materialization_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-cost-efficient-coverage-opportunity-refinement": {
+      "script": "scripts/run_xunce_cost_efficient_coverage_opportunity_refinement.py",
+      "default_config": "configs/xunce_cost_efficient_coverage_opportunity_refinement_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_cost_efficient_coverage_opportunity_refinement_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-oracle-separability-benchmark": {
+      "script": "scripts/run_xunce_oracle_separability_benchmark.py",
+      "default_config": "configs/xunce_oracle_separability_benchmark_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_oracle_separability_benchmark_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-true-incumbent-selection-binding": {
+      "script": "scripts/run_xunce_true_incumbent_selection_binding.py",
+      "default_config": "configs/xunce_true_incumbent_selection_binding_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_true_incumbent_selection_binding_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-safe-efficient-opportunity-root-cause-audit": {
+      "script": "scripts/run_xunce_safe_efficient_opportunity_root_cause_audit.py",
+      "default_config": "configs/xunce_safe_efficient_opportunity_root_cause_audit_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_safe_efficient_opportunity_root_cause_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-safe-efficient-candidate-repair": {
+      "script": "scripts/run_xunce_safe_efficient_candidate_repair.py",
+      "default_config": "configs/xunce_safe_efficient_candidate_repair_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_safe_efficient_candidate_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-risk-coverage-cost-quantization-audit": {
+      "script": "scripts/run_xunce_risk_coverage_cost_quantization_audit.py",
+      "default_config": "configs/xunce_risk_coverage_cost_quantization_audit_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_risk_coverage_cost_quantization_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-risk-constrained-frontier-nbv-candidate-generation": {
+      "script": "scripts/run_xunce_risk_constrained_frontier_nbv_candidate_generation.py",
+      "default_config": "configs/xunce_risk_constrained_frontier_nbv_candidate_generation_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_risk_constrained_frontier_nbv_candidate_generation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "path-feedback-validation": {
       "script": "scripts/run_path_feedback_validation.py",
       "default_output_root": "outputs/path_feedback_validation",

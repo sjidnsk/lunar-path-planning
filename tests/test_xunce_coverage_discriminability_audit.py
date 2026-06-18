@@ -135,6 +135,35 @@ class XunceCoverageDiscriminabilityAuditTests(unittest.TestCase):
         self.assertEqual(summary["root_cause_route"], "coverage_metric_too_coarse")
         self.assertGreater(summary["path_line_coverage_spread_range"], summary["candidate_coverage_spread_range"])
 
+    def test_reads_stage18e_path_line_coverage_field(self) -> None:
+        from scripts.run_xunce_coverage_discriminability_audit import run_xunce_coverage_discriminability_audit
+
+        self._write_evidence(
+            coverage_values=[0.02, 0.04, 0.08],
+            path_line_values=[0.02, 0.12, 0.2],
+            incumbent_return=0.02,
+            xunce_return=0.02,
+            endpoint_tie=True,
+            static_reuse=False,
+        )
+        payload = json.loads((self.expansion_root / "xunce-high-fidelity-path-feedback-audit.json").read_text(encoding="utf-8"))
+        for scenario in payload["scenarios"]:
+            for candidate in scenario["path_feedback"]["candidates"]:
+                candidate["path_line_coverage_delta"] = candidate.pop("expected_path_line_coverage_delta")
+        (self.expansion_root / "xunce-high-fidelity-path-feedback-audit.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        summary = run_xunce_coverage_discriminability_audit(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertIn("coverage_metric_too_coarse", summary["reason_codes"])
+        self.assertGreater(summary["path_line_coverage_spread_range"], summary["candidate_coverage_spread_range"])
+
     def _write_config(self) -> None:
         payload = {
             "schema_version": "xunce-coverage-discriminability-audit-config/v1",

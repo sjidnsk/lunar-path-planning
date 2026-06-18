@@ -408,6 +408,8 @@ def _coverage_value(candidate: dict[str, Any]) -> float:
 
 def _path_line_coverage_value(candidate: dict[str, Any]) -> float:
     value = _float_or_none(candidate.get("expected_path_line_coverage_delta"))
+    if value is None:
+        value = _float_or_none(candidate.get("path_line_coverage_delta"))
     return _coverage_value(candidate) if value is None else value
 
 
