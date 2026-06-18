@@ -28,6 +28,7 @@ SUPPORTED_STAGE_IDS = {
     "xunce-guarded-training-candidate-preflight",
     "xunce-controlled-training-candidate",
     "xunce-post-training-offline-evaluation",
+    "xunce-high-fidelity-exploration-coverage-comparison",
 }
 
 

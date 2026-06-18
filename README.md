@@ -4653,6 +4653,38 @@ This still does not approve default-policy replacement, checkpoint publication,
 real executor connection, online canary traffic, PPO training, or real-world
 performance claims.
 
+`Xunce High-Fidelity Exploration Coverage Comparison v1` is the Stage 18C
+follow-up for coverage behavior. It is registered as:
+
+```bash
+python scripts/run_stage.py --stage xunce-high-fidelity-exploration-coverage-comparison --dry-run
+```
+
+The runner is
+`scripts/run_xunce_high_fidelity_exploration_coverage_comparison.py`, with
+config `configs/xunce_high_fidelity_exploration_coverage_comparison_v1.json`
+and output root
+`outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_v1/`.
+It runs a 24-scenario x 10-step offline shadow rollout over the Stage 18A
+high-fidelity scenarios, loading the same Xunce sandbox checkpoint and
+incumbent policy checkpoint used by Stage 18B. Stage 18B compares one-step true
+model inference quality; Stage 18C compares multi-step exploration coverage,
+coverage efficiency, safety/feasibility, and model behavior. It writes
+`xunce-exploration-coverage-comparison-summary.json`,
+`xunce-exploration-coverage-episodes.jsonl`,
+`xunce-exploration-coverage-steps.jsonl`,
+`xunce-exploration-coverage-model-inference.jsonl`,
+`xunce-exploration-coverage-roi-breakdown.json`, and
+`xunce-exploration-coverage-decision-audit.json`.
+
+Stage 18C still treats path-feedback rows as candidate/path/risk evidence only;
+model action selection must come from true checkpoint inference. If Xunce does
+not improve coverage return and coverage curve AUC without mask, safety,
+fallback, path-cost, or risk-efficiency regression, the next change remains
+`xunce_research_iteration_required` or
+`refine_coverage_reward_and_cost_guard`, not additional network complexity or
+default-policy authorization.
+
 Stage 18 v1 uses the existing LOLA LDEM/LDEC quasi-real dataset by default. It
 does not require downloading additional map products unless the 24-slice /
 8-ROI-group expansion still has low path/risk/value spread or the next research

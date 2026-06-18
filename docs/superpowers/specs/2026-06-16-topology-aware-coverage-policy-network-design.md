@@ -475,6 +475,26 @@ artifacts. Each stage should be committed and pushed separately.
    - This still does not publish checkpoints, replace default policy, train PPO,
      modify network/action space/default A*, connect a real executor, start
      online canary traffic, or claim real-world performance.
+   - Stage 18C target:
+     `scripts/run_xunce_high_fidelity_exploration_coverage_comparison.py`.
+   - Stage 18C output root:
+     `outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_v1/`.
+   - Run a 24-scenario x 10-step offline shadow rollout over the Stage 18A
+     high-fidelity scenarios with the same Xunce and incumbent checkpoints used
+     by Stage 18B.
+   - Stage 18B is the one-step true-inference comparison. Stage 18C is the
+     multi-step exploration coverage comparison: coverage return, cumulative
+     coverage delta, coverage curve AUC, new/revisited cells, ROI-family
+     minimum coverage, path/risk efficiency, mask/fallback violations, action
+     entropy, selected probability/rank, latency, and parameter count.
+   - Stage 18C must keep `proxy_selection_used=false`. Path-feedback evidence
+     can define candidates, path cost, risk, and coverage effects, but it must
+     not choose actions for either model.
+   - Coverage advantage is valid only when coverage return and coverage AUC
+     improve without mask, safety, fallback, path-cost, or risk-efficiency
+     regression. Otherwise the route is `xunce_research_iteration_required` or
+     `refine_coverage_reward_and_cost_guard`, not default-policy replacement
+     and not additional network complexity by default.
 
 ## Acceptance Criteria
 
