@@ -1,0 +1,10 @@
+{
+  "schema_version": "xunce-stage18i-evidence-closure-audit-config/v1",
+  "stage18i_candidate_generation_root": "outputs/path_feedback_batch_xunce_risk_constrained_frontier_nbv_candidate_generation_v1",
+  "after_stage18i_model_inference_root": "outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_after_stage18i_v1",
+  "after_stage18i_true_incumbent_binding_root": "outputs/path_feedback_batch_xunce_true_incumbent_selection_binding_after_stage18i_v1",
+  "after_stage18i_quantization_root": "outputs/path_feedback_batch_xunce_risk_coverage_cost_quantization_audit_after_stage18i_v1",
+  "after_stage18i_oracle_separability_root": "outputs/path_feedback_batch_xunce_oracle_separability_benchmark_after_stage18i_v1",
+  "after_stage18i_coverage_comparison_root": "outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_after_stage18i_v1",
+  "canary_traffic_fraction": 0.0
+}

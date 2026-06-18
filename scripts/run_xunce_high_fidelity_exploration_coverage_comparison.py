@@ -90,6 +90,7 @@ EFFICIENCY_NEXT_REQUIRED_CHANGE = "refine_coverage_reward_and_cost_guard"
 ADVANTAGE_NEXT_REQUIRED_CHANGE = "xunce_default_policy_candidate_authorization_preflight"
 NO_ADVANTAGE_NEXT_REQUIRED_CHANGE = "xunce_research_iteration_required"
 FIX_SOURCE_NEXT_REQUIRED_CHANGE = "fix_xunce_high_fidelity_real_map_roi_expansion"
+REVIEW_COMPARISON_NEXT_REQUIRED_CHANGE = "review_xunce_incumbent_comparison_metrics"
 
 POLICIES = ("xunce", "incumbent")
 ORACLE_POLICIES = ("greedy_coverage_oracle", "cost_aware_coverage_oracle")
@@ -842,21 +843,62 @@ def _decision(
             next_change = FIX_SOURCE_NEXT_REQUIRED_CHANGE
     else:
         status = "passed"
-        if coverage_advantage:
-            next_change = ADVANTAGE_NEXT_REQUIRED_CHANGE
-        elif coverage_advantage_with_efficiency_regression:
-            next_change = EFFICIENCY_NEXT_REQUIRED_CHANGE
-        else:
-            next_change = NO_ADVANTAGE_NEXT_REQUIRED_CHANGE
+        next_change = REVIEW_COMPARISON_NEXT_REQUIRED_CHANGE
+    diagnostic_reasons: list[str] = []
+    if not coverage_advantage:
+        diagnostic_reasons.append("xunce_coverage_advantage_not_established")
+    if coverage_advantage_with_efficiency_regression:
+        diagnostic_reasons.append("xunce_coverage_advantage_with_efficiency_regression")
+    if comparison["coverage_gain_per_path_cost_delta_vs_incumbent"] < -TOLERANCE:
+        diagnostic_reasons.append("coverage_gain_per_path_cost_regressive")
+    if comparison["coverage_gain_per_risk_delta_vs_incumbent"] < -TOLERANCE:
+        diagnostic_reasons.append("coverage_gain_per_risk_regressive")
+    blocking_reasons = unique_sorted(reasons)
+    diagnostic_reasons = unique_sorted(diagnostic_reasons)
+    evidence_gate = not any(
+        reason
+        in {
+            "missing_xunce_candidate_checkpoint",
+            "invalid_xunce_candidate_checkpoint",
+            "xunce_checkpoint_state_dict_missing",
+            "xunce_checkpoint_model_config_missing",
+            "missing_incumbent_policy_checkpoint",
+            "incumbent_checkpoint_format_unsupported",
+            "true_model_inference_not_executed",
+            "proxy_selection_used",
+        }
+        for reason in blocking_reasons
+    )
+    candidate_gate = not any(
+        reason in {"model_inference_mask_violation", "no_valid_candidates"}
+        or "boundary" in reason
+        or "fallback" in reason
+        for reason in blocking_reasons
+    )
     return {
         "schema_version": "xunce-exploration-coverage-decision-audit/v1",
         "status": status,
-        "reason_codes": unique_sorted(reasons),
+        "reason_codes": blocking_reasons,
+        "blocking_reason_codes": blocking_reasons,
+        "diagnostic_reason_codes": diagnostic_reasons,
+        "diagnostic_recommended_change": _coverage_diagnostic_recommended_change(diagnostic_reasons),
+        "evidence_authenticity_gate_passed": evidence_gate,
+        "candidate_validity_gate_passed": candidate_gate,
+        "comparison_allowed": status == "passed" and evidence_gate and candidate_gate,
         "xunce_coverage_advantage_established": coverage_advantage,
         "coverage_advantage_with_efficiency_regression": coverage_advantage_with_efficiency_regression,
         "next_required_change": next_change,
         **_boundary_fields(),
     }
+
+
+def _coverage_diagnostic_recommended_change(diagnostic_reasons: list[str]) -> str:
+    reason_set = set(diagnostic_reasons)
+    if "xunce_coverage_advantage_with_efficiency_regression" in reason_set or "coverage_gain_per_path_cost_regressive" in reason_set:
+        return EFFICIENCY_NEXT_REQUIRED_CHANGE
+    if "xunce_coverage_advantage_not_established" in reason_set:
+        return NO_ADVANTAGE_NEXT_REQUIRED_CHANGE
+    return ""
 
 
 def _summary(
@@ -883,6 +925,12 @@ def _summary(
         "generated_at": generated_at,
         "status": decision["status"],
         "reason_codes": decision["reason_codes"],
+        "blocking_reason_codes": decision["blocking_reason_codes"],
+        "diagnostic_reason_codes": decision["diagnostic_reason_codes"],
+        "diagnostic_recommended_change": decision["diagnostic_recommended_change"],
+        "evidence_authenticity_gate_passed": decision["evidence_authenticity_gate_passed"],
+        "candidate_validity_gate_passed": decision["candidate_validity_gate_passed"],
+        "comparison_allowed": decision["comparison_allowed"],
         "true_model_inference_executed": model_inference["true_model_inference_executed"],
         "proxy_selection_used": model_inference["proxy_selection_used"],
         "xunce_checkpoint_loaded": model_inference["xunce_checkpoint_loaded"],

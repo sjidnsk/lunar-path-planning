@@ -299,6 +299,12 @@ def _quantize(
             if relative["safe_efficient_candidate"]:
                 totals["safe_efficient_candidate_count"] += 1
                 scenario_safe += 1
+            if relative["hard_validity_passed"]:
+                totals["valid_candidate_count"] += 1
+            else:
+                totals["invalid_candidate_count"] += 1
+                for reason in failure_reasons:
+                    totals[f"invalid_candidate_reason:{reason}"] += 1
 
             enriched = dict(candidate)
             enriched.update(
@@ -319,6 +325,7 @@ def _quantize(
                     "cost_guard_passed": relative["cost_guard_passed"],
                     "hard_validity_passed": relative["hard_validity_passed"],
                     "safe_efficient_candidate": relative["safe_efficient_candidate"],
+                    "safe_efficient_opportunity": relative["safe_efficient_opportunity"],
                     "pareto_status": raw_statuses[action_index],
                     "normalized_pareto_status": normalized_statuses[action_index],
                     "normalization_instability": raw_statuses[action_index] != normalized_statuses[action_index],
@@ -344,6 +351,7 @@ def _quantize(
                     "pareto_status": raw_statuses[action_index],
                     "normalized_pareto_status": normalized_statuses[action_index],
                     "safe_efficient_candidate": relative["safe_efficient_candidate"],
+                    "safe_efficient_opportunity": relative["safe_efficient_opportunity"],
                     "failure_primary_axis": failure_primary_axis,
                     "failure_reason_codes": failure_reasons,
                 }
@@ -418,6 +426,15 @@ def _quantize(
         "candidate_pareto_frontier_count": _mean([float(value) for value in pareto_frontier_counts]),
         "normalization_instability_count": normalization_instability_count,
         "path_feedback_validation_missing_count": totals["path_feedback_validation_missing_count"],
+        "valid_candidate_count": totals["valid_candidate_count"],
+        "invalid_candidate_count": totals["invalid_candidate_count"],
+        "valid_scenario_count": sum(1 for row in scenario_rows if row["candidate_count"] > 0),
+        "invalid_scenario_count": sum(1 for row in scenario_rows if row["candidate_count"] <= 0),
+        "invalid_candidate_reason_counts": {
+            key.split(":", 1)[1]: value
+            for key, value in sorted(totals.items())
+            if key.startswith("invalid_candidate_reason:")
+        },
     }
     pareto_audit = {
         "schema_version": "xunce-risk-coverage-cost-pareto-audit/v1",
@@ -533,6 +550,7 @@ def _relative_to_incumbent(raw: dict[str, Any], incumbent: dict[str, Any], confi
         "cost_guard_passed": cost_guard,
         "hard_validity_passed": hard_validity,
         "safe_efficient_candidate": safe,
+        "safe_efficient_opportunity": safe,
         "unvalidated_positive_candidate": bool(coverage_guard and (candidate or {}).get("proposal_validated_by_path_feedback") is False),
     }
 
@@ -589,32 +607,113 @@ def _pareto_statuses(vectors: list[dict[str, Any]]) -> list[str]:
 
 
 def _decision(config: dict[str, Any], source: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
-    reasons = list(metrics["reason_codes"])
-    if any(reason == "missing_true_incumbent_binding" for reason in reasons) or metrics["fallback_action_index_0_count"] > 0:
-        reasons.append("missing_true_incumbent_binding")
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": FIX_BINDING_NEXT_REQUIRED_CHANGE}
+    blocking_reasons = list(metrics["reason_codes"])
+    diagnostic_reasons: list[str] = []
+    if any(reason == "missing_true_incumbent_binding" for reason in blocking_reasons) or metrics["fallback_action_index_0_count"] > 0:
+        blocking_reasons.append("missing_true_incumbent_binding")
+        return _decision_payload(
+            status="failed",
+            blocking_reasons=blocking_reasons,
+            diagnostic_reasons=diagnostic_reasons,
+            next_required_change=FIX_BINDING_NEXT_REQUIRED_CHANGE,
+            evidence_gate=False,
+            candidate_gate=True,
+        )
     if metrics["path_feedback_validation_missing_count"] > 0:
-        reasons.append("path_feedback_validation_missing")
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": FIX_VALIDATION_NEXT_REQUIRED_CHANGE}
+        blocking_reasons.append("path_feedback_validation_missing")
+        return _decision_payload(
+            status="failed",
+            blocking_reasons=blocking_reasons,
+            diagnostic_reasons=diagnostic_reasons,
+            next_required_change=FIX_VALIDATION_NEXT_REQUIRED_CHANGE,
+            evidence_gate=True,
+            candidate_gate=False,
+        )
+    if metrics.get("valid_candidate_count", metrics.get("candidate_count", 0)) <= 0:
+        blocking_reasons.append("no_valid_candidates")
+        return _decision_payload(
+            status="failed",
+            blocking_reasons=blocking_reasons,
+            diagnostic_reasons=diagnostic_reasons,
+            next_required_change=FIX_VALIDATION_NEXT_REQUIRED_CHANGE,
+            evidence_gate=True,
+            candidate_gate=False,
+        )
     if metrics["metric_coupling_detected"]:
-        reasons.append("metric_coupling_detected")
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": FIX_COUPLING_NEXT_REQUIRED_CHANGE}
+        blocking_reasons.append("metric_coupling_detected")
+        return _decision_payload(
+            status="failed",
+            blocking_reasons=blocking_reasons,
+            diagnostic_reasons=diagnostic_reasons,
+            next_required_change=FIX_COUPLING_NEXT_REQUIRED_CHANGE,
+            evidence_gate=True,
+            candidate_gate=True,
+        )
     if metrics["normalization_instability_count"] > 0:
-        reasons.append("normalization_instability")
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": FIX_NORMALIZATION_NEXT_REQUIRED_CHANGE}
-    if metrics["safe_efficient_candidate_count"] > 0 and metrics["roi_group_with_safe_efficient_candidate_count"] >= int(config["min_roi_group_with_safe_efficient_candidate"]):
-        return {"status": "passed", "reason_codes": unique_sorted(reasons), "next_required_change": PASS_NEXT_REQUIRED_CHANGE}
+        blocking_reasons.append("normalization_instability")
+        return _decision_payload(
+            status="failed",
+            blocking_reasons=blocking_reasons,
+            diagnostic_reasons=diagnostic_reasons,
+            next_required_change=FIX_NORMALIZATION_NEXT_REQUIRED_CHANGE,
+            evidence_gate=True,
+            candidate_gate=True,
+        )
+    if metrics["safe_efficient_candidate_count"] <= 0:
+        diagnostic_reasons.append("safe_efficient_candidate_missing")
+    if metrics["roi_group_with_safe_efficient_candidate_count"] < int(config["min_roi_group_with_safe_efficient_candidate"]):
+        diagnostic_reasons.append("safe_efficient_roi_spread_insufficient")
     if metrics["coverage_positive_candidate_count"] == 0:
-        reasons.append("roi_or_map_complexity_insufficient")
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": EXPAND_COMPLEXITY_NEXT_REQUIRED_CHANGE}
+        diagnostic_reasons.append("roi_or_map_complexity_insufficient")
     if metrics["coverage_positive_but_risk_regressive_count"] >= metrics["coverage_positive_candidate_count"]:
-        reasons.append("risk_guard_too_strict_or_miscalibrated")
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": CALIBRATE_RISK_NEXT_REQUIRED_CHANGE}
-    if metrics["coverage_positive_but_risk_regressive_count"] > 0:
-        reasons.append("candidate_generation_risk_biased")
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": REPAIR_RISK_GENERATION_NEXT_REQUIRED_CHANGE}
-    reasons.append("roi_or_map_complexity_insufficient")
-    return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": EXPAND_COMPLEXITY_NEXT_REQUIRED_CHANGE}
+        diagnostic_reasons.append("risk_guard_too_strict_or_miscalibrated")
+    elif metrics["coverage_positive_but_risk_regressive_count"] > 0:
+        diagnostic_reasons.append("candidate_generation_risk_biased")
+    if metrics.get("coverage_positive_but_cost_regressive_count", 0) > 0:
+        diagnostic_reasons.append("coverage_positive_but_cost_regressive")
+    return _decision_payload(
+        status="passed",
+        blocking_reasons=blocking_reasons,
+        diagnostic_reasons=diagnostic_reasons,
+        next_required_change=PASS_NEXT_REQUIRED_CHANGE,
+        evidence_gate=True,
+        candidate_gate=True,
+    )
+
+
+def _decision_payload(
+    *,
+    status: str,
+    blocking_reasons: list[str],
+    diagnostic_reasons: list[str],
+    next_required_change: str,
+    evidence_gate: bool,
+    candidate_gate: bool,
+) -> dict[str, Any]:
+    blocking_reason_codes = unique_sorted(blocking_reasons)
+    diagnostic_reason_codes = unique_sorted(diagnostic_reasons)
+    return {
+        "status": status,
+        "reason_codes": blocking_reason_codes,
+        "blocking_reason_codes": blocking_reason_codes,
+        "diagnostic_reason_codes": diagnostic_reason_codes,
+        "diagnostic_recommended_change": _diagnostic_recommended_change(diagnostic_reason_codes),
+        "evidence_authenticity_gate_passed": evidence_gate,
+        "candidate_validity_gate_passed": candidate_gate,
+        "comparison_allowed": status == "passed" and evidence_gate and candidate_gate,
+        "next_required_change": next_required_change,
+    }
+
+
+def _diagnostic_recommended_change(diagnostic_reasons: list[str]) -> str:
+    reason_set = set(diagnostic_reasons)
+    if {"risk_guard_too_strict_or_miscalibrated"} & reason_set:
+        return CALIBRATE_RISK_NEXT_REQUIRED_CHANGE
+    if {"candidate_generation_risk_biased", "safe_efficient_candidate_missing", "coverage_positive_but_cost_regressive"} & reason_set:
+        return REPAIR_RISK_GENERATION_NEXT_REQUIRED_CHANGE
+    if {"roi_or_map_complexity_insufficient", "safe_efficient_roi_spread_insufficient"} & reason_set:
+        return EXPAND_COMPLEXITY_NEXT_REQUIRED_CHANGE
+    return ""
 
 
 def _summary(
@@ -634,6 +733,12 @@ def _summary(
         "generated_at": generated_at,
         "status": decision["status"],
         "reason_codes": decision["reason_codes"],
+        "blocking_reason_codes": decision["blocking_reason_codes"],
+        "diagnostic_reason_codes": decision["diagnostic_reason_codes"],
+        "diagnostic_recommended_change": decision["diagnostic_recommended_change"],
+        "evidence_authenticity_gate_passed": decision["evidence_authenticity_gate_passed"],
+        "candidate_validity_gate_passed": decision["candidate_validity_gate_passed"],
+        "comparison_allowed": decision["comparison_allowed"],
         "next_required_change": decision["next_required_change"],
         **{key: value for key, value in metrics.items() if key != "reason_codes"},
         "source_bound_coverage_root": config["source_bound_coverage_root"],
@@ -659,6 +764,12 @@ def _decision_audit(source: dict[str, Any], metrics: dict[str, Any], decision: d
         "schema_version": "xunce-risk-coverage-cost-decision-audit/v1",
         "status": decision["status"],
         "reason_codes": decision["reason_codes"],
+        "blocking_reason_codes": decision["blocking_reason_codes"],
+        "diagnostic_reason_codes": decision["diagnostic_reason_codes"],
+        "diagnostic_recommended_change": decision["diagnostic_recommended_change"],
+        "evidence_authenticity_gate_passed": decision["evidence_authenticity_gate_passed"],
+        "candidate_validity_gate_passed": decision["candidate_validity_gate_passed"],
+        "comparison_allowed": decision["comparison_allowed"],
         "next_required_change": decision["next_required_change"],
         "source_true_incumbent_selection_bound": source["binding_summary"].get("true_incumbent_selection_bound"),
         "metric_coupling_detected": metrics["metric_coupling_detected"],

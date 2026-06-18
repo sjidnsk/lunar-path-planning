@@ -44,7 +44,7 @@ FIX_MATERIALIZATION_NEXT_REQUIRED_CHANGE = "run_candidate_level_coverage_opportu
 FIX_STAGE18F1_NEXT_REQUIRED_CHANGE = "run_cost_efficient_coverage_opportunity_refinement"
 EXPAND_COMPLEXITY_NEXT_REQUIRED_CHANGE = "expand_roi_or_map_complexity"
 TRAINING_ITERATION_NEXT_REQUIRED_CHANGE = "xunce_training_or_adapter_iteration_required"
-RUN_STAGE18C_V2_NEXT_REQUIRED_CHANGE = "run_stage18c_v2_with_refined_cost_efficient_root"
+RUN_STAGE18C_V2_NEXT_REQUIRED_CHANGE = "run_stage18c_v2_model_comparison"
 EFFICIENCY_NEXT_REQUIRED_CHANGE = "refine_coverage_reward_and_cost_guard"
 REFINE_COST_EFFICIENT_NEXT_REQUIRED_CHANGE = "refine_cost_efficient_coverage_opportunity"
 
@@ -256,7 +256,6 @@ def _metrics(config: dict[str, Any], source: dict[str, Any], rows: list[dict[str
     safe_available = safe_count > 0
     oracle_separable = bool(
         not source["reason_codes"]
-        and (not source["source_cost_efficient_refinement_detected"] or safe_available)
         and _mean(greedy_deltas) > TOLERANCE
         and _mean(cost_deltas) > TOLERANCE
         and _safe_ratio(len(better_rows), len(rows)) >= float(config["oracle_better_scenario_fraction_threshold"])
@@ -291,17 +290,68 @@ def _decision(metrics: dict[str, Any]) -> dict[str, Any]:
     reasons = list(metrics["reason_codes"])
     if reasons:
         next_change = FIX_STAGE18F1_NEXT_REQUIRED_CHANGE if "missing_stage18f1_refined_root" in reasons else FIX_MATERIALIZATION_NEXT_REQUIRED_CHANGE
-        return {"status": "failed", "reason_codes": unique_sorted(reasons), "next_required_change": next_change}
+        return _decision_payload(
+            status="failed",
+            blocking_reasons=reasons,
+            diagnostic_reasons=[],
+            next_required_change=next_change,
+            evidence_gate=False,
+            candidate_gate=False,
+        )
+    diagnostic_reasons: list[str] = []
     if metrics["source_cost_efficient_refinement_detected"] and not metrics["safe_efficient_opportunity_available"]:
-        return {"status": "passed", "reason_codes": ["safe_efficient_opportunity_insufficient"], "next_required_change": REFINE_COST_EFFICIENT_NEXT_REQUIRED_CHANGE}
+        diagnostic_reasons.append("safe_efficient_opportunity_insufficient")
+    if not metrics["oracle_separable"]:
+        diagnostic_reasons.append("oracle_not_separable")
     if metrics["xunce_coverage_advantage_established"] and metrics["xunce_efficiency_regression_count"] > 0:
-        return {"status": "passed", "reason_codes": [], "next_required_change": EFFICIENCY_NEXT_REQUIRED_CHANGE}
-    if metrics["xunce_coverage_advantage_established"]:
-        return {"status": "passed", "reason_codes": [], "next_required_change": PASS_NEXT_REQUIRED_CHANGE}
-    if metrics["oracle_separable"]:
-        next_change = RUN_STAGE18C_V2_NEXT_REQUIRED_CHANGE if metrics["source_cost_efficient_refinement_detected"] else TRAINING_ITERATION_NEXT_REQUIRED_CHANGE
-        return {"status": "passed", "reason_codes": [], "next_required_change": next_change}
-    return {"status": "passed", "reason_codes": [], "next_required_change": EXPAND_COMPLEXITY_NEXT_REQUIRED_CHANGE}
+        diagnostic_reasons.append("xunce_coverage_advantage_with_efficiency_regression")
+    elif not metrics["xunce_coverage_advantage_established"]:
+        diagnostic_reasons.append("xunce_coverage_advantage_not_established")
+    return _decision_payload(
+        status="passed",
+        blocking_reasons=[],
+        diagnostic_reasons=diagnostic_reasons,
+        next_required_change=RUN_STAGE18C_V2_NEXT_REQUIRED_CHANGE,
+        evidence_gate=True,
+        candidate_gate=True,
+    )
+
+
+def _decision_payload(
+    *,
+    status: str,
+    blocking_reasons: list[str],
+    diagnostic_reasons: list[str],
+    next_required_change: str,
+    evidence_gate: bool,
+    candidate_gate: bool,
+) -> dict[str, Any]:
+    blocking_reason_codes = unique_sorted(blocking_reasons)
+    diagnostic_reason_codes = unique_sorted(diagnostic_reasons)
+    return {
+        "status": status,
+        "reason_codes": blocking_reason_codes,
+        "blocking_reason_codes": blocking_reason_codes,
+        "diagnostic_reason_codes": diagnostic_reason_codes,
+        "diagnostic_recommended_change": _diagnostic_recommended_change(diagnostic_reason_codes),
+        "evidence_authenticity_gate_passed": evidence_gate,
+        "candidate_validity_gate_passed": candidate_gate,
+        "comparison_allowed": status == "passed" and evidence_gate and candidate_gate,
+        "next_required_change": next_required_change,
+    }
+
+
+def _diagnostic_recommended_change(diagnostic_reasons: list[str]) -> str:
+    reason_set = set(diagnostic_reasons)
+    if "oracle_not_separable" in reason_set:
+        return "refine_candidate_generation_or_roi_complexity"
+    if "safe_efficient_opportunity_insufficient" in reason_set:
+        return REFINE_COST_EFFICIENT_NEXT_REQUIRED_CHANGE
+    if "xunce_coverage_advantage_with_efficiency_regression" in reason_set:
+        return EFFICIENCY_NEXT_REQUIRED_CHANGE
+    if "xunce_coverage_advantage_not_established" in reason_set:
+        return TRAINING_ITERATION_NEXT_REQUIRED_CHANGE
+    return ""
 
 
 def _summary(
@@ -321,6 +371,12 @@ def _summary(
         "generated_at": generated_at,
         "status": decision["status"],
         "reason_codes": decision["reason_codes"],
+        "blocking_reason_codes": decision["blocking_reason_codes"],
+        "diagnostic_reason_codes": decision["diagnostic_reason_codes"],
+        "diagnostic_recommended_change": decision["diagnostic_recommended_change"],
+        "evidence_authenticity_gate_passed": decision["evidence_authenticity_gate_passed"],
+        "candidate_validity_gate_passed": decision["candidate_validity_gate_passed"],
+        "comparison_allowed": decision["comparison_allowed"],
         "next_required_change": decision["next_required_change"],
         **{key: value for key, value in metrics.items() if key != "reason_codes"},
         "source_materialized_coverage_root": config["source_materialized_coverage_root"],
@@ -372,11 +428,8 @@ def _candidate_rows(scenario: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _oracle_index(candidates: list[dict[str, Any]], *, mode: str) -> int | None:
     scored: list[tuple[float, float, int]] = []
-    requires_safe_efficient = mode == "cost_aware" and any("safe_efficient_opportunity" in candidate for candidate in candidates)
     for index, candidate in enumerate(candidates):
         if not _candidate_valid(candidate):
-            continue
-        if requires_safe_efficient and candidate.get("safe_efficient_opportunity") is not True:
             continue
         coverage = _coverage_value(candidate)
         cost = _path_cost(candidate)
@@ -398,7 +451,13 @@ def _candidate_at(candidates: list[dict[str, Any]], index: int | None) -> dict[s
 
 
 def _candidate_valid(candidate: dict[str, Any] | None) -> bool:
-    return bool(candidate and candidate.get("reachable") is True and candidate.get("open_grid_fallback_used") is not True)
+    return bool(
+        candidate
+        and candidate.get("reachable") is True
+        and candidate.get("open_grid_fallback_used") is not True
+        and candidate.get("proposal_only") is not True
+        and candidate.get("proposal_validated_by_path_feedback") is not False
+    )
 
 
 def _coverage_value(candidate: dict[str, Any] | None) -> float:
@@ -426,11 +485,19 @@ def _selected_index_from_scenario(scenario: dict[str, Any], field: str, *, defau
 
 
 def _scenarios_have_safe_efficient_field(scenarios: list[dict[str, Any]]) -> bool:
-    return any("safe_efficient_opportunity" in candidate for scenario in scenarios for candidate in _candidate_rows(scenario))
+    return any(_has_safe_efficient_field(candidate) for scenario in scenarios for candidate in _candidate_rows(scenario))
 
 
 def _safe_efficient_opportunity_count(scenarios: list[dict[str, Any]]) -> int:
-    return sum(1 for scenario in scenarios for candidate in _candidate_rows(scenario) if candidate.get("safe_efficient_opportunity") is True)
+    return sum(1 for scenario in scenarios for candidate in _candidate_rows(scenario) if _candidate_safe_efficient(candidate))
+
+
+def _has_safe_efficient_field(candidate: dict[str, Any]) -> bool:
+    return "safe_efficient_opportunity" in candidate or "safe_efficient_candidate" in candidate
+
+
+def _candidate_safe_efficient(candidate: dict[str, Any]) -> bool:
+    return candidate.get("safe_efficient_opportunity") is True or candidate.get("safe_efficient_candidate") is True
 
 
 def _read_json(path: Path, reasons: list[str], reason_code: str) -> dict[str, Any]:

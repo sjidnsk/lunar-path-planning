@@ -67,6 +67,13 @@ class XunceRiskCoverageCostQuantizationAuditTests(unittest.TestCase):
         self.assertNotIn("max_curvature", candidate["cost_vector"])
         self.assertNotIn("ackermann_feasibility", candidate["cost_vector"])
         self.assertTrue(candidate["safe_efficient_candidate"])
+        self.assertTrue(candidate["safe_efficient_opportunity"])
+        self.assertEqual(candidate["safe_efficient_opportunity"], candidate["safe_efficient_candidate"])
+        generated = json.loads((self.output_root / "xunce-high-fidelity-path-feedback-audit.json").read_text(encoding="utf-8"))
+        generated_candidate = generated["scenarios"][0]["path_feedback"]["candidates"][1]
+        self.assertTrue(generated_candidate["safe_efficient_candidate"])
+        self.assertTrue(generated_candidate["safe_efficient_opportunity"])
+        self.assertEqual(generated_candidate["safe_efficient_opportunity"], generated_candidate["safe_efficient_candidate"])
 
         expected_files = (
             "xunce-risk-coverage-cost-quantization-summary.json",
@@ -126,9 +133,10 @@ class XunceRiskCoverageCostQuantizationAuditTests(unittest.TestCase):
         positive = [row for row in rows if row["action_index"] == 1]
         self.assertTrue(positive)
         self.assertTrue(all(not row["safe_efficient_candidate"] for row in positive))
+        self.assertTrue(all(not row["safe_efficient_opportunity"] for row in positive))
         self.assertTrue(all(row["failure_primary_axis"] == "validation" for row in positive))
 
-    def test_risk_regression_is_attributed_to_risk_axis(self) -> None:
+    def test_risk_regression_is_reported_as_diagnostic_not_blocking(self) -> None:
         from scripts.run_xunce_risk_coverage_cost_quantization_audit import (
             run_xunce_risk_coverage_cost_quantization_audit,
         )
@@ -141,12 +149,15 @@ class XunceRiskCoverageCostQuantizationAuditTests(unittest.TestCase):
             repo_root=self.repo_root,
         )
 
-        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(summary["comparison_allowed"])
+        self.assertEqual(summary["blocking_reason_codes"], [])
         self.assertEqual(summary["safe_efficient_candidate_count"], 0)
         self.assertGreater(summary["coverage_positive_but_risk_regressive_count"], 0)
         self.assertEqual(summary["risk_regression_primary_axis_counts"], {"path_risk_peak": 48})
-        self.assertIn("risk_guard_too_strict_or_miscalibrated", summary["reason_codes"])
-        self.assertEqual(summary["next_required_change"], "calibrate_risk_margin_or_risk_attribution")
+        self.assertIn("risk_guard_too_strict_or_miscalibrated", summary["diagnostic_reason_codes"])
+        self.assertEqual(summary["diagnostic_recommended_change"], "calibrate_risk_margin_or_risk_attribution")
+        self.assertEqual(summary["next_required_change"], "rerun_oracle_separability_with_quantized_root")
 
         rows = self._read_jsonl(self.output_root / "xunce-risk-coverage-cost-candidates.jsonl")
         risk_failed = [row for row in rows if row["action_index"] in (1, 2)]

@@ -26,7 +26,7 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_dir)
 
-    def test_oracle_separable_but_xunce_not_better_routes_to_training_iteration(self) -> None:
+    def test_oracle_separable_but_xunce_not_better_still_routes_to_model_comparison(self) -> None:
         from scripts.run_xunce_oracle_separability_benchmark import run_xunce_oracle_separability_benchmark
 
         summary = run_xunce_oracle_separability_benchmark(
@@ -38,7 +38,9 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
         self.assertEqual(summary["status"], "passed")
         self.assertTrue(summary["oracle_separable"])
         self.assertFalse(summary["xunce_coverage_advantage_established"])
-        self.assertEqual(summary["next_required_change"], "xunce_training_or_adapter_iteration_required")
+        self.assertTrue(summary["comparison_allowed"])
+        self.assertEqual(summary["next_required_change"], "run_stage18c_v2_model_comparison")
+        self.assertIn("xunce_coverage_advantage_not_established", summary["diagnostic_reason_codes"])
         self.assertGreater(summary["greedy_oracle_coverage_return_delta_vs_incumbent"], 0.0)
         self.assertGreater(summary["cost_aware_oracle_coverage_return_delta_vs_incumbent"], 0.0)
         self.assertGreaterEqual(summary["oracle_better_scenario_fraction"], 0.60)
@@ -57,7 +59,7 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
         self.assertTrue((self.output_root / "xunce-oracle-separability-report.md").is_file())
         self.assertTrue((self.output_root / "stage18c_v2").is_dir())
 
-    def test_oracle_not_separable_routes_to_roi_or_map_complexity(self) -> None:
+    def test_oracle_not_separable_is_diagnostic_and_allows_stage18c(self) -> None:
         from scripts.run_xunce_oracle_separability_benchmark import run_xunce_oracle_separability_benchmark
 
         self._write_materialized_root(flat=True)
@@ -70,7 +72,10 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
 
         self.assertEqual(summary["status"], "passed")
         self.assertFalse(summary["oracle_separable"])
-        self.assertEqual(summary["next_required_change"], "expand_roi_or_map_complexity")
+        self.assertTrue(summary["comparison_allowed"])
+        self.assertEqual(summary["next_required_change"], "run_stage18c_v2_model_comparison")
+        self.assertIn("oracle_not_separable", summary["diagnostic_reason_codes"])
+        self.assertEqual(summary["diagnostic_recommended_change"], "refine_candidate_generation_or_roi_complexity")
 
     def test_oracles_do_not_select_masked_or_unreachable_candidate(self) -> None:
         from scripts.run_xunce_oracle_separability_benchmark import run_xunce_oracle_separability_benchmark
@@ -103,9 +108,10 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
         self.assertGreater(summary["cost_aware_oracle_coverage_return_delta_vs_incumbent"], 0.0)
         self.assertGreater(summary["cost_aware_oracle_efficiency_regression_count"], 0)
         self.assertFalse(summary["oracle_separable"])
-        self.assertEqual(summary["next_required_change"], "expand_roi_or_map_complexity")
+        self.assertEqual(summary["next_required_change"], "run_stage18c_v2_model_comparison")
+        self.assertIn("oracle_not_separable", summary["diagnostic_reason_codes"])
 
-    def test_refined_safe_efficient_candidates_filter_cost_aware_oracle(self) -> None:
+    def test_refined_safe_efficient_candidates_are_reported_but_do_not_filter_oracle_pool(self) -> None:
         from scripts.run_xunce_oracle_separability_benchmark import run_xunce_oracle_separability_benchmark
 
         self._write_refined_root()
@@ -121,13 +127,34 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
         self.assertGreater(summary["safe_efficient_opportunity_count"], 0)
         self.assertTrue(summary["oracle_separable"])
         self.assertEqual(summary["cost_aware_oracle_efficiency_regression_count"], 0)
-        self.assertEqual(summary["next_required_change"], "run_stage18c_v2_with_refined_cost_efficient_root")
+        self.assertEqual(summary["next_required_change"], "run_stage18c_v2_model_comparison")
         scenario_rows = self._read_jsonl(self.output_root / "xunce-oracle-separability-scenarios.jsonl")
         self.assertTrue(scenario_rows)
         self.assertTrue(all(row["greedy_oracle_selected_action_index"] == 2 for row in scenario_rows))
-        self.assertTrue(all(row["cost_aware_oracle_selected_action_index"] == 1 for row in scenario_rows))
+        self.assertTrue(all(row["cost_aware_oracle_selected_action_index"] in (1, 2) for row in scenario_rows))
 
-    def test_refined_root_without_safe_efficient_opportunities_routes_to_refinement(self) -> None:
+    def test_safe_efficient_candidate_alias_does_not_filter_cost_aware_oracle(self) -> None:
+        from scripts.run_xunce_oracle_separability_benchmark import run_xunce_oracle_separability_benchmark
+
+        self._write_refined_root(candidate_alias_only=True)
+
+        summary = run_xunce_oracle_separability_benchmark(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(summary["source_cost_efficient_refinement_detected"])
+        self.assertGreater(summary["safe_efficient_opportunity_count"], 0)
+        self.assertTrue(summary["oracle_separable"])
+        self.assertEqual(summary["cost_aware_oracle_efficiency_regression_count"], 0)
+        scenario_rows = self._read_jsonl(self.output_root / "xunce-oracle-separability-scenarios.jsonl")
+        self.assertTrue(scenario_rows)
+        self.assertTrue(all(row["greedy_oracle_selected_action_index"] == 2 for row in scenario_rows))
+        self.assertTrue(all(row["cost_aware_oracle_selected_action_index"] in (1, 2) for row in scenario_rows))
+
+    def test_refined_root_without_safe_efficient_opportunities_still_allows_oracle_benchmark(self) -> None:
         from scripts.run_xunce_oracle_separability_benchmark import run_xunce_oracle_separability_benchmark
 
         self._write_refined_root(no_safe=True)
@@ -138,10 +165,10 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
             repo_root=self.repo_root,
         )
 
-        self.assertFalse(summary["oracle_separable"])
+        self.assertTrue(summary["oracle_separable"])
         self.assertEqual(summary["safe_efficient_opportunity_count"], 0)
-        self.assertIn("safe_efficient_opportunity_insufficient", summary["reason_codes"])
-        self.assertEqual(summary["next_required_change"], "refine_cost_efficient_coverage_opportunity")
+        self.assertIn("safe_efficient_opportunity_insufficient", summary["diagnostic_reason_codes"])
+        self.assertEqual(summary["next_required_change"], "run_stage18c_v2_model_comparison")
 
     def _write_config(self) -> None:
         payload = {
@@ -274,7 +301,7 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
             },
         )
 
-    def _write_refined_root(self, *, no_safe: bool = False) -> None:
+    def _write_refined_root(self, *, no_safe: bool = False, candidate_alias_only: bool = False) -> None:
         self.materialized_root.mkdir(parents=True, exist_ok=True)
         scenarios = []
         slices = []
@@ -287,8 +314,7 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
             candidates = []
             for action_index, value in enumerate(coverage):
                 safe = bool(action_index == 1 and not no_safe)
-                candidates.append(
-                    {
+                candidate = {
                         "action_index": action_index,
                         "cell": [index * 20 + action_index + 1, action_index],
                         "reachable": True,
@@ -309,8 +335,10 @@ class XunceOracleSeparabilityBenchmarkTests(unittest.TestCase):
                         "cost_efficiency_guard_passed": safe,
                         "risk_efficiency_guard_passed": safe,
                         "efficiency_refinement_source": "cost_efficient_counterfactual_from_stage18e_candidate/v1",
-                    }
-                )
+                }
+                if candidate_alias_only:
+                    candidate["safe_efficient_candidate"] = candidate.pop("safe_efficient_opportunity")
+                candidates.append(candidate)
             scenarios.append(
                 {
                     "scenario_id": scenario_id,

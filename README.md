@@ -4756,11 +4756,14 @@ The runner is `scripts/run_xunce_oracle_separability_benchmark.py`, with config
 `outputs/path_feedback_batch_xunce_oracle_separability_benchmark_v1/`. It
 checks whether greedy coverage and cost-aware coverage oracles can beat the
 incumbent over the Stage 18E materialized candidate set without mask violation,
-open-grid fallback, or cost-aware efficiency regression. If oracle cannot beat
-incumbent, the next route is ROI/map complexity expansion. If oracle can beat
-incumbent but Xunce cannot, the next route is Xunce adapter, reward, candidate
-materialization, or training-objective iteration. Oracle is a diagnostic
-baseline only and must not be treated as a default policy.
+open-grid fallback, or cost-aware efficiency regression. After the gate
+simplification, `oracle_separable=false`, cost-efficiency regression, or missing
+safe-efficient opportunities are diagnostic signals only; they no longer block
+Stage 18C-v2 model comparison. Stage 18F passes when evidence authenticity and
+candidate validity gates pass, routes to `run_stage18c_v2_model_comparison`,
+and records research advice in `diagnostic_reason_codes` and
+`diagnostic_recommended_change`. Oracle remains a diagnostic baseline only and
+must not be treated as a default policy.
 
 Stage 18 v1 uses the existing LOLA LDEM/LDEC quasi-real dataset by default. It
 does not require downloading additional map products unless the 24-slice /
@@ -4790,11 +4793,12 @@ coverage efficiency. This stage repairs oracle separability efficiency
 regression; it does not train Xunce, publish checkpoints, replace the default
 policy, connect the executor, start online canary, or download new map data.
 
-When a refined root contains `safe_efficient_opportunity`, Stage 18F's
-cost-aware oracle only chooses from safe-efficient candidates. If no such
-candidate exists, the route is `refine_cost_efficient_coverage_opportunity` or
-ROI/map complexity expansion. If the cost-aware oracle becomes separable on the
-refined root, the next diagnostic step is Stage 18C-v2 with:
+When a refined root contains `safe_efficient_opportunity`, Stage 18F reports
+that field but does not use it as a hard oracle-candidate-pool restriction.
+The cost-aware oracle chooses only from valid candidates: reachable,
+path-feedback validated, non-proposal, and no open-grid fallback. Missing
+safe-efficient opportunities remain visible as diagnostics, but the next
+evidence step is still Stage 18C-v2:
 
 ```bash
 python scripts/run_stage.py --stage xunce-oracle-separability-benchmark \
@@ -4852,11 +4856,12 @@ coverage is not silently double counted. Risk remains the main diagnostic axis
 because Stage 18G showed coverage-positive candidates were risk-regressive.
 Cost remains lightweight in v1: `path_cost`, `budget_used_ratio`, and
 `planning_latency_ms`; it does not introduce Ackermann, curvature, or executor
-feasibility claims. Stage 18H.0 may route to Stage 18F rerun only when
-path-feedback-validated safe-efficient candidates exist across enough ROI
-groups. Otherwise it routes to risk calibration, risk-aware candidate
-generation, path-feedback validation, or ROI/map complexity repair. It does not
-train actor/critic models, publish checkpoints, replace default policy, connect
+feasibility claims. Stage 18H.0 no longer requires nonzero safe-efficient
+candidates, no risk regression, or no cost regression before continuing. Those
+values are emitted as metrics and diagnostics; hard failures are limited to
+missing true incumbent binding, missing path-feedback validation, metric
+coupling, normalization failure, or zero valid candidates. It does not train
+actor/critic models, publish checkpoints, replace default policy, connect
 executors, start online canary, or download new maps.
 
 `Xunce Risk-Constrained Frontier-NBV Candidate Generation v1` is Stage 18I. It
@@ -4886,6 +4891,75 @@ as positive safe-efficient opportunities. Stage 18I keeps coverage, risk, and
 cost separated and does not publish checkpoints, replace the default policy,
 connect the executor, start online canary, modify action space/default A*, or
 download new map data.
+
+`Xunce Risk-Aware Frontier-NBV Candidate Repair v1` is Stage 18I.2. It is
+registered as:
+
+```bash
+python scripts/run_stage.py --stage xunce-risk-aware-frontier-nbv-candidate-repair --dry-run
+```
+
+The runner is
+`scripts/run_xunce_risk_aware_frontier_nbv_candidate_repair.py`, with config
+`configs/xunce_risk_aware_frontier_nbv_candidate_repair_v1.json` and output
+root
+`outputs/path_feedback_batch_xunce_risk_aware_frontier_nbv_candidate_repair_v1/`.
+Stage 18I.2 repairs candidate generation after Stage 18I by anchoring the
+baseline to Stage 18G.0 true incumbent binding. It matches the incumbent by
+candidate cell, not by `action_index=0`, then emits an unbound root containing
+`incumbent_neighborhood`, `frontier_boundary`, and `roi_undercovered_boundary`
+candidates. Coverage is geometric path-line plus endpoint provenance; path
+cost, risk, reachability, and open-grid status must come from path-feedback
+evidence. Unvalidated proposals remain diagnostic and cannot become
+safe-efficient candidates.
+
+Current after-Stage18I evidence shows why this repair is needed: Stage 18I
+looked safe-efficient before true binding because all candidates were effectively
+`incumbent_neighborhood`; after true incumbent binding, safe-efficient
+candidates collapsed to zero. Under the simplified gate system, that is no
+longer a hard blocker for model comparison. Stage 18I.2 passes when the root has
+real incumbent binding, no action-0 fallback, path-feedback validated reachable
+candidates, no open-grid fallback, and coverage/risk/cost provenance. Missing
+frontier candidates, missing safe-efficient candidates, low spread, and
+cost/risk regression are recorded as diagnostics such as
+`frontier_boundary_candidate_missing` or `safe_efficient_candidate_missing`,
+with repair advice such as `repair_frontier_nbv_sampling`.
+
+`Xunce Stage 18I.1 Evidence Closure Audit v1` is registered as:
+
+```bash
+python scripts/run_stage.py --stage xunce-stage18i-evidence-closure-audit --dry-run
+```
+
+The runner is `scripts/run_xunce_stage18i_evidence_closure_audit.py`, with
+config `configs/xunce_stage18i_evidence_closure_audit_v1.json` and output root
+`outputs/path_feedback_batch_xunce_stage18i_evidence_closure_v1/`. It is a
+read-only closure summary over the after-Stage18I evidence chain: Stage 18I
+candidate generation, Stage 18B true checkpoint inference, Stage 18G.0 true
+incumbent binding, Stage 18H.0 risk/coverage/cost quantization, Stage 18F
+oracle separability, and Stage 18C-v2 rollout. In this closure, Stage 18F should
+consume the Stage 18H.0 after-Stage18I true-bound/quantized root, not the
+unbound Stage 18I root. `safe_efficient_candidate` and
+`safe_efficient_opportunity` are kept as compatible aliases, but they are report
+fields rather than model-comparison prerequisites. Stage 18I.1 now checks only
+that after-Stage18I artifacts exist, true checkpoint inference was executed,
+proxy selection was not used, true incumbent binding is present, and candidate
+validity gates passed. If those conditions hold, it routes to
+`review_xunce_incumbent_comparison_metrics`, even when oracle is not separable
+or Xunce has not shown coverage advantage. This still does not authorize PPO,
+checkpoint publication, default-policy replacement, executor connection, online
+canary, or new map downloads.
+
+Across Stage 18I.2, Stage 18H.0, Stage 18F, Stage 18C-v2, and Stage 18I.1 the
+hard gates are now limited to two families: evidence authenticity and candidate
+validity. Evidence authenticity blocks fake inference, proxy selection,
+checkpoint load failure, action-0 fallback, and candidate-cell binding mismatch.
+Candidate validity blocks unvalidated proposals, unreachable candidates,
+open-grid fallback, missing required cost/risk/coverage provenance, and zero
+valid candidates. Safe-efficient counts, frontier-family counts, oracle
+separability, cost-efficiency deltas, and Xunce advantage are retained as
+diagnostics and comparison metrics, not preconditions for running the model
+comparison.
 
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is

@@ -44,6 +44,7 @@ REPORT_FILE = "xunce-frontier-nbv-report.md"
 MATERIALIZATION_SUMMARY_FILE = "xunce-candidate-level-coverage-opportunity-summary.json"
 
 PASS_NEXT_REQUIRED_CHANGE = "rerun_true_model_inference_and_binding"
+COMPATIBLE_EXPANSION_NEXT_REQUIRED_CHANGE = "xunce_high_fidelity_real_map_policy_comparison"
 FIX_STAGE18A_NEXT_REQUIRED_CHANGE = "run_xunce_high_fidelity_real_map_roi_expansion"
 FIX_QUANTIZATION_NEXT_REQUIRED_CHANGE = "run_xunce_risk_coverage_cost_quantization_audit"
 EXPAND_COMPLEXITY_NEXT_REQUIRED_CHANGE = "expand_roi_or_map_complexity"
@@ -407,6 +408,7 @@ def _proposal_rows_for_scenario(
         coverage_guard = coverage > incumbent_coverage + TOLERANCE
         risk_guard = risk <= incumbent_risk + float(config["risk_margin"]) + TOLERANCE
         cost_guard = cost <= incumbent_cost + float(config["cost_margin"]) + TOLERANCE
+        safe_efficient = bool(validated and coverage_guard and risk_guard and cost_guard)
         proposal.update(
             {
                 "source_action_index": candidate.get("action_index", index),
@@ -435,7 +437,8 @@ def _proposal_rows_for_scenario(
                 "coverage_guard_passed": coverage_guard,
                 "risk_guard_passed": risk_guard,
                 "cost_guard_passed": cost_guard,
-                "safe_efficient_candidate": bool(validated and coverage_guard and risk_guard and cost_guard),
+                "safe_efficient_candidate": safe_efficient,
+                "safe_efficient_opportunity": safe_efficient,
                 "metric_coupling_detected": False,
                 "frontier_radius_cells": list(config["frontier_radius_cells"]),
                 "frontier_direction_count": int(config["frontier_direction_count"]),
@@ -615,7 +618,7 @@ def _generated_expansion_summary(expansion_summary: dict[str, Any], summary: dic
     payload["frontier_nbv_candidate_generation_source"] = "risk_constrained_frontier_guided_nbv/v1"
     payload["candidate_count"] = summary["candidate_count"]
     payload["safe_efficient_candidate_count"] = summary["safe_efficient_candidate_count"]
-    payload["next_required_change"] = summary["next_required_change"]
+    payload["next_required_change"] = COMPATIBLE_EXPANSION_NEXT_REQUIRED_CHANGE if summary["status"] == "passed" else summary["next_required_change"]
     payload.update(_boundary_fields())
     payload["canary_traffic_fraction"] = summary["canary_traffic_fraction"]
     return payload

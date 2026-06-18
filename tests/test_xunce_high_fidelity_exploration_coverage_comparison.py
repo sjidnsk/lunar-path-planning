@@ -55,7 +55,9 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(summary["model_inference_mask_violation_count"], 0)
         self.assertEqual(summary["open_grid_fallback_count"], 0)
         self.assertFalse(summary["xunce_coverage_advantage_established"])
-        self.assertEqual(summary["next_required_change"], "xunce_research_iteration_required")
+        self.assertTrue(summary["comparison_allowed"])
+        self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
+        self.assertIn("xunce_coverage_advantage_not_established", summary["diagnostic_reason_codes"])
         self.assertIn("xunce_coverage_return_delta_vs_incumbent", summary)
         self.assertIn("xunce_coverage_curve_auc_delta_vs_incumbent", summary)
         self.assertIn("coverage_gain_per_path_cost_delta_vs_incumbent", summary)
@@ -173,7 +175,9 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(summary["status"], "passed")
         self.assertFalse(summary["xunce_coverage_advantage_established"])
         self.assertGreater(summary["xunce_efficiency_regression_count"], 0)
-        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+        self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
+        self.assertIn("xunce_coverage_advantage_with_efficiency_regression", summary["diagnostic_reason_codes"])
+        self.assertEqual(summary["diagnostic_recommended_change"], "refine_coverage_reward_and_cost_guard")
 
     def test_dynamic_v2_refreshes_candidates_and_writes_oracle_artifacts(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
@@ -283,7 +287,9 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
 
         self.assertFalse(summary["xunce_coverage_advantage_established"])
         self.assertGreater(summary["xunce_efficiency_regression_count"], 0)
-        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+        self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
+        self.assertIn("xunce_coverage_advantage_with_efficiency_regression", summary["diagnostic_reason_codes"])
+        self.assertEqual(summary["diagnostic_recommended_change"], "refine_coverage_reward_and_cost_guard")
 
     def _write_xunce_checkpoint(self) -> None:
         import torch

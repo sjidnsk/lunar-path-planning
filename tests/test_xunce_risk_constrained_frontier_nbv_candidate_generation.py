@@ -73,6 +73,11 @@ class XunceRiskConstrainedFrontierNbvCandidateGenerationTests(unittest.TestCase)
         for filename in expected_files:
             self.assertTrue((self.output_root / filename).is_file(), filename)
 
+        compatible_summary = json.loads((self.output_root / "xunce-high-fidelity-real-map-roi-expansion-summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(compatible_summary["status"], "passed")
+        self.assertEqual(compatible_summary["next_required_change"], "xunce_high_fidelity_real_map_policy_comparison")
+        self.assertEqual(compatible_summary["frontier_nbv_candidate_generation_status"], "passed")
+
         generated = json.loads((self.output_root / "xunce-high-fidelity-path-feedback-audit.json").read_text(encoding="utf-8"))
         first_scenario = generated["scenarios"][0]
         self.assertNotIn("incumbent_selected_action_index", first_scenario)
@@ -83,6 +88,7 @@ class XunceRiskConstrainedFrontierNbvCandidateGenerationTests(unittest.TestCase)
         self.assertEqual([row["action_index"] for row in candidates], list(range(len(candidates))))
         safe = [row for row in candidates if row["safe_efficient_candidate"]]
         self.assertTrue(safe)
+        self.assertTrue(all(row["safe_efficient_opportunity"] == row["safe_efficient_candidate"] for row in candidates))
         candidate = candidates[0]
         self.assertEqual(candidate["coverage_opportunity_source"], "geometric_counterfactual_from_frontier_nbv_candidate/v1")
         self.assertEqual(candidate["coverage_cell_set_kind"], "path_line_plus_endpoint_union")
@@ -140,6 +146,7 @@ class XunceRiskConstrainedFrontierNbvCandidateGenerationTests(unittest.TestCase)
         unvalidated = [row for row in proposals if row.get("proposal_only") and row.get("expected_new_coverage_cell_count", 0) > 0]
         self.assertTrue(unvalidated)
         self.assertTrue(all(not row.get("safe_efficient_candidate", False) for row in unvalidated))
+        self.assertTrue(all(not row.get("safe_efficient_opportunity", False) for row in unvalidated))
 
     def test_missing_path_feedback_metrics_cannot_become_safe(self) -> None:
         from scripts.run_xunce_risk_constrained_frontier_nbv_candidate_generation import (
@@ -163,6 +170,7 @@ class XunceRiskConstrainedFrontierNbvCandidateGenerationTests(unittest.TestCase)
         proposals = self._read_jsonl(self.output_root / "xunce-frontier-nbv-proposals.jsonl")
         self.assertTrue(proposals)
         self.assertTrue(all(not row.get("safe_efficient_candidate", False) for row in proposals))
+        self.assertTrue(all(not row.get("safe_efficient_opportunity", False) for row in proposals))
 
     def test_open_grid_candidate_is_counted_as_open_grid_rejection(self) -> None:
         from scripts.run_xunce_risk_constrained_frontier_nbv_candidate_generation import (

@@ -531,10 +531,13 @@ artifacts. Each stage should be committed and pushed separately.
      `outputs/path_feedback_batch_xunce_oracle_separability_benchmark_v1/`.
    - Stage 18F verifies whether greedy and cost-aware coverage oracles can beat
      incumbent on Stage 18E materialized candidates without mask, fallback, or
-     cost-aware efficiency regressions. If oracle cannot separate, expand ROI or
-     map complexity. If oracle separates but Xunce does not, iterate adapter,
-     reward, candidate materialization, or training objective. Oracle remains a
-     diagnostic baseline and must not become the default policy.
+     cost-aware efficiency regressions. After gate simplification, oracle
+     separability is diagnostic only: `oracle_separable=false` no longer blocks
+     Stage 18C-v2 model comparison. Stage 18F passes when evidence authenticity
+     and candidate validity gates pass, then routes to
+     `run_stage18c_v2_model_comparison`; research advice is recorded in
+     `diagnostic_reason_codes` and `diagnostic_recommended_change`. Oracle
+     remains a diagnostic baseline and must not become the default policy.
    - Stage 18F.1 target:
      `scripts/run_xunce_cost_efficient_coverage_opportunity_refinement.py`.
    - Stage 18F.1 output root:
@@ -542,13 +545,13 @@ artifacts. Each stage should be committed and pushed separately.
    - Stage 18F.1 refines Stage 18E candidates into a cost-efficient coverage
      root by adding cost-, risk-, and budget-adjusted coverage fields,
      Pareto/dominance status, and `safe_efficient_opportunity`. The cost-aware
-     oracle in Stage 18F must use only safe-efficient candidates when that field
-     exists. If no safe-efficient opportunity exists, the route is ROI/map
-     complexity or cost-efficient materialization repair. If such opportunities
-     exist but Xunce cannot exploit them, the route is adapter, reward, and
-     training-objective iteration. This remains offline counterfactual evidence
-     and does not authorize checkpoint publication, default-policy replacement,
-     executor connection, or online canary.
+     oracle in Stage 18F reports this field but does not use it as a hard pool
+     restriction; it selects from valid candidates only: reachable,
+     path-feedback validated, non-proposal, and no open-grid fallback. Missing
+     safe-efficient opportunity is diagnostic, not a blocker for model
+     comparison. This remains offline counterfactual evidence and does not
+     authorize checkpoint publication, default-policy replacement, executor
+     connection, or online canary.
    - Stage 18G targets:
      `scripts/run_xunce_true_incumbent_selection_binding.py`,
      `scripts/run_xunce_safe_efficient_opportunity_root_cause_audit.py`, and
@@ -572,10 +575,12 @@ artifacts. Each stage should be committed and pushed separately.
      v1 and records that source explicitly; cost stays lightweight with path
      cost, budget ratio, and planning latency only. This stage is a diagnostic
      and label-standardization gate, not actor/critic training.
-   - Stage 18H.0 can route to Stage 18F rerun only when path-feedback-validated
-     safe-efficient candidates exist across enough ROI groups. Otherwise it
-     routes to risk calibration, risk-aware candidate generation,
-     path-feedback validation, or ROI/map complexity repair.
+   - Stage 18H.0 no longer requires safe-efficient candidates, zero risk
+     regression, or zero cost regression before Stage 18F / Stage 18C-v2 can
+     continue. It hard-fails only on missing true incumbent binding, missing
+     path-feedback validation, metric coupling, normalization failure, or zero
+     valid candidates. Risk/cost regressions and safe-efficient absence are
+     diagnostics.
    - Stage 18I target:
      `scripts/run_xunce_risk_constrained_frontier_nbv_candidate_generation.py`.
    - Stage 18I output root:
@@ -589,6 +594,49 @@ artifacts. Each stage should be committed and pushed separately.
      true incumbent binding before Stage 18H.0 quantization. Stage 18I is not
      actor/critic training, checkpoint publication, default-policy replacement,
      executor connection, online canary traffic, or a new map download.
+   - Stage 18I.2 target:
+     `scripts/run_xunce_risk_aware_frontier_nbv_candidate_repair.py`.
+   - Stage 18I.2 output root:
+     `outputs/path_feedback_batch_xunce_risk_aware_frontier_nbv_candidate_repair_v1/`.
+   - Stage 18I.2 repairs the Stage 18I candidate-generation bottleneck by using
+     Stage 18G.0 true incumbent binding as the baseline. It matches the
+     incumbent by candidate cell instead of treating `action_index=0` as a
+     pseudo-incumbent, then emits `incumbent_neighborhood`,
+     `frontier_boundary`, and `roi_undercovered_boundary` candidates. Coverage
+     remains geometric path-line plus endpoint provenance; cost/risk/reachable
+     labels must come from path-feedback evidence. Proposal-only rows cannot
+     count as safe-efficient candidates. After gate simplification, missing
+     frontier candidates, safe-efficient count 0, low spread, and cost/risk
+     regression are diagnostics; Stage 18I.2 still passes and routes to
+     `rerun_true_model_inference_and_binding` when authenticity and candidate
+     validity gates pass.
+   - Stage 18I.1 target:
+     `scripts/run_xunce_stage18i_evidence_closure_audit.py`.
+   - Stage 18I.1 output root:
+     `outputs/path_feedback_batch_xunce_stage18i_evidence_closure_v1/`.
+   - Stage 18I.1 closes the after-Stage18I evidence chain by reading Stage 18I
+     candidate generation, Stage 18B true checkpoint inference, Stage 18G.0
+     true incumbent binding, Stage 18H.0 quantization, Stage 18F oracle
+     separability, and Stage 18C-v2 rollout summaries. In this closure, Stage
+     18F must consume the true-bound / quantized Stage 18H.0 after-Stage18I
+     root rather than the unbound Stage 18I root.
+   - `safe_efficient_candidate` and `safe_efficient_opportunity` are compatible
+     aliases and report fields, not model-comparison prerequisites. Stage 18I.1
+     checks only artifact completeness, true model inference, no proxy
+     selection, true incumbent binding, and candidate validity. When these pass,
+     it routes to `review_xunce_incumbent_comparison_metrics`, even if oracle is
+     not separable or Xunce has not improved. This still does not authorize PPO,
+     checkpoint publication, default-policy replacement, executor connection,
+     online canary traffic, or map download.
+
+   - Simplified hard-gate system:
+     `evidence_authenticity_gate_passed` blocks fake inference, proxy
+     selection, checkpoint load failure, action-0 fallback, and candidate-cell
+     mismatch. `candidate_validity_gate_passed` blocks unvalidated proposals,
+     unreachable candidates, open-grid fallback, missing cost/risk/coverage
+     provenance, and zero valid candidates. Safe-efficient counts, frontier
+     family counts, oracle separability, cost-efficiency deltas, and Xunce
+     advantage are diagnostics and comparison metrics only.
 
 ## Acceptance Criteria
 
