@@ -31,7 +31,7 @@ def test_visual_workbench_structure_and_documented_boundaries() -> None:
 
     for required in (
         "visual-workbench",
-        "fourth-subproject",
+        "fourth submodule",
         "React + FastAPI",
         "dry-run",
         "validate",

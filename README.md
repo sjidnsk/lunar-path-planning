@@ -2,12 +2,12 @@
 
 System-level repository for lunar rover autonomous exploration and path planning.
 
-This parent repository coordinates three Git submodules and one local fourth-subproject candidate:
+This parent repository coordinates four Git submodules:
 
 - `path-planner`
 - `model-explorer`
 - `dev-platform-constraints`
-- `visual-workbench` (local artifact-first frontend/backend workbench; pending a fourth-submodule remote)
+- `visual-workbench` (artifact-first frontend/backend workbench)
 
 `path-planner` is the active in-repository replacement for the former
 `a_gcs_ws-2.0.1` execution-layer reference. The old project is intentionally
@@ -22,7 +22,7 @@ The three subprojects now form a staged research prototype:
 | `dev-platform-constraints` | Modeling foundation | P0/P1/P2 are runnable: map contracts, terrain features, platform configs, hard constraints, confidence update, coverage-aware goal candidates, sequence scoring, and `model-explorer-contract/v1` reports. |
 | `model-explorer` | Decision orchestration | Runnable synthetic decision/benchmark stack exists: contract loading, goal selection, loop/replan reasons, policy experiments, planning-result feedback, CLI-backed `path-planner` route evaluation, and optional system-level semi-real calibration that gates v5 distillation runs with path-feedback diagnostics. |
 | `path-planner` | Path execution evaluation | Rebuilt from scratch through Phase 8: platform-aware A*, postprocess corridors, smoothing, curvature checks, trackable path, tracking simulation, fixed-corridor optimization, execution-aware metrics, and optional Drake IRIS/region graph diagnostics. |
-| `visual-workbench` | Evidence visualization | Local fourth-subproject candidate providing a React + FastAPI artifact workbench. It indexes allowlisted `outputs/` roots, renders evidence browser / map-route / path-feedback / experiment views, and only permits dry-run/validate commands. It is not yet wired as a Git submodule because no remote is configured. |
+| `visual-workbench` | Evidence visualization | Fourth Git submodule providing a React + FastAPI artifact workbench. It indexes allowlisted `outputs/` roots, renders evidence browser / map-route / path-feedback / experiment views, and only permits dry-run/validate commands. |
 
 ## Windows and Ubuntu Support
 
@@ -128,7 +128,7 @@ the control-point terrain-cost GCS candidate unless
 `--gcs-control-point-candidate` is supplied, and it does not claim a rover
 motion-feasibility solver or Ackermann-feasible trajectory.
 
-The Python entrypoint initializes/checks the three submodules, generates the fixed `.npz`
+The Python entrypoint initializes/checks the four submodules, generates the fixed `.npz`
 validation maps, exports paired `model-explorer-contract/v1` and
 `path-planner-sidecar/v1` JSON files, writes a `path-feedback-manifest/v1`
 with `scenario_set`, `diagnostic_profile`, `acceptance_gate`, `top_k`,
@@ -5319,7 +5319,7 @@ bash scripts/bootstrap_ubuntu_conda.sh --run-validation
 If the parent repository was cloned without submodules, the script runs:
 
 ```bash
-git submodule update --init --recursive path-planner model-explorer dev-platform-constraints
+git submodule update --init --recursive path-planner model-explorer dev-platform-constraints visual-workbench
 ```
 
 After setup:

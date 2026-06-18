@@ -2,9 +2,9 @@
 
 ## Summary
 
-`visual-workbench` is the fourth, visually focused subproject for
-`lunar-path-planning`. It is a local sibling directory for now, not a Git
-submodule, because no remote is configured. Its role is to make existing
+`visual-workbench` is the fourth, visually focused Git submodule for
+`lunar-path-planning`, backed by `git@github.com:sjidnsk/visual-workbench.git`
+on branch `main`. Its role is to make existing
 artifact evidence browsable, explainable, and presentable without entering the
 algorithmic loop owned by `dev-platform-constraints`, `model-explorer`, and
 `path-planner`.

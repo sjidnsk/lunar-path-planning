@@ -9,7 +9,7 @@ from pathlib import Path
 from platform_command import display_command
 
 
-MODULES = ("path-planner", "model-explorer", "dev-platform-constraints")
+MODULES = ("path-planner", "model-explorer", "dev-platform-constraints", "visual-workbench")
 PYTHON_SPEC = "python=3.12"
 WINDOWS_DEFAULT_ENV_PREFIX = r"D:\conda_envs\lunar-explorer"
 WINDOWS_DEFAULT_DOWNLOAD_ROOT = r"D:\CodexDownloads\lunar-path-planning"

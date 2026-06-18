@@ -51,7 +51,7 @@ class BootstrapUbuntuCondaTests(unittest.TestCase):
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 0, output)
         self.assertIn("DRY RUN", output)
-        self.assertIn("git submodule update --init --recursive path-planner model-explorer dev-platform-constraints", output)
+        self.assertIn("git submodule update --init --recursive path-planner model-explorer dev-platform-constraints visual-workbench", output)
         self.assertNotIn("a_gcs_ws-2.0.1", output)
         self.assertIn("conda env create/update", output)
         self.assertIn("environment.yml", output)

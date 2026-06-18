@@ -12,3 +12,8 @@
 	path = dev-platform-constraints
 	url = https://github.com/sjidnsk/dev-platform-constraints.git
 	branch = dev-platform-constraints
+
+[submodule "visual-workbench"]
+	path = visual-workbench
+	url = git@github.com:sjidnsk/visual-workbench.git
+	branch = main

@@ -23,9 +23,9 @@ Options:
   --conda PATH          Conda-compatible executable to use. Default: conda
   --env-name NAME       Named Conda environment. Default: lunar-explorer
   --env-prefix PATH     Prefix-based Conda environment path. Overrides --env-name.
-  --install-editable    Install the three submodules as editable Python packages.
+  --install-editable    Install the core Python submodules as editable packages.
   --with-training       Install model-explorer training dependency extras, including PyTorch.
-  --run-validation      Run the three submodule test suites after setup.
+  --run-validation      Run the core submodule test suites after setup.
   --skip-submodules     Do not run git submodule update.
   --dry-run             Print commands without executing them.
   -h, --help            Show this help.
@@ -96,7 +96,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENVIRONMENT_FILE="$REPO_ROOT/environment.yml"
-MODULES=(path-planner model-explorer dev-platform-constraints)
+MODULES=(path-planner model-explorer dev-platform-constraints visual-workbench)
 
 if [[ -n "$ENV_PREFIX" ]]; then
   CONDA_TARGET_ARGS=(-p "$ENV_PREFIX")
@@ -190,7 +190,7 @@ ensure_submodules() {
   fi
 
   for module in "${MODULES[@]}"; do
-    if [[ ! -d "$REPO_ROOT/$module/src" ]]; then
+    if [[ ! -d "$REPO_ROOT/$module" ]]; then
       echo "Missing initialized submodule: $module" >&2
       echo "Run: git submodule update --init --recursive ${MODULES[*]}" >&2
       exit 1
