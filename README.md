@@ -4685,6 +4685,45 @@ fallback, path-cost, or risk-efficiency regression, the next change remains
 `refine_coverage_reward_and_cost_guard`, not additional network complexity or
 default-policy authorization.
 
+`Xunce Coverage Discriminability Audit v1` is the Stage 18D follow-up for the
+case where Stage 18C shows action disagreement but no coverage separation. It
+is registered as:
+
+```bash
+python scripts/run_stage.py --stage xunce-coverage-discriminability-audit --dry-run
+```
+
+The runner is `scripts/run_xunce_coverage_discriminability_audit.py`, with
+config `configs/xunce_coverage_discriminability_audit_v1.json` and output root
+`outputs/path_feedback_batch_xunce_coverage_discriminability_audit_v1/`. It
+audits candidate coverage spread, candidate-set reuse, Pareto opportunities,
+ROI-group spread, oracle coverage return, oracle regret, and whether endpoint
+footprint coverage is too coarse. A Stage 18C result with
+`coverage_return_delta=0` is not by itself proof that the Xunce architecture is
+ineffective; Stage 18D distinguishes map/ROI simplicity, static candidate
+materialization, coarse coverage metrics, and genuine model failure to exploit
+available coverage opportunities.
+
+Stage 18C also supports a v2 dynamic coverage rollout mode through extra runner
+arguments:
+
+```bash
+python scripts/run_stage.py --stage xunce-high-fidelity-exploration-coverage-comparison \
+  --extra-arg --candidate-refresh-mode --extra-arg dynamic_from_coverage_memory \
+  --extra-arg --coverage-metric-mode --extra-arg path_line_plus_endpoint \
+  --extra-arg --include-oracle-baselines \
+  --extra-arg --include-roi-weighted-coverage
+```
+
+This mode refreshes candidates from current coverage memory, records path-line
+plus endpoint coverage, adds greedy and cost-aware coverage oracle baselines,
+and writes v2 artifacts (`xunce-exploration-coverage-comparison-v2-summary.json`,
+`xunce-exploration-coverage-v2-steps.jsonl`, and
+`xunce-exploration-coverage-v2-episodes.jsonl`). Xunce can only route to
+authorization preflight when coverage/AUC improve, oracle regret improves,
+efficiency and safety do not regress, mask violations remain zero, and no
+open-grid fallback is used.
+
 Stage 18 v1 uses the existing LOLA LDEM/LDEC quasi-real dataset by default. It
 does not require downloading additional map products unless the 24-slice /
 8-ROI-group expansion still has low path/risk/value spread or the next research

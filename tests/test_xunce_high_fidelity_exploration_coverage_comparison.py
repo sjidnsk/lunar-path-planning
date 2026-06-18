@@ -175,6 +175,116 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertGreater(summary["xunce_efficiency_regression_count"], 0)
         self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
 
+    def test_dynamic_v2_refreshes_candidates_and_writes_oracle_artifacts(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._update_config(
+            candidate_refresh_mode="dynamic_from_coverage_memory",
+            coverage_metric_mode="path_line_plus_endpoint",
+            include_oracle_baselines=True,
+            include_roi_weighted_coverage=True,
+        )
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["candidate_refresh_mode"], "dynamic_from_coverage_memory")
+        self.assertEqual(summary["coverage_metric_mode"], "path_line_plus_endpoint")
+        self.assertTrue(summary["include_oracle_baselines"])
+        self.assertIn("xunce_oracle_regret", summary)
+        self.assertIn("incumbent_oracle_regret", summary)
+        self.assertIn("evaluation_task_discriminative", summary)
+        self.assertTrue((self.output_root / "xunce-exploration-coverage-comparison-v2-summary.json").is_file())
+        self.assertTrue((self.output_root / "xunce-exploration-coverage-v2-steps.jsonl").is_file())
+        self.assertTrue((self.output_root / "xunce-exploration-coverage-v2-episodes.jsonl").is_file())
+
+        v2_steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-v2-steps.jsonl")
+        candidate_sets = {
+            (row["policy"], row["step_index"], tuple(tuple(cell) for cell in row["candidate_cells"]))
+            for row in v2_steps
+            if row["policy"] == "xunce"
+        }
+        self.assertGreater(len({item[2] for item in candidate_sets}), 1)
+        self.assertTrue(any(row["policy"] == "greedy_coverage_oracle" for row in v2_steps))
+        self.assertTrue(any(row["policy"] == "cost_aware_coverage_oracle" for row in v2_steps))
+
+    def test_dynamic_v2_oracles_do_not_select_masked_candidate(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence(mask_first_candidate=True)
+        self._update_config(
+            candidate_refresh_mode="dynamic_from_coverage_memory",
+            coverage_metric_mode="path_line_plus_endpoint",
+            include_oracle_baselines=True,
+        )
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["model_inference_mask_violation_count"], 0)
+        v2_steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-v2-steps.jsonl")
+        oracle_rows = [row for row in v2_steps if row["policy"].endswith("_oracle")]
+        self.assertTrue(oracle_rows)
+        self.assertTrue(all(row["selected_action_index"] != 0 for row in oracle_rows))
+
+    def test_dynamic_v2_requires_oracle_regret_efficiency_and_safety_for_authorization(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        self._update_config(
+            candidate_refresh_mode="dynamic_from_coverage_memory",
+            coverage_metric_mode="path_line_plus_endpoint",
+            include_oracle_baselines=True,
+        )
+        original_run_policy = module._run_policy_episode
+
+        def fake_episode(*, policy_name, **kwargs):
+            row = original_run_policy(policy_name=policy_name, **kwargs)
+            if policy_name == "xunce":
+                row["coverage_return"] = 5.0
+                row["coverage_curve_auc"] = 5.0
+                row["cumulative_coverage_rate_delta"] = 5.0
+                row["new_covered_cell_count"] = 500
+                row["coverage_gain_per_path_cost"] = 1.0
+                row["coverage_gain_per_risk"] = 1.0
+                row["path_cost"] = 5.0
+                row["risk"] = 0.1
+            elif policy_name == "incumbent":
+                row["coverage_return"] = 2.0
+                row["coverage_curve_auc"] = 2.0
+                row["cumulative_coverage_rate_delta"] = 2.0
+                row["new_covered_cell_count"] = 200
+                row["coverage_gain_per_path_cost"] = 0.5
+                row["coverage_gain_per_risk"] = 0.5
+                row["path_cost"] = 4.0
+                row["risk"] = 0.1
+            elif policy_name == "greedy_coverage_oracle":
+                row["coverage_return"] = 6.0
+                row["coverage_curve_auc"] = 6.0
+            return row
+
+        module._run_policy_episode = fake_episode
+        try:
+            summary = module.run_xunce_high_fidelity_exploration_coverage_comparison(
+                config_path=self.config_path,
+                output_root=self.output_root,
+                repo_root=self.repo_root,
+            )
+        finally:
+            module._run_policy_episode = original_run_policy
+
+        self.assertFalse(summary["xunce_coverage_advantage_established"])
+        self.assertGreater(summary["xunce_efficiency_regression_count"], 0)
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
     def _write_xunce_checkpoint(self) -> None:
         import torch
 
@@ -282,6 +392,11 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             "max_latency_ratio_vs_incumbent": 10.0,
             "canary_traffic_fraction": 0.0,
         }
+        self.config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _update_config(self, **updates) -> None:
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        payload.update(updates)
         self.config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _write_expansion_evidence(

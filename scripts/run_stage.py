@@ -19,6 +19,7 @@ class StageRegistryError(ValueError):
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = _normalize_extra_arg_tokens(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description="Run registered lunar-path-planning stages cross-platform.")
     parser.add_argument("--registry", default=DEFAULT_REGISTRY, help="Stage registry JSON path.")
     parser.add_argument("--list", action="store_true", help="List available stages.")
@@ -132,6 +133,24 @@ def _build_command(
         replacements["output_root"] = str(_resolve_path(output_root, repo_root))
     rendered_args = [item.format(**replacements) for item in raw_args]
     return python_script_command(script_path, *rendered_args, *extra_args)
+
+
+def _normalize_extra_arg_tokens(argv: list[str]) -> list[str]:
+    normalized: list[str] = []
+    index = 0
+    while index < len(argv):
+        item = argv[index]
+        if item == "--extra-arg":
+            if index + 1 >= len(argv):
+                normalized.append(item)
+                index += 1
+                continue
+            normalized.append(f"--extra-arg={argv[index + 1]}")
+            index += 2
+            continue
+        normalized.append(item)
+        index += 1
+    return normalized
 
 
 def _require_string(payload: dict[str, Any], field: str) -> str:

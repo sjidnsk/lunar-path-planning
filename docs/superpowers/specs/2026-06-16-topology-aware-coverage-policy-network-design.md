@@ -495,6 +495,26 @@ artifacts. Each stage should be committed and pushed separately.
      regression. Otherwise the route is `xunce_research_iteration_required` or
      `refine_coverage_reward_and_cost_guard`, not default-policy replacement
      and not additional network complexity by default.
+   - Stage 18D target:
+     `scripts/run_xunce_coverage_discriminability_audit.py`.
+   - Stage 18D output root:
+     `outputs/path_feedback_batch_xunce_coverage_discriminability_audit_v1/`.
+   - Stage 18D diagnoses why Stage 18C may show many model disagreements but
+     no coverage separation. It checks candidate coverage spread, static
+     candidate reuse, Pareto coverage/cost opportunities, ROI-group spread,
+     oracle coverage return, oracle regret, useful disagreement opportunities,
+     and whether endpoint footprint coverage is too coarse.
+   - Stage 18C-v2 is enabled through dynamic coverage rollout options:
+     `candidate_refresh_mode=dynamic_from_coverage_memory`,
+     `coverage_metric_mode=path_line_plus_endpoint`,
+     `include_oracle_baselines=true`, and
+     `include_roi_weighted_coverage=true`.
+   - If oracle baselines cannot beat incumbent, the route is ROI/map or
+     candidate-task complexity expansion. If oracle baselines can beat incumbent
+     but Xunce cannot, the route is training objective, adapter, coverage
+     reward, and candidate materialization iteration. Neither case authorizes
+     checkpoint publication, default-policy replacement, executor connection,
+     online canary traffic, or network complexity increases by default.
 
 ## Acceptance Criteria
 

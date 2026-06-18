@@ -1,0 +1,13 @@
+{
+  "schema_version": "xunce-coverage-discriminability-audit-config/v1",
+  "source_roi_expansion_root": "outputs/path_feedback_batch_xunce_high_fidelity_real_map_roi_expansion_v1",
+  "source_coverage_comparison_root": "outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_v1",
+  "xunce_candidate_checkpoint": "outputs/path_feedback_batch_xunce_sandbox_candidate_preflight_v1/sandbox_package/xunce-controlled-training-candidate.pt",
+  "incumbent_policy_checkpoint": "outputs/path_feedback_batch_value_stability_candidate_v1/experimental-hybrid-policy-candidate.pt",
+  "required_scenario_count": 24,
+  "rollout_steps": 10,
+  "min_candidate_coverage_spread": 0.005,
+  "max_static_candidate_reuse_rate": 0.5,
+  "min_roi_group_with_nonzero_spread_count": 3,
+  "canary_traffic_fraction": 0.0
+}

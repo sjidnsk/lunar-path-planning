@@ -132,6 +132,12 @@
       "default_output_root": "outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-coverage-discriminability-audit": {
+      "script": "scripts/run_xunce_coverage_discriminability_audit.py",
+      "default_config": "configs/xunce_coverage_discriminability_audit_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_coverage_discriminability_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "path-feedback-validation": {
       "script": "scripts/run_path_feedback_validation.py",
       "default_output_root": "outputs/path_feedback_validation",

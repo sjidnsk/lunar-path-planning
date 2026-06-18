@@ -78,6 +78,9 @@ ROI_BREAKDOWN_FILE = "xunce-exploration-coverage-roi-breakdown.json"
 DECISION_AUDIT_FILE = "xunce-exploration-coverage-decision-audit.json"
 MANIFEST_FILE = "xunce-exploration-coverage-comparison-manifest.json"
 REPORT_FILE = "xunce-exploration-coverage-comparison-report.md"
+V2_SUMMARY_FILE = "xunce-exploration-coverage-comparison-v2-summary.json"
+V2_EPISODES_FILE = "xunce-exploration-coverage-v2-episodes.jsonl"
+V2_STEPS_FILE = "xunce-exploration-coverage-v2-steps.jsonl"
 
 FIX_XUNCE_CHECKPOINT_NEXT_REQUIRED_CHANGE = "fix_xunce_sandbox_candidate_preflight"
 FIX_INCUMBENT_CHECKPOINT_NEXT_REQUIRED_CHANGE = "fix_incumbent_policy_checkpoint"
@@ -89,6 +92,7 @@ NO_ADVANTAGE_NEXT_REQUIRED_CHANGE = "xunce_research_iteration_required"
 FIX_SOURCE_NEXT_REQUIRED_CHANGE = "fix_xunce_high_fidelity_real_map_roi_expansion"
 
 POLICIES = ("xunce", "incumbent")
+ORACLE_POLICIES = ("greedy_coverage_oracle", "cost_aware_coverage_oracle")
 TOLERANCE = 1.0e-12
 
 BOUNDARY_FIELDS = tuple(global_99_boundary_defaults()) + (
@@ -112,6 +116,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--xunce-candidate-checkpoint")
     parser.add_argument("--incumbent-policy-checkpoint")
     parser.add_argument("--rollout-steps", type=int)
+    parser.add_argument("--candidate-refresh-mode")
+    parser.add_argument("--coverage-metric-mode")
+    parser.add_argument("--include-oracle-baselines", action="store_true")
+    parser.add_argument("--include-roi-weighted-coverage", action="store_true")
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[1]
     overrides = {
@@ -121,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
             "xunce_candidate_checkpoint": args.xunce_candidate_checkpoint,
             "incumbent_policy_checkpoint": args.incumbent_policy_checkpoint,
             "rollout_steps": args.rollout_steps,
+            "candidate_refresh_mode": args.candidate_refresh_mode,
+            "coverage_metric_mode": args.coverage_metric_mode,
+            "include_oracle_baselines": True if args.include_oracle_baselines else None,
+            "include_roi_weighted_coverage": True if args.include_roi_weighted_coverage else None,
         }.items()
         if value is not None
     }
@@ -210,6 +222,10 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     write_json(paths["decision_audit"], decision)
     write_json(paths["manifest"], manifest)
     write_json(paths["summary"], summary)
+    if _v2_enabled(config):
+        write_json(paths["v2_summary"], summary)
+        write_jsonl(paths["v2_episodes"], [_public_episode(row) for row in episodes])
+        write_jsonl(paths["v2_steps"], steps)
     paths["report"].write_text(_render_report(summary), encoding="utf-8")
     return summary
 
@@ -244,6 +260,14 @@ def _load_config(
     normalized["coverage_denominator_cells"] = _positive_int(payload.get("coverage_denominator_cells", 1000), "coverage_denominator_cells")
     normalized["path_budget_m"] = _positive_float(payload.get("path_budget_m", 5000.0), "path_budget_m")
     normalized["planning_backend"] = _require_string(payload.get("planning_backend", "channel_aware_astar"), "planning_backend")
+    normalized["candidate_refresh_mode"] = _require_string(payload.get("candidate_refresh_mode", "static_from_source"), "candidate_refresh_mode")
+    if normalized["candidate_refresh_mode"] not in {"static_from_source", "dynamic_from_coverage_memory"}:
+        raise ConfigError("candidate_refresh_mode must be static_from_source or dynamic_from_coverage_memory")
+    normalized["coverage_metric_mode"] = _require_string(payload.get("coverage_metric_mode", "endpoint_footprint"), "coverage_metric_mode")
+    if normalized["coverage_metric_mode"] not in {"endpoint_footprint", "path_line_plus_endpoint"}:
+        raise ConfigError("coverage_metric_mode must be endpoint_footprint or path_line_plus_endpoint")
+    normalized["include_oracle_baselines"] = _require_bool(payload.get("include_oracle_baselines", False), "include_oracle_baselines")
+    normalized["include_roi_weighted_coverage"] = _require_bool(payload.get("include_roi_weighted_coverage", False), "include_roi_weighted_coverage")
     normalized["allow_open_grid_fallback"] = _require_bool(payload.get("allow_open_grid_fallback", False), "allow_open_grid_fallback")
     normalized["require_context_ids"] = _require_bool(payload.get("require_context_ids", True), "require_context_ids")
     normalized["require_contract_and_sidecar_paths"] = _require_bool(payload.get("require_contract_and_sidecar_paths", True), "require_contract_and_sidecar_paths")
@@ -264,7 +288,19 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
         "decision_audit": output_root / DECISION_AUDIT_FILE,
         "manifest": output_root / MANIFEST_FILE,
         "report": output_root / REPORT_FILE,
+        "v2_summary": output_root / V2_SUMMARY_FILE,
+        "v2_episodes": output_root / V2_EPISODES_FILE,
+        "v2_steps": output_root / V2_STEPS_FILE,
     }
+
+
+def _v2_enabled(config: dict[str, Any]) -> bool:
+    return (
+        config["candidate_refresh_mode"] == "dynamic_from_coverage_memory"
+        or config["coverage_metric_mode"] == "path_line_plus_endpoint"
+        or bool(config["include_oracle_baselines"])
+        or bool(config["include_roi_weighted_coverage"])
+    )
 
 
 def _run_coverage_rollouts(
@@ -285,7 +321,8 @@ def _run_coverage_rollouts(
         scenario_id = str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))
         slice_row = slice_by_id.get(scenario_id, {})
         roi_group = str(slice_row.get("roi_name") or scenario.get("roi_group") or scenario.get("scenario_group") or "unknown")
-        for policy_name in POLICIES:
+        policy_names = POLICIES + (ORACLE_POLICIES if config["include_oracle_baselines"] else ())
+        for policy_name in policy_names:
             episode = _run_policy_episode(
                 policy_name=policy_name,
                 scenario=scenario,
@@ -341,7 +378,13 @@ def _run_policy_episode(
 
     for step_index in range(config["rollout_steps"]):
         cell_before = current_cell
-        candidates = _candidate_rows(scenario)
+        candidates = _candidate_rows_for_step(
+            scenario,
+            current_cell=current_cell,
+            covered_cells=covered_cells,
+            step_index=step_index,
+            config=config,
+        )
         scenario_state = dict(scenario)
         scenario_state["coverage_rate"] = coverage_rates[-1]
         scenario_state["coverage_rate_delta"] = steps[-1]["coverage_rate_delta"] if steps else 0.0
@@ -354,7 +397,27 @@ def _run_policy_episode(
         step_reasons: list[str] = []
         detail: dict[str, Any] | None = None
         true_model_inference_executed = False
-        if not model_bundle["xunce_checkpoint_loaded"] or not model_bundle["incumbent_checkpoint_loaded"]:
+        if policy_name in ORACLE_POLICIES:
+            selected_index = _oracle_selected_index(
+                policy_name,
+                candidates,
+                current_cell=current_cell,
+                covered_cells=covered_cells,
+                config=config,
+            )
+            true_model_inference_executed = False
+            detail = {
+                "logits": [],
+                "masked_logits": [],
+                "action_probs": [],
+                "value": 0.0,
+                "selected_action_index": selected_index,
+                "selected_probability": 1.0 if selected_index is not None else 0.0,
+                "selected_rank": 1 if selected_index is not None else 0,
+                "finite_outputs": True,
+                "latency_ms": 0.0,
+            }
+        elif not model_bundle["xunce_checkpoint_loaded"] or not model_bundle["incumbent_checkpoint_loaded"]:
             step_reasons.append("true_model_inference_not_executed")
         elif not adapter["has_valid_action"]:
             step_reasons.append("no_valid_action")
@@ -370,7 +433,7 @@ def _run_policy_episode(
                 step_reasons.append("true_model_inference_not_executed")
 
         detail_payload = detail or _empty_model_detail()
-        selected_index = _selected_index(detail)
+        selected_index = detail["selected_action_index"] if policy_name in ORACLE_POLICIES and detail is not None else _selected_index(detail)
         selected_candidate = _candidate_at(candidates, selected_index)
         selected_cell = _cell_tuple(_candidate_cell(selected_candidate)) if selected_candidate is not None else None
         selected_cost = _candidate_cost(selected_candidate) if selected_candidate is not None else None
@@ -408,7 +471,12 @@ def _run_policy_episode(
         revisited_cells: set[tuple[int, int]] = set()
         coverage_delta = 0.0
         if executed and selected_cell is not None and selected_cost is not None:
-            footprint = set(_footprint(selected_cell, radius=radius))
+            footprint = _coverage_cells(
+                start=cell_before,
+                end=selected_cell,
+                radius=radius,
+                mode=str(config["coverage_metric_mode"]),
+            )
             new_cells = footprint - covered_cells
             revisited_cells = footprint & covered_cells
             covered_cells.update(footprint)
@@ -440,6 +508,7 @@ def _run_policy_episode(
             "current_cell_before": list(cell_before),
             "selected_action_index": selected_index,
             "selected_cell": list(selected_cell) if selected_cell is not None else None,
+            "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
             "selected_probability": detail_payload["selected_probability"],
             "selected_rank": detail_payload["selected_rank"],
             "action_entropy": entropies[-1] if entropies else 0.0,
@@ -460,23 +529,24 @@ def _run_policy_episode(
             "reason_codes": unique_sorted(step_reasons),
         }
         steps.append(step_row)
-        inference_rows.append(
-            {
-                "schema_version": "xunce-exploration-coverage-model-inference/v1",
-                "input_source": "high_fidelity_scenario_adapter/v1",
-                "scenario_id": scenario_id,
-                "roi_group": roi_group,
-                "policy": policy_name,
-                "step_index": step_index,
-                "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
-                "action_mask": list(adapter["action_mask"]),
-                "selected_action_index": selected_index,
-                "true_model_inference_executed": true_model_inference_executed,
-                "model_inference_mask_violation_count": int(mask_violation),
-                "detail": detail_payload,
-                "reason_codes": unique_sorted(step_reasons),
-            }
-        )
+        if policy_name not in ORACLE_POLICIES:
+            inference_rows.append(
+                {
+                    "schema_version": "xunce-exploration-coverage-model-inference/v1",
+                    "input_source": "high_fidelity_scenario_adapter/v1",
+                    "scenario_id": scenario_id,
+                    "roi_group": roi_group,
+                    "policy": policy_name,
+                    "step_index": step_index,
+                    "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
+                    "action_mask": list(adapter["action_mask"]),
+                    "selected_action_index": selected_index,
+                    "true_model_inference_executed": true_model_inference_executed,
+                    "model_inference_mask_violation_count": int(mask_violation),
+                    "detail": detail_payload,
+                    "reason_codes": unique_sorted(step_reasons),
+                }
+            )
         reason_codes.extend(step_reasons)
         if not executed:
             break
@@ -568,12 +638,12 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
             xunce_worse += 1
         else:
             xunce_tie += 1
-        if cost_delta < -TOLERANCE or risk_delta < -TOLERANCE:
-            efficiency_regression += 1
         if float(xunce["risk"]) > float(incumbent["risk"]) + TOLERANCE:
             risk_regression += 1
         if float(xunce["path_cost"]) > float(incumbent["path_cost"]) + TOLERANCE:
             path_cost_regression += 1
+        if cost_delta < -TOLERANCE or risk_delta < -TOLERANCE or float(xunce["path_cost"]) > float(incumbent["path_cost"]) + TOLERANCE:
+            efficiency_regression += 1
         if (
             int(xunce["mask_violation_count"]) > int(incumbent["mask_violation_count"])
             or int(xunce["unreachable_selected_count"]) > int(incumbent["unreachable_selected_count"])
@@ -585,6 +655,29 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
     disagreement_count, useful_disagreement_count = _disagreement_counts(steps)
     xunce_episodes = [row for row in episodes if row["policy"] == "xunce"]
     incumbent_episodes = [row for row in episodes if row["policy"] == "incumbent"]
+    oracle_episodes = [row for row in episodes if row["policy"] == "greedy_coverage_oracle"]
+    oracle_by_scenario = {str(row["scenario_id"]): row for row in oracle_episodes}
+    xunce_oracle_regrets = []
+    incumbent_oracle_regrets = []
+    oracle_vs_incumbent_deltas = []
+    for policies in pairs.values():
+        xunce = policies.get("xunce")
+        incumbent = policies.get("incumbent")
+        if not xunce or not incumbent:
+            continue
+        oracle = oracle_by_scenario.get(str(xunce["scenario_id"]))
+        if not oracle:
+            continue
+        oracle_return = float(oracle["coverage_return"])
+        xunce_oracle_regrets.append(max(0.0, oracle_return - float(xunce["coverage_return"])))
+        incumbent_oracle_regrets.append(max(0.0, oracle_return - float(incumbent["coverage_return"])))
+        oracle_vs_incumbent_deltas.append(oracle_return - float(incumbent["coverage_return"]))
+    evaluation_task_discriminative = bool(
+        oracle_vs_incumbent_deltas
+        and _mean(oracle_vs_incumbent_deltas) > TOLERANCE
+        and useful_disagreement_count > 0
+        and sum(1 for row in episodes if row["policy"] == "greedy_coverage_oracle") > 0
+    )
     return {
         "schema_version": "xunce-exploration-coverage-comparison-audit/v1",
         "scenario_count": len(pairs),
@@ -595,6 +688,10 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
         "xunce_safety_regression_count": safety_regression,
         "risk_regression_count": risk_regression,
         "path_cost_regression_count": path_cost_regression,
+        "xunce_oracle_regret": _mean(xunce_oracle_regrets),
+        "incumbent_oracle_regret": _mean(incumbent_oracle_regrets),
+        "oracle_vs_incumbent_coverage_delta": _mean(oracle_vs_incumbent_deltas),
+        "evaluation_task_discriminative": evaluation_task_discriminative,
         "xunce_final_coverage_rate_delta_vs_incumbent": _mean(final_coverage_deltas),
         "xunce_coverage_return_delta_vs_incumbent": _mean(coverage_return_deltas),
         "xunce_coverage_curve_auc_delta_vs_incumbent": _mean(coverage_auc_deltas),
@@ -711,10 +808,15 @@ def _decision(
         and comparison["xunce_coverage_return_delta_vs_incumbent"] > TOLERANCE
         and comparison["xunce_coverage_curve_auc_delta_vs_incumbent"] > TOLERANCE
         and comparison["xunce_safety_regression_count"] == 0
+        and comparison["xunce_efficiency_regression_count"] == 0
         and model_inference["model_inference_mask_violation_count"] == 0
         and comparison["open_grid_fallback_count"] == 0
         and comparison["coverage_gain_per_risk_delta_vs_incumbent"] >= -TOLERANCE
         and comparison["coverage_gain_per_path_cost_delta_vs_incumbent"] >= -TOLERANCE
+        and (
+            comparison["incumbent_oracle_regret"] <= TOLERANCE
+            or comparison["xunce_oracle_regret"] < comparison["incumbent_oracle_regret"] - TOLERANCE
+        )
     )
     coverage_advantage_with_efficiency_regression = (
         not reasons
@@ -790,6 +892,10 @@ def _summary(
         "coverage_radius_cells": config["coverage_radius_cells"],
         "coverage_radius_sensitivity": config["coverage_radius_sensitivity"],
         "planning_backend": config["planning_backend"],
+        "candidate_refresh_mode": config["candidate_refresh_mode"],
+        "coverage_metric_mode": config["coverage_metric_mode"],
+        "include_oracle_baselines": config["include_oracle_baselines"],
+        "include_roi_weighted_coverage": config["include_roi_weighted_coverage"],
         "xunce_coverage_advantage_established": decision["xunce_coverage_advantage_established"],
         "xunce_coverage_better_count": comparison["xunce_coverage_better_count"],
         "xunce_coverage_worse_count": comparison["xunce_coverage_worse_count"],
@@ -812,6 +918,10 @@ def _summary(
         "coverage_gain_per_risk_delta_vs_incumbent": comparison["coverage_gain_per_risk_delta_vs_incumbent"],
         "policy_disagreement_count": comparison["policy_disagreement_count"],
         "useful_disagreement_count": comparison["useful_disagreement_count"],
+        "xunce_oracle_regret": comparison["xunce_oracle_regret"],
+        "incumbent_oracle_regret": comparison["incumbent_oracle_regret"],
+        "oracle_vs_incumbent_coverage_delta": comparison["oracle_vs_incumbent_coverage_delta"],
+        "evaluation_task_discriminative": comparison["evaluation_task_discriminative"],
         "selected_probability_median": comparison["selected_probability_median"],
         "action_entropy_median": comparison["action_entropy_median"],
         "selected_rank_median": comparison["selected_rank_median"],
@@ -884,6 +994,120 @@ def _disagreement_counts(steps: list[dict[str, Any]]) -> tuple[int, int]:
             ):
                 useful += 1
     return disagreement, useful
+
+
+def _candidate_rows_for_step(
+    scenario: dict[str, Any],
+    *,
+    current_cell: tuple[int, int],
+    covered_cells: set[tuple[int, int]],
+    step_index: int,
+    config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    candidates = [dict(candidate) for candidate in _candidate_rows(scenario)]
+    if config["candidate_refresh_mode"] != "dynamic_from_coverage_memory":
+        return candidates
+    refreshed: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
+        candidate = dict(candidate)
+        dynamic_cells = candidate.get("dynamic_cells")
+        cell = None
+        if isinstance(dynamic_cells, list) and step_index < len(dynamic_cells):
+            cell = _cell_tuple(dynamic_cells[step_index])
+        if cell is None:
+            base_cell = _cell_tuple(_candidate_cell(candidate)) or current_cell
+            offset = (step_index + 1) * (index + 1)
+            cell = (base_cell[0] + offset, base_cell[1] + step_index + 1)
+        candidate["base_cell"] = _candidate_cell(candidate)
+        candidate["cell"] = [cell[0], cell[1]]
+        candidate["dynamic_candidate_generated"] = True
+        if _candidate_is_valid(candidate):
+            candidate_cells = _coverage_cells(
+                start=current_cell,
+                end=cell,
+                radius=int(config["coverage_radius_cells"]),
+                mode=str(config["coverage_metric_mode"]),
+            )
+            new_count = len(candidate_cells - covered_cells)
+            candidate["expected_new_coverage_area"] = float(new_count)
+            candidate["expected_coverage_rate_delta"] = float(new_count) / float(config["coverage_denominator_cells"])
+            candidate["coverage_overlap_count"] = len(candidate_cells & covered_cells)
+            candidate["coverage_overlap_ratio"] = _safe_ratio(len(candidate_cells & covered_cells), len(candidate_cells)) or 0.0
+        refreshed.append(candidate)
+    return refreshed
+
+
+def _oracle_selected_index(
+    policy_name: str,
+    candidates: list[dict[str, Any]],
+    *,
+    current_cell: tuple[int, int],
+    covered_cells: set[tuple[int, int]],
+    config: dict[str, Any],
+) -> int | None:
+    scored: list[tuple[float, float, float, int]] = []
+    for index, candidate in enumerate(candidates):
+        if not _candidate_is_valid(candidate):
+            continue
+        cell = _cell_tuple(_candidate_cell(candidate))
+        if cell is None:
+            continue
+        coverage_cells = _coverage_cells(
+            start=current_cell,
+            end=cell,
+            radius=int(config["coverage_radius_cells"]),
+            mode=str(config["coverage_metric_mode"]),
+        )
+        new_count = len(coverage_cells - covered_cells)
+        path_cost = _candidate_cost(candidate) or 0.0
+        risk = _finite_or_none(candidate.get("risk")) or 0.0
+        if policy_name == "cost_aware_coverage_oracle":
+            primary = new_count / max(float(path_cost), TOLERANCE)
+            secondary = float(new_count)
+        else:
+            primary = float(new_count)
+            secondary = -float(path_cost)
+        scored.append((primary, secondary, -float(risk), index))
+    if not scored:
+        return None
+    return max(scored)[3]
+
+
+def _coverage_cells(
+    *,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    radius: int,
+    mode: str,
+) -> set[tuple[int, int]]:
+    cells = set(_footprint(end, radius=radius))
+    if mode == "path_line_plus_endpoint":
+        for cell in _line_cells(start, end):
+            cells.update(_footprint(cell, radius=radius))
+    return cells
+
+
+def _line_cells(start: tuple[int, int], end: tuple[int, int]) -> list[tuple[int, int]]:
+    x0, y0 = start
+    x1, y1 = end
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx - dy
+    cells: list[tuple[int, int]] = []
+    while True:
+        cells.append((x0, y0))
+        if x0 == x1 and y0 == y1:
+            break
+        error2 = 2 * err
+        if error2 > -dy:
+            err -= dy
+            x0 += sx
+        if error2 < dx:
+            err += dx
+            y0 += sy
+    return cells
 
 
 def _footprint(cell: tuple[int, int], *, radius: int) -> set[tuple[int, int]]:
