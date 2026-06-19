@@ -4704,8 +4704,41 @@ ineffective; Stage 18D distinguishes map/ROI simplicity, static candidate
 materialization, coarse coverage metrics, and genuine model failure to exploit
 available coverage opportunities.
 
-Stage 18C also supports a v2 dynamic coverage rollout mode through extra runner
-arguments:
+Stage 18.4D uses a true dynamic frontier-NBV rollout mode as the mainline
+coverage comparison path. At each rollout step it regenerates frontier/NBV
+proposals from the current cell and coverage memory, validates them with the
+in-process `path_planner.search.AStarPlanner` batch wrapper, and then lets
+Xunce, incumbent, and oracle policies choose from the same validated candidate
+set for that state:
+
+```bash
+python scripts/run_stage.py --stage xunce-high-fidelity-exploration-coverage-comparison \
+  --extra-arg --candidate-refresh-mode --extra-arg dynamic_frontier_nbv_in_process \
+  --extra-arg --dynamic-candidate-validation-mode --extra-arg in_process_path_planner_astar_batch \
+  --extra-arg --coverage-metric-mode --extra-arg path_line_plus_endpoint \
+  --extra-arg --include-oracle-baselines \
+  --extra-arg --include-roi-weighted-coverage
+```
+
+The batch A* path is evidence kind `in_process_astar_screening`; it can produce
+formal rollout candidates but must not be reported as full
+`PathPlannerRouteAdapter` evidence. `PathPlannerRouteAdapter` remains available
+only for explicit smoke or sampled audit. Enable sampled audit explicitly with
+`--extra-arg --dynamic-adapter-audit-enabled`; it audits a bounded route sample
+and does not participate in policy action selection. The summary therefore separates
+closed-loop dynamic rollout effects from same-candidate-set model-selection
+evidence.
+
+Stage 18.4D also resolves dynamic ROI metadata through one shared scripts-level
+helper. Dynamic proposal, validation, step, episode, pair, model-inference, and
+ROI-breakdown rows use the same fallback order: scenario `roi_group`, slice
+`roi_group`, slice `roi_name`, scenario `scenario_group`, slice
+`metadata.roi_group`, then `unknown` only when source evidence has no ROI label.
+This is reporting/audit metadata propagation only; it does not affect model
+selection, A* validation, or coverage/risk/cost calculations.
+
+The older Stage 18C-v2 `dynamic_from_coverage_memory` mode remains available as
+a historical baseline through extra runner arguments:
 
 ```bash
 python scripts/run_stage.py --stage xunce-high-fidelity-exploration-coverage-comparison \

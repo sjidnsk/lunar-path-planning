@@ -72,6 +72,8 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             "xunce-exploration-coverage-comparison-summary.json",
             "xunce-exploration-coverage-episodes.jsonl",
             "xunce-exploration-coverage-steps.jsonl",
+            "xunce-exploration-coverage-comparison-pairs.jsonl",
+            "xunce-exploration-coverage-comparison-aggregate.json",
             "xunce-exploration-coverage-model-inference.jsonl",
             "xunce-exploration-coverage-roi-breakdown.json",
             "xunce-exploration-coverage-decision-audit.json",
@@ -91,8 +93,50 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         first_episode = episode_rows[0]
         self.assertIn("coverage_return", first_episode)
         self.assertIn("coverage_curve_auc", first_episode)
+        self.assertIn("total_new_cell_count", first_episode)
+        self.assertIn("path_cost_total_m", first_episode)
+        self.assertIn("risk_total", first_episode)
+        self.assertIn("risk_cost_weighted_total", first_episode)
+        self.assertIn("risk_source", first_episode)
+        self.assertIn("roi_weighted_coverage_source", first_episode)
+        self.assertIn("coverage_per_100m", first_episode)
+        self.assertIn("risk_per_100m", first_episode)
         self.assertIn("revisit_rate", first_episode)
         self.assertIn("min_roi_group_coverage_rate", first_episode)
+
+        pair_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-comparison-pairs.jsonl")
+        self.assertEqual(len(pair_rows), 24)
+        first_pair = pair_rows[0]
+        for field in (
+            "coverage_delta_cells",
+            "roi_weighted_coverage_delta",
+            "path_cost_delta_m",
+            "risk_delta",
+            "risk_cost_weighted_delta",
+            "coverage_per_100m_delta",
+            "risk_per_100m_delta",
+            "greedy_oracle_coverage_regret_xunce",
+            "greedy_oracle_coverage_regret_incumbent",
+            "cost_aware_oracle_utility_regret_xunce",
+            "cost_aware_oracle_utility_regret_incumbent",
+            "undefined_metric_reason_codes",
+        ):
+            self.assertIn(field, first_pair)
+        self.assertIsInstance(first_pair["undefined_metric_reason_codes"], list)
+
+        aggregate = self._read_json(self.output_root / "xunce-exploration-coverage-comparison-aggregate.json")
+        self.assertEqual(aggregate["scenario_count"], 24)
+        self.assertIn("coverage_delta_cells_mean", aggregate)
+        self.assertIn("coverage_delta_cells_median", aggregate)
+        self.assertIn("coverage_delta_cells_iqr", aggregate)
+        self.assertIn("path_cost_delta_m_mean", aggregate)
+        self.assertIn("risk_delta_mean", aggregate)
+        self.assertIn("coverage_per_100m_delta_median", aggregate)
+        self.assertIn("greedy_oracle_coverage_regret_delta_mean", aggregate)
+        self.assertIn("cost_aware_oracle_utility_regret_delta_mean", aggregate)
+        self.assertEqual(summary["xunce_path_cost_delta_vs_incumbent"], aggregate["path_cost_delta_m_mean"])
+        self.assertEqual(summary["xunce_risk_delta_vs_incumbent"], aggregate["risk_delta_mean"])
+        self.assertIn("comparison_utility_profiles", summary)
 
     def test_masked_unreachable_candidate_is_not_selected(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
@@ -280,6 +324,199 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertTrue(xunce_step_1["dynamic_candidate_validation_missing"])
         self.assertIn("dynamic_candidate_validation_missing", xunce_step_1["reason_codes"])
 
+    def test_dynamic_frontier_nbv_in_process_generates_and_validates_step_candidates(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence(metadata_only_roi_indices={1})
+        self._update_config(
+            required_scenario_count=2,
+            rollout_steps=2,
+            candidate_refresh_mode="dynamic_frontier_nbv_in_process",
+            coverage_metric_mode="path_line_plus_endpoint",
+            include_oracle_baselines=True,
+            include_roi_weighted_coverage=True,
+            dynamic_frontier_radius_cells=[1, 2],
+            dynamic_proposal_pool_limit_per_step=8,
+            dynamic_max_candidates_per_step=3,
+            dynamic_validation_work_root=str(self.temp_dir / "_xunce_dynamic_validation_work"),
+            dynamic_validation_max_path_length=1000,
+            dynamic_sidecar_fallback_mode="diagnostic_only",
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["candidate_refresh_mode"], "dynamic_frontier_nbv_in_process")
+        self.assertTrue(summary["dynamic_candidate_generation_executed"])
+        self.assertEqual(summary["dynamic_candidate_validation_mode"], "in_process_path_planner_astar_batch")
+        self.assertGreater(summary["dynamic_proposal_count"], 0)
+        self.assertGreater(summary["dynamic_validation_attempt_count"], 0)
+        self.assertGreater(summary["dynamic_validation_success_count"], 0)
+        self.assertEqual(summary["dynamic_candidate_generation_missing_count"], 0)
+        self.assertEqual(summary["dynamic_contract_sidecar_missing_count"], 0)
+        self.assertEqual(summary["dynamic_path_length_preflight_failure_count"], 0)
+        self.assertGreater(summary["in_process_batch_astar_validation_count"], 0)
+        self.assertEqual(summary["path_planner_route_adapter_success_count"], 0)
+        self.assertEqual(summary["path_planner_route_adapter_failure_count"], 0)
+        self.assertEqual(summary["path_planner_route_adapter_audit_sample_count"], 0)
+        self.assertFalse(summary["adapter_audit_passed"])
+        self.assertEqual(summary["sidecar_grid_astar_screening_count"], 0)
+        self.assertFalse(summary["dynamic_validation_full_adapter_evidence_passed"])
+        self.assertIn("in_process_path_planner_astar_batch", summary["planner_validation_backend_counts"])
+        self.assertEqual(summary["validation_evidence_kind_counts"]["in_process_astar_screening"], summary["dynamic_validation_success_count"])
+        self.assertGreater(summary["paired_decision_audit_row_count"], 0)
+        self.assertIn("closed_loop_dynamic_rollout_summary", summary)
+        self.assertIn("same_candidate_set_policy_selection_summary", summary)
+        self.assertEqual(summary["candidate_generation_effect_scope"], "dynamic_generator_plus_policy_closed_loop")
+        self.assertEqual(summary["model_selection_evidence_scope"], "same_state_same_candidate_set_paired_decision_audit")
+        self.assertTrue((self.output_root / "xunce-exploration-coverage-dynamic-proposals.jsonl").is_file())
+        self.assertTrue((self.output_root / "xunce-exploration-coverage-dynamic-validation-results.jsonl").is_file())
+        self.assertTrue((self.output_root / "xunce-exploration-coverage-dynamic-validation-audit.json").is_file())
+        self.assertTrue((self.output_root / "xunce-exploration-coverage-paired-decision-audit.jsonl").is_file())
+
+        steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-v2-steps.jsonl")
+        xunce_steps = [row for row in steps if row["policy"] == "xunce"]
+        self.assertTrue(xunce_steps)
+        self.assertTrue(all(row["candidate_generation_source"] == "dynamic_frontier_nbv_in_process/v1" for row in xunce_steps))
+        self.assertTrue(all(row["state_conditioned_candidate_generation"] is True for row in xunce_steps))
+        self.assertTrue(all(row["dynamic_proposal_count"] > 0 for row in xunce_steps))
+        self.assertTrue(all(row["dynamic_validated_candidate_count"] > 0 for row in xunce_steps))
+        self.assertTrue(all(row["candidate_set_hash"] for row in xunce_steps))
+        self.assertNotEqual(xunce_steps[0]["candidate_set_hash"], xunce_steps[1]["candidate_set_hash"])
+        oracle_rows = [row for row in steps if row["policy"].endswith("_oracle")]
+        self.assertTrue(oracle_rows)
+        self.assertTrue(all(row["oracle_rollout_executed"] is True for row in oracle_rows))
+        self.assertTrue(all(row["true_model_inference_executed"] is False for row in oracle_rows))
+
+        validations = self._read_jsonl(self.output_root / "xunce-exploration-coverage-dynamic-validation-results.jsonl")
+        formal = [row for row in validations if row.get("proposal_only") is False]
+        self.assertTrue(formal)
+        self.assertTrue(all(row["proposal_validated_by_path_feedback"] is True for row in formal))
+        self.assertTrue(all(row["coverage_validated_by_path_feedback"] is False for row in formal))
+        self.assertTrue(all(row["policy"] in {"xunce", "incumbent", "greedy_coverage_oracle", "cost_aware_coverage_oracle"} for row in validations))
+        self.assertTrue(all(row["current_cell_before"] for row in validations))
+        self.assertTrue(all(row["covered_cells_hash"] for row in validations))
+        self.assertTrue(all(row["candidate_set_hash"] for row in validations))
+        self.assertTrue(all(row["planner_validation_backend"] for row in formal))
+        self.assertTrue(all(row["planner_validation_backend"] == "in_process_path_planner_astar_batch" for row in formal))
+        self.assertTrue(all(row["validation_evidence_kind"] == "in_process_astar_screening" for row in formal))
+        self.assertIn("dynamic_planner_validation_backend_counts", summary)
+        paired = self._read_jsonl(self.output_root / "xunce-exploration-coverage-paired-decision-audit.jsonl")
+        self.assertTrue(paired)
+        self.assertTrue(all(row["same_state_same_candidate_set"] is True for row in paired))
+        self.assertTrue(all("xunce_selected_expected_new_coverage_cell_count" in row for row in paired))
+        self.assertTrue(all("incumbent_selected_expected_new_coverage_cell_count" in row for row in paired))
+        expected_roi_by_scenario = {"scenario_000": "roi_0", "scenario_001": "metadata_roi_1"}
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-dynamic-proposals.jsonl",
+            expected_roi_by_scenario,
+        )
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-dynamic-validation-results.jsonl",
+            expected_roi_by_scenario,
+        )
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-steps.jsonl",
+            expected_roi_by_scenario,
+        )
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-v2-steps.jsonl",
+            expected_roi_by_scenario,
+        )
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-episodes.jsonl",
+            expected_roi_by_scenario,
+        )
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-comparison-pairs.jsonl",
+            expected_roi_by_scenario,
+        )
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-paired-decision-audit.jsonl",
+            expected_roi_by_scenario,
+        )
+        self._assert_artifact_roi_groups(
+            "xunce-exploration-coverage-model-inference.jsonl",
+            expected_roi_by_scenario,
+        )
+        roi_breakdown = self._read_json(self.output_root / "xunce-exploration-coverage-roi-breakdown.json")
+        roi_groups = {row["roi_group"] for row in roi_breakdown["families"]}
+        self.assertIn("roi_0", roi_groups)
+        self.assertIn("metadata_roi_1", roi_groups)
+        self.assertNotIn("unknown", roi_groups)
+
+    def test_dynamic_frontier_nbv_adapter_sample_audit_compares_batch_astar_rows(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        original_validate = module.validate_candidate_cells
+
+        def fake_adapter_validate(**kwargs):
+            rows = []
+            for proposal in kwargs["proposal_rows"]:
+                row = dict(proposal)
+                row.update(
+                    {
+                        "proposal_only": False,
+                        "proposal_validated_by_path_feedback": True,
+                        "path_feedback_validation_source": "in_process_evaluate_candidate_paths/v1",
+                        "planner_validation_backend": "path_planner_route_adapter",
+                        "validation_evidence_kind": "full_path_planner_adapter",
+                        "path_planner_adapter_audit_status": "passed",
+                        "planner_reachable": True,
+                        "reachable": True,
+                        "open_grid_fallback_used": False,
+                        "failure_reason": None,
+                        "replan_required": False,
+                        "path_cost": float(proposal["path_cost"]),
+                        "path_length": float(proposal["path_length"]),
+                        "risk": float(proposal["risk"]),
+                        "risk_source": "planner_route_result",
+                    }
+                )
+                rows.append(row)
+            return rows
+
+        module.validate_candidate_cells = fake_adapter_validate
+        try:
+            self._write_expansion_evidence()
+            self._update_config(
+                required_scenario_count=1,
+                rollout_steps=1,
+                candidate_refresh_mode="dynamic_frontier_nbv_in_process",
+                coverage_metric_mode="path_line_plus_endpoint",
+                include_oracle_baselines=False,
+                dynamic_frontier_radius_cells=[1],
+                dynamic_proposal_pool_limit_per_step=4,
+                dynamic_max_candidates_per_step=3,
+                dynamic_validation_work_root=str(self.temp_dir / "_xunce_dynamic_validation_work"),
+                dynamic_validation_max_path_length=1000,
+                dynamic_adapter_audit_enabled=True,
+                dynamic_adapter_audit_max_routes=2,
+                dynamic_adapter_audit_min_per_frontier_source=1,
+            )
+
+            summary = module.run_xunce_high_fidelity_exploration_coverage_comparison(
+                config_path=self.config_path,
+                output_root=self.output_root,
+                repo_root=self.repo_root,
+            )
+        finally:
+            module.validate_candidate_cells = original_validate
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["dynamic_candidate_validation_mode"], "in_process_path_planner_astar_batch")
+        self.assertGreater(summary["in_process_batch_astar_validation_count"], 0)
+        self.assertGreater(summary["path_planner_route_adapter_audit_sample_count"], 0)
+        self.assertEqual(summary["adapter_batch_astar_mismatch_count"], 0)
+        self.assertTrue(summary["adapter_audit_passed"])
+        self.assertFalse(summary["dynamic_validation_full_adapter_evidence_passed"])
+
     def test_dynamic_v2_oracles_do_not_select_masked_candidate(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,
@@ -354,6 +591,46 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
         self.assertIn("xunce_coverage_advantage_with_efficiency_regression", summary["diagnostic_reason_codes"])
         self.assertEqual(summary["diagnostic_recommended_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_pairwise_metrics_record_undefined_ratio_reasons(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        original_run_policy = module._run_policy_episode
+
+        def fake_episode(*, policy_name, **kwargs):
+            row = original_run_policy(policy_name=policy_name, **kwargs)
+            row["coverage_return"] = 1.0
+            row["coverage_curve_auc"] = 1.0
+            row["new_covered_cell_count"] = 10
+            row["total_new_cell_count"] = 10
+            row["valuable_area_covered"] = 10.0
+            row["roi_weighted_coverage_total"] = 10.0
+            row["path_cost"] = 0.0
+            row["path_cost_total_m"] = 0.0
+            row["risk"] = 0.0
+            row["risk_total"] = 0.0
+            row["risk_cost_weighted_total"] = 0.0
+            return row
+
+        module._run_policy_episode = fake_episode
+        try:
+            summary = module.run_xunce_high_fidelity_exploration_coverage_comparison(
+                config_path=self.config_path,
+                output_root=self.output_root,
+                repo_root=self.repo_root,
+            )
+        finally:
+            module._run_policy_episode = original_run_policy
+
+        self.assertEqual(summary["status"], "passed")
+        pair_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-comparison-pairs.jsonl")
+        self.assertTrue(pair_rows)
+        self.assertTrue(
+            all("no_positive_incremental_coverage" in row["undefined_metric_reason_codes"] for row in pair_rows)
+        )
+        self.assertTrue(all("near_zero_denominator" in row["undefined_metric_reason_codes"] for row in pair_rows))
+        self.assertIsNone(pair_rows[0]["incremental_cost_per_extra_cell"])
+        self.assertIsNone(pair_rows[0]["xunce_coverage_per_100m"])
 
     def _write_xunce_checkpoint(self) -> None:
         import torch
@@ -475,8 +752,10 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         repeated_cells: bool = False,
         mask_first_candidate: bool = False,
         dynamic_validated_candidates: bool | str = False,
+        metadata_only_roi_indices: set[int] | None = None,
     ) -> None:
         self.expansion_root.mkdir(parents=True, exist_ok=True)
+        metadata_only_roi_indices = metadata_only_roi_indices or set()
         scenarios = []
         slices = []
         splits = ["train", "validation", "test"]
@@ -529,11 +808,11 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
                                 "proposal_validated_by_path_feedback": True,
                             }
                         )
-            scenarios.append(
-                {
+            scenario_row = {
                     "scenario_id": scenario_id,
                     "scenario_group": group,
                     "roi_group": group,
+                    "start_cell": [0, 0],
                     "selected_cell_after_path_feedback": cells[0],
                     "selected_cell_before_path_feedback": cells[1],
                     "selected_path_cost_after_feedback": 5.0,
@@ -544,9 +823,7 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
                     "tracking_safety_violation_count": 0,
                     "path_feedback": {"candidates": candidates},
                 }
-            )
-            slices.append(
-                {
+            slice_row = {
                     "schema_version": "quasi-real-map-slice/v1",
                     "scenario_id": scenario_id,
                     "scenario_group": group,
@@ -556,7 +833,22 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
                     "legacy_identity_fallback_used": False,
                     "contract": str(self.expansion_root / f"{scenario_id}.contract.json"),
                     "sidecar": str(self.expansion_root / f"{scenario_id}.sidecar.json"),
+                    "start_cell": [0, 0],
+                    "map_source": {"roi": {"width": 128, "height": 128}},
                 }
+            if index in metadata_only_roi_indices:
+                scenario_row.pop("scenario_group", None)
+                scenario_row.pop("roi_group", None)
+                slice_row.pop("scenario_group", None)
+                slice_row.pop("roi_name", None)
+                slice_row["metadata"] = {"roi_group": f"metadata_roi_{index}"}
+            scenarios.append(scenario_row)
+            slices.append(slice_row)
+            self._write_tiny_contract_and_sidecar(
+                self.expansion_root / f"{scenario_id}.contract.json",
+                self.expansion_root / f"{scenario_id}.sidecar.json",
+                width=128,
+                height=128,
             )
         (self.expansion_root / "xunce-high-fidelity-real-map-slices.jsonl").write_text(
             "\n".join(json.dumps(row, ensure_ascii=False) for row in slices) + "\n",
@@ -606,8 +898,49 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @staticmethod
+    def _write_tiny_contract_and_sidecar(contract_path: Path, sidecar_path: Path, *, width: int, height: int) -> None:
+        contract = {
+            "schema_version": "model-explorer-contract/v1",
+            "grid": {
+                "width": width,
+                "height": height,
+                "resolution": 1.0,
+                "frame_id": "test",
+                "origin": [0.0, 0.0],
+                "layers": ["cost"],
+            },
+            "constraints": {"violation_count": 0, "passable_ratio": 1.0, "reason_counts": {}},
+            "top_goals": [{"cell": [1, 0], "utility": 1.0, "reachable": True}],
+            "top_sequences": [],
+            "observation_update": {"coverage_rate_delta": 0.0},
+        }
+        sidecar = {
+            "schema_version": "path-planner-sidecar/v1",
+            "cost": [[1.0 for _ in range(width)] for _ in range(height)],
+            "passable_mask": [[True for _ in range(width)] for _ in range(height)],
+            "metadata": {"fixture": "coverage-comparison"},
+        }
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    @staticmethod
+    def _read_json(path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    @staticmethod
     def _read_jsonl(path: Path) -> list[dict]:
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def _assert_artifact_roi_groups(self, filename: str, expected_by_scenario: dict[str, str]) -> None:
+        rows = self._read_jsonl(self.output_root / filename)
+        self.assertTrue(rows, filename)
+        for row in rows:
+            scenario_id = str(row.get("scenario_id"))
+            if scenario_id not in expected_by_scenario:
+                continue
+            self.assertIn("roi_group", row, f"{filename}:{scenario_id}")
+            self.assertEqual(row["roi_group"], expected_by_scenario[scenario_id], f"{filename}:{scenario_id}")
+            self.assertNotEqual(row["roi_group"], "unknown", f"{filename}:{scenario_id}")
 
 
 if __name__ == "__main__":

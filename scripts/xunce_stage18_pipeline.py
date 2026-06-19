@@ -24,12 +24,14 @@ TRUE_BINDING_SUMMARY_FILE = "xunce-true-incumbent-selection-binding-summary.json
 QUANTIZATION_SUMMARY_FILE = "xunce-risk-coverage-cost-quantization-summary.json"
 ORACLE_SUMMARY_FILE = "xunce-oracle-separability-summary.json"
 COVERAGE_COMPARISON_SUMMARY_FILE = "xunce-exploration-coverage-comparison-summary.json"
+COVERAGE_COMPARISON_AGGREGATE_FILE = "xunce-exploration-coverage-comparison-aggregate.json"
 
 REVIEW_METRICS_NEXT_REQUIRED_CHANGE = "review_xunce_incumbent_comparison_metrics"
 STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE = "prepare_stage19_evaluator_critic_preflight"
 REFRESH_STAGE18_NEXT_REQUIRED_CHANGE = "refresh_stage18_research_evidence_pipeline"
 ROOT_REPAIR_NEXT_REQUIRED_CHANGE = "rerun_stage18_downstream_evidence_for_candidate_root"
 BOUNDARY_REPAIR_NEXT_REQUIRED_CHANGE = "resolve_stage18_research_evidence_boundary_rejections"
+DYNAMIC_ROLLOUT_NEXT_REQUIRED_CHANGE = "run_dynamic_frontier_nbv_rollout_comparison"
 
 BOUNDARY_FIELDS = tuple(global_99_boundary_defaults()) + (
     "default_policy_replacement_approved",
@@ -217,6 +219,13 @@ def build_stage18_pipeline_summary(
         "stage_command_plan": commands,
         "single_step_comparison_summary": diagnostics["single_step_comparison_summary"],
         "coverage_rollout_comparison_summary": diagnostics["coverage_rollout_comparison_summary"],
+        "comparison_metric_summary": diagnostics["comparison_metric_summary"],
+        "coverage_delta_distribution": diagnostics["coverage_delta_distribution"],
+        "cost_delta_distribution": diagnostics["cost_delta_distribution"],
+        "risk_delta_distribution": diagnostics["risk_delta_distribution"],
+        "scenario_win_loss_summary": diagnostics["scenario_win_loss_summary"],
+        "utility_profile_summary": diagnostics["utility_profile_summary"],
+        "legacy_label_summary": diagnostics["legacy_label_summary"],
         "oracle_summary": diagnostics["oracle_summary"],
         "candidate_generation_summary": diagnostics["candidate_generation_summary"],
         "governance_boundary": boundary_payload(),
@@ -240,6 +249,7 @@ def load_stage18_evidence(roots: Stage18RootSet) -> dict[str, Any]:
         missing,
         "missing_stage18_4_coverage_comparison",
     )
+    coverage_aggregate = _read_optional_json(roots.coverage_comparison_root / COVERAGE_COMPARISON_AGGREGATE_FILE)
     return {
         "stage18_1": stage18_1,
         "stage18_2": stage18_2,
@@ -248,6 +258,7 @@ def load_stage18_evidence(roots: Stage18RootSet) -> dict[str, Any]:
         "quantization": quant,
         "oracle": oracle,
         "coverage_comparison": coverage,
+        "coverage_comparison_aggregate": coverage_aggregate,
         "missing_reason_codes": unique_sorted(missing),
     }
 
@@ -264,6 +275,7 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
     quant = evidence["quantization"]
     oracle = evidence["oracle"]
     coverage = evidence["coverage_comparison"]
+    coverage_aggregate = evidence["coverage_comparison_aggregate"]
 
     if _boundary_violation(*(payload for payload in evidence.values() if isinstance(payload, dict))):
         blocking.append("boundary_violation")
@@ -292,6 +304,23 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
         diagnostic.append("oracle_not_separable")
     if coverage and coverage.get("xunce_coverage_advantage_established") is not True:
         diagnostic.append("xunce_coverage_advantage_not_established")
+    if coverage and coverage.get("candidate_refresh_mode") != "dynamic_frontier_nbv_in_process":
+        missing.append("missing_dynamic_frontier_nbv_rollout_comparison")
+        diagnostic.append("dynamic_frontier_nbv_rollout_not_executed")
+    if coverage and coverage.get("candidate_refresh_mode") == "dynamic_frontier_nbv_in_process":
+        if coverage.get("dynamic_candidate_generation_executed") is not True:
+            blocking.append("dynamic_candidate_generation_not_executed")
+        if int(coverage.get("dynamic_contract_sidecar_missing_count", 0) or 0) > 0:
+            blocking.append("dynamic_contract_sidecar_missing")
+        if int(coverage.get("dynamic_candidate_generation_missing_count", 0) or 0) > 0:
+            blocking.append("dynamic_candidate_generation_missing")
+        if coverage.get("dynamic_validation_full_adapter_evidence_passed") is not True:
+            if int(coverage.get("sidecar_grid_astar_screening_count", 0) or 0) > 0 or int(coverage.get("dynamic_sidecar_grid_astar_fallback_count", 0) or 0) > 0:
+                diagnostic.append("sidecar_screening_not_full_adapter_evidence")
+            elif int(coverage.get("in_process_batch_astar_validation_count", 0) or 0) > 0:
+                diagnostic.append("dynamic_batch_astar_screening_not_full_adapter_evidence")
+            else:
+                diagnostic.append("dynamic_validation_not_full_adapter_evidence")
     if model and model.get("xunce_candidate_advantage_established") is not True:
         diagnostic.append("single_step_xunce_advantage_not_established")
     if coverage and int(coverage.get("xunce_efficiency_regression_count", 0) or 0) > 0:
@@ -320,7 +349,14 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
         "diagnostic_recommended_changes": _diagnostic_recommendations(diagnostic),
         "module_results": module_results,
         "single_step_comparison_summary": _single_step_summary(model),
-        "coverage_rollout_comparison_summary": _coverage_summary(coverage),
+        "coverage_rollout_comparison_summary": _coverage_summary(coverage, coverage_aggregate),
+        "comparison_metric_summary": _comparison_metric_summary(coverage, coverage_aggregate),
+        "coverage_delta_distribution": _distribution_summary(coverage_aggregate, "coverage_delta_cells"),
+        "cost_delta_distribution": _distribution_summary(coverage_aggregate, "path_cost_delta_m"),
+        "risk_delta_distribution": _distribution_summary(coverage_aggregate, "risk_delta"),
+        "scenario_win_loss_summary": _scenario_win_loss_summary(coverage_aggregate),
+        "utility_profile_summary": (coverage_aggregate or {}).get("utility_profile_summary", {}),
+        "legacy_label_summary": _legacy_label_summary(model, coverage, oracle),
         "oracle_summary": _oracle_summary(oracle),
         "candidate_generation_summary": _candidate_summary(stage18_2, quant),
     }
@@ -396,7 +432,15 @@ def build_stage18_command_plan(*, repo_root: Path, roots: Stage18RootSet) -> lis
                 "--extra-arg",
                 "--candidate-refresh-mode",
                 "--extra-arg",
-                "static_from_source",
+                "dynamic_frontier_nbv_in_process",
+                "--extra-arg",
+                "--dynamic-candidate-validation-mode",
+                "--extra-arg",
+                "in_process_path_planner_astar_batch",
+                "--extra-arg",
+                "--dynamic-validation-work-root",
+                "--extra-arg",
+                "outputs/_xunce_dynamic_validation_work",
                 "--extra-arg",
                 "--coverage-metric-mode",
                 "--extra-arg",
@@ -457,6 +501,14 @@ def render_stage18_report(summary: dict[str, Any]) -> str:
             f"- release_readiness: `{summary['release_readiness']}`",
             f"- training_readiness: `{summary['training_readiness']}`",
             "",
+            "## Quantitative Comparison",
+            "",
+            f"- mean coverage delta cells: `{summary['comparison_metric_summary'].get('coverage_delta_cells_mean')}`",
+            f"- mean path cost delta m: `{summary['comparison_metric_summary'].get('path_cost_delta_m_mean')}`",
+            f"- mean risk delta: `{summary['comparison_metric_summary'].get('risk_delta_mean')}`",
+            f"- mean coverage per 100m delta: `{summary['comparison_metric_summary'].get('coverage_per_100m_delta_mean')}`",
+            f"- scenario win/tie/loss: `{summary['scenario_win_loss_summary']}`",
+            "",
             "This pipeline is an offline research evidence closure. It does not approve checkpoint publication, default policy replacement, executor connection, PPO updates, or online canary traffic.",
             "",
         ]
@@ -471,6 +523,16 @@ def _read_json(path: Path, missing: list[str], reason_code: str) -> dict[str, An
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         missing.append(reason_code)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_optional_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -525,6 +587,8 @@ def _root_consistency_reasons(
     if oracle and not _same_path(oracle.get("source_materialized_coverage_root"), roots.quantization_root):
         reasons.append("stale_or_mixed_stage18_roots")
     if coverage and not _same_path(coverage.get("source_roi_expansion_root"), roots.quantization_root):
+        reasons.append("stale_or_mixed_stage18_roots")
+    if coverage and coverage.get("dynamic_validation_source_root") and not _same_path(coverage.get("dynamic_validation_source_root"), roots.quantization_root):
         reasons.append("stale_or_mixed_stage18_roots")
     return unique_sorted(reasons)
 
@@ -584,6 +648,8 @@ def _next_required_change(*, missing: list[str], blocking: list[str], comparison
         return BOUNDARY_REPAIR_NEXT_REQUIRED_CHANGE
     if "stale_or_mixed_stage18_roots" in blocking:
         return ROOT_REPAIR_NEXT_REQUIRED_CHANGE
+    if "missing_dynamic_frontier_nbv_rollout_comparison" in missing:
+        return DYNAMIC_ROLLOUT_NEXT_REQUIRED_CHANGE
     if blocking:
         return REFRESH_STAGE18_NEXT_REQUIRED_CHANGE
     if missing:
@@ -602,6 +668,10 @@ def _diagnostic_recommendations(diagnostic: list[str]) -> list[str]:
         recommendations.append(STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE)
     if "coverage_efficiency_regression_present" in reason_set:
         recommendations.append("review_coverage_cost_tradeoff_metrics")
+    if "dynamic_frontier_nbv_rollout_not_executed" in reason_set:
+        recommendations.append(DYNAMIC_ROLLOUT_NEXT_REQUIRED_CHANGE)
+    if {"sidecar_screening_not_full_adapter_evidence", "dynamic_validation_not_full_adapter_evidence"} & reason_set:
+        recommendations.append("repair_dynamic_path_planner_adapter_evidence")
     return unique_sorted(recommendations)
 
 
@@ -617,16 +687,85 @@ def _single_step_summary(model: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _coverage_summary(coverage: dict[str, Any]) -> dict[str, Any]:
+def _coverage_summary(coverage: dict[str, Any], aggregate: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": coverage.get("status"),
-        "xunce_coverage_advantage_established": coverage.get("xunce_coverage_advantage_established"),
-        "xunce_coverage_return_delta_vs_incumbent": coverage.get("xunce_coverage_return_delta_vs_incumbent"),
-        "xunce_new_covered_cell_delta_vs_incumbent": coverage.get("xunce_new_covered_cell_delta_vs_incumbent"),
-        "coverage_gain_per_path_cost_delta_vs_incumbent": coverage.get("coverage_gain_per_path_cost_delta_vs_incumbent"),
-        "xunce_efficiency_regression_count": coverage.get("xunce_efficiency_regression_count"),
+        "candidate_refresh_mode": coverage.get("candidate_refresh_mode"),
+        "dynamic_candidate_generation_executed": coverage.get("dynamic_candidate_generation_executed"),
+        "dynamic_validation_work_root": coverage.get("dynamic_validation_work_root"),
+        "dynamic_validation_work_root_path_length": coverage.get("dynamic_validation_work_root_path_length"),
+        "dynamic_validation_max_path_length": coverage.get("dynamic_validation_max_path_length"),
+        "dynamic_candidate_validation_mode": coverage.get("dynamic_candidate_validation_mode"),
+        "dynamic_validation_attempt_count": coverage.get("dynamic_validation_attempt_count"),
+        "dynamic_validation_success_count": coverage.get("dynamic_validation_success_count"),
+        "dynamic_path_length_preflight_failure_count": coverage.get("dynamic_path_length_preflight_failure_count"),
+        "in_process_batch_astar_validation_count": coverage.get("in_process_batch_astar_validation_count"),
+        "path_planner_route_adapter_success_count": coverage.get("path_planner_route_adapter_success_count"),
+        "path_planner_route_adapter_failure_count": coverage.get("path_planner_route_adapter_failure_count"),
+        "path_planner_route_adapter_audit_sample_count": coverage.get("path_planner_route_adapter_audit_sample_count"),
+        "path_planner_route_adapter_audit_failure_count": coverage.get("path_planner_route_adapter_audit_failure_count"),
+        "adapter_batch_astar_mismatch_count": coverage.get("adapter_batch_astar_mismatch_count"),
+        "adapter_audit_passed": coverage.get("adapter_audit_passed"),
+        "sidecar_grid_astar_screening_count": coverage.get("sidecar_grid_astar_screening_count"),
+        "sidecar_grid_astar_diagnostic_count": coverage.get("sidecar_grid_astar_diagnostic_count"),
+        "adapter_error_type_counts": coverage.get("adapter_error_type_counts"),
+        "adapter_error_message_samples": coverage.get("adapter_error_message_samples"),
+        "planner_validation_backend_counts": coverage.get("planner_validation_backend_counts", coverage.get("dynamic_planner_validation_backend_counts")),
+        "validation_evidence_kind_counts": coverage.get("validation_evidence_kind_counts"),
+        "dynamic_validation_full_adapter_evidence_passed": coverage.get("dynamic_validation_full_adapter_evidence_passed"),
+        "dynamic_candidate_generation_missing_count": coverage.get("dynamic_candidate_generation_missing_count"),
+        "paired_decision_audit_row_count": coverage.get("paired_decision_audit_row_count"),
+        "candidate_generation_effect_scope": coverage.get("candidate_generation_effect_scope"),
+        "model_selection_evidence_scope": coverage.get("model_selection_evidence_scope"),
+        "closed_loop_dynamic_rollout_summary": coverage.get("closed_loop_dynamic_rollout_summary"),
+        "same_candidate_set_policy_selection_summary": coverage.get("same_candidate_set_policy_selection_summary"),
+        "coverage_delta_cells_mean": aggregate.get("coverage_delta_cells_mean", coverage.get("xunce_new_covered_cell_delta_vs_incumbent")),
+        "coverage_delta_cells_median": aggregate.get("coverage_delta_cells_median"),
+        "path_cost_delta_m_mean": aggregate.get("path_cost_delta_m_mean", coverage.get("xunce_path_cost_delta_vs_incumbent")),
+        "risk_delta_mean": aggregate.get("risk_delta_mean", coverage.get("xunce_risk_delta_vs_incumbent")),
+        "coverage_per_100m_delta_mean": aggregate.get("coverage_per_100m_delta_mean", coverage.get("coverage_per_100m_delta_vs_incumbent")),
         "policy_disagreement_count": coverage.get("policy_disagreement_count"),
         "useful_disagreement_count": coverage.get("useful_disagreement_count"),
+    }
+
+
+def _comparison_metric_summary(coverage: dict[str, Any], aggregate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": coverage.get("status"),
+        "coverage_delta_cells_mean": aggregate.get("coverage_delta_cells_mean", coverage.get("xunce_new_covered_cell_delta_vs_incumbent")),
+        "path_cost_delta_m_mean": aggregate.get("path_cost_delta_m_mean", coverage.get("xunce_path_cost_delta_vs_incumbent")),
+        "risk_delta_mean": aggregate.get("risk_delta_mean", coverage.get("xunce_risk_delta_vs_incumbent")),
+        "coverage_per_100m_delta_mean": aggregate.get("coverage_per_100m_delta_mean", coverage.get("coverage_per_100m_delta_vs_incumbent")),
+        "greedy_oracle_coverage_regret_delta_mean": aggregate.get("greedy_oracle_coverage_regret_delta_mean"),
+        "cost_aware_oracle_utility_regret_delta_mean": aggregate.get("cost_aware_oracle_utility_regret_delta_mean"),
+    }
+
+
+def _distribution_summary(aggregate: dict[str, Any], prefix: str) -> dict[str, Any]:
+    return {
+        "mean": aggregate.get(f"{prefix}_mean"),
+        "median": aggregate.get(f"{prefix}_median"),
+        "iqr": aggregate.get(f"{prefix}_iqr"),
+        "min": aggregate.get(f"{prefix}_min"),
+        "max": aggregate.get(f"{prefix}_max"),
+    }
+
+
+def _scenario_win_loss_summary(aggregate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "xunce_coverage_win_count": aggregate.get("xunce_coverage_win_count"),
+        "xunce_coverage_tie_count": aggregate.get("xunce_coverage_tie_count"),
+        "xunce_coverage_loss_count": aggregate.get("xunce_coverage_loss_count"),
+        "xunce_coverage_win_rate": aggregate.get("xunce_coverage_win_rate"),
+    }
+
+
+def _legacy_label_summary(model: dict[str, Any], coverage: dict[str, Any], oracle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "xunce_candidate_advantage_established": model.get("xunce_candidate_advantage_established"),
+        "xunce_coverage_advantage_established": coverage.get("xunce_coverage_advantage_established"),
+        "xunce_efficiency_regression_count": coverage.get("xunce_efficiency_regression_count"),
+        "oracle_separable": oracle.get("oracle_separable"),
     }
 
 

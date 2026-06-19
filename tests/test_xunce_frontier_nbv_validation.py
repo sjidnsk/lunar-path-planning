@@ -170,6 +170,127 @@ def test_in_process_validation_keeps_unreachable_proposal_out_of_formal_set(tmp_
     assert "proposal_unreachable" in row["validation_diagnostic_flags"]
 
 
+def test_path_length_preflight_fails_closed_without_sidecar_formalization(tmp_path) -> None:
+    repo_root = _scripts_on_path()
+    from scripts.xunce_frontier_nbv_validation import validate_candidate_cells
+
+    contract_path, sidecar_path = _write_tiny_contract_and_sidecar(tmp_path)
+    rows = validate_candidate_cells(
+        scenario={"scenario_id": "too-long"},
+        proposal_rows=[{"proposal_id": "p-long", "cell": [2, 0], "frontier_candidate_source": "frontier_boundary"}],
+        contract_path=contract_path,
+        sidecar_path=sidecar_path,
+        current_cell=(0, 0),
+        repo_root=repo_root,
+        output_work_root=tmp_path / "work",
+        max_validation_path_length=10,
+    )
+
+    row = rows[0]
+    assert row["proposal_only"] is True
+    assert row["proposal_validated_by_path_feedback"] is False
+    assert row["planner_validation_backend"] == "path_planner_route_adapter"
+    assert row["path_length_gate_passed"] is False
+    assert row["failure_reason"] == "path_length_preflight_failed"
+    assert row["path_planner_adapter_audit_status"] == "not_attempted_path_length_preflight_failed"
+
+
+def test_adapter_failure_diagnostic_only_keeps_sidecar_out_of_formal_candidates(tmp_path, monkeypatch) -> None:
+    repo_root = _scripts_on_path()
+    import scripts.xunce_frontier_nbv_validation as module
+
+    contract_path, sidecar_path = _write_tiny_contract_and_sidecar(tmp_path)
+
+    class FailedResult:
+        failure_reason = "path_planner_adapter_failed"
+        metadata = {"error_type": "FileNotFoundError", "message": "path too long for request file"}
+
+    class FailedEvaluation:
+        action_index = 0
+        result = FailedResult()
+
+    monkeypatch.setattr(module, "_evaluate_candidate_paths", lambda *args, **kwargs: [FailedEvaluation()])
+
+    rows = module.validate_candidate_cells(
+        scenario={"scenario_id": "adapter-fails"},
+        proposal_rows=[{"proposal_id": "p-fail", "cell": [2, 0], "frontier_candidate_source": "frontier_boundary"}],
+        contract_path=contract_path,
+        sidecar_path=sidecar_path,
+        current_cell=(0, 0),
+        repo_root=repo_root,
+        output_work_root=tmp_path / "work",
+        sidecar_fallback_mode="diagnostic_only",
+    )
+
+    row = rows[0]
+    assert row["proposal_only"] is True
+    assert row["proposal_validated_by_path_feedback"] is False
+    assert row["planner_validation_backend"] == "path_planner_route_adapter"
+    assert row["adapter_error_type"] == "FileNotFoundError"
+    assert "path too long" in row["adapter_error_message_tail"]
+    assert row["path_planner_adapter_audit_status"] == "failed"
+
+
+def test_formal_screening_mode_marks_sidecar_backend_as_non_adapter_evidence(tmp_path, monkeypatch) -> None:
+    repo_root = _scripts_on_path()
+    import scripts.xunce_frontier_nbv_validation as module
+
+    contract_path, sidecar_path = _write_tiny_contract_and_sidecar(tmp_path)
+    calls = {"count": 0}
+
+    class FailedResult:
+        failure_reason = "path_planner_adapter_failed"
+        metadata = {"error_type": "RuntimeError", "message": "adapter failed"}
+
+    class FailedEvaluation:
+        action_index = 0
+        result = FailedResult()
+
+    class SuccessfulEvaluation:
+        action_index = 0
+
+        def to_dict(self):
+            return {
+                "action_index": 0,
+                "cell": [2, 0],
+                "reachable": True,
+                "path_cost": 2.0,
+                "path_length": 2.0,
+                "risk": 0.0,
+                "failure_reason": None,
+                "replan_required": False,
+                "open_grid_fallback_used": False,
+                "diagnostic_interpretation": {"diagnostic_flags": []},
+            }
+
+    def fake_evaluate(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return [FailedEvaluation()]
+        return [SuccessfulEvaluation()]
+
+    monkeypatch.setattr(module, "_evaluate_candidate_paths", fake_evaluate)
+
+    rows = module.validate_candidate_cells(
+        scenario={"scenario_id": "screening"},
+        proposal_rows=[{"proposal_id": "p-screen", "cell": [2, 0], "frontier_candidate_source": "frontier_boundary"}],
+        contract_path=contract_path,
+        sidecar_path=sidecar_path,
+        current_cell=(0, 0),
+        repo_root=repo_root,
+        output_work_root=tmp_path / "work",
+        sidecar_fallback_mode="formal_screening",
+    )
+
+    row = rows[0]
+    assert row["proposal_only"] is False
+    assert row["proposal_validated_by_path_feedback"] is True
+    assert row["planner_validation_backend"] == "sidecar_grid_astar_screening"
+    assert row["path_planner_adapter_audit_status"] == "failed"
+    assert row["adapter_error_type"] == "RuntimeError"
+    assert "sidecar_grid_astar_screening_used" in row["validation_diagnostic_flags"]
+
+
 def _write_tiny_contract_and_sidecar(tmp_path: Path, *, passable_mask: list[list[bool]] | None = None) -> tuple[Path, Path]:
     root = tmp_path / "tiny"
     root.mkdir()

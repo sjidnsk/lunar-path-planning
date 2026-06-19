@@ -675,6 +675,22 @@ artifacts. Each stage should be committed and pushed separately.
      Stage 18.4 maps to Stage 18H.0, Stage 18F, and Stage 18C-v2
      quantization/oracle/rollout comparison. Stage 18.5 maps to closure,
      attribution, and next-stage routing.
+   - Stage 18.4D dynamic rollout now uses
+     `candidate_refresh_mode=dynamic_frontier_nbv_in_process` with
+     `dynamic_candidate_validation_mode=in_process_path_planner_astar_batch`
+     as the mainline validation path. It loads the sidecar/grid once per step
+     and calls `path_planner.search.AStarPlanner.plan()` in-process for the
+     proposal batch. The evidence kind is `in_process_astar_screening`: it can
+     create formal offline rollout candidates, but it is not full
+     `PathPlannerRouteAdapter` evidence. `PathPlannerRouteAdapter` is reserved
+     for explicit smoke or sampled audit. Sampled audit is explicitly enabled
+     with `dynamic_adapter_audit_enabled=true`; it compares a bounded route
+     sample and does not participate in policy action selection.
+   - Stage 18.4 reports closed-loop dynamic rollout performance
+     (`dynamic generator + policy`) separately from same-candidate-set policy
+     selection evidence (`same state + same mask + same candidates`). Candidate
+     set hash divergence is expected after trajectories split and must not be
+     treated as an error.
    - Stage 18D, 18E, 18F.1, 18G.1, and 18G.2 remain available as legacy
      diagnostics or optional experiments; they are no longer the mainline
      preconditions for comparing Xunce and incumbent.

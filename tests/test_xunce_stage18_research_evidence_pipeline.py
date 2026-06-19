@@ -47,6 +47,31 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         self.assertEqual(summary["comparison_verdict"], "xunce_advantage_not_established")
         self.assertEqual(summary["overall_conclusion"], "evidence_valid_but_xunce_advantage_not_established")
         self.assertIn("oracle_not_separable", summary["diagnostic_reason_codes"])
+        self.assertIn("comparison_metric_summary", summary)
+        self.assertIn("coverage_delta_distribution", summary)
+        self.assertIn("cost_delta_distribution", summary)
+        self.assertIn("risk_delta_distribution", summary)
+        self.assertIn("scenario_win_loss_summary", summary)
+        self.assertIn("utility_profile_summary", summary)
+        self.assertIn("legacy_label_summary", summary)
+        self.assertEqual(summary["comparison_metric_summary"]["coverage_delta_cells_mean"], 70.0)
+        self.assertEqual(summary["cost_delta_distribution"]["mean"], 5.0)
+        self.assertEqual(summary["risk_delta_distribution"]["mean"], 0.2)
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["candidate_refresh_mode"], "dynamic_frontier_nbv_in_process")
+        self.assertTrue(summary["coverage_rollout_comparison_summary"]["dynamic_candidate_generation_executed"])
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["dynamic_candidate_validation_mode"], "in_process_path_planner_astar_batch")
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["dynamic_validation_success_count"], 144)
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["in_process_batch_astar_validation_count"], 144)
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["path_planner_route_adapter_success_count"], 0)
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["path_planner_route_adapter_failure_count"], 0)
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["sidecar_grid_astar_screening_count"], 0)
+        self.assertFalse(summary["coverage_rollout_comparison_summary"]["dynamic_validation_full_adapter_evidence_passed"])
+        self.assertFalse(summary["coverage_rollout_comparison_summary"]["adapter_audit_passed"])
+        self.assertIn("dynamic_batch_astar_screening_not_full_adapter_evidence", summary["diagnostic_reason_codes"])
+        self.assertIn("closed_loop_dynamic_rollout_summary", summary["coverage_rollout_comparison_summary"])
+        self.assertIn("same_candidate_set_policy_selection_summary", summary["coverage_rollout_comparison_summary"])
+        self.assertNotIn("xunce_coverage_advantage_established", summary["coverage_rollout_comparison_summary"])
+        self.assertIn("xunce_coverage_advantage_established", summary["legacy_label_summary"])
         self.assertEqual(summary["release_readiness"], "not_authorized")
         self.assertEqual(summary["training_readiness"], "not_authorized")
         self.assertFalse(summary["publishes_checkpoint"])
@@ -57,6 +82,52 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         self.assertTrue((self.output_root / "xunce-stage18-resolved-roots.json").is_file())
         self.assertTrue((self.output_root / "xunce-stage18-module-results.jsonl").is_file())
         self.assertTrue((self.output_root / "xunce-stage18-pipeline-report.md").is_file())
+
+    def test_static_coverage_summary_is_partial_for_dynamic_mainline(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence(dynamic_rollout=False)
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertEqual(summary["status"], "partial")
+        self.assertEqual(summary["evidence_status"], "partial")
+        self.assertIn("missing_dynamic_frontier_nbv_rollout_comparison", summary["missing_reason_codes"])
+        self.assertEqual(summary["next_required_change"], "run_dynamic_frontier_nbv_rollout_comparison")
+
+    def test_sidecar_screening_is_diagnostic_not_full_adapter_blocker(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence(dynamic_rollout=True)
+        coverage_path = self.coverage_root / "xunce-exploration-coverage-comparison-summary.json"
+        coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+        coverage.update(
+            {
+                "path_planner_route_adapter_success_count": 0,
+                "path_planner_route_adapter_failure_count": 144,
+                "sidecar_grid_astar_screening_count": 144,
+                "planner_validation_backend_counts": {"sidecar_grid_astar_screening": 144},
+                "dynamic_validation_full_adapter_evidence_passed": False,
+            }
+        )
+        self._write_json(coverage_path, coverage)
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertIn("sidecar_screening_not_full_adapter_evidence", summary["diagnostic_reason_codes"])
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["sidecar_grid_astar_screening_count"], 144)
+        self.assertFalse(summary["coverage_rollout_comparison_summary"]["dynamic_validation_full_adapter_evidence_passed"])
 
     def test_missing_artifacts_are_partial_with_explicit_routes(self) -> None:
         from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
@@ -156,6 +227,25 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         self.assertNotIn("python3", completed.stdout.lower())
         self.assertNotIn("/home/kai", completed.stdout)
 
+    def test_command_plan_uses_dynamic_frontier_nbv_mainline(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+        coverage_commands = [
+            row
+            for row in summary["stage_command_plan"]
+            if row["stage"] == "xunce-high-fidelity-exploration-coverage-comparison"
+        ]
+        self.assertEqual(len(coverage_commands), 1)
+        self.assertIn("dynamic_frontier_nbv_in_process", coverage_commands[0]["display"])
+        self.assertIn("in_process_path_planner_astar_batch", coverage_commands[0]["display"])
+
     def _write_config(self) -> None:
         payload = {
             "schema_version": "xunce-stage18-research-evidence-pipeline-config/v1",
@@ -175,6 +265,7 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         *,
         binding_candidate_root: Path | None = None,
         true_model_inference: bool = True,
+        dynamic_rollout: bool = True,
     ) -> None:
         self._write_json(
             self.roi_root / "xunce-high-fidelity-real-map-roi-expansion-summary.json",
@@ -187,7 +278,7 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
                 "status": "passed",
                 "candidate_count": 144,
                 "valid_candidate_count": 144,
-                "candidate_validation_mode": "in_process_evaluate_candidate_paths",
+                "candidate_validation_mode": "in_process_path_planner_astar_batch",
                 "safe_efficient_candidate_count": 120,
                 "canary_traffic_fraction": 0.0,
             },
@@ -251,6 +342,42 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
                 "schema_version": "xunce-exploration-coverage-comparison-summary/v1",
                 "status": "passed",
                 "source_roi_expansion_root": str(self.quant_root.resolve()),
+                "candidate_refresh_mode": "dynamic_frontier_nbv_in_process" if dynamic_rollout else "static_from_source",
+                "dynamic_candidate_generation_executed": bool(dynamic_rollout),
+                "dynamic_candidate_generation_source": "dynamic_frontier_nbv_in_process/v1" if dynamic_rollout else "",
+                "dynamic_candidate_validation_mode": "in_process_path_planner_astar_batch",
+                "dynamic_validation_work_root": str((self.temp_dir / "_xunce_dynamic_validation_work").resolve()) if dynamic_rollout else "",
+                "dynamic_validation_work_root_path_length": len(str((self.temp_dir / "_xunce_dynamic_validation_work").resolve())) if dynamic_rollout else 0,
+                "dynamic_validation_max_path_length": 180,
+                "dynamic_proposal_count": 240 if dynamic_rollout else 0,
+                "dynamic_validation_attempt_count": 240 if dynamic_rollout else 0,
+                "dynamic_validation_success_count": 144 if dynamic_rollout else 0,
+                "dynamic_validation_failure_count": 96 if dynamic_rollout else 0,
+                "dynamic_validation_cache_hit_count": 12 if dynamic_rollout else 0,
+                "dynamic_contract_sidecar_missing_count": 0,
+                "dynamic_path_length_preflight_failure_count": 0,
+                "in_process_batch_astar_validation_count": 144 if dynamic_rollout else 0,
+                "path_planner_route_adapter_success_count": 0,
+                "path_planner_route_adapter_failure_count": 0,
+                "path_planner_route_adapter_audit_sample_count": 0,
+                "adapter_batch_astar_mismatch_count": 0,
+                "adapter_audit_passed": False,
+                "sidecar_grid_astar_screening_count": 0,
+                "sidecar_grid_astar_diagnostic_count": 0,
+                "adapter_error_type_counts": {},
+                "adapter_error_message_samples": [],
+                "planner_validation_backend_counts": {"in_process_path_planner_astar_batch": 144} if dynamic_rollout else {},
+                "validation_evidence_kind_counts": {"in_process_astar_screening": 144} if dynamic_rollout else {},
+                "dynamic_validation_full_adapter_evidence_passed": False,
+                "dynamic_validation_source_root": str(self.quant_root.resolve()) if dynamic_rollout else "",
+                "dynamic_candidate_generation_missing_count": 0,
+                "state_conditioned_candidate_generation": bool(dynamic_rollout),
+                "candidate_set_hash_mismatch_count": 0,
+                "paired_decision_audit_row_count": 48 if dynamic_rollout else 0,
+                "candidate_generation_effect_scope": "dynamic_generator_plus_policy_closed_loop" if dynamic_rollout else "static_candidate_set",
+                "model_selection_evidence_scope": "same_state_same_candidate_set_paired_decision_audit" if dynamic_rollout else "static_candidate_set",
+                "closed_loop_dynamic_rollout_summary": {"enabled": bool(dynamic_rollout), "scenario_count": 24},
+                "same_candidate_set_policy_selection_summary": {"paired_decision_audit_row_count": 48 if dynamic_rollout else 0},
                 "xunce_coverage_advantage_established": False,
                 "xunce_coverage_return_delta_vs_incumbent": 0.07,
                 "xunce_new_covered_cell_delta_vs_incumbent": 70.0,
@@ -259,6 +386,38 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
                 "policy_disagreement_count": 240,
                 "useful_disagreement_count": 0,
                 "canary_traffic_fraction": 0.0,
+            },
+        )
+        self._write_json(
+            self.coverage_root / "xunce-exploration-coverage-comparison-aggregate.json",
+            {
+                "schema_version": "xunce-exploration-coverage-comparison-aggregate/v1",
+                "scenario_count": 24,
+                "xunce_coverage_win_count": 8,
+                "xunce_coverage_tie_count": 4,
+                "xunce_coverage_loss_count": 12,
+                "xunce_coverage_win_rate": 8 / 24,
+                "coverage_delta_cells_mean": 70.0,
+                "coverage_delta_cells_median": 60.0,
+                "coverage_delta_cells_iqr": 25.0,
+                "coverage_delta_cells_min": -10.0,
+                "coverage_delta_cells_max": 120.0,
+                "path_cost_delta_m_mean": 5.0,
+                "path_cost_delta_median": 4.0,
+                "path_cost_delta_iqr": 2.0,
+                "risk_delta_mean": 0.2,
+                "risk_delta_median": 0.1,
+                "risk_delta_iqr": 0.05,
+                "coverage_per_100m_delta_mean": 1.5,
+                "coverage_per_100m_delta_median": 1.0,
+                "coverage_per_100m_delta_iqr": 0.4,
+                "greedy_oracle_coverage_regret_delta_mean": -0.1,
+                "cost_aware_oracle_utility_regret_delta_mean": 0.3,
+                "utility_profile_summary": {
+                    "coverage_first": {"xunce_win_count": 8, "incumbent_win_count": 12, "tie_count": 4},
+                    "cost_aware": {"xunce_win_count": 6, "incumbent_win_count": 14, "tie_count": 4},
+                    "risk_aware": {"xunce_win_count": 5, "incumbent_win_count": 15, "tie_count": 4},
+                },
             },
         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import statistics
@@ -21,6 +22,14 @@ try:
     from git_provenance import git_snapshot
     from global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json, write_jsonl
     from global_99_governance_common import global_99_boundary_defaults
+    from xunce_dynamic_frontier_nbv import (
+        GENERATION_SOURCE as DYNAMIC_FRONTIER_NBV_GENERATION_SOURCE,
+        build_dynamic_frontier_nbv_candidates,
+        candidate_set_hash,
+        covered_cells_hash,
+        resolve_roi_group,
+    )
+    from xunce_frontier_nbv_validation import IN_PROCESS_VALIDATION_MODE, validate_candidate_cells
     from run_xunce_high_fidelity_real_map_comparison import (
         _boundary_audit as _stage18b_boundary_audit,
         _candidate_at,
@@ -44,6 +53,14 @@ except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json, write_jsonl
     from scripts.global_99_governance_common import global_99_boundary_defaults
+    from scripts.xunce_dynamic_frontier_nbv import (
+        GENERATION_SOURCE as DYNAMIC_FRONTIER_NBV_GENERATION_SOURCE,
+        build_dynamic_frontier_nbv_candidates,
+        candidate_set_hash,
+        covered_cells_hash,
+        resolve_roi_group,
+    )
+    from scripts.xunce_frontier_nbv_validation import IN_PROCESS_VALIDATION_MODE, validate_candidate_cells
     from scripts.run_xunce_high_fidelity_real_map_comparison import (
         _boundary_audit as _stage18b_boundary_audit,
         _candidate_at,
@@ -73,6 +90,12 @@ DEFAULT_OUTPUT_ROOT = "outputs/path_feedback_batch_xunce_high_fidelity_explorati
 SUMMARY_FILE = "xunce-exploration-coverage-comparison-summary.json"
 EPISODES_FILE = "xunce-exploration-coverage-episodes.jsonl"
 STEPS_FILE = "xunce-exploration-coverage-steps.jsonl"
+COMPARISON_PAIRS_FILE = "xunce-exploration-coverage-comparison-pairs.jsonl"
+COMPARISON_AGGREGATE_FILE = "xunce-exploration-coverage-comparison-aggregate.json"
+DYNAMIC_PROPOSALS_FILE = "xunce-exploration-coverage-dynamic-proposals.jsonl"
+DYNAMIC_VALIDATION_RESULTS_FILE = "xunce-exploration-coverage-dynamic-validation-results.jsonl"
+DYNAMIC_VALIDATION_AUDIT_FILE = "xunce-exploration-coverage-dynamic-validation-audit.json"
+PAIRED_DECISION_AUDIT_FILE = "xunce-exploration-coverage-paired-decision-audit.jsonl"
 MODEL_INFERENCE_FILE = "xunce-exploration-coverage-model-inference.jsonl"
 ROI_BREAKDOWN_FILE = "xunce-exploration-coverage-roi-breakdown.json"
 DECISION_AUDIT_FILE = "xunce-exploration-coverage-decision-audit.json"
@@ -98,6 +121,12 @@ MODEL_POLICY_INFERENCE_KIND = "true_checkpoint_inference"
 ORACLE_POLICY_INFERENCE_KIND = "oracle_offline_policy"
 TOLERANCE = 1.0e-12
 
+DEFAULT_COMPARISON_UTILITY_PROFILES = {
+    "coverage_first": {"cost_weight": 0.0, "risk_weight": 0.0},
+    "cost_aware": {"cost_weight": 0.0001, "risk_weight": 0.0},
+    "risk_aware": {"cost_weight": 0.0001, "risk_weight": 0.01},
+}
+
 BOUNDARY_FIELDS = tuple(global_99_boundary_defaults()) + (
     "real_world_release_approved",
     "real_world_performance_claimed",
@@ -121,6 +150,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rollout-steps", type=int)
     parser.add_argument("--candidate-refresh-mode")
     parser.add_argument("--coverage-metric-mode")
+    parser.add_argument("--dynamic-candidate-validation-mode")
+    parser.add_argument("--dynamic-validation-work-root")
+    parser.add_argument("--dynamic-validation-max-path-length", type=int)
+    parser.add_argument("--dynamic-sidecar-fallback-mode")
+    parser.add_argument("--dynamic-proposal-pool-limit-per-step", type=int)
+    parser.add_argument("--dynamic-max-candidates-per-step", type=int)
+    parser.add_argument("--dynamic-adapter-audit-enabled", action="store_true")
+    parser.add_argument("--dynamic-adapter-audit-max-routes", type=int)
+    parser.add_argument("--dynamic-adapter-audit-min-per-frontier-source", type=int)
     parser.add_argument("--include-oracle-baselines", action="store_true")
     parser.add_argument("--include-roi-weighted-coverage", action="store_true")
     args = parser.parse_args(argv)
@@ -134,6 +172,15 @@ def main(argv: list[str] | None = None) -> int:
             "rollout_steps": args.rollout_steps,
             "candidate_refresh_mode": args.candidate_refresh_mode,
             "coverage_metric_mode": args.coverage_metric_mode,
+            "dynamic_candidate_validation_mode": args.dynamic_candidate_validation_mode,
+            "dynamic_validation_work_root": args.dynamic_validation_work_root,
+            "dynamic_validation_max_path_length": args.dynamic_validation_max_path_length,
+            "dynamic_sidecar_fallback_mode": args.dynamic_sidecar_fallback_mode,
+            "dynamic_proposal_pool_limit_per_step": args.dynamic_proposal_pool_limit_per_step,
+            "dynamic_max_candidates_per_step": args.dynamic_max_candidates_per_step,
+            "dynamic_adapter_audit_enabled": True if args.dynamic_adapter_audit_enabled else None,
+            "dynamic_adapter_audit_max_routes": args.dynamic_adapter_audit_max_routes,
+            "dynamic_adapter_audit_min_per_frontier_source": args.dynamic_adapter_audit_min_per_frontier_source,
             "include_oracle_baselines": True if args.include_oracle_baselines else None,
             "include_roi_weighted_coverage": True if args.include_roi_weighted_coverage else None,
         }.items()
@@ -181,8 +228,28 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     boundary = _boundary_audit(config, source)
     model_bundle = _load_model_bundle(config, source, repo_root)
     source_match = _source_match_audit(config, source)
-    episodes, steps, inference_rows = _run_coverage_rollouts(config, source, model_bundle)
-    comparison = _coverage_comparison_audit(episodes, steps)
+    episodes, steps, inference_rows, dynamic_proposals, dynamic_validation_rows, paired_decision_rows = _run_coverage_rollouts(
+        config,
+        source,
+        model_bundle,
+        repo_root=repo_root,
+        output_root=output_root,
+    )
+    comparison_pairs = _comparison_pairs(episodes, config)
+    comparison_aggregate = _comparison_aggregate(comparison_pairs, config)
+    comparison = _coverage_comparison_audit(
+        episodes,
+        steps,
+        comparison_pairs,
+        comparison_aggregate,
+        dynamic_proposals=dynamic_proposals,
+        dynamic_validation_rows=dynamic_validation_rows,
+        paired_decision_rows=paired_decision_rows,
+        source=source,
+        config=config,
+        repo_root=repo_root,
+        output_root=output_root,
+    )
     roi_breakdown = _roi_breakdown(episodes)
     model_inference = _model_inference_audit(model_bundle, inference_rows)
     decision = _decision(
@@ -221,6 +288,12 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
 
     write_jsonl(paths["episodes"], [_public_episode(row) for row in episodes])
     write_jsonl(paths["steps"], steps)
+    write_jsonl(paths["comparison_pairs"], comparison_pairs)
+    write_json(paths["comparison_aggregate"], comparison_aggregate)
+    write_jsonl(paths["dynamic_proposals"], dynamic_proposals)
+    write_jsonl(paths["dynamic_validation_results"], dynamic_validation_rows)
+    write_json(paths["dynamic_validation_audit"], comparison["dynamic_validation_audit"])
+    write_jsonl(paths["paired_decision_audit"], paired_decision_rows)
     write_jsonl(paths["model_inference"], inference_rows)
     write_json(paths["roi_breakdown"], roi_breakdown)
     write_json(paths["decision_audit"], decision)
@@ -269,13 +342,64 @@ def _load_config(
     if normalized["candidate_refresh_mode"] == "dynamic_from_coverage_memory":
         normalized["candidate_refresh_mode"] = "dynamic_validated_only"
         normalized["diagnostic_reason_codes"].append("dynamic_from_coverage_memory_legacy_mode")
-    if normalized["candidate_refresh_mode"] not in {"static_from_source", "dynamic_validated_only"}:
-        raise ConfigError("candidate_refresh_mode must be static_from_source or dynamic_validated_only")
+    if normalized["candidate_refresh_mode"] not in {"static_from_source", "dynamic_validated_only", "dynamic_frontier_nbv_in_process"}:
+        raise ConfigError("candidate_refresh_mode must be static_from_source, dynamic_validated_only, or dynamic_frontier_nbv_in_process")
     normalized["coverage_metric_mode"] = _require_string(payload.get("coverage_metric_mode", "endpoint_footprint"), "coverage_metric_mode")
     if normalized["coverage_metric_mode"] not in {"endpoint_footprint", "path_line_plus_endpoint"}:
         raise ConfigError("coverage_metric_mode must be endpoint_footprint or path_line_plus_endpoint")
     normalized["include_oracle_baselines"] = _require_bool(payload.get("include_oracle_baselines", False), "include_oracle_baselines")
     normalized["include_roi_weighted_coverage"] = _require_bool(payload.get("include_roi_weighted_coverage", False), "include_roi_weighted_coverage")
+    normalized["comparison_utility_profiles"] = _comparison_utility_profiles(payload.get("comparison_utility_profiles"))
+    normalized["dynamic_candidate_validation_mode"] = _require_string(
+        payload.get("dynamic_candidate_validation_mode", "in_process_path_planner_astar_batch"),
+        "dynamic_candidate_validation_mode",
+    )
+    dynamic_work_root = payload.get("dynamic_validation_work_root", "outputs/_xunce_dynamic_validation_work")
+    if not isinstance(dynamic_work_root, str) or not dynamic_work_root.strip():
+        raise ConfigError("dynamic_validation_work_root must be a non-empty path string")
+    normalized["dynamic_validation_work_root"] = str(resolve_path(Path(dynamic_work_root), repo_root))
+    normalized["dynamic_validation_max_path_length"] = _positive_int(
+        payload.get("dynamic_validation_max_path_length", 180),
+        "dynamic_validation_max_path_length",
+    )
+    normalized["dynamic_validation_short_path_retry_enabled"] = _require_bool(
+        payload.get("dynamic_validation_short_path_retry_enabled", True),
+        "dynamic_validation_short_path_retry_enabled",
+    )
+    normalized["dynamic_sidecar_fallback_mode"] = _require_string(
+        payload.get("dynamic_sidecar_fallback_mode", "diagnostic_only"),
+        "dynamic_sidecar_fallback_mode",
+    )
+    if normalized["dynamic_sidecar_fallback_mode"] not in {"diagnostic_only", "formal_screening"}:
+        raise ConfigError("dynamic_sidecar_fallback_mode must be diagnostic_only or formal_screening")
+    radii = payload.get("dynamic_frontier_radius_cells", [2, 4, 6])
+    if not isinstance(radii, list) or any(not isinstance(item, int) or item <= 0 for item in radii):
+        raise ConfigError("dynamic_frontier_radius_cells must be a list of positive integers")
+    normalized["dynamic_frontier_radius_cells"] = list(radii)
+    normalized["dynamic_frontier_direction_count"] = _positive_int(payload.get("dynamic_frontier_direction_count", 8), "dynamic_frontier_direction_count")
+    normalized["dynamic_proposal_pool_limit_per_step"] = _positive_int(
+        payload.get("dynamic_proposal_pool_limit_per_step", 24),
+        "dynamic_proposal_pool_limit_per_step",
+    )
+    normalized["dynamic_max_candidates_per_step"] = _positive_int(
+        payload.get("dynamic_max_candidates_per_step", 6),
+        "dynamic_max_candidates_per_step",
+    )
+    normalized["dynamic_validation_cache_enabled"] = _require_bool(payload.get("dynamic_validation_cache_enabled", True), "dynamic_validation_cache_enabled")
+    normalized["dynamic_adapter_audit_enabled"] = _require_bool(payload.get("dynamic_adapter_audit_enabled", False), "dynamic_adapter_audit_enabled")
+    normalized["dynamic_adapter_audit_max_routes"] = _positive_int(
+        payload.get("dynamic_adapter_audit_max_routes", 128),
+        "dynamic_adapter_audit_max_routes",
+    )
+    normalized["dynamic_adapter_audit_min_per_frontier_source"] = _positive_int(
+        payload.get("dynamic_adapter_audit_min_per_frontier_source", 1),
+        "dynamic_adapter_audit_min_per_frontier_source",
+    )
+    normalized["debug_validation_artifacts"] = _require_bool(payload.get("debug_validation_artifacts", False), "debug_validation_artifacts")
+    normalized["state_conditioned_candidate_generation"] = _require_bool(
+        payload.get("state_conditioned_candidate_generation", True),
+        "state_conditioned_candidate_generation",
+    )
     normalized["allow_open_grid_fallback"] = _require_bool(payload.get("allow_open_grid_fallback", False), "allow_open_grid_fallback")
     normalized["require_context_ids"] = _require_bool(payload.get("require_context_ids", True), "require_context_ids")
     normalized["require_contract_and_sidecar_paths"] = _require_bool(payload.get("require_contract_and_sidecar_paths", True), "require_contract_and_sidecar_paths")
@@ -291,6 +415,12 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
         "summary": output_root / SUMMARY_FILE,
         "episodes": output_root / EPISODES_FILE,
         "steps": output_root / STEPS_FILE,
+        "comparison_pairs": output_root / COMPARISON_PAIRS_FILE,
+        "comparison_aggregate": output_root / COMPARISON_AGGREGATE_FILE,
+        "dynamic_proposals": output_root / DYNAMIC_PROPOSALS_FILE,
+        "dynamic_validation_results": output_root / DYNAMIC_VALIDATION_RESULTS_FILE,
+        "dynamic_validation_audit": output_root / DYNAMIC_VALIDATION_AUDIT_FILE,
+        "paired_decision_audit": output_root / PAIRED_DECISION_AUDIT_FILE,
         "model_inference": output_root / MODEL_INFERENCE_FILE,
         "roi_breakdown": output_root / ROI_BREAKDOWN_FILE,
         "decision_audit": output_root / DECISION_AUDIT_FILE,
@@ -304,7 +434,7 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
 
 def _v2_enabled(config: dict[str, Any]) -> bool:
     return (
-        config["candidate_refresh_mode"] == "dynamic_validated_only"
+        config["candidate_refresh_mode"] in {"dynamic_validated_only", "dynamic_frontier_nbv_in_process"}
         or config["coverage_metric_mode"] == "path_line_plus_endpoint"
         or bool(config["include_oracle_baselines"])
         or bool(config["include_roi_weighted_coverage"])
@@ -315,7 +445,10 @@ def _run_coverage_rollouts(
     config: dict[str, Any],
     source: dict[str, Any],
     model_bundle: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    *,
+    repo_root: Path,
+    output_root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     scenarios = source["path_feedback"].get("scenarios", [])
     if not isinstance(scenarios, list):
         scenarios = []
@@ -323,12 +456,16 @@ def _run_coverage_rollouts(
     episodes: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
     inference_rows: list[dict[str, Any]] = []
+    dynamic_proposals: list[dict[str, Any]] = []
+    dynamic_validation_rows: list[dict[str, Any]] = []
+    paired_decision_rows: list[dict[str, Any]] = []
+    validation_cache: dict[str, list[dict[str, Any]]] = {}
     for scenario_index, scenario in enumerate(scenarios[: config["required_scenario_count"]]):
         if not isinstance(scenario, dict):
             continue
         scenario_id = str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))
         slice_row = slice_by_id.get(scenario_id, {})
-        roi_group = str(slice_row.get("roi_name") or scenario.get("roi_group") or scenario.get("scenario_group") or "unknown")
+        roi_group = resolve_roi_group(scenario, slice_row)
         policy_names = POLICIES + (ORACLE_POLICIES if config["include_oracle_baselines"] else ())
         for policy_name in policy_names:
             episode = _run_policy_episode(
@@ -340,11 +477,18 @@ def _run_coverage_rollouts(
                 split=slice_row.get("split"),
                 config=config,
                 model_bundle=model_bundle,
+                slice_row=slice_row,
+                repo_root=repo_root,
+                output_root=output_root,
+                validation_cache=validation_cache,
             )
             episodes.append(episode)
             steps.extend(episode.get("steps", []))
             inference_rows.extend(episode.get("inference_rows", []))
-    return episodes, steps, inference_rows
+            dynamic_proposals.extend(episode.get("dynamic_proposals", []))
+            dynamic_validation_rows.extend(episode.get("dynamic_validation_rows", []))
+            paired_decision_rows.extend(episode.get("paired_decision_rows", []))
+    return episodes, steps, inference_rows, dynamic_proposals, dynamic_validation_rows, paired_decision_rows
 
 
 def _run_policy_episode(
@@ -357,6 +501,10 @@ def _run_policy_episode(
     split: Any,
     config: dict[str, Any],
     model_bundle: dict[str, Any],
+    slice_row: dict[str, Any],
+    repo_root: Path,
+    output_root: Path,
+    validation_cache: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     denominator = float(config["coverage_denominator_cells"])
     radius = int(config["coverage_radius_cells"])
@@ -368,6 +516,7 @@ def _run_policy_episode(
     reason_codes: list[str] = []
     path_cost_total = 0.0
     risk_total = 0.0
+    risk_cost_weighted_total = 0.0
     energy_total = 0.0
     new_cell_total = 0
     revisited_cell_total = 0
@@ -383,16 +532,59 @@ def _run_policy_episode(
     path_planning_failure_count = 0
     open_grid_fallback_count = 0
     current_cell = start_cell
+    dynamic_proposals: list[dict[str, Any]] = []
+    dynamic_validation_rows: list[dict[str, Any]] = []
+    paired_decision_rows: list[dict[str, Any]] = []
 
     for step_index in range(config["rollout_steps"]):
         cell_before = current_cell
-        candidates = _candidate_rows_for_step(
+        candidate_batch = _candidate_rows_for_step(
             scenario,
             current_cell=current_cell,
             covered_cells=covered_cells,
             step_index=step_index,
             config=config,
+            scenario_id=scenario_id,
+            slice_row=slice_row,
+            repo_root=repo_root,
+            output_root=output_root,
+            validation_cache=validation_cache,
         )
+        candidates = candidate_batch["candidates"]
+        candidate_set_id = candidate_batch["candidate_set_id"]
+        candidate_set_hash_value = candidate_batch["candidate_set_hash"]
+        covered_hash = covered_cells_hash(covered_cells)
+        dynamic_proposals.extend(
+            [
+                _dynamic_artifact_row(
+                    row,
+                    scenario_id=scenario_id,
+                    policy=policy_name,
+                    policy_step=step_index,
+                    current_cell=cell_before,
+                    covered_cells_hash_value=covered_hash,
+                    candidate_set_id=candidate_set_id,
+                    candidate_set_hash_value=candidate_set_hash_value,
+                )
+                for row in candidate_batch["dynamic_proposals"]
+            ]
+        )
+        dynamic_validation_rows.extend(
+            [
+                _dynamic_artifact_row(
+                    row,
+                    scenario_id=scenario_id,
+                    policy=policy_name,
+                    policy_step=step_index,
+                    current_cell=cell_before,
+                    covered_cells_hash_value=covered_hash,
+                    candidate_set_id=candidate_set_id,
+                    candidate_set_hash_value=candidate_set_hash_value,
+                )
+                for row in candidate_batch["dynamic_validation_rows"]
+            ]
+        )
+        remaining_budget = max(0.0, float(config["path_budget_m"]) - path_cost_total)
         scenario_state = dict(scenario)
         scenario_state["coverage_rate"] = coverage_rates[-1]
         scenario_state["coverage_rate_delta"] = steps[-1]["coverage_rate_delta"] if steps else 0.0
@@ -411,6 +603,11 @@ def _run_policy_episode(
         dynamic_candidate_validation_missing = any(candidate.get("dynamic_candidate_validation_missing") is True for candidate in candidates)
         if dynamic_candidate_validation_missing:
             step_reasons.append("dynamic_candidate_validation_missing")
+        if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
+            if not candidate_batch["dynamic_generation_executed"]:
+                step_reasons.append("dynamic_candidate_generation_missing")
+            if not candidates:
+                step_reasons.append("no_valid_dynamic_candidates")
         if is_oracle_policy:
             selected_index = _oracle_selected_index(
                 policy_name,
@@ -446,6 +643,23 @@ def _run_policy_episode(
             except Exception as exc:  # pragma: no cover
                 step_reasons.append(f"true_model_inference_failed:{type(exc).__name__}")
                 step_reasons.append("true_model_inference_not_executed")
+
+        paired_row = _paired_decision_audit_row(
+            scenario_id=scenario_id,
+            roi_group=roi_group,
+            split=split,
+            executing_policy=policy_name,
+            step_index=step_index,
+            current_cell=cell_before,
+            candidate_set_id=candidate_set_id,
+            candidate_set_hash_value=candidate_set_hash_value,
+            covered_cells_hash_value=covered_hash,
+            candidates=candidates,
+            adapter=adapter,
+            model_bundle=model_bundle,
+        )
+        if paired_row:
+            paired_decision_rows.append(paired_row)
 
         detail_payload = detail or _empty_model_detail()
         selected_index = detail["selected_action_index"] if is_oracle_policy and detail is not None else _selected_index(detail)
@@ -499,6 +713,7 @@ def _run_policy_episode(
             current_cell = selected_cell
             path_cost_total += float(selected_cost)
             risk_total += _float_default(selected_risk)
+            risk_cost_weighted_total += float(selected_cost) * _float_default(selected_risk)
             energy_total += _float_default(selected_energy)
             new_cell_total += len(new_cells)
             revisited_cell_total += len(revisited_cells)
@@ -522,9 +737,21 @@ def _run_policy_episode(
             "policy": policy_name,
             "step_index": step_index,
             "current_cell_before": list(cell_before),
+            "remaining_budget_m": remaining_budget,
             "selected_action_index": selected_index,
             "selected_cell": list(selected_cell) if selected_cell is not None else None,
             "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
+            "candidate_generation_source": candidate_batch["candidate_generation_source"],
+            "candidate_set_id": candidate_set_id,
+            "candidate_set_hash": candidate_set_hash_value,
+            "covered_cells_hash": covered_hash,
+            "state_conditioned_candidate_generation": bool(config.get("state_conditioned_candidate_generation", True))
+            and config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process",
+            "dynamic_proposal_count": candidate_batch["dynamic_proposal_count"],
+            "dynamic_validated_candidate_count": candidate_batch["dynamic_validated_candidate_count"],
+            "dynamic_validation_cache_hit": candidate_batch["dynamic_validation_cache_hit"],
+            "path_feedback_validation_source_counts": candidate_batch["path_feedback_validation_source_counts"],
+            "frontier_candidate_source_counts": candidate_batch["frontier_candidate_source_counts"],
             "selected_probability": detail_payload["selected_probability"],
             "selected_rank": detail_payload["selected_rank"],
             "action_entropy": entropies[-1] if entropies else 0.0,
@@ -558,6 +785,8 @@ def _run_policy_episode(
                     "policy": policy_name,
                     "step_index": step_index,
                     "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
+                    "candidate_set_id": candidate_set_id,
+                    "candidate_set_hash": candidate_set_hash_value,
                     "action_mask": list(adapter["action_mask"]),
                     "selected_action_index": selected_index,
                     "policy_inference_kind": policy_inference_kind,
@@ -577,6 +806,14 @@ def _run_policy_episode(
     coverage_curve_auc = _coverage_curve_auc(coverage_rates, config["rollout_steps"])
     cumulative_delta = coverage_rates[-1] - coverage_rates[0]
     total_seen_cells = new_cell_total + revisited_cell_total
+    coverage_per_100m = _safe_ratio_v2(new_cell_total * 100.0, path_cost_total, "coverage_per_100m")
+    risk_per_100m = _safe_ratio_v2(risk_total * 100.0, path_cost_total, "risk_per_100m")
+    if valuable_area_covered > TOLERANCE:
+        roi_weighted_coverage_total = valuable_area_covered
+        roi_weighted_coverage_source = "candidate_value_weighted_new_cells/v1"
+    else:
+        roi_weighted_coverage_total = float(new_cell_total)
+        roi_weighted_coverage_source = "unweighted_new_cell_count_fallback_due_missing_candidate_value/v1"
     return {
         "schema_version": "xunce-exploration-coverage-episode/v1",
         "scenario_id": scenario_id,
@@ -592,18 +829,29 @@ def _run_policy_episode(
         "coverage_return": coverage_return,
         "coverage_curve_auc": coverage_curve_auc,
         "new_covered_cell_count": new_cell_total,
+        "total_new_cell_count": new_cell_total,
         "revisited_cell_count": revisited_cell_total,
         "revisit_rate": _safe_ratio(revisited_cell_total, total_seen_cells) or 0.0,
         "coverage_overlap_ratio": _safe_ratio(revisited_cell_total, total_seen_cells) or 0.0,
         "min_roi_group_coverage_rate": coverage_rates[-1],
         "valuable_area_covered": valuable_area_covered,
+        "roi_weighted_coverage_total": roi_weighted_coverage_total,
+        "roi_weighted_coverage_source": roi_weighted_coverage_source,
         "path_cost": path_cost_total,
+        "path_cost_total_m": path_cost_total,
         "risk": risk_total,
+        "risk_total": risk_total,
+        "risk_source": "candidate_risk_scalar_rollout_sum/v1",
+        "risk_cost_weighted_total": risk_cost_weighted_total,
+        "risk_cost_weighted_source": "sum_path_cost_times_candidate_risk_scalar/v1",
         "energy_cost": energy_total,
         "coverage_gain_per_path_cost": _safe_ratio(coverage_return, path_cost_total),
         "coverage_gain_per_meter": _safe_ratio(coverage_return, path_cost_total),
         "coverage_gain_per_risk": _safe_ratio(coverage_return, risk_total),
         "coverage_gain_per_energy": _safe_ratio(coverage_return, energy_total),
+        "coverage_per_100m": coverage_per_100m["value"],
+        "risk_per_100m": risk_per_100m["value"],
+        "undefined_metric_reason_codes": unique_sorted(coverage_per_100m["reason_codes"] + risk_per_100m["reason_codes"]),
         "path_budget_used_ratio": _safe_ratio(path_cost_total, config["path_budget_m"]) or 0.0,
         "latency_per_coverage_gain": _safe_ratio(sum(latencies), coverage_return),
         "selected_probability_median": statistics.median(selected_probabilities) if selected_probabilities else 0.0,
@@ -618,10 +866,148 @@ def _run_policy_episode(
         "action_indices": action_indices,
         "steps": steps,
         "inference_rows": inference_rows,
+        "dynamic_proposals": dynamic_proposals,
+        "dynamic_validation_rows": dynamic_validation_rows,
+        "paired_decision_rows": paired_decision_rows,
     }
 
 
-def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[str, Any]]) -> dict[str, Any]:
+def _comparison_pairs(episodes: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for episode in episodes:
+        grouped[str(episode["scenario_id"])][str(episode["policy"])] = episode
+    rows: list[dict[str, Any]] = []
+    profiles = config["comparison_utility_profiles"]
+    for scenario_id in sorted(grouped):
+        policies = grouped[scenario_id]
+        xunce = policies.get("xunce")
+        incumbent = policies.get("incumbent")
+        if not xunce or not incumbent:
+            continue
+        greedy_oracle = policies.get("greedy_coverage_oracle")
+        cost_aware_oracle = policies.get("cost_aware_coverage_oracle")
+        coverage_delta = _episode_number(xunce, "total_new_cell_count") - _episode_number(incumbent, "total_new_cell_count")
+        roi_delta = _episode_number(xunce, "roi_weighted_coverage_total") - _episode_number(incumbent, "roi_weighted_coverage_total")
+        path_cost_delta = _episode_number(xunce, "path_cost_total_m") - _episode_number(incumbent, "path_cost_total_m")
+        risk_delta = _episode_number(xunce, "risk_total") - _episode_number(incumbent, "risk_total")
+        risk_cost_delta = _episode_number(xunce, "risk_cost_weighted_total") - _episode_number(incumbent, "risk_cost_weighted_total")
+        xunce_coverage_per_100m = _safe_ratio_v2(_episode_number(xunce, "total_new_cell_count") * 100.0, _episode_number(xunce, "path_cost_total_m"), "xunce_coverage_per_100m")
+        incumbent_coverage_per_100m = _safe_ratio_v2(_episode_number(incumbent, "total_new_cell_count") * 100.0, _episode_number(incumbent, "path_cost_total_m"), "incumbent_coverage_per_100m")
+        xunce_risk_per_100m = _safe_ratio_v2(_episode_number(xunce, "risk_total") * 100.0, _episode_number(xunce, "path_cost_total_m"), "xunce_risk_per_100m")
+        incumbent_risk_per_100m = _safe_ratio_v2(_episode_number(incumbent, "risk_total") * 100.0, _episode_number(incumbent, "path_cost_total_m"), "incumbent_risk_per_100m")
+        incremental_cost = _incremental_ratio(path_cost_delta, coverage_delta, "incremental_cost_per_extra_cell")
+        greedy_xunce_regret = _oracle_coverage_regret(greedy_oracle, xunce)
+        greedy_incumbent_regret = _oracle_coverage_regret(greedy_oracle, incumbent)
+        cost_xunce_regret = _oracle_utility_regret(cost_aware_oracle, xunce, profiles["cost_aware"])
+        cost_incumbent_regret = _oracle_utility_regret(cost_aware_oracle, incumbent, profiles["cost_aware"])
+        profile_outcomes = {
+            name: _utility_pair_outcome(xunce, incumbent, profile)
+            for name, profile in profiles.items()
+        }
+        reason_codes = unique_sorted(
+            list(xunce.get("undefined_metric_reason_codes", []))
+            + list(incumbent.get("undefined_metric_reason_codes", []))
+            + xunce_coverage_per_100m["reason_codes"]
+            + incumbent_coverage_per_100m["reason_codes"]
+            + xunce_risk_per_100m["reason_codes"]
+            + incumbent_risk_per_100m["reason_codes"]
+            + incremental_cost["reason_codes"]
+            + _missing_oracle_reasons(greedy_oracle, cost_aware_oracle)
+        )
+        row = {
+            "schema_version": "xunce-exploration-coverage-comparison-pair/v1",
+            "scenario_id": scenario_id,
+            "roi_group": xunce.get("roi_group"),
+            "split": xunce.get("split"),
+            "rollout_steps": xunce.get("rollout_steps"),
+            "xunce_total_new_cell_count": _episode_number(xunce, "total_new_cell_count"),
+            "incumbent_total_new_cell_count": _episode_number(incumbent, "total_new_cell_count"),
+            "coverage_delta_cells": coverage_delta,
+            "xunce_roi_weighted_coverage_total": _episode_number(xunce, "roi_weighted_coverage_total"),
+            "incumbent_roi_weighted_coverage_total": _episode_number(incumbent, "roi_weighted_coverage_total"),
+            "roi_weighted_coverage_delta": roi_delta,
+            "xunce_path_cost_total_m": _episode_number(xunce, "path_cost_total_m"),
+            "incumbent_path_cost_total_m": _episode_number(incumbent, "path_cost_total_m"),
+            "path_cost_delta_m": path_cost_delta,
+            "xunce_risk_total": _episode_number(xunce, "risk_total"),
+            "incumbent_risk_total": _episode_number(incumbent, "risk_total"),
+            "risk_delta": risk_delta,
+            "xunce_risk_cost_weighted_total": _episode_number(xunce, "risk_cost_weighted_total"),
+            "incumbent_risk_cost_weighted_total": _episode_number(incumbent, "risk_cost_weighted_total"),
+            "risk_cost_weighted_delta": risk_cost_delta,
+            "xunce_coverage_per_100m": xunce_coverage_per_100m["value"],
+            "incumbent_coverage_per_100m": incumbent_coverage_per_100m["value"],
+            "coverage_per_100m_delta": _nullable_delta(xunce_coverage_per_100m["value"], incumbent_coverage_per_100m["value"]),
+            "xunce_risk_per_100m": xunce_risk_per_100m["value"],
+            "incumbent_risk_per_100m": incumbent_risk_per_100m["value"],
+            "risk_per_100m_delta": _nullable_delta(xunce_risk_per_100m["value"], incumbent_risk_per_100m["value"]),
+            "incremental_cost_per_extra_cell": incremental_cost["value"],
+            "greedy_oracle_coverage_regret_xunce": greedy_xunce_regret,
+            "greedy_oracle_coverage_regret_incumbent": greedy_incumbent_regret,
+            "cost_aware_oracle_utility_regret_xunce": cost_xunce_regret,
+            "cost_aware_oracle_utility_regret_incumbent": cost_incumbent_regret,
+            "utility_profile_outcomes": profile_outcomes,
+            "pairwise_outcome": _coverage_pairwise_outcome(coverage_delta),
+            "undefined_metric_reason_codes": reason_codes,
+        }
+        rows.append(row)
+    return rows
+
+
+def _comparison_aggregate(pairs: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
+    win_count = sum(1 for row in pairs if row["pairwise_outcome"] == "xunce_coverage_win")
+    tie_count = sum(1 for row in pairs if row["pairwise_outcome"] == "coverage_tie")
+    loss_count = sum(1 for row in pairs if row["pairwise_outcome"] == "xunce_coverage_loss")
+    profile_summary: dict[str, dict[str, int]] = {}
+    for profile_name in config["comparison_utility_profiles"]:
+        outcomes = [row.get("utility_profile_outcomes", {}).get(profile_name) for row in pairs]
+        profile_summary[profile_name] = {
+            "xunce_win_count": sum(1 for outcome in outcomes if outcome == "xunce_win"),
+            "incumbent_win_count": sum(1 for outcome in outcomes if outcome == "incumbent_win"),
+            "tie_count": sum(1 for outcome in outcomes if outcome == "tie"),
+        }
+    return {
+        "schema_version": "xunce-exploration-coverage-comparison-aggregate/v1",
+        "scenario_count": len(pairs),
+        "xunce_coverage_win_count": win_count,
+        "xunce_coverage_tie_count": tie_count,
+        "xunce_coverage_loss_count": loss_count,
+        "xunce_coverage_win_rate": _safe_ratio(win_count, len(pairs)) or 0.0,
+        **_distribution_fields("coverage_delta_cells", [row.get("coverage_delta_cells") for row in pairs]),
+        **_distribution_fields("path_cost_delta_m", [row.get("path_cost_delta_m") for row in pairs]),
+        **_distribution_fields("risk_delta", [row.get("risk_delta") for row in pairs]),
+        **_distribution_fields("coverage_per_100m_delta", [row.get("coverage_per_100m_delta") for row in pairs]),
+        "greedy_oracle_coverage_regret_delta_mean": _mean(
+            [
+                _nullable_delta(row.get("greedy_oracle_coverage_regret_xunce"), row.get("greedy_oracle_coverage_regret_incumbent"))
+                for row in pairs
+            ]
+        ),
+        "cost_aware_oracle_utility_regret_delta_mean": _mean(
+            [
+                _nullable_delta(row.get("cost_aware_oracle_utility_regret_xunce"), row.get("cost_aware_oracle_utility_regret_incumbent"))
+                for row in pairs
+            ]
+        ),
+        "utility_profile_summary": profile_summary,
+        "comparison_utility_profiles": config["comparison_utility_profiles"],
+    }
+
+
+def _coverage_comparison_audit(
+    episodes: list[dict[str, Any]],
+    steps: list[dict[str, Any]],
+    comparison_pairs: list[dict[str, Any]],
+    comparison_aggregate: dict[str, Any],
+    *,
+    dynamic_proposals: list[dict[str, Any]],
+    dynamic_validation_rows: list[dict[str, Any]],
+    paired_decision_rows: list[dict[str, Any]],
+    source: dict[str, Any],
+    config: dict[str, Any],
+    repo_root: Path,
+    output_root: Path,
+) -> dict[str, Any]:
     pairs: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for episode in episodes:
         pairs[str(episode["scenario_id"])][str(episode["policy"])] = episode
@@ -674,7 +1060,10 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
             or float(xunce["risk"]) > float(incumbent["risk"]) + TOLERANCE
         ):
             safety_regression += 1
-    disagreement_count, useful_disagreement_count = _disagreement_counts(steps)
+    if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
+        disagreement_count, useful_disagreement_count = _paired_disagreement_counts(paired_decision_rows)
+    else:
+        disagreement_count, useful_disagreement_count = _disagreement_counts(steps)
     xunce_episodes = [row for row in episodes if row["policy"] == "xunce"]
     incumbent_episodes = [row for row in episodes if row["policy"] == "incumbent"]
     oracle_episodes = [row for row in episodes if row["policy"] == "greedy_coverage_oracle"]
@@ -700,12 +1089,22 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
         and useful_disagreement_count > 0
         and sum(1 for row in episodes if row["policy"] == "greedy_coverage_oracle") > 0
     )
+    dynamic_audit = _dynamic_validation_audit(
+        config,
+        source,
+        dynamic_proposals,
+        dynamic_validation_rows,
+        steps,
+        repo_root=repo_root,
+        output_root=output_root,
+    )
     return {
         "schema_version": "xunce-exploration-coverage-comparison-audit/v1",
-        "scenario_count": len(pairs),
-        "xunce_coverage_better_count": xunce_better,
-        "xunce_coverage_worse_count": xunce_worse,
-        "xunce_coverage_tie_count": xunce_tie,
+        "dynamic_validation_audit": dynamic_audit,
+        "scenario_count": comparison_aggregate["scenario_count"],
+        "xunce_coverage_better_count": comparison_aggregate["xunce_coverage_win_count"],
+        "xunce_coverage_worse_count": comparison_aggregate["xunce_coverage_loss_count"],
+        "xunce_coverage_tie_count": comparison_aggregate["xunce_coverage_tie_count"],
         "xunce_efficiency_regression_count": efficiency_regression,
         "xunce_safety_regression_count": safety_regression,
         "risk_regression_count": risk_regression,
@@ -717,10 +1116,16 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
         "xunce_final_coverage_rate_delta_vs_incumbent": _mean(final_coverage_deltas),
         "xunce_coverage_return_delta_vs_incumbent": _mean(coverage_return_deltas),
         "xunce_coverage_curve_auc_delta_vs_incumbent": _mean(coverage_auc_deltas),
-        "xunce_new_covered_cell_delta_vs_incumbent": _mean(new_cell_deltas),
+        "xunce_new_covered_cell_delta_vs_incumbent": comparison_aggregate["coverage_delta_cells_mean"],
         "xunce_min_roi_group_coverage_delta_vs_incumbent": _mean(min_roi_deltas),
         "coverage_gain_per_path_cost_delta_vs_incumbent": _mean(gain_per_cost_deltas),
         "coverage_gain_per_risk_delta_vs_incumbent": _mean(gain_per_risk_deltas),
+        "xunce_path_cost_delta_vs_incumbent": comparison_aggregate["path_cost_delta_m_mean"],
+        "xunce_risk_delta_vs_incumbent": comparison_aggregate["risk_delta_mean"],
+        "risk_cost_weighted_delta_vs_incumbent": _mean([row.get("risk_cost_weighted_delta") for row in comparison_pairs]),
+        "coverage_per_100m_delta_vs_incumbent": comparison_aggregate["coverage_per_100m_delta_mean"],
+        "risk_per_100m_delta_vs_incumbent": _mean([row.get("risk_per_100m_delta") for row in comparison_pairs]),
+        "comparison_aggregate": comparison_aggregate,
         "policy_disagreement_count": disagreement_count,
         "useful_disagreement_count": useful_disagreement_count,
         "selected_probability_median": _median([row["selected_probability_median"] for row in episodes]),
@@ -737,7 +1142,475 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
             for row in steps
             if row.get("dynamic_candidate_validation_missing") is True
         ),
+        "dynamic_candidate_generation_executed": dynamic_audit["dynamic_candidate_generation_executed"],
+        "dynamic_candidate_generation_source": dynamic_audit["dynamic_candidate_generation_source"],
+        "dynamic_candidate_validation_mode": dynamic_audit["dynamic_candidate_validation_mode"],
+        "dynamic_validation_work_root": dynamic_audit["dynamic_validation_work_root"],
+        "dynamic_validation_work_root_path_length": dynamic_audit["dynamic_validation_work_root_path_length"],
+        "dynamic_validation_max_path_length": dynamic_audit["dynamic_validation_max_path_length"],
+        "dynamic_proposal_count": dynamic_audit["dynamic_proposal_count"],
+        "dynamic_validation_attempt_count": dynamic_audit["dynamic_validation_attempt_count"],
+        "dynamic_validation_success_count": dynamic_audit["dynamic_validation_success_count"],
+        "dynamic_validation_failure_count": dynamic_audit["dynamic_validation_failure_count"],
+        "dynamic_validation_cache_hit_count": dynamic_audit["dynamic_validation_cache_hit_count"],
+        "dynamic_contract_sidecar_missing_count": dynamic_audit["dynamic_contract_sidecar_missing_count"],
+        "dynamic_path_length_preflight_failure_count": dynamic_audit["dynamic_path_length_preflight_failure_count"],
+        "in_process_batch_astar_validation_count": dynamic_audit["in_process_batch_astar_validation_count"],
+        "path_planner_route_adapter_success_count": dynamic_audit["path_planner_route_adapter_success_count"],
+        "path_planner_route_adapter_failure_count": dynamic_audit["path_planner_route_adapter_failure_count"],
+        "path_planner_route_adapter_audit_sample_count": dynamic_audit["path_planner_route_adapter_audit_sample_count"],
+        "path_planner_route_adapter_audit_failure_count": dynamic_audit["path_planner_route_adapter_audit_failure_count"],
+        "adapter_batch_astar_mismatch_count": dynamic_audit["adapter_batch_astar_mismatch_count"],
+        "adapter_audit_passed": dynamic_audit["adapter_audit_passed"],
+        "sidecar_grid_astar_screening_count": dynamic_audit["sidecar_grid_astar_screening_count"],
+        "sidecar_grid_astar_diagnostic_count": dynamic_audit["sidecar_grid_astar_diagnostic_count"],
+        "adapter_error_type_counts": dynamic_audit["adapter_error_type_counts"],
+        "adapter_error_message_samples": dynamic_audit["adapter_error_message_samples"],
+        "planner_validation_backend_counts": dynamic_audit["planner_validation_backend_counts"],
+        "validation_evidence_kind_counts": dynamic_audit["validation_evidence_kind_counts"],
+        "dynamic_validation_full_adapter_evidence_passed": dynamic_audit["dynamic_validation_full_adapter_evidence_passed"],
+        "dynamic_planner_validation_backend_counts": dynamic_audit["planner_validation_backend_counts"],
+        "dynamic_sidecar_grid_astar_fallback_count": dynamic_audit["sidecar_grid_astar_fallback_count"],
+        "dynamic_validation_source_root": dynamic_audit["dynamic_validation_source_root"],
+        "dynamic_candidate_generation_missing_count": dynamic_audit["dynamic_candidate_generation_missing_count"],
+        "state_conditioned_candidate_generation": dynamic_audit["state_conditioned_candidate_generation"],
+        "candidate_set_hash_mismatch_count": _candidate_set_hash_mismatch_count(steps),
+        "paired_decision_audit_row_count": len(paired_decision_rows),
+        "candidate_generation_effect_scope": (
+            "dynamic_generator_plus_policy_closed_loop"
+            if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process"
+            else "static_candidate_set"
+        ),
+        "model_selection_evidence_scope": (
+            "same_state_same_candidate_set_paired_decision_audit"
+            if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process"
+            else "static_candidate_set"
+        ),
+        "closed_loop_dynamic_rollout_summary": {
+            "enabled": config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process",
+            "scenario_count": comparison_aggregate["scenario_count"],
+            "xunce_coverage_win_count": comparison_aggregate["xunce_coverage_win_count"],
+            "xunce_coverage_loss_count": comparison_aggregate["xunce_coverage_loss_count"],
+            "coverage_delta_cells_mean": comparison_aggregate["coverage_delta_cells_mean"],
+            "path_cost_delta_m_mean": comparison_aggregate["path_cost_delta_m_mean"],
+            "risk_delta_mean": comparison_aggregate["risk_delta_mean"],
+        },
+        "same_candidate_set_policy_selection_summary": {
+            "paired_decision_audit_row_count": len(paired_decision_rows),
+            "policy_disagreement_count": disagreement_count,
+            "useful_disagreement_count": useful_disagreement_count,
+        },
+        "closed_loop_dynamic_rollout_advantage_established": False,
+        "same_candidate_set_policy_selection_advantage_established": bool(useful_disagreement_count > 0),
     }
+
+
+def _dynamic_validation_audit(
+    config: dict[str, Any],
+    source: dict[str, Any],
+    dynamic_proposals: list[dict[str, Any]],
+    dynamic_validation_rows: list[dict[str, Any]],
+    steps: list[dict[str, Any]],
+    *,
+    repo_root: Path,
+    output_root: Path,
+) -> dict[str, Any]:
+    generation_executed = config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process"
+    validation_attempts = len(dynamic_validation_rows)
+    validation_success = sum(1 for row in dynamic_validation_rows if row.get("proposal_validated_by_path_feedback") is True and row.get("proposal_only") is False)
+    contract_sidecar_missing = sum(
+        1
+        for row in dynamic_validation_rows
+        if row.get("dynamic_contract_missing") is True
+        or row.get("dynamic_sidecar_missing") is True
+        or row.get("path_feedback_validation_source") == "dynamic_contract_or_sidecar_missing"
+    )
+    generation_missing = sum(
+        1
+        for row in steps
+        if "dynamic_candidate_generation_missing" in set(row.get("reason_codes", []))
+        or "no_valid_dynamic_candidates" in set(row.get("reason_codes", []))
+    )
+    backend_counts = _count_by_field(dynamic_validation_rows, "planner_validation_backend")
+    evidence_kind_counts = _count_by_field(dynamic_validation_rows, "validation_evidence_kind")
+    batch_astar_count = sum(
+        1
+        for row in dynamic_validation_rows
+        if row.get("planner_validation_backend") == "in_process_path_planner_astar_batch"
+        and row.get("proposal_validated_by_path_feedback") is True
+        and row.get("proposal_only") is False
+    )
+    path_length_preflight_failures = sum(
+        1
+        for row in dynamic_validation_rows
+        if row.get("path_feedback_validation_source") == "path_length_preflight_failed"
+        or row.get("failure_reason") == "path_length_preflight_failed"
+        or row.get("path_length_gate_passed") is False
+    )
+    route_success = sum(
+        1
+        for row in dynamic_validation_rows
+        if row.get("planner_validation_backend") == "path_planner_route_adapter"
+        and row.get("proposal_validated_by_path_feedback") is True
+        and row.get("proposal_only") is False
+    )
+    route_failure = sum(
+        1
+        for row in dynamic_validation_rows
+        if row.get("planner_validation_backend") == "path_planner_route_adapter"
+        and (
+            row.get("proposal_validated_by_path_feedback") is not True
+            or row.get("path_planner_adapter_audit_status") in {"failed", "not_attempted_path_length_preflight_failed"}
+        )
+    )
+    sidecar_screening = sum(
+        1 for row in dynamic_validation_rows if row.get("planner_validation_backend") == "sidecar_grid_astar_screening"
+    )
+    sidecar_diagnostic = sum(
+        1 for row in dynamic_validation_rows if row.get("planner_validation_backend") == "sidecar_grid_astar_diagnostic"
+    )
+    old_sidecar_fallback = sum(
+        1 for row in dynamic_validation_rows if row.get("planner_validation_backend") == "sidecar_grid_astar_fallback"
+    )
+    full_adapter_evidence = bool(
+        route_success > 0
+        and route_failure == 0
+        and sidecar_screening == 0
+        and old_sidecar_fallback == 0
+        and batch_astar_count == 0
+        and path_length_preflight_failures == 0
+    )
+    adapter_error_samples = unique_sorted(
+        [str(row.get("adapter_error_message_tail")) for row in dynamic_validation_rows if row.get("adapter_error_message_tail")]
+    )[:3]
+    sample_audit = _path_planner_route_adapter_sample_audit(
+        config,
+        source,
+        dynamic_validation_rows,
+        steps,
+        repo_root=repo_root,
+        output_root=output_root,
+    )
+    dynamic_work_root = Path(str(config.get("dynamic_validation_work_root", "")))
+    return {
+        "schema_version": "xunce-exploration-coverage-dynamic-validation-audit/v1",
+        "dynamic_candidate_generation_executed": generation_executed,
+        "dynamic_candidate_generation_source": DYNAMIC_FRONTIER_NBV_GENERATION_SOURCE if generation_executed else "",
+        "dynamic_candidate_validation_mode": config.get("dynamic_candidate_validation_mode", ""),
+        "dynamic_validation_work_root": str(dynamic_work_root),
+        "dynamic_validation_work_root_path_length": len(str(dynamic_work_root.resolve())) if str(dynamic_work_root) else 0,
+        "dynamic_validation_max_path_length": int(config.get("dynamic_validation_max_path_length", 180)),
+        "dynamic_proposal_count": len(dynamic_proposals),
+        "dynamic_validation_attempt_count": validation_attempts,
+        "dynamic_validation_success_count": validation_success,
+        "dynamic_validation_failure_count": max(0, validation_attempts - validation_success),
+        "dynamic_validation_cache_hit_count": sum(1 for row in dynamic_validation_rows if row.get("dynamic_validation_cache_hit") is True),
+        "dynamic_contract_sidecar_missing_count": contract_sidecar_missing,
+        "dynamic_path_length_preflight_failure_count": path_length_preflight_failures,
+        "path_planner_route_adapter_success_count": route_success,
+        "path_planner_route_adapter_failure_count": route_failure,
+        "path_planner_route_adapter_audit_sample_count": sample_audit["sample_count"],
+        "path_planner_route_adapter_audit_failure_count": sample_audit["failure_count"],
+        "adapter_batch_astar_mismatch_count": sample_audit["mismatch_count"],
+        "adapter_audit_passed": sample_audit["passed"],
+        "adapter_audit_rows": sample_audit["rows"],
+        "in_process_batch_astar_validation_count": batch_astar_count,
+        "sidecar_grid_astar_screening_count": sidecar_screening,
+        "sidecar_grid_astar_diagnostic_count": sidecar_diagnostic,
+        "sidecar_grid_astar_fallback_count": old_sidecar_fallback,
+        "adapter_error_type_counts": _count_by_field(dynamic_validation_rows, "adapter_error_type"),
+        "adapter_error_message_samples": adapter_error_samples,
+        "planner_validation_backend_counts": backend_counts,
+        "validation_evidence_kind_counts": evidence_kind_counts,
+        "dynamic_validation_full_adapter_evidence_passed": full_adapter_evidence,
+        "dynamic_validation_source_root": str(source["root"]),
+        "dynamic_candidate_generation_missing_count": generation_missing,
+        "state_conditioned_candidate_generation": bool(config.get("state_conditioned_candidate_generation", True)) and generation_executed,
+        "path_feedback_validation_source_counts": _count_by_field(dynamic_validation_rows, "path_feedback_validation_source"),
+        "frontier_candidate_source_counts": _count_by_field(dynamic_validation_rows, "frontier_candidate_source"),
+    }
+
+
+def _path_planner_route_adapter_sample_audit(
+    config: dict[str, Any],
+    source: dict[str, Any],
+    dynamic_validation_rows: list[dict[str, Any]],
+    steps: list[dict[str, Any]],
+    *,
+    repo_root: Path,
+    output_root: Path,
+) -> dict[str, Any]:
+    if not bool(config.get("dynamic_adapter_audit_enabled", False)):
+        return {"sample_count": 0, "failure_count": 0, "mismatch_count": 0, "passed": False, "rows": []}
+    if config.get("candidate_refresh_mode") != "dynamic_frontier_nbv_in_process":
+        return {"sample_count": 0, "failure_count": 0, "mismatch_count": 0, "passed": False, "rows": []}
+
+    samples = _adapter_audit_sample_rows(
+        dynamic_validation_rows,
+        steps,
+        max_routes=int(config.get("dynamic_adapter_audit_max_routes", 128)),
+        min_per_frontier_source=int(config.get("dynamic_adapter_audit_min_per_frontier_source", 1)),
+    )
+    if not samples:
+        return {"sample_count": 0, "failure_count": 0, "mismatch_count": 0, "passed": False, "rows": []}
+
+    scenario_by_id = {
+        str(row.get("scenario_id")): row
+        for row in source["path_feedback"].get("scenarios", [])
+        if isinstance(row, dict)
+    }
+    slice_by_id = {str(row.get("scenario_id")): row for row in source["slices"] if isinstance(row, dict)}
+    audit_rows: list[dict[str, Any]] = []
+    for index, sample in enumerate(samples):
+        scenario_id = str(sample.get("scenario_id") or "")
+        scenario = scenario_by_id.get(scenario_id, {"scenario_id": scenario_id})
+        slice_row = slice_by_id.get(scenario_id, {})
+        contract_path = _resolved_file(slice_row.get("contract"), repo_root)
+        sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
+        batch_hash = _short_hash(
+            {
+                "scenario_id": scenario_id,
+                "policy": sample.get("policy"),
+                "step_index": sample.get("step_index"),
+                "cell": sample.get("cell"),
+                "candidate_set_hash": sample.get("candidate_set_hash"),
+            }
+        )
+        if contract_path is None or sidecar_path is None:
+            audit_rows.append(
+                _adapter_audit_result_row(
+                    sample,
+                    batch_hash=batch_hash,
+                    audit_status="failed",
+                    failure_reason="adapter_audit_contract_or_sidecar_missing",
+                    mismatch=True,
+                )
+            )
+            continue
+        current_cell = _cell_tuple(sample.get("current_cell_before")) or (0, 0)
+        output_work_root = Path(str(config.get("dynamic_validation_work_root"))) / "_adapter_audit" / batch_hash
+        try:
+            adapter_rows = validate_candidate_cells(
+                scenario=scenario,
+                proposal_rows=[dict(sample)],
+                contract_path=contract_path,
+                sidecar_path=sidecar_path,
+                current_cell=current_cell,
+                repo_root=repo_root,
+                output_work_root=output_work_root,
+                validation_mode=IN_PROCESS_VALIDATION_MODE,
+                top_k=1,
+                allow_open_grid_fallback=bool(config.get("allow_open_grid_fallback", False)),
+                debug_validation_artifacts=bool(config.get("debug_validation_artifacts", False)),
+                max_validation_path_length=int(config.get("dynamic_validation_max_path_length", 180)),
+                sidecar_fallback_mode="diagnostic_only",
+                validation_batch_hash=batch_hash,
+            )
+        except Exception as exc:  # pragma: no cover - defensive audit isolation
+            audit_rows.append(
+                _adapter_audit_result_row(
+                    sample,
+                    batch_hash=batch_hash,
+                    audit_status="failed",
+                    failure_reason=f"adapter_audit_exception:{type(exc).__name__}",
+                    mismatch=True,
+                )
+            )
+            continue
+        adapter_row = adapter_rows[0] if adapter_rows else {}
+        mismatch_reasons = _adapter_audit_mismatch_reasons(sample, adapter_row)
+        audit_rows.append(
+            _adapter_audit_result_row(
+                sample,
+                adapter_row=adapter_row,
+                batch_hash=batch_hash,
+                audit_status="passed" if not mismatch_reasons else "mismatch",
+                failure_reason=";".join(mismatch_reasons),
+                mismatch=bool(mismatch_reasons),
+                sample_index=index,
+            )
+        )
+
+    failure_count = sum(1 for row in audit_rows if row.get("adapter_audit_status") == "failed")
+    mismatch_count = sum(1 for row in audit_rows if row.get("adapter_batch_astar_mismatch") is True)
+    return {
+        "sample_count": len(audit_rows),
+        "failure_count": failure_count,
+        "mismatch_count": mismatch_count,
+        "passed": bool(audit_rows) and failure_count == 0 and mismatch_count == 0,
+        "rows": audit_rows,
+    }
+
+
+def _adapter_audit_sample_rows(
+    dynamic_validation_rows: list[dict[str, Any]],
+    steps: list[dict[str, Any]],
+    *,
+    max_routes: int,
+    min_per_frontier_source: int,
+) -> list[dict[str, Any]]:
+    formal_rows = [
+        row
+        for row in dynamic_validation_rows
+        if row.get("planner_validation_backend") == "in_process_path_planner_astar_batch"
+        and row.get("proposal_validated_by_path_feedback") is True
+        and row.get("proposal_only") is False
+        and _cell_tuple(row.get("cell")) is not None
+    ]
+    if not formal_rows or max_routes <= 0:
+        return []
+    selected_keys = {
+        (
+            str(row.get("scenario_id")),
+            str(row.get("policy")),
+            int(row.get("step_index", 0) or 0),
+            str(row.get("candidate_set_hash") or ""),
+            tuple(_cell_tuple(row.get("selected_cell")) or (-1, -1)),
+        )
+        for row in steps
+        if row.get("selected_cell") is not None
+    }
+    selected: list[dict[str, Any]] = []
+    family: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    def add(row: dict[str, Any], bucket: list[dict[str, Any]]) -> None:
+        key = _adapter_audit_row_key(row)
+        if key in seen:
+            return
+        seen.add(key)
+        bucket.append(row)
+
+    for row in sorted(formal_rows, key=_adapter_audit_sort_key):
+        cell = _cell_tuple(row.get("cell")) or (-1, -1)
+        selected_key = (
+            str(row.get("scenario_id")),
+            str(row.get("policy")),
+            int(row.get("step_index", 0) or 0),
+            str(row.get("candidate_set_hash") or ""),
+            cell,
+        )
+        if selected_key in selected_keys:
+            add(row, selected)
+
+    for source_name in unique_sorted([str(row.get("frontier_candidate_source") or "missing") for row in formal_rows]):
+        count = 0
+        for row in sorted(formal_rows, key=_adapter_audit_sort_key):
+            if str(row.get("frontier_candidate_source") or "missing") != source_name:
+                continue
+            add(row, family)
+            count += 1
+            if count >= min_per_frontier_source:
+                break
+
+    for row in sorted(formal_rows, key=_adapter_audit_sort_key):
+        add(row, remaining)
+
+    ordered = selected + family + remaining
+    deduped: list[dict[str, Any]] = []
+    emitted: set[tuple[Any, ...]] = set()
+    for row in ordered:
+        key = _adapter_audit_row_key(row)
+        if key in emitted:
+            continue
+        emitted.add(key)
+        deduped.append(dict(row))
+        if len(deduped) >= max_routes:
+            break
+    return deduped
+
+
+def _adapter_audit_mismatch_reasons(batch_row: dict[str, Any], adapter_row: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if adapter_row.get("proposal_validated_by_path_feedback") is not True or adapter_row.get("proposal_only") is True:
+        reasons.append("adapter_candidate_not_formal")
+    for field in ("reachable", "open_grid_fallback_used"):
+        if bool(batch_row.get(field)) != bool(adapter_row.get(field)):
+            reasons.append(f"{field}_mismatch")
+    for field in ("path_cost", "path_length", "risk"):
+        left = _finite_or_none(batch_row.get(field))
+        right = _finite_or_none(adapter_row.get(field))
+        if left is None or right is None:
+            reasons.append(f"{field}_missing")
+        elif abs(left - right) > max(1.0e-6, 1.0e-6 * max(abs(left), abs(right), 1.0)):
+            reasons.append(f"{field}_mismatch")
+    return unique_sorted(reasons)
+
+
+def _adapter_audit_result_row(
+    batch_row: dict[str, Any],
+    *,
+    batch_hash: str,
+    audit_status: str,
+    failure_reason: str,
+    mismatch: bool,
+    adapter_row: dict[str, Any] | None = None,
+    sample_index: int = 0,
+) -> dict[str, Any]:
+    adapter_row = adapter_row or {}
+    return {
+        "schema_version": "xunce-exploration-coverage-adapter-sample-audit/v1",
+        "sample_index": int(sample_index),
+        "scenario_id": batch_row.get("scenario_id"),
+        "policy": batch_row.get("policy"),
+        "step_index": batch_row.get("step_index"),
+        "candidate_set_hash": batch_row.get("candidate_set_hash"),
+        "cell": batch_row.get("cell"),
+        "frontier_candidate_source": batch_row.get("frontier_candidate_source"),
+        "validation_batch_hash": batch_hash,
+        "batch_backend": batch_row.get("planner_validation_backend"),
+        "adapter_backend": adapter_row.get("planner_validation_backend"),
+        "batch_path_cost": batch_row.get("path_cost"),
+        "adapter_path_cost": adapter_row.get("path_cost"),
+        "batch_path_length": batch_row.get("path_length"),
+        "adapter_path_length": adapter_row.get("path_length"),
+        "batch_risk": batch_row.get("risk"),
+        "adapter_risk": adapter_row.get("risk"),
+        "adapter_audit_status": audit_status,
+        "adapter_batch_astar_mismatch": bool(mismatch),
+        "failure_reason": failure_reason,
+    }
+
+
+def _adapter_audit_row_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(row.get("scenario_id")),
+        str(row.get("policy")),
+        int(row.get("step_index", 0) or 0),
+        str(row.get("candidate_set_hash") or ""),
+        _cell_tuple(row.get("cell")),
+    )
+
+
+def _adapter_audit_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    cell = _cell_tuple(row.get("cell")) or (1_000_000, 1_000_000)
+    return (
+        str(row.get("scenario_id")),
+        int(row.get("step_index", 0) or 0),
+        str(row.get("policy")),
+        str(row.get("frontier_candidate_source") or ""),
+        cell[0],
+        cell[1],
+    )
+
+
+def _resolved_file(value: Any, repo_root: Path) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = resolve_path(Path(value), repo_root)
+    return path if path.is_file() else None
+
+
+def _short_hash(payload: Any) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
+def _candidate_set_hash_mismatch_count(steps: list[dict[str, Any]]) -> int:
+    by_key: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for row in steps:
+        by_key[(str(row.get("scenario_id")), int(row.get("step_index", 0)))].add(str(row.get("candidate_set_hash") or ""))
+    return sum(1 for hashes in by_key.values() if len(hashes - {""}) > 1)
 
 
 def _model_inference_audit(model_bundle: dict[str, Any], inference_rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -830,6 +1703,13 @@ def _decision(
         reasons.append("missing_xunce_candidate_checkpoint")
     if "missing_incumbent_policy_checkpoint" in source["read_reason_codes"]:
         reasons.append("missing_incumbent_policy_checkpoint")
+    if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
+        if comparison.get("dynamic_contract_sidecar_missing_count", 0) > 0:
+            reasons.append("dynamic_contract_sidecar_missing")
+        if comparison.get("dynamic_candidate_generation_missing_count", 0) > 0:
+            reasons.append("dynamic_candidate_generation_missing")
+        if comparison.get("dynamic_validation_attempt_count", 0) <= 0:
+            reasons.append("dynamic_candidate_validation_not_executed")
     reasons = unique_sorted(reasons)
     coverage_advantage = (
         not reasons
@@ -882,6 +1762,18 @@ def _decision(
         diagnostic_reasons.append("coverage_gain_per_risk_regressive")
     if comparison.get("dynamic_candidate_validation_missing_count", 0) > 0:
         diagnostic_reasons.append("dynamic_candidate_validation_missing")
+    if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process" and comparison.get("dynamic_validation_success_count", 0) <= 0:
+        diagnostic_reasons.append("dynamic_candidate_validation_no_success")
+    if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
+        if comparison.get("dynamic_path_length_preflight_failure_count", 0) > 0:
+            diagnostic_reasons.append("dynamic_validation_path_length_preflight_failed")
+        if comparison.get("dynamic_validation_full_adapter_evidence_passed") is not True:
+            if comparison.get("sidecar_grid_astar_screening_count", 0) > 0 or comparison.get("dynamic_sidecar_grid_astar_fallback_count", 0) > 0:
+                diagnostic_reasons.append("sidecar_screening_not_full_adapter_evidence")
+            elif comparison.get("in_process_batch_astar_validation_count", 0) > 0:
+                diagnostic_reasons.append("dynamic_batch_astar_screening_not_full_adapter_evidence")
+            else:
+                diagnostic_reasons.append("dynamic_validation_not_full_adapter_evidence")
     blocking_reasons = unique_sorted(reasons)
     diagnostic_reasons = unique_sorted(diagnostic_reasons)
     evidence_gate = not any(
@@ -902,6 +1794,7 @@ def _decision(
         reason in {"model_inference_mask_violation", "no_valid_candidates"}
         or "boundary" in reason
         or "fallback" in reason
+        or reason.startswith("dynamic_")
         for reason in blocking_reasons
     )
     return {
@@ -993,6 +1886,53 @@ def _summary(
         "xunce_min_roi_group_coverage_delta_vs_incumbent": comparison["xunce_min_roi_group_coverage_delta_vs_incumbent"],
         "coverage_gain_per_path_cost_delta_vs_incumbent": comparison["coverage_gain_per_path_cost_delta_vs_incumbent"],
         "coverage_gain_per_risk_delta_vs_incumbent": comparison["coverage_gain_per_risk_delta_vs_incumbent"],
+        "xunce_path_cost_delta_vs_incumbent": comparison["xunce_path_cost_delta_vs_incumbent"],
+        "xunce_risk_delta_vs_incumbent": comparison["xunce_risk_delta_vs_incumbent"],
+        "risk_cost_weighted_delta_vs_incumbent": comparison["risk_cost_weighted_delta_vs_incumbent"],
+        "coverage_per_100m_delta_vs_incumbent": comparison["coverage_per_100m_delta_vs_incumbent"],
+        "risk_per_100m_delta_vs_incumbent": comparison["risk_per_100m_delta_vs_incumbent"],
+        "comparison_aggregate": comparison["comparison_aggregate"],
+        "comparison_utility_profiles": config["comparison_utility_profiles"],
+        "dynamic_candidate_generation_executed": comparison["dynamic_candidate_generation_executed"],
+        "dynamic_candidate_generation_source": comparison["dynamic_candidate_generation_source"],
+        "dynamic_candidate_validation_mode": comparison["dynamic_candidate_validation_mode"],
+        "dynamic_validation_work_root": comparison["dynamic_validation_work_root"],
+        "dynamic_validation_work_root_path_length": comparison["dynamic_validation_work_root_path_length"],
+        "dynamic_validation_max_path_length": comparison["dynamic_validation_max_path_length"],
+        "dynamic_proposal_count": comparison["dynamic_proposal_count"],
+        "dynamic_validation_attempt_count": comparison["dynamic_validation_attempt_count"],
+        "dynamic_validation_success_count": comparison["dynamic_validation_success_count"],
+        "dynamic_validation_failure_count": comparison["dynamic_validation_failure_count"],
+        "dynamic_validation_cache_hit_count": comparison["dynamic_validation_cache_hit_count"],
+        "dynamic_contract_sidecar_missing_count": comparison["dynamic_contract_sidecar_missing_count"],
+        "dynamic_path_length_preflight_failure_count": comparison["dynamic_path_length_preflight_failure_count"],
+        "in_process_batch_astar_validation_count": comparison["in_process_batch_astar_validation_count"],
+        "path_planner_route_adapter_success_count": comparison["path_planner_route_adapter_success_count"],
+        "path_planner_route_adapter_failure_count": comparison["path_planner_route_adapter_failure_count"],
+        "path_planner_route_adapter_audit_sample_count": comparison["path_planner_route_adapter_audit_sample_count"],
+        "path_planner_route_adapter_audit_failure_count": comparison["path_planner_route_adapter_audit_failure_count"],
+        "adapter_batch_astar_mismatch_count": comparison["adapter_batch_astar_mismatch_count"],
+        "adapter_audit_passed": comparison["adapter_audit_passed"],
+        "sidecar_grid_astar_screening_count": comparison["sidecar_grid_astar_screening_count"],
+        "sidecar_grid_astar_diagnostic_count": comparison["sidecar_grid_astar_diagnostic_count"],
+        "adapter_error_type_counts": comparison["adapter_error_type_counts"],
+        "adapter_error_message_samples": comparison["adapter_error_message_samples"],
+        "planner_validation_backend_counts": comparison["planner_validation_backend_counts"],
+        "validation_evidence_kind_counts": comparison["validation_evidence_kind_counts"],
+        "dynamic_validation_full_adapter_evidence_passed": comparison["dynamic_validation_full_adapter_evidence_passed"],
+        "dynamic_planner_validation_backend_counts": comparison["dynamic_planner_validation_backend_counts"],
+        "dynamic_sidecar_grid_astar_fallback_count": comparison["dynamic_sidecar_grid_astar_fallback_count"],
+        "dynamic_validation_source_root": comparison["dynamic_validation_source_root"],
+        "dynamic_candidate_generation_missing_count": comparison["dynamic_candidate_generation_missing_count"],
+        "state_conditioned_candidate_generation": comparison["state_conditioned_candidate_generation"],
+        "candidate_set_hash_mismatch_count": comparison["candidate_set_hash_mismatch_count"],
+        "paired_decision_audit_row_count": comparison["paired_decision_audit_row_count"],
+        "candidate_generation_effect_scope": comparison["candidate_generation_effect_scope"],
+        "model_selection_evidence_scope": comparison["model_selection_evidence_scope"],
+        "closed_loop_dynamic_rollout_summary": comparison["closed_loop_dynamic_rollout_summary"],
+        "same_candidate_set_policy_selection_summary": comparison["same_candidate_set_policy_selection_summary"],
+        "closed_loop_dynamic_rollout_advantage_established": comparison["closed_loop_dynamic_rollout_advantage_established"],
+        "same_candidate_set_policy_selection_advantage_established": comparison["same_candidate_set_policy_selection_advantage_established"],
         "dynamic_candidate_validation_missing_count": comparison["dynamic_candidate_validation_missing_count"],
         "policy_disagreement_count": comparison["policy_disagreement_count"],
         "useful_disagreement_count": comparison["useful_disagreement_count"],
@@ -1015,6 +1955,12 @@ def _summary(
         "summary": str(paths["summary"]),
         "episodes": str(paths["episodes"]),
         "steps": str(paths["steps"]),
+        "comparison_pairs": str(paths["comparison_pairs"]),
+        "comparison_aggregate_path": str(paths["comparison_aggregate"]),
+        "dynamic_proposals": str(paths["dynamic_proposals"]),
+        "dynamic_validation_results": str(paths["dynamic_validation_results"]),
+        "dynamic_validation_audit": str(paths["dynamic_validation_audit"]),
+        "paired_decision_audit": str(paths["paired_decision_audit"]),
         "model_inference": str(paths["model_inference"]),
         "roi_breakdown": str(paths["roi_breakdown"]),
         "decision_audit": str(paths["decision_audit"]),
@@ -1048,7 +1994,11 @@ def _roi_breakdown(episodes: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _public_episode(row: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in row.items() if key not in {"steps", "inference_rows", "action_indices"}}
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in {"steps", "inference_rows", "action_indices", "dynamic_proposals", "dynamic_validation_rows", "paired_decision_rows"}
+    }
 
 
 def _disagreement_counts(steps: list[dict[str, Any]]) -> tuple[int, int]:
@@ -1081,10 +2031,56 @@ def _candidate_rows_for_step(
     covered_cells: set[tuple[int, int]],
     step_index: int,
     config: dict[str, Any],
-) -> list[dict[str, Any]]:
+    scenario_id: str,
+    slice_row: dict[str, Any],
+    repo_root: Path,
+    output_root: Path,
+    validation_cache: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
     candidates = [dict(candidate) for candidate in _candidate_rows(scenario)]
+    if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
+        formal_candidates, proposal_rows, validation_rows = build_dynamic_frontier_nbv_candidates(
+            scenario=scenario,
+            slice_row=slice_row,
+            current_cell=current_cell,
+            covered_cells=covered_cells,
+            step_index=step_index,
+            config=config,
+            repo_root=repo_root,
+            output_work_root=Path(config["dynamic_validation_work_root"]),
+            validation_cache=validation_cache,
+        )
+        batch_hash = candidate_set_hash(formal_candidates)
+        return {
+            "candidates": formal_candidates,
+            "dynamic_proposals": proposal_rows,
+            "dynamic_validation_rows": validation_rows,
+            "candidate_generation_source": DYNAMIC_FRONTIER_NBV_GENERATION_SOURCE,
+            "candidate_set_id": f"{scenario_id}:step-{step_index}:dynamic:{batch_hash[:16]}",
+            "candidate_set_hash": batch_hash,
+            "dynamic_generation_executed": True,
+            "dynamic_proposal_count": len(proposal_rows),
+            "dynamic_validated_candidate_count": len(formal_candidates),
+            "dynamic_validation_cache_hit": bool(validation_rows and all(row.get("dynamic_validation_cache_hit") is True for row in validation_rows)),
+            "path_feedback_validation_source_counts": _count_by_field(validation_rows, "path_feedback_validation_source"),
+            "frontier_candidate_source_counts": _count_by_field(formal_candidates, "frontier_candidate_source"),
+        }
     if config["candidate_refresh_mode"] != "dynamic_validated_only":
-        return candidates
+        batch_hash = candidate_set_hash(candidates)
+        return {
+            "candidates": candidates,
+            "dynamic_proposals": [],
+            "dynamic_validation_rows": [],
+            "candidate_generation_source": "static_from_source",
+            "candidate_set_id": f"{scenario_id}:step-{step_index}:static:{batch_hash[:16]}",
+            "candidate_set_hash": batch_hash,
+            "dynamic_generation_executed": False,
+            "dynamic_proposal_count": 0,
+            "dynamic_validated_candidate_count": 0,
+            "dynamic_validation_cache_hit": False,
+            "path_feedback_validation_source_counts": {},
+            "frontier_candidate_source_counts": _count_by_field(candidates, "frontier_candidate_source"),
+        }
     refreshed: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate = dict(candidate)
@@ -1120,7 +2116,21 @@ def _candidate_rows_for_step(
             candidate["coverage_overlap_count"] = len(candidate_cells & covered_cells)
             candidate["coverage_overlap_ratio"] = _safe_ratio(len(candidate_cells & covered_cells), len(candidate_cells)) or 0.0
         refreshed.append(candidate)
-    return refreshed
+    batch_hash = candidate_set_hash(refreshed)
+    return {
+        "candidates": refreshed,
+        "dynamic_proposals": [],
+        "dynamic_validation_rows": [],
+        "candidate_generation_source": "dynamic_validated_only",
+        "candidate_set_id": f"{scenario_id}:step-{step_index}:dynamic_validated_only:{batch_hash[:16]}",
+        "candidate_set_hash": batch_hash,
+        "dynamic_generation_executed": False,
+        "dynamic_proposal_count": 0,
+        "dynamic_validated_candidate_count": sum(1 for candidate in refreshed if candidate.get("dynamic_candidate_generated") is True),
+        "dynamic_validation_cache_hit": False,
+        "path_feedback_validation_source_counts": {},
+        "frontier_candidate_source_counts": _count_by_field(refreshed, "frontier_candidate_source"),
+    }
 
 
 def _validated_dynamic_candidate_for_step(candidate: dict[str, Any], step_index: int) -> dict[str, Any] | None:
@@ -1167,6 +2177,156 @@ def _dynamic_candidate_has_validation(row: Any) -> bool:
     return True
 
 
+def _dynamic_artifact_row(
+    row: dict[str, Any],
+    *,
+    scenario_id: str,
+    policy: str,
+    policy_step: int,
+    current_cell: tuple[int, int],
+    covered_cells_hash_value: str,
+    candidate_set_id: str,
+    candidate_set_hash_value: str,
+) -> dict[str, Any]:
+    payload = dict(row)
+    payload.setdefault("scenario_id", scenario_id)
+    payload["policy"] = policy
+    payload.setdefault("step_index", policy_step)
+    payload["current_cell_before"] = list(current_cell)
+    payload["covered_cells_hash"] = covered_cells_hash_value
+    payload["candidate_set_id"] = candidate_set_id
+    payload["candidate_set_hash"] = candidate_set_hash_value
+    return payload
+
+
+def _selected_candidate_metrics(candidates: list[dict[str, Any]], selected_index: Any) -> dict[str, Any]:
+    candidate = _candidate_at(candidates, selected_index)
+    if candidate is None:
+        return {}
+    return {
+        "selected_cell": _candidate_cell(candidate),
+        "selected_path_cost": _candidate_cost(candidate),
+        "selected_risk": _finite_or_none(candidate.get("risk")),
+        "selected_expected_new_coverage_cell_count": _finite_or_none(candidate.get("expected_new_coverage_cell_count")),
+        "selected_roi_weighted_coverage_delta": _finite_or_none(candidate.get("roi_weighted_coverage_delta")),
+    }
+
+
+def _paired_disagreement_counts(rows: list[dict[str, Any]]) -> tuple[int, int]:
+    disagreement = 0
+    useful = 0
+    seen: set[tuple[str, int, str, str]] = set()
+    for row in rows:
+        key = (
+            str(row.get("scenario_id")),
+            int(row.get("step_index", 0) or 0),
+            str(row.get("candidate_set_hash") or ""),
+            str(row.get("covered_cells_hash") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        if row.get("policy_disagreement") is not True:
+            continue
+        disagreement += 1
+        xunce_gain = _finite_or_none(row.get("xunce_selected_expected_new_coverage_cell_count"))
+        incumbent_gain = _finite_or_none(row.get("incumbent_selected_expected_new_coverage_cell_count"))
+        xunce_cost = _finite_or_none(row.get("xunce_selected_path_cost"))
+        incumbent_cost = _finite_or_none(row.get("incumbent_selected_path_cost"))
+        xunce_risk = _finite_or_none(row.get("xunce_selected_risk"))
+        incumbent_risk = _finite_or_none(row.get("incumbent_selected_risk"))
+        if (
+            xunce_gain is not None
+            and incumbent_gain is not None
+            and xunce_cost is not None
+            and incumbent_cost is not None
+            and xunce_risk is not None
+            and incumbent_risk is not None
+            and xunce_gain > incumbent_gain + TOLERANCE
+            and xunce_cost <= incumbent_cost + TOLERANCE
+            and xunce_risk <= incumbent_risk + TOLERANCE
+        ):
+            useful += 1
+    return disagreement, useful
+
+
+def _count_by_field(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(field) or "missing")
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _paired_decision_audit_row(
+    *,
+    scenario_id: str,
+    roi_group: str,
+    split: Any,
+    executing_policy: str,
+    step_index: int,
+    current_cell: tuple[int, int],
+    candidate_set_id: str,
+    candidate_set_hash_value: str,
+    covered_cells_hash_value: str,
+    candidates: list[dict[str, Any]],
+    adapter: dict[str, Any],
+    model_bundle: dict[str, Any],
+) -> dict[str, Any] | None:
+    if executing_policy in ORACLE_POLICIES:
+        return None
+    row = {
+        "schema_version": "xunce-exploration-coverage-paired-decision-audit/v1",
+        "scenario_id": scenario_id,
+        "roi_group": roi_group,
+        "split": split,
+        "executing_policy": executing_policy,
+        "step_index": step_index,
+        "current_cell": list(current_cell),
+        "candidate_set_id": candidate_set_id,
+        "candidate_set_hash": candidate_set_hash_value,
+        "covered_cells_hash": covered_cells_hash_value,
+        "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
+        "action_mask": list(adapter["action_mask"]),
+        "same_state_same_candidate_set": True,
+        "xunce_checkpoint_loaded": bool(model_bundle.get("xunce_checkpoint_loaded")),
+        "incumbent_checkpoint_loaded": bool(model_bundle.get("incumbent_checkpoint_loaded")),
+        "reason_codes": [],
+    }
+    if not adapter.get("has_valid_action"):
+        row["reason_codes"] = ["no_valid_action"]
+        return row
+    if not model_bundle.get("xunce_checkpoint_loaded") or not model_bundle.get("incumbent_checkpoint_loaded"):
+        row["reason_codes"] = ["checkpoint_not_loaded"]
+        return row
+    reasons: list[str] = []
+    try:
+        xunce_detail = _score_xunce_model(model_bundle["xunce_model"], adapter["xunce_batch"])
+        row["xunce_selected_action_index"] = _selected_index(xunce_detail)
+        row["xunce_selected_probability"] = xunce_detail.get("selected_probability")
+        row["xunce_selected_rank"] = xunce_detail.get("selected_rank")
+        row["xunce_finite_outputs"] = xunce_detail.get("finite_outputs")
+        row.update({f"xunce_{key}": value for key, value in _selected_candidate_metrics(candidates, row["xunce_selected_action_index"]).items()})
+    except Exception as exc:  # pragma: no cover
+        reasons.append(f"xunce_shadow_scoring_failed:{type(exc).__name__}")
+    try:
+        incumbent_detail = _policy_detail_to_dict(model_bundle["incumbent_scorer"].score_detail(adapter["incumbent_observation"]))
+        row["incumbent_selected_action_index"] = _selected_index(incumbent_detail)
+        row["incumbent_selected_probability"] = incumbent_detail.get("selected_probability")
+        row["incumbent_selected_rank"] = incumbent_detail.get("selected_rank")
+        row["incumbent_finite_outputs"] = incumbent_detail.get("finite_outputs")
+        row.update({f"incumbent_{key}": value for key, value in _selected_candidate_metrics(candidates, row["incumbent_selected_action_index"]).items()})
+    except Exception as exc:  # pragma: no cover
+        reasons.append(f"incumbent_shadow_scoring_failed:{type(exc).__name__}")
+    row["policy_disagreement"] = (
+        row.get("xunce_selected_action_index") is not None
+        and row.get("incumbent_selected_action_index") is not None
+        and row.get("xunce_selected_action_index") != row.get("incumbent_selected_action_index")
+    )
+    row["reason_codes"] = unique_sorted(reasons)
+    return row
+
+
 def _oracle_selected_index(
     policy_name: str,
     candidates: list[dict[str, Any]],
@@ -1192,7 +2352,15 @@ def _oracle_selected_index(
         path_cost = _candidate_cost(candidate) or 0.0
         risk = _finite_or_none(candidate.get("risk")) or 0.0
         if policy_name == "cost_aware_coverage_oracle":
-            primary = new_count / max(float(path_cost), TOLERANCE)
+            profile = config.get("comparison_utility_profiles", {}).get("risk_aware", DEFAULT_COMPARISON_UTILITY_PROFILES["risk_aware"])
+            roi_gain = _finite_or_none(candidate.get("roi_weighted_coverage_delta"))
+            if roi_gain is None:
+                roi_gain = float(new_count)
+            primary = (
+                float(roi_gain)
+                - float(profile.get("cost_weight", 0.0001)) * float(path_cost)
+                - float(profile.get("risk_weight", 0.01)) * float(path_cost) * float(risk)
+            )
             secondary = float(new_count)
         else:
             primary = float(new_count)
@@ -1296,6 +2464,27 @@ def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
     return float(numeric) / float(denom)
 
 
+def _safe_ratio_v2(numerator: Any, denominator: Any, metric_name: str) -> dict[str, Any]:
+    numeric = _finite_or_none(numerator)
+    denom = _finite_or_none(denominator)
+    if numeric is None:
+        return {"value": None, "reason_codes": [f"{metric_name}:missing_numerator"]}
+    if denom is None:
+        return {"value": None, "reason_codes": [f"{metric_name}:missing_denominator"]}
+    if abs(float(denom)) <= TOLERANCE:
+        return {"value": None, "reason_codes": [f"{metric_name}:near_zero_denominator", "near_zero_denominator"]}
+    return {"value": float(numeric) / float(denom), "reason_codes": []}
+
+
+def _incremental_ratio(numerator: Any, coverage_delta_cells: Any, metric_name: str) -> dict[str, Any]:
+    delta = _finite_or_none(coverage_delta_cells)
+    if delta is None:
+        return {"value": None, "reason_codes": [f"{metric_name}:missing_coverage_delta"]}
+    if float(delta) <= TOLERANCE:
+        return {"value": None, "reason_codes": [f"{metric_name}:no_positive_incremental_coverage", "no_positive_incremental_coverage"]}
+    return _safe_ratio_v2(numerator, delta, metric_name)
+
+
 def _mean(values: list[Any]) -> float:
     numeric = [float(value) for value in values if _finite_or_none(value) is not None]
     return statistics.mean(numeric) if numeric else 0.0
@@ -1304,6 +2493,134 @@ def _mean(values: list[Any]) -> float:
 def _median(values: list[Any]) -> float:
     numeric = [float(value) for value in values if _finite_or_none(value) is not None]
     return statistics.median(numeric) if numeric else 0.0
+
+
+def _iqr(values: list[Any]) -> float:
+    numeric = sorted(float(value) for value in values if _finite_or_none(value) is not None)
+    if not numeric:
+        return 0.0
+    return _percentile(numeric, 75.0) - _percentile(numeric, 25.0)
+
+
+def _percentile(sorted_values: list[float], percentile: float) -> float:
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    position = (len(sorted_values) - 1) * percentile / 100.0
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return sorted_values[int(position)]
+    lower_value = sorted_values[lower]
+    upper_value = sorted_values[upper]
+    return lower_value + (upper_value - lower_value) * (position - lower)
+
+
+def _distribution_fields(prefix: str, values: list[Any]) -> dict[str, float]:
+    numeric = [float(value) for value in values if _finite_or_none(value) is not None]
+    if not numeric:
+        return {
+            f"{prefix}_mean": 0.0,
+            f"{prefix}_median": 0.0,
+            f"{prefix}_iqr": 0.0,
+            f"{prefix}_min": 0.0,
+            f"{prefix}_max": 0.0,
+        }
+    return {
+        f"{prefix}_mean": statistics.mean(numeric),
+        f"{prefix}_median": statistics.median(numeric),
+        f"{prefix}_iqr": _iqr(numeric),
+        f"{prefix}_min": min(numeric),
+        f"{prefix}_max": max(numeric),
+    }
+
+
+def _episode_number(episode: dict[str, Any], field: str) -> float:
+    aliases = {
+        "total_new_cell_count": "new_covered_cell_count",
+        "path_cost_total_m": "path_cost",
+        "risk_total": "risk",
+        "roi_weighted_coverage_total": "valuable_area_covered",
+    }
+    value = _finite_or_none(episode.get(field))
+    if value is None and field in aliases:
+        value = _finite_or_none(episode.get(aliases[field]))
+    return 0.0 if value is None else float(value)
+
+
+def _nullable_delta(left: Any, right: Any) -> float | None:
+    left_number = _finite_or_none(left)
+    right_number = _finite_or_none(right)
+    if left_number is None or right_number is None:
+        return None
+    return float(left_number) - float(right_number)
+
+
+def _oracle_coverage_regret(oracle: dict[str, Any] | None, episode: dict[str, Any]) -> float | None:
+    if oracle is None:
+        return None
+    return max(0.0, _episode_number(oracle, "total_new_cell_count") - _episode_number(episode, "total_new_cell_count"))
+
+
+def _episode_utility(episode: dict[str, Any], profile: dict[str, float]) -> float:
+    return (
+        _episode_number(episode, "roi_weighted_coverage_total")
+        - float(profile.get("cost_weight", 0.0)) * _episode_number(episode, "path_cost_total_m")
+        - float(profile.get("risk_weight", 0.0)) * _episode_number(episode, "risk_cost_weighted_total")
+    )
+
+
+def _oracle_utility_regret(oracle: dict[str, Any] | None, episode: dict[str, Any], profile: dict[str, float]) -> float | None:
+    if oracle is None:
+        return None
+    return max(0.0, _episode_utility(oracle, profile) - _episode_utility(episode, profile))
+
+
+def _utility_pair_outcome(xunce: dict[str, Any], incumbent: dict[str, Any], profile: dict[str, float]) -> str:
+    delta = _episode_utility(xunce, profile) - _episode_utility(incumbent, profile)
+    if delta > TOLERANCE:
+        return "xunce_win"
+    if delta < -TOLERANCE:
+        return "incumbent_win"
+    return "tie"
+
+
+def _coverage_pairwise_outcome(coverage_delta_cells: float) -> str:
+    if coverage_delta_cells > TOLERANCE:
+        return "xunce_coverage_win"
+    if coverage_delta_cells < -TOLERANCE:
+        return "xunce_coverage_loss"
+    return "coverage_tie"
+
+
+def _missing_oracle_reasons(greedy_oracle: dict[str, Any] | None, cost_aware_oracle: dict[str, Any] | None) -> list[str]:
+    reasons: list[str] = []
+    if greedy_oracle is None:
+        reasons.append("missing_greedy_coverage_oracle_episode")
+    if cost_aware_oracle is None:
+        reasons.append("missing_cost_aware_oracle_episode")
+    return reasons
+
+
+def _comparison_utility_profiles(payload: Any) -> dict[str, dict[str, float]]:
+    if payload is None:
+        payload = DEFAULT_COMPARISON_UTILITY_PROFILES
+    if not isinstance(payload, dict) or not payload:
+        raise ConfigError("comparison_utility_profiles must be a non-empty object")
+    normalized: dict[str, dict[str, float]] = {}
+    for name, profile in payload.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ConfigError("comparison_utility_profiles keys must be non-empty strings")
+        if not isinstance(profile, dict):
+            raise ConfigError(f"comparison_utility_profiles.{name} must be an object")
+        cost_weight = _nonnegative_float(profile.get("cost_weight", 0.0), f"comparison_utility_profiles.{name}.cost_weight")
+        risk_weight = _nonnegative_float(profile.get("risk_weight", 0.0), f"comparison_utility_profiles.{name}.risk_weight")
+        normalized[name] = {"cost_weight": cost_weight, "risk_weight": risk_weight}
+    for required in ("coverage_first", "cost_aware", "risk_aware"):
+        if required not in normalized:
+            normalized[required] = dict(DEFAULT_COMPARISON_UTILITY_PROFILES[required])
+    return normalized
 
 
 def _none_to_zero(value: Any) -> float:
@@ -1348,8 +2665,14 @@ def _render_report(summary: dict[str, Any]) -> str:
             f"- xunce_coverage_advantage_established: `{summary['xunce_coverage_advantage_established']}`",
             f"- xunce_coverage_return_delta_vs_incumbent: `{summary['xunce_coverage_return_delta_vs_incumbent']}`",
             f"- xunce_coverage_curve_auc_delta_vs_incumbent: `{summary['xunce_coverage_curve_auc_delta_vs_incumbent']}`",
+            f"- xunce_new_covered_cell_delta_vs_incumbent: `{summary['xunce_new_covered_cell_delta_vs_incumbent']}`",
+            f"- xunce_path_cost_delta_vs_incumbent: `{summary['xunce_path_cost_delta_vs_incumbent']}`",
+            f"- xunce_risk_delta_vs_incumbent: `{summary['xunce_risk_delta_vs_incumbent']}`",
+            f"- coverage_per_100m_delta_vs_incumbent: `{summary['coverage_per_100m_delta_vs_incumbent']}`",
             f"- xunce_efficiency_regression_count: `{summary['xunce_efficiency_regression_count']}`",
             f"- xunce_safety_regression_count: `{summary['xunce_safety_regression_count']}`",
+            f"- comparison_pairs: `{summary['comparison_pairs']}`",
+            f"- comparison_aggregate: `{summary['comparison_aggregate_path']}`",
             f"- next_required_change: `{summary['next_required_change']}`",
             "",
             "This is an offline shadow rollout comparison. It does not approve default-policy replacement, real executor connection, checkpoint publication, PPO training, online canary, or real-world performance claims.",
