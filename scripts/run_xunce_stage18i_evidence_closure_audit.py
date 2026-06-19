@@ -27,6 +27,7 @@ DEFAULT_OUTPUT_ROOT = "outputs/path_feedback_batch_xunce_stage18i_evidence_closu
 
 STAGE18I_SUMMARY_FILE = "xunce-risk-constrained-frontier-nbv-candidate-generation-summary.json"
 STAGE18I2_SUMMARY_FILE = "xunce-risk-aware-frontier-nbv-candidate-repair-summary.json"
+STAGE18I3_SUMMARY_FILE = "xunce-true-frontier-nbv-candidate-source-summary.json"
 COMPARISON_SUMMARY_FILE = "xunce-high-fidelity-real-map-comparison-summary.json"
 BINDING_SUMMARY_FILE = "xunce-true-incumbent-selection-binding-summary.json"
 QUANTIZATION_SUMMARY_FILE = "xunce-risk-coverage-cost-quantization-summary.json"
@@ -199,6 +200,7 @@ def _load_evidence(config: dict[str, Any]) -> dict[str, Any]:
         (
             stage18i_root / STAGE18I_SUMMARY_FILE,
             stage18i_root / STAGE18I2_SUMMARY_FILE,
+            stage18i_root / STAGE18I3_SUMMARY_FILE,
         ),
         evidence["reason_codes"],
         "missing_stage18i_candidate_generation",

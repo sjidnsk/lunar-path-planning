@@ -150,6 +150,26 @@ class XunceHighFidelityRealMapComparisonTests(unittest.TestCase):
         self.assertIn("missing_xunce_candidate_checkpoint", summary["reason_codes"])
         self.assertEqual(summary["next_required_change"], "fix_xunce_sandbox_candidate_preflight")
 
+    def test_frontier_nbv_candidate_root_can_request_true_model_rebinding(self) -> None:
+        from scripts.run_xunce_high_fidelity_real_map_comparison import run_xunce_high_fidelity_real_map_comparison
+
+        summary_path = self.expansion_root / "xunce-high-fidelity-real-map-roi-expansion-summary.json"
+        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary_payload["next_required_change"] = "rerun_true_model_inference_and_binding"
+        summary_payload["true_frontier_nbv_candidate_source_replacement_status"] = "passed"
+        summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = run_xunce_high_fidelity_real_map_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertTrue(summary["source_match_audit_passed"])
+        self.assertEqual(summary["source_roi_expansion_next_required_change"], "rerun_true_model_inference_and_binding")
+        self.assertTrue(summary["true_model_inference_executed"])
+        self.assertFalse(summary["proxy_selection_used"])
+
     def test_missing_incumbent_checkpoint_routes_to_incumbent_fix(self) -> None:
         from scripts.run_xunce_high_fidelity_real_map_comparison import run_xunce_high_fidelity_real_map_comparison
 

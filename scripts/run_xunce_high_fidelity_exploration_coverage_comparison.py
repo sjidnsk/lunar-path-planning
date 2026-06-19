@@ -94,6 +94,8 @@ REVIEW_COMPARISON_NEXT_REQUIRED_CHANGE = "review_xunce_incumbent_comparison_metr
 
 POLICIES = ("xunce", "incumbent")
 ORACLE_POLICIES = ("greedy_coverage_oracle", "cost_aware_coverage_oracle")
+MODEL_POLICY_INFERENCE_KIND = "true_checkpoint_inference"
+ORACLE_POLICY_INFERENCE_KIND = "oracle_offline_policy"
 TOLERANCE = 1.0e-12
 
 BOUNDARY_FIELDS = tuple(global_99_boundary_defaults()) + (
@@ -184,6 +186,7 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     roi_breakdown = _roi_breakdown(episodes)
     model_inference = _model_inference_audit(model_bundle, inference_rows)
     decision = _decision(
+        config=config,
         source=source,
         boundary=boundary,
         source_match=source_match,
@@ -261,9 +264,13 @@ def _load_config(
     normalized["coverage_denominator_cells"] = _positive_int(payload.get("coverage_denominator_cells", 1000), "coverage_denominator_cells")
     normalized["path_budget_m"] = _positive_float(payload.get("path_budget_m", 5000.0), "path_budget_m")
     normalized["planning_backend"] = _require_string(payload.get("planning_backend", "channel_aware_astar"), "planning_backend")
+    normalized["diagnostic_reason_codes"] = list(payload.get("diagnostic_reason_codes", [])) if isinstance(payload.get("diagnostic_reason_codes", []), list) else []
     normalized["candidate_refresh_mode"] = _require_string(payload.get("candidate_refresh_mode", "static_from_source"), "candidate_refresh_mode")
-    if normalized["candidate_refresh_mode"] not in {"static_from_source", "dynamic_from_coverage_memory"}:
-        raise ConfigError("candidate_refresh_mode must be static_from_source or dynamic_from_coverage_memory")
+    if normalized["candidate_refresh_mode"] == "dynamic_from_coverage_memory":
+        normalized["candidate_refresh_mode"] = "dynamic_validated_only"
+        normalized["diagnostic_reason_codes"].append("dynamic_from_coverage_memory_legacy_mode")
+    if normalized["candidate_refresh_mode"] not in {"static_from_source", "dynamic_validated_only"}:
+        raise ConfigError("candidate_refresh_mode must be static_from_source or dynamic_validated_only")
     normalized["coverage_metric_mode"] = _require_string(payload.get("coverage_metric_mode", "endpoint_footprint"), "coverage_metric_mode")
     if normalized["coverage_metric_mode"] not in {"endpoint_footprint", "path_line_plus_endpoint"}:
         raise ConfigError("coverage_metric_mode must be endpoint_footprint or path_line_plus_endpoint")
@@ -297,7 +304,7 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
 
 def _v2_enabled(config: dict[str, Any]) -> bool:
     return (
-        config["candidate_refresh_mode"] == "dynamic_from_coverage_memory"
+        config["candidate_refresh_mode"] == "dynamic_validated_only"
         or config["coverage_metric_mode"] == "path_line_plus_endpoint"
         or bool(config["include_oracle_baselines"])
         or bool(config["include_roi_weighted_coverage"])
@@ -398,7 +405,13 @@ def _run_policy_episode(
         step_reasons: list[str] = []
         detail: dict[str, Any] | None = None
         true_model_inference_executed = False
-        if policy_name in ORACLE_POLICIES:
+        is_oracle_policy = policy_name in ORACLE_POLICIES
+        oracle_rollout_executed = False
+        policy_inference_kind = ORACLE_POLICY_INFERENCE_KIND if is_oracle_policy else MODEL_POLICY_INFERENCE_KIND
+        dynamic_candidate_validation_missing = any(candidate.get("dynamic_candidate_validation_missing") is True for candidate in candidates)
+        if dynamic_candidate_validation_missing:
+            step_reasons.append("dynamic_candidate_validation_missing")
+        if is_oracle_policy:
             selected_index = _oracle_selected_index(
                 policy_name,
                 candidates,
@@ -407,6 +420,7 @@ def _run_policy_episode(
                 config=config,
             )
             true_model_inference_executed = False
+            oracle_rollout_executed = True
             detail = {
                 "logits": [],
                 "masked_logits": [],
@@ -434,7 +448,7 @@ def _run_policy_episode(
                 step_reasons.append("true_model_inference_not_executed")
 
         detail_payload = detail or _empty_model_detail()
-        selected_index = detail["selected_action_index"] if policy_name in ORACLE_POLICIES and detail is not None else _selected_index(detail)
+        selected_index = detail["selected_action_index"] if is_oracle_policy and detail is not None else _selected_index(detail)
         selected_candidate = _candidate_at(candidates, selected_index)
         selected_cell = _cell_tuple(_candidate_cell(selected_candidate)) if selected_candidate is not None else None
         selected_cost = _candidate_cost(selected_candidate) if selected_candidate is not None else None
@@ -457,8 +471,9 @@ def _run_policy_episode(
         if selected_cost is not None and path_cost_total + float(selected_cost) > float(config["path_budget_m"]):
             step_reasons.append("path_budget_exhausted")
 
+        policy_execution_ready = oracle_rollout_executed if is_oracle_policy else true_model_inference_executed
         executed = (
-            true_model_inference_executed
+            policy_execution_ready
             and detail_payload["finite_outputs"]
             and selected_candidate is not None
             and selected_cell is not None
@@ -523,14 +538,17 @@ def _run_policy_episode(
             "revisited_cell_count": len(revisited_cells),
             "coverage_gain_per_path_cost": _safe_ratio(coverage_delta, selected_cost),
             "coverage_gain_per_risk": _safe_ratio(coverage_delta, selected_risk),
+            "policy_inference_kind": policy_inference_kind,
+            "oracle_rollout_executed": oracle_rollout_executed,
             "true_model_inference_executed": true_model_inference_executed,
+            "dynamic_candidate_validation_missing": dynamic_candidate_validation_missing,
             "finite_outputs": detail_payload["finite_outputs"],
             "model_inference_mask_violation": mask_violation,
             "executed": executed,
             "reason_codes": unique_sorted(step_reasons),
         }
         steps.append(step_row)
-        if policy_name not in ORACLE_POLICIES:
+        if not is_oracle_policy:
             inference_rows.append(
                 {
                     "schema_version": "xunce-exploration-coverage-model-inference/v1",
@@ -542,7 +560,10 @@ def _run_policy_episode(
                     "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
                     "action_mask": list(adapter["action_mask"]),
                     "selected_action_index": selected_index,
+                    "policy_inference_kind": policy_inference_kind,
+                    "oracle_rollout_executed": oracle_rollout_executed,
                     "true_model_inference_executed": true_model_inference_executed,
+                    "dynamic_candidate_validation_missing": dynamic_candidate_validation_missing,
                     "model_inference_mask_violation_count": int(mask_violation),
                     "detail": detail_payload,
                     "reason_codes": unique_sorted(step_reasons),
@@ -711,6 +732,11 @@ def _coverage_comparison_audit(episodes: list[dict[str, Any]], steps: list[dict[
         "open_grid_fallback_count": sum(int(row["open_grid_fallback_count"]) for row in episodes),
         "unreachable_selected_count": sum(int(row["unreachable_selected_count"]) for row in episodes),
         "path_planning_failure_count": sum(int(row["path_planning_failure_count"]) for row in episodes),
+        "dynamic_candidate_validation_missing_count": sum(
+            1
+            for row in steps
+            if row.get("dynamic_candidate_validation_missing") is True
+        ),
     }
 
 
@@ -788,6 +814,7 @@ def _boundary_audit(config: dict[str, Any], source: dict[str, Any]) -> dict[str,
 
 def _decision(
     *,
+    config: dict[str, Any],
     source: dict[str, Any],
     boundary: dict[str, Any],
     source_match: dict[str, Any],
@@ -844,7 +871,7 @@ def _decision(
     else:
         status = "passed"
         next_change = REVIEW_COMPARISON_NEXT_REQUIRED_CHANGE
-    diagnostic_reasons: list[str] = []
+    diagnostic_reasons: list[str] = list(config.get("diagnostic_reason_codes", []))
     if not coverage_advantage:
         diagnostic_reasons.append("xunce_coverage_advantage_not_established")
     if coverage_advantage_with_efficiency_regression:
@@ -853,6 +880,8 @@ def _decision(
         diagnostic_reasons.append("coverage_gain_per_path_cost_regressive")
     if comparison["coverage_gain_per_risk_delta_vs_incumbent"] < -TOLERANCE:
         diagnostic_reasons.append("coverage_gain_per_risk_regressive")
+    if comparison.get("dynamic_candidate_validation_missing_count", 0) > 0:
+        diagnostic_reasons.append("dynamic_candidate_validation_missing")
     blocking_reasons = unique_sorted(reasons)
     diagnostic_reasons = unique_sorted(diagnostic_reasons)
     evidence_gate = not any(
@@ -964,6 +993,7 @@ def _summary(
         "xunce_min_roi_group_coverage_delta_vs_incumbent": comparison["xunce_min_roi_group_coverage_delta_vs_incumbent"],
         "coverage_gain_per_path_cost_delta_vs_incumbent": comparison["coverage_gain_per_path_cost_delta_vs_incumbent"],
         "coverage_gain_per_risk_delta_vs_incumbent": comparison["coverage_gain_per_risk_delta_vs_incumbent"],
+        "dynamic_candidate_validation_missing_count": comparison["dynamic_candidate_validation_missing_count"],
         "policy_disagreement_count": comparison["policy_disagreement_count"],
         "useful_disagreement_count": comparison["useful_disagreement_count"],
         "xunce_oracle_regret": comparison["xunce_oracle_regret"],
@@ -1053,22 +1083,30 @@ def _candidate_rows_for_step(
     config: dict[str, Any],
 ) -> list[dict[str, Any]]:
     candidates = [dict(candidate) for candidate in _candidate_rows(scenario)]
-    if config["candidate_refresh_mode"] != "dynamic_from_coverage_memory":
+    if config["candidate_refresh_mode"] != "dynamic_validated_only":
         return candidates
     refreshed: list[dict[str, Any]] = []
-    for index, candidate in enumerate(candidates):
+    for candidate in candidates:
         candidate = dict(candidate)
-        dynamic_cells = candidate.get("dynamic_cells")
-        cell = None
-        if isinstance(dynamic_cells, list) and step_index < len(dynamic_cells):
-            cell = _cell_tuple(dynamic_cells[step_index])
+        validated_candidate = _validated_dynamic_candidate_for_step(candidate, step_index)
+        if validated_candidate is None:
+            candidate["dynamic_candidate_validation_missing"] = True
+            refreshed.append(candidate)
+            continue
+        cell = _cell_tuple(validated_candidate["cell"])
         if cell is None:
-            base_cell = _cell_tuple(_candidate_cell(candidate)) or current_cell
-            offset = (step_index + 1) * (index + 1)
-            cell = (base_cell[0] + offset, base_cell[1] + step_index + 1)
+            candidate["dynamic_candidate_validation_missing"] = True
+            refreshed.append(candidate)
+            continue
         candidate["base_cell"] = _candidate_cell(candidate)
         candidate["cell"] = [cell[0], cell[1]]
+        candidate["reachable"] = bool(validated_candidate["reachable"])
+        candidate["path_cost"] = float(validated_candidate["path_cost"])
+        candidate["risk"] = float(validated_candidate["risk"])
+        candidate["open_grid_fallback_used"] = bool(validated_candidate["open_grid_fallback_used"])
+        candidate["proposal_validated_by_path_feedback"] = True
         candidate["dynamic_candidate_generated"] = True
+        candidate["dynamic_candidate_validation_missing"] = False
         if _candidate_is_valid(candidate):
             candidate_cells = _coverage_cells(
                 start=current_cell,
@@ -1083,6 +1121,50 @@ def _candidate_rows_for_step(
             candidate["coverage_overlap_ratio"] = _safe_ratio(len(candidate_cells & covered_cells), len(candidate_cells)) or 0.0
         refreshed.append(candidate)
     return refreshed
+
+
+def _validated_dynamic_candidate_for_step(candidate: dict[str, Any], step_index: int) -> dict[str, Any] | None:
+    dynamic_candidates = candidate.get("dynamic_validated_candidates")
+    if not isinstance(dynamic_candidates, list):
+        return None
+    if step_index < len(dynamic_candidates):
+        row = dynamic_candidates[step_index]
+        if _dynamic_candidate_has_validation(row):
+            return row
+    for row in dynamic_candidates:
+        if _dynamic_candidate_matches_step(row, step_index) and _dynamic_candidate_has_validation(row):
+            return row
+    return None
+
+
+def _dynamic_candidate_matches_step(row: Any, step_index: int) -> bool:
+    if not isinstance(row, dict):
+        return False
+    raw_step = row.get("step_index")
+    if raw_step is None:
+        return False
+    try:
+        return int(raw_step) == step_index
+    except (TypeError, ValueError):
+        return False
+
+
+def _dynamic_candidate_has_validation(row: Any) -> bool:
+    if not isinstance(row, dict):
+        return False
+    if row.get("proposal_validated_by_path_feedback") is not True:
+        return False
+    if _cell_tuple(row.get("cell")) is None:
+        return False
+    if not isinstance(row.get("reachable"), bool):
+        return False
+    if _finite_or_none(row.get("path_cost")) is None:
+        return False
+    if _finite_or_none(row.get("risk")) is None:
+        return False
+    if not isinstance(row.get("open_grid_fallback_used"), bool):
+        return False
+    return True
 
 
 def _oracle_selected_index(

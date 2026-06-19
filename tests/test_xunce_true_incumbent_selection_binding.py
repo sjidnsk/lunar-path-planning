@@ -71,6 +71,31 @@ class XunceTrueIncumbentSelectionBindingTests(unittest.TestCase):
         self.assertIn("candidate_cell_mismatch", summary["reason_codes"])
         self.assertEqual(summary["next_required_change"], "repair_stage18e_candidate_alignment")
 
+    def test_accepts_true_frontier_nbv_candidate_source_summary_alias(self) -> None:
+        from scripts.run_xunce_true_incumbent_selection_binding import run_xunce_true_incumbent_selection_binding
+
+        (self.materialized_root / "xunce-candidate-level-coverage-opportunity-summary.json").unlink()
+        self._write_json(
+            self.materialized_root / "xunce-true-frontier-nbv-candidate-source-summary.json",
+            {
+                "schema_version": "xunce-true-frontier-nbv-candidate-source-summary/v1",
+                "status": "passed",
+                "candidate_validation_mode": "in_process_evaluate_candidate_paths",
+                "next_required_change": "rerun_true_model_inference_and_binding",
+                "canary_traffic_fraction": 0.0,
+            },
+        )
+
+        summary = run_xunce_true_incumbent_selection_binding(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(summary["true_incumbent_selection_bound"])
+        self.assertEqual(summary["source_materialization_status"], "passed")
+
     def test_non_true_inference_fails_to_stage18b_route(self) -> None:
         from scripts.run_xunce_true_incumbent_selection_binding import run_xunce_true_incumbent_selection_binding
 

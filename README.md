@@ -4925,6 +4925,45 @@ cost/risk regression are recorded as diagnostics such as
 `frontier_boundary_candidate_missing` or `safe_efficient_candidate_missing`,
 with repair advice such as `repair_frontier_nbv_sampling`.
 
+`Xunce True Frontier-NBV Candidate Source Replacement v1` is Stage 18I.3. It is
+registered as:
+
+```bash
+python scripts/run_stage.py --stage xunce-true-frontier-nbv-candidate-source-replacement --dry-run
+```
+
+The runner is
+`scripts/run_xunce_true_frontier_nbv_candidate_source_replacement.py`, with
+config `configs/xunce_true_frontier_nbv_candidate_source_replacement_v1.json`
+and output root
+`outputs/path_feedback_batch_xunce_true_frontier_nbv_candidate_source_replacement_v1/`.
+Stage 18I.3 is the true candidate-source replacement step: it generates
+frontier/NBV proposals from ROI geometry, start cell, and true incumbent binding
+instead of only relabeling old candidates. A proposal can enter the formal action
+set only after the validation adapter attaches path-feedback-backed
+`reachable`, `path_cost`, `risk`, and `open_grid_fallback_used=false`.
+Unvalidated proposals stay in proposal/audit artifacts as `proposal_only=true`
+and never become positive or safe-efficient candidates. The v1 validation path
+now uses the Stage 18I.4 in-process proposal validation adapter by default:
+proposal cells are injected into an in-memory `ModelExplorerContract` copy and
+validated through `model_explorer.policy.planning.evaluate_candidate_paths()`.
+The temporary `reachable=true` goal flag is only a planner-attempt seed; the
+formal candidate `reachable`, `path_cost`, `risk`, `path_length`, and
+`open_grid_fallback_used` fields must come from the planner/path-feedback
+candidate evaluation. Coverage remains an offline geometric counterfactual and
+is explicitly marked as not path-feedback validated. The CLI path-feedback path
+is retained only as a tiny integration smoke test for schema, sidecar, and
+Windows path compatibility, not as the default bulk validation route.
+
+Stage 18C-v2 also separates model and oracle execution. Xunce and incumbent
+steps still require real checkpoint inference and `proxy_selection_used=false`.
+Greedy and cost-aware oracle steps are offline rollout baselines labelled
+`policy_inference_kind=oracle_offline_policy`; they can execute without
+checkpoint inference. The legacy `dynamic_from_coverage_memory` option now maps
+to `dynamic_validated_only`, where a dynamic candidate must carry validated
+path-feedback fields or the runner keeps the static validated candidate instead
+of moving a cell while reusing stale path cost/risk.
+
 `Xunce Stage 18I.1 Evidence Closure Audit v1` is registered as:
 
 ```bash
@@ -4960,6 +4999,54 @@ valid candidates. Safe-efficient counts, frontier-family counts, oracle
 separability, cost-efficiency deltas, and Xunce advantage are retained as
 diagnostics and comparison metrics, not preconditions for running the model
 comparison.
+
+`Xunce Stage 18 Research Evidence Pipeline v1` is the consolidated mainline
+entry point for the Stage 18 research chain. It is registered as:
+
+```bash
+python scripts/run_stage.py --stage xunce-stage18-research-evidence-pipeline --plan-only
+```
+
+The runner is `scripts/run_xunce_stage18_research_evidence_pipeline.py`, with
+config `configs/xunce_stage18_research_evidence_pipeline_v1.json` and output
+root `outputs/path_feedback_batch_xunce_stage18_research_evidence_pipeline_v1/`.
+It does not replace the existing Stage 18 runners. Instead, it reads their
+summaries, resolves the active evidence roots, checks that candidate generation,
+true checkpoint inference, true incumbent binding, quantization, oracle
+benchmarking, and coverage rollout belong to the same candidate-root lineage,
+and writes one consolidated report:
+
+```text
+xunce-stage18-pipeline-summary.json
+xunce-stage18-resolved-roots.json
+xunce-stage18-module-results.jsonl
+xunce-stage18-pipeline-report.md
+```
+
+The consolidated Stage 18 mainline is:
+
+```text
+18.1 scenario and high-fidelity quasi-real map evidence preparation
+18.2 candidate generation plus planner/path-feedback validation
+18.3 true checkpoint inference and true incumbent binding
+18.4 risk/coverage/cost quantization, oracle baselines, and offline rollout
+18.5 evidence closure, attribution, and next-stage routing
+```
+
+Legacy Stage 18 runners remain available for historical reproduction and
+diagnostics. The active mainline is 18A, 18I.3/18I.4, 18B, 18G.0, 18H.0, 18F,
+18C-v2, and 18I.1. Stage 18D, 18E, 18F.1, 18G.1, and 18G.2 are retained as
+legacy diagnostic or optional experiment entry points. Earlier proxy comparison
+and old safe-efficient hard-gate experiments are historical reproduction paths.
+
+The pipeline summary separates evidence state from model and release decisions:
+`evidence_status`, `candidate_validity_status`, `comparison_verdict`,
+`overall_conclusion`, `release_readiness`, and `training_readiness` are reported
+as separate fields. A complete evidence chain can still conclude
+`evidence_valid_but_xunce_advantage_not_established`; that means the offline
+research evidence is readable and authentic, not that Xunce is approved for
+default-policy replacement, checkpoint publication, executor connection, PPO
+training, or online canary traffic.
 
 The first stage, `Global 99% Coverage Benchmark v1`, is implemented as a
 deterministic contract benchmark, not as a frontier planner. Its runner is

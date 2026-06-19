@@ -179,11 +179,12 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertIn("xunce_coverage_advantage_with_efficiency_regression", summary["diagnostic_reason_codes"])
         self.assertEqual(summary["diagnostic_recommended_change"], "refine_coverage_reward_and_cost_guard")
 
-    def test_dynamic_v2_refreshes_candidates_and_writes_oracle_artifacts(self) -> None:
+    def test_dynamic_v2_legacy_mode_does_not_offset_candidates_and_writes_oracle_artifacts(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,
         )
 
+        self._write_expansion_evidence(dynamic_validated_candidates=True)
         self._update_config(
             candidate_refresh_mode="dynamic_from_coverage_memory",
             coverage_metric_mode="path_line_plus_endpoint",
@@ -197,9 +198,11 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["status"], "passed")
-        self.assertEqual(summary["candidate_refresh_mode"], "dynamic_from_coverage_memory")
+        self.assertEqual(summary["candidate_refresh_mode"], "dynamic_validated_only")
+        self.assertIn("dynamic_from_coverage_memory_legacy_mode", summary["diagnostic_reason_codes"])
         self.assertEqual(summary["coverage_metric_mode"], "path_line_plus_endpoint")
         self.assertTrue(summary["include_oracle_baselines"])
+        self.assertTrue(summary["true_model_inference_executed"])
         self.assertIn("xunce_oracle_regret", summary)
         self.assertIn("incumbent_oracle_regret", summary)
         self.assertIn("evaluation_task_discriminative", summary)
@@ -208,21 +211,81 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertTrue((self.output_root / "xunce-exploration-coverage-v2-episodes.jsonl").is_file())
 
         v2_steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-v2-steps.jsonl")
-        candidate_sets = {
-            (row["policy"], row["step_index"], tuple(tuple(cell) for cell in row["candidate_cells"]))
-            for row in v2_steps
-            if row["policy"] == "xunce"
-        }
-        self.assertGreater(len({item[2] for item in candidate_sets}), 1)
+        xunce_rows = [row for row in v2_steps if row["policy"] == "xunce"]
+        self.assertTrue(xunce_rows)
+        xunce_step_0 = next(row for row in xunce_rows if row["step_index"] == 0)
+        xunce_step_1 = next(row for row in xunce_rows if row["step_index"] == 1)
+        self.assertEqual(xunce_step_0["candidate_cells"], [[1, 1], [2, 2], [3, 3]])
+        self.assertEqual(xunce_step_1["candidate_cells"], [[101, 51], [102, 52], [103, 53]])
+        self.assertFalse(xunce_step_1["dynamic_candidate_validation_missing"])
+        self.assertTrue(all(row["policy_inference_kind"] == "true_checkpoint_inference" for row in xunce_rows))
+        self.assertTrue(all(row["oracle_rollout_executed"] is False for row in xunce_rows))
         self.assertTrue(any(row["policy"] == "greedy_coverage_oracle" for row in v2_steps))
         self.assertTrue(any(row["policy"] == "cost_aware_coverage_oracle" for row in v2_steps))
+        oracle_rows = [row for row in v2_steps if row["policy"].endswith("_oracle")]
+        self.assertTrue(oracle_rows)
+        self.assertTrue(all(row["executed"] for row in oracle_rows))
+        self.assertTrue(all(row["true_model_inference_executed"] is False for row in oracle_rows))
+        self.assertTrue(all(row["oracle_rollout_executed"] is True for row in oracle_rows))
+        self.assertTrue(all(row["policy_inference_kind"] == "oracle_offline_policy" for row in oracle_rows))
+
+    def test_dynamic_validated_only_uses_validated_dynamic_candidates(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence(dynamic_validated_candidates=True)
+        self._update_config(
+            candidate_refresh_mode="dynamic_validated_only",
+            coverage_metric_mode="path_line_plus_endpoint",
+            include_oracle_baselines=True,
+        )
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["candidate_refresh_mode"], "dynamic_validated_only")
+        v2_steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-v2-steps.jsonl")
+        xunce_step_1 = next(row for row in v2_steps if row["policy"] == "xunce" and row["step_index"] == 1)
+        self.assertEqual(xunce_step_1["candidate_cells"], [[101, 51], [102, 52], [103, 53]])
+        self.assertFalse(xunce_step_1["dynamic_candidate_validation_missing"])
+        self.assertNotIn("dynamic_candidate_validation_missing", xunce_step_1["reason_codes"])
+
+    def test_dynamic_validated_only_records_diagnostic_when_validation_missing(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence(dynamic_validated_candidates="missing_step")
+        self._update_config(
+            candidate_refresh_mode="dynamic_validated_only",
+            coverage_metric_mode="path_line_plus_endpoint",
+        )
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertIn("dynamic_candidate_validation_missing", summary["diagnostic_reason_codes"])
+        self.assertTrue(summary["candidate_validity_gate_passed"])
+        self.assertGreater(summary["dynamic_candidate_validation_missing_count"], 0)
+        v2_steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-v2-steps.jsonl")
+        xunce_step_1 = next(row for row in v2_steps if row["policy"] == "xunce" and row["step_index"] == 1)
+        self.assertEqual(xunce_step_1["candidate_cells"], [[1, 1], [2, 2], [3, 3]])
+        self.assertTrue(xunce_step_1["dynamic_candidate_validation_missing"])
+        self.assertIn("dynamic_candidate_validation_missing", xunce_step_1["reason_codes"])
 
     def test_dynamic_v2_oracles_do_not_select_masked_candidate(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,
         )
 
-        self._write_expansion_evidence(mask_first_candidate=True)
+        self._write_expansion_evidence(mask_first_candidate=True, dynamic_validated_candidates=True)
         self._update_config(
             candidate_refresh_mode="dynamic_from_coverage_memory",
             coverage_metric_mode="path_line_plus_endpoint",
@@ -243,6 +306,7 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
     def test_dynamic_v2_requires_oracle_regret_efficiency_and_safety_for_authorization(self) -> None:
         from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
 
+        self._write_expansion_evidence(dynamic_validated_candidates=True)
         self._update_config(
             candidate_refresh_mode="dynamic_from_coverage_memory",
             coverage_metric_mode="path_line_plus_endpoint",
@@ -410,6 +474,7 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         *,
         repeated_cells: bool = False,
         mask_first_candidate: bool = False,
+        dynamic_validated_candidates: bool | str = False,
     ) -> None:
         self.expansion_root.mkdir(parents=True, exist_ok=True)
         scenarios = []
@@ -440,6 +505,30 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
                         "value": 0.2 + action_index * 0.1,
                     }
                 )
+                if dynamic_validated_candidates:
+                    candidates[-1]["dynamic_validated_candidates"] = [
+                        {
+                            "step_index": 0,
+                            "cell": cell,
+                            "reachable": reachable,
+                            "path_cost": 5.0 + action_index,
+                            "risk": 0.1 + action_index * 0.01,
+                            "open_grid_fallback_used": False,
+                            "proposal_validated_by_path_feedback": True,
+                        }
+                    ]
+                    if dynamic_validated_candidates != "missing_step":
+                        candidates[-1]["dynamic_validated_candidates"].append(
+                            {
+                                "step_index": 1,
+                                "cell": [base_x + 101 + action_index, 51 + action_index],
+                                "reachable": reachable,
+                                "path_cost": 15.0 + action_index,
+                                "risk": 0.2 + action_index * 0.01,
+                                "open_grid_fallback_used": False,
+                                "proposal_validated_by_path_feedback": True,
+                            }
+                        )
             scenarios.append(
                 {
                     "scenario_id": scenario_id,

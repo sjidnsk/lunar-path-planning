@@ -1062,7 +1062,11 @@ def _efficiency_audit(config: dict[str, Any], decision_rows: list[dict[str, Any]
 def _source_match_audit(config: dict[str, Any], source: dict[str, Any], scenario_rows: list[dict[str, Any]]) -> dict[str, Any]:
     expansion = source["expansion"]
     reasons = list(source["read_reason_codes"])
-    if expansion.get("status") != "passed" or expansion.get("next_required_change") != "xunce_high_fidelity_real_map_policy_comparison":
+    allowed_next_changes = {
+        "xunce_high_fidelity_real_map_policy_comparison",
+        "rerun_true_model_inference_and_binding",
+    }
+    if expansion.get("status") != "passed" or expansion.get("next_required_change") not in allowed_next_changes:
         reasons.append("xunce_high_fidelity_roi_expansion_not_ready")
     if _int_value(expansion.get("slice_count")) < config["required_scenario_count"]:
         reasons.append("xunce_high_fidelity_roi_expansion_slice_count_short")

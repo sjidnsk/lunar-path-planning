@@ -192,10 +192,22 @@
       "default_output_root": "outputs/path_feedback_batch_xunce_risk_aware_frontier_nbv_candidate_repair_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-true-frontier-nbv-candidate-source-replacement": {
+      "script": "scripts/run_xunce_true_frontier_nbv_candidate_source_replacement.py",
+      "default_config": "configs/xunce_true_frontier_nbv_candidate_source_replacement_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_true_frontier_nbv_candidate_source_replacement_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18i-evidence-closure-audit": {
       "script": "scripts/run_xunce_stage18i_evidence_closure_audit.py",
       "default_config": "configs/xunce_stage18i_evidence_closure_audit_v1.json",
       "default_output_root": "outputs/path_feedback_batch_xunce_stage18i_evidence_closure_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage18-research-evidence-pipeline": {
+      "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
+      "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_stage18_research_evidence_pipeline_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
     "path-feedback-validation": {

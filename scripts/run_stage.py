@@ -29,7 +29,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-root", help="Repository root override. Defaults to parent of scripts/.")
     parser.add_argument("--extra-arg", action="append", default=[], help="Extra argument appended to the stage argv.")
     parser.add_argument("--dry-run", action="store_true", help="Print the command without executing it.")
-    args = parser.parse_args(argv)
+    args, passthrough_args = parser.parse_known_args(argv)
+    if passthrough_args and (args.list or not args.stage):
+        print(f"unknown arguments: {' '.join(passthrough_args)}", file=sys.stderr)
+        return 2
 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[1]
     registry_path = _resolve_path(args.registry, repo_root)
@@ -59,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=repo_root,
             config_override=args.config,
             output_root_override=args.output_root,
-            extra_args=args.extra_arg,
+            extra_args=[*args.extra_arg, *passthrough_args],
         )
     except StageRegistryError as exc:
         print(f"stage registry error: {exc}", file=sys.stderr)

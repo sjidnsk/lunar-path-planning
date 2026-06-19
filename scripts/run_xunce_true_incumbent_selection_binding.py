@@ -26,6 +26,7 @@ DEFAULT_CONFIG = "configs/xunce_true_incumbent_selection_binding_v1.json"
 DEFAULT_OUTPUT_ROOT = "outputs/path_feedback_batch_xunce_true_incumbent_selection_binding_v1"
 
 MATERIALIZATION_SUMMARY_FILE = "xunce-candidate-level-coverage-opportunity-summary.json"
+CANDIDATE_SOURCE_SUMMARY_FILE = "xunce-true-frontier-nbv-candidate-source-summary.json"
 EXPANSION_SUMMARY_FILE = "xunce-high-fidelity-real-map-roi-expansion-summary.json"
 EXPANSION_SLICES_FILE = "xunce-high-fidelity-real-map-slices.jsonl"
 PATH_FEEDBACK_AUDIT_FILE = "xunce-high-fidelity-path-feedback-audit.json"
@@ -161,7 +162,7 @@ def _load_source(config: dict[str, Any]) -> dict[str, Any]:
     materialized_root = Path(config["source_materialized_coverage_root"])
     inference_root = Path(config["source_model_inference_root"])
     reasons: list[str] = []
-    materialization_summary = _read_json(materialized_root / MATERIALIZATION_SUMMARY_FILE, reasons, "missing_stage18e_materialization")
+    materialization_summary = _read_materialization_summary(materialized_root, reasons)
     expansion_summary = _read_json(materialized_root / EXPANSION_SUMMARY_FILE, reasons, "missing_stage18e_materialization")
     slices = _read_jsonl(materialized_root / EXPANSION_SLICES_FILE, reasons, "missing_stage18e_materialization_slices")
     path_feedback = _read_json(materialized_root / PATH_FEEDBACK_AUDIT_FILE, reasons, "missing_stage18e_materialization")
@@ -182,6 +183,15 @@ def _load_source(config: dict[str, Any]) -> dict[str, Any]:
         "comparison_summary": comparison_summary,
         "reason_codes": unique_sorted(reasons),
     }
+
+
+def _read_materialization_summary(root: Path, reasons: list[str]) -> dict[str, Any]:
+    for filename in (MATERIALIZATION_SUMMARY_FILE, CANDIDATE_SOURCE_SUMMARY_FILE):
+        path = root / filename
+        if path.is_file():
+            return _read_json(path, reasons, "missing_stage18e_materialization")
+    reasons.append("missing_stage18e_materialization")
+    return {}
 
 
 def _paths(output_root: Path) -> dict[str, Path]:

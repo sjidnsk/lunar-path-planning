@@ -117,6 +117,22 @@ class XunceStage18iEvidenceClosureAuditTests(unittest.TestCase):
         self.assertTrue(summary["stage18i_candidate_generation_passed"])
         self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
 
+    def test_closure_accepts_stage18i3_true_frontier_candidate_source_summary(self) -> None:
+        from scripts.run_xunce_stage18i_evidence_closure_audit import run_xunce_stage18i_evidence_closure_audit
+
+        self._write_complete_evidence(stage18i3=True, oracle_separable=False, xunce_advantage=False)
+
+        summary = run_xunce_stage18i_evidence_closure_audit(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(summary["stage18i_candidate_generation_passed"])
+        self.assertEqual(summary["stage18i_summary_status"], "passed")
+        self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
+
     def _write_config(self) -> None:
         payload = {
             "schema_version": "xunce-stage18i-evidence-closure-audit-config/v1",
@@ -130,18 +146,27 @@ class XunceStage18iEvidenceClosureAuditTests(unittest.TestCase):
         }
         self.config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def _write_complete_evidence(self, *, oracle_separable: bool = True, xunce_advantage: bool = False, stage18i2: bool = False) -> None:
-        stage18i_filename = (
-            "xunce-risk-aware-frontier-nbv-candidate-repair-summary.json"
-            if stage18i2
-            else "xunce-risk-constrained-frontier-nbv-candidate-generation-summary.json"
-        )
+    def _write_complete_evidence(
+        self,
+        *,
+        oracle_separable: bool = True,
+        xunce_advantage: bool = False,
+        stage18i2: bool = False,
+        stage18i3: bool = False,
+    ) -> None:
+        if stage18i3:
+            stage18i_filename = "xunce-true-frontier-nbv-candidate-source-summary.json"
+            stage18i_schema = "xunce-true-frontier-nbv-candidate-source-summary/v1"
+        elif stage18i2:
+            stage18i_filename = "xunce-risk-aware-frontier-nbv-candidate-repair-summary.json"
+            stage18i_schema = "xunce-risk-aware-frontier-nbv-candidate-repair-summary/v1"
+        else:
+            stage18i_filename = "xunce-risk-constrained-frontier-nbv-candidate-generation-summary.json"
+            stage18i_schema = "xunce-risk-constrained-frontier-nbv-candidate-generation-summary/v1"
         self._write_json(
             self.stage18i_root / stage18i_filename,
             {
-                "schema_version": "xunce-risk-aware-frontier-nbv-candidate-repair-summary/v1"
-                if stage18i2
-                else "xunce-risk-constrained-frontier-nbv-candidate-generation-summary/v1",
+                "schema_version": stage18i_schema,
                 "status": "passed",
                 "safe_efficient_candidate_count": 18,
                 "roi_group_with_safe_efficient_candidate_count": 6,

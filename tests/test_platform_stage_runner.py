@@ -39,7 +39,9 @@ SUPPORTED_STAGE_IDS = {
     "xunce-risk-coverage-cost-quantization-audit",
     "xunce-risk-constrained-frontier-nbv-candidate-generation",
     "xunce-risk-aware-frontier-nbv-candidate-repair",
+    "xunce-true-frontier-nbv-candidate-source-replacement",
     "xunce-stage18i-evidence-closure-audit",
+    "xunce-stage18-research-evidence-pipeline",
 }
 
 
