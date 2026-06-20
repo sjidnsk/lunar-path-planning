@@ -691,6 +691,28 @@ artifacts. Each stage should be committed and pushed separately.
      selection evidence (`same state + same mask + same candidates`). Candidate
      set hash divergence is expected after trajectories split and must not be
      treated as an error.
+   - Dynamic candidate exhaustion is a clean terminal condition, not a model
+     inference failure. When dynamic generation executes but returns no formal
+     valid candidates, the episode records
+     `terminal_reason=candidate_generation_exhausted` and does not count the
+     step as a mask violation, path-planning failure, or
+     `true_model_inference_not_executed`.
+   - Coverage reports raw cells and saturation-aware rates separately. Raw
+     cell counts and `comparison-pairs.jsonl` deltas remain the primary model
+     comparison facts; `coverage_rate_capped` and
+     `coverage_saturation_exceeded` are reporting diagnostics for long rollouts
+     whose legacy denominator can be exceeded.
+   - Stage 18.4E updates the dynamic generator to
+     `candidate_generation_algorithm_source=map_aware_coverage_frontier_nbv/v1`
+     while keeping the public refresh source
+     `dynamic_frontier_nbv_in_process/v1` for compatibility. The generator now
+     treats frontier as a coverage frontier over valid ROI/passable cells,
+     proposes undercovered component centroid/boundary candidates, keeps
+     low-cost bridge and conservative local backups, clips coverage estimates
+     to valid cells, and selects validated candidates with a Pareto-diverse
+     rule instead of pure coverage-first sorting. A* validates reachability,
+     path cost, and path length; `risk` remains a documented sidecar/path-cost
+     proxy, not a physical executor risk integral.
    - Stage 18D, 18E, 18F.1, 18G.1, and 18G.2 remain available as legacy
      diagnostics or optional experiments; they are no longer the mainline
      preconditions for comparing Xunce and incumbent.

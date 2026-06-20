@@ -151,11 +151,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--candidate-refresh-mode")
     parser.add_argument("--coverage-metric-mode")
     parser.add_argument("--dynamic-candidate-validation-mode")
+    parser.add_argument("--dynamic-candidate-generation-mode")
+    parser.add_argument("--dynamic-candidate-selection-mode")
     parser.add_argument("--dynamic-validation-work-root")
     parser.add_argument("--dynamic-validation-max-path-length", type=int)
     parser.add_argument("--dynamic-sidecar-fallback-mode")
     parser.add_argument("--dynamic-proposal-pool-limit-per-step", type=int)
     parser.add_argument("--dynamic-max-candidates-per-step", type=int)
+    parser.add_argument("--dynamic-min-frontier-candidates-per-step", type=int)
+    parser.add_argument("--dynamic-min-low-cost-candidates-per-step", type=int)
+    parser.add_argument("--dynamic-min-efficiency-candidates-per-step", type=int)
+    parser.add_argument("--dynamic-frontier-min-uncovered-component-cells", type=int)
+    parser.add_argument("--dynamic-frontier-max-components", type=int)
     parser.add_argument("--dynamic-adapter-audit-enabled", action="store_true")
     parser.add_argument("--dynamic-adapter-audit-max-routes", type=int)
     parser.add_argument("--dynamic-adapter-audit-min-per-frontier-source", type=int)
@@ -173,11 +180,18 @@ def main(argv: list[str] | None = None) -> int:
             "candidate_refresh_mode": args.candidate_refresh_mode,
             "coverage_metric_mode": args.coverage_metric_mode,
             "dynamic_candidate_validation_mode": args.dynamic_candidate_validation_mode,
+            "dynamic_candidate_generation_mode": args.dynamic_candidate_generation_mode,
+            "dynamic_candidate_selection_mode": args.dynamic_candidate_selection_mode,
             "dynamic_validation_work_root": args.dynamic_validation_work_root,
             "dynamic_validation_max_path_length": args.dynamic_validation_max_path_length,
             "dynamic_sidecar_fallback_mode": args.dynamic_sidecar_fallback_mode,
             "dynamic_proposal_pool_limit_per_step": args.dynamic_proposal_pool_limit_per_step,
             "dynamic_max_candidates_per_step": args.dynamic_max_candidates_per_step,
+            "dynamic_min_frontier_candidates_per_step": args.dynamic_min_frontier_candidates_per_step,
+            "dynamic_min_low_cost_candidates_per_step": args.dynamic_min_low_cost_candidates_per_step,
+            "dynamic_min_efficiency_candidates_per_step": args.dynamic_min_efficiency_candidates_per_step,
+            "dynamic_frontier_min_uncovered_component_cells": args.dynamic_frontier_min_uncovered_component_cells,
+            "dynamic_frontier_max_components": args.dynamic_frontier_max_components,
             "dynamic_adapter_audit_enabled": True if args.dynamic_adapter_audit_enabled else None,
             "dynamic_adapter_audit_max_routes": args.dynamic_adapter_audit_max_routes,
             "dynamic_adapter_audit_min_per_frontier_source": args.dynamic_adapter_audit_min_per_frontier_source,
@@ -335,6 +349,12 @@ def _load_config(
         raise ConfigError("coverage_radius_sensitivity must be a list of non-negative integers")
     normalized["coverage_radius_sensitivity"] = list(sensitivity)
     normalized["coverage_denominator_cells"] = _positive_int(payload.get("coverage_denominator_cells", 1000), "coverage_denominator_cells")
+    normalized["coverage_denominator_mode"] = _require_string(
+        payload.get("coverage_denominator_mode", "fixed_config_cells"),
+        "coverage_denominator_mode",
+    )
+    if normalized["coverage_denominator_mode"] not in {"roi_valid_cells", "fixed_config_cells", "raw_cells_only"}:
+        raise ConfigError("coverage_denominator_mode must be roi_valid_cells, fixed_config_cells, or raw_cells_only")
     normalized["path_budget_m"] = _positive_float(payload.get("path_budget_m", 5000.0), "path_budget_m")
     normalized["planning_backend"] = _require_string(payload.get("planning_backend", "channel_aware_astar"), "planning_backend")
     normalized["diagnostic_reason_codes"] = list(payload.get("diagnostic_reason_codes", [])) if isinstance(payload.get("diagnostic_reason_codes", []), list) else []
@@ -353,6 +373,14 @@ def _load_config(
     normalized["dynamic_candidate_validation_mode"] = _require_string(
         payload.get("dynamic_candidate_validation_mode", "in_process_path_planner_astar_batch"),
         "dynamic_candidate_validation_mode",
+    )
+    normalized["dynamic_candidate_generation_mode"] = _require_string(
+        payload.get("dynamic_candidate_generation_mode", "map_aware_coverage_frontier_nbv"),
+        "dynamic_candidate_generation_mode",
+    )
+    normalized["dynamic_candidate_selection_mode"] = _require_string(
+        payload.get("dynamic_candidate_selection_mode", "validated_pareto_diverse"),
+        "dynamic_candidate_selection_mode",
     )
     dynamic_work_root = payload.get("dynamic_validation_work_root", "outputs/_xunce_dynamic_validation_work")
     if not isinstance(dynamic_work_root, str) or not dynamic_work_root.strip():
@@ -385,6 +413,30 @@ def _load_config(
         payload.get("dynamic_max_candidates_per_step", 6),
         "dynamic_max_candidates_per_step",
     )
+    normalized["dynamic_min_frontier_candidates_per_step"] = _positive_int(
+        payload.get("dynamic_min_frontier_candidates_per_step", 1),
+        "dynamic_min_frontier_candidates_per_step",
+    )
+    normalized["dynamic_min_low_cost_candidates_per_step"] = _positive_int(
+        payload.get("dynamic_min_low_cost_candidates_per_step", 1),
+        "dynamic_min_low_cost_candidates_per_step",
+    )
+    normalized["dynamic_min_efficiency_candidates_per_step"] = _positive_int(
+        payload.get("dynamic_min_efficiency_candidates_per_step", 1),
+        "dynamic_min_efficiency_candidates_per_step",
+    )
+    normalized["dynamic_frontier_min_uncovered_component_cells"] = _positive_int(
+        payload.get("dynamic_frontier_min_uncovered_component_cells", 4),
+        "dynamic_frontier_min_uncovered_component_cells",
+    )
+    normalized["dynamic_frontier_max_components"] = _positive_int(
+        payload.get("dynamic_frontier_max_components", 8),
+        "dynamic_frontier_max_components",
+    )
+    weight_map = payload.get("roi_group_weight_map", {})
+    if weight_map is not None and not isinstance(weight_map, dict):
+        raise ConfigError("roi_group_weight_map must be an object when provided")
+    normalized["roi_group_weight_map"] = dict(weight_map or {})
     normalized["dynamic_validation_cache_enabled"] = _require_bool(payload.get("dynamic_validation_cache_enabled", True), "dynamic_validation_cache_enabled")
     normalized["dynamic_adapter_audit_enabled"] = _require_bool(payload.get("dynamic_adapter_audit_enabled", False), "dynamic_adapter_audit_enabled")
     normalized["dynamic_adapter_audit_max_routes"] = _positive_int(
@@ -439,6 +491,111 @@ def _v2_enabled(config: dict[str, Any]) -> bool:
         or bool(config["include_oracle_baselines"])
         or bool(config["include_roi_weighted_coverage"])
     )
+
+
+def resolve_coverage_denominator(
+    scenario: dict[str, Any],
+    slice_row: dict[str, Any],
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    mode = str(config.get("coverage_denominator_mode", "fixed_config_cells"))
+    fixed_cells = int(config["coverage_denominator_cells"])
+    if mode == "raw_cells_only":
+        return {
+            "coverage_denominator_cells": None,
+            "legacy_coverage_denominator_cells": fixed_cells,
+            "coverage_denominator_mode": mode,
+            "coverage_denominator_source": "raw_cells_only_no_rate_denominator/v1",
+            "coverage_denominator_reason_codes": ["raw_cells_only"],
+        }
+    if mode == "roi_valid_cells":
+        sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
+        if sidecar_path is not None:
+            valid_cells = _count_passable_mask_cells(sidecar_path)
+            if valid_cells > 0:
+                return {
+                    "coverage_denominator_cells": valid_cells,
+                    "legacy_coverage_denominator_cells": valid_cells,
+                    "coverage_denominator_mode": mode,
+                    "coverage_denominator_source": "sidecar_passable_mask_valid_cells/v1",
+                    "coverage_denominator_reason_codes": [],
+                }
+        return {
+            "coverage_denominator_cells": fixed_cells,
+            "legacy_coverage_denominator_cells": fixed_cells,
+            "coverage_denominator_mode": mode,
+            "coverage_denominator_source": "fixed_config_cells_fallback_due_missing_roi_valid_cells/v1",
+            "coverage_denominator_reason_codes": ["roi_valid_cells_unavailable", "fixed_config_cells_fallback"],
+        }
+    return {
+        "coverage_denominator_cells": fixed_cells,
+        "legacy_coverage_denominator_cells": fixed_cells,
+        "coverage_denominator_mode": mode,
+        "coverage_denominator_source": "fixed_config_cells/v1",
+        "coverage_denominator_reason_codes": [],
+    }
+
+
+def _count_passable_mask_cells(sidecar_path: Path) -> int:
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    mask = _find_nested_key(payload, "passable_mask")
+    if not isinstance(mask, list):
+        return 0
+    return _count_truthy_nested(mask)
+
+
+def _find_nested_key(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        if key in value:
+            return value[key]
+        for child in value.values():
+            found = _find_nested_key(child, key)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_nested_key(child, key)
+            if found is not None:
+                return found
+    return None
+
+
+def _count_truthy_nested(value: Any) -> int:
+    if isinstance(value, list):
+        return sum(_count_truthy_nested(item) for item in value)
+    return 1 if bool(value) else 0
+
+
+def _coverage_rate_from_count(cell_count: int, denominator_context: dict[str, Any]) -> float | None:
+    denominator = denominator_context.get("coverage_denominator_cells")
+    if denominator is None:
+        return None
+    numeric = _finite_or_none(denominator)
+    if numeric is None or float(numeric) <= TOLERANCE:
+        return None
+    return float(cell_count) / float(numeric)
+
+
+def _coverage_rate_capped(rate: float | None) -> float | None:
+    if rate is None:
+        return None
+    return min(float(rate), 1.0)
+
+
+def _coverage_saturation_excess(rate: float | None) -> float:
+    if rate is None:
+        return 0.0
+    return max(0.0, float(rate) - 1.0)
+
+
+def _coverage_curve_auc_nullable(coverage_rates: list[float | None], rollout_steps: int) -> float | None:
+    if any(value is None for value in coverage_rates):
+        return None
+    return _coverage_curve_auc([float(value) for value in coverage_rates if value is not None], rollout_steps)
 
 
 def _run_coverage_rollouts(
@@ -506,11 +663,14 @@ def _run_policy_episode(
     output_root: Path,
     validation_cache: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    denominator = float(config["coverage_denominator_cells"])
+    denominator_context = resolve_coverage_denominator(scenario, slice_row, config, repo_root)
+    denominator = float(denominator_context["legacy_coverage_denominator_cells"])
     radius = int(config["coverage_radius_cells"])
     start_cell = _cell_tuple(scenario.get("start_cell")) or (0, 0)
     covered_cells = set(_footprint(start_cell, radius=radius))
     coverage_rates = [len(covered_cells) / denominator]
+    coverage_rate_raw_values: list[float | None] = [_coverage_rate_from_count(len(covered_cells), denominator_context)]
+    coverage_rate_capped_values: list[float | None] = [_coverage_rate_capped(coverage_rate_raw_values[-1])]
     steps: list[dict[str, Any]] = []
     inference_rows: list[dict[str, Any]] = []
     reason_codes: list[str] = []
@@ -531,6 +691,10 @@ def _run_policy_episode(
     unreachable_selected_count = 0
     path_planning_failure_count = 0
     open_grid_fallback_count = 0
+    model_inference_failure_count = 0
+    candidate_generation_exhausted_count = 0
+    episode_termination_reason: str | None = None
+    candidate_generation_exhausted_step: int | None = None
     current_cell = start_cell
     dynamic_proposals: list[dict[str, Any]] = []
     dynamic_validation_rows: list[dict[str, Any]] = []
@@ -585,6 +749,81 @@ def _run_policy_episode(
             ]
         )
         remaining_budget = max(0.0, float(config["path_budget_m"]) - path_cost_total)
+        if (
+            config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process"
+            and candidate_batch["dynamic_generation_executed"]
+            and not candidates
+        ):
+            step_reasons = ["candidate_generation_exhausted", "no_valid_dynamic_candidates"]
+            coverage_rates.append(coverage_rates[-1])
+            coverage_rate_raw_values.append(coverage_rate_raw_values[-1])
+            coverage_rate_capped_values.append(coverage_rate_capped_values[-1])
+            action_indices.append(None)
+            candidate_generation_exhausted_count += 1
+            episode_termination_reason = "candidate_generation_exhausted"
+            candidate_generation_exhausted_step = step_index
+            step_row = {
+                "schema_version": "xunce-exploration-coverage-step/v1",
+                "scenario_id": scenario_id,
+                "roi_group": roi_group,
+                "split": split,
+                "policy": policy_name,
+                "step_index": step_index,
+                "current_cell_before": list(cell_before),
+                "remaining_budget_m": remaining_budget,
+                "selected_action_index": None,
+                "selected_cell": None,
+                "candidate_cells": [],
+                "candidate_generation_source": candidate_batch["candidate_generation_source"],
+                "candidate_set_id": candidate_set_id,
+                "candidate_set_hash": candidate_set_hash_value,
+                "covered_cells_hash": covered_hash,
+                "state_conditioned_candidate_generation": bool(config.get("state_conditioned_candidate_generation", True)),
+                "dynamic_proposal_count": candidate_batch["dynamic_proposal_count"],
+                "dynamic_validated_candidate_count": 0,
+                "dynamic_validation_cache_hit": candidate_batch["dynamic_validation_cache_hit"],
+                "path_feedback_validation_source_counts": candidate_batch["path_feedback_validation_source_counts"],
+                "frontier_candidate_source_counts": candidate_batch["frontier_candidate_source_counts"],
+                "selected_probability": 0.0,
+                "selected_rank": 0,
+                "action_entropy": 0.0,
+                "path_cost": None,
+                "risk": None,
+                "energy_cost": None,
+                "coverage_rate_delta": 0.0,
+                "cumulative_coverage_rate_delta": coverage_rates[-1] - coverage_rates[0],
+                "final_coverage_rate": coverage_rates[-1],
+                "raw_covered_cell_count": len(covered_cells),
+                "raw_new_covered_cell_count": 0,
+                "coverage_rate_raw": coverage_rate_raw_values[-1],
+                "coverage_rate_capped": coverage_rate_capped_values[-1],
+                "coverage_saturation_exceeded": bool(
+                    coverage_rate_raw_values[-1] is not None and coverage_rate_raw_values[-1] > 1.0 + TOLERANCE
+                ),
+                "coverage_saturation_excess": _coverage_saturation_excess(coverage_rate_raw_values[-1]),
+                "coverage_denominator_cells": denominator_context["coverage_denominator_cells"],
+                "coverage_denominator_mode": denominator_context["coverage_denominator_mode"],
+                "coverage_denominator_source": denominator_context["coverage_denominator_source"],
+                "coverage_denominator_reason_codes": denominator_context["coverage_denominator_reason_codes"],
+                "new_covered_cell_count": 0,
+                "revisited_cell_count": 0,
+                "coverage_gain_per_path_cost": None,
+                "coverage_gain_per_risk": None,
+                "policy_inference_kind": MODEL_POLICY_INFERENCE_KIND if policy_name not in ORACLE_POLICIES else ORACLE_POLICY_INFERENCE_KIND,
+                "oracle_rollout_executed": False,
+                "true_model_inference_executed": False,
+                "dynamic_candidate_validation_missing": False,
+                "finite_outputs": False,
+                "model_inference_failure": False,
+                "model_inference_mask_violation": False,
+                "candidate_generation_exhausted": True,
+                "terminal_reason": "candidate_generation_exhausted",
+                "executed": False,
+                "reason_codes": step_reasons,
+            }
+            steps.append(step_row)
+            reason_codes.extend(step_reasons)
+            break
         scenario_state = dict(scenario)
         scenario_state["coverage_rate"] = coverage_rates[-1]
         scenario_state["coverage_rate_delta"] = steps[-1]["coverage_rate_delta"] if steps else 0.0
@@ -600,14 +839,13 @@ def _run_policy_episode(
         is_oracle_policy = policy_name in ORACLE_POLICIES
         oracle_rollout_executed = False
         policy_inference_kind = ORACLE_POLICY_INFERENCE_KIND if is_oracle_policy else MODEL_POLICY_INFERENCE_KIND
+        model_inference_failure = False
         dynamic_candidate_validation_missing = any(candidate.get("dynamic_candidate_validation_missing") is True for candidate in candidates)
         if dynamic_candidate_validation_missing:
             step_reasons.append("dynamic_candidate_validation_missing")
         if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
             if not candidate_batch["dynamic_generation_executed"]:
                 step_reasons.append("dynamic_candidate_generation_missing")
-            if not candidates:
-                step_reasons.append("no_valid_dynamic_candidates")
         if is_oracle_policy:
             selected_index = _oracle_selected_index(
                 policy_name,
@@ -641,6 +879,9 @@ def _run_policy_episode(
                     detail = _policy_detail_to_dict(model_bundle["incumbent_scorer"].score_detail(adapter["incumbent_observation"]))
                 true_model_inference_executed = True
             except Exception as exc:  # pragma: no cover
+                model_inference_failure = True
+                model_inference_failure_count += 1
+                step_reasons.append("model_inference_failure")
                 step_reasons.append(f"true_model_inference_failed:{type(exc).__name__}")
                 step_reasons.append("true_model_inference_not_executed")
 
@@ -663,17 +904,32 @@ def _run_policy_episode(
 
         detail_payload = detail or _empty_model_detail()
         selected_index = detail["selected_action_index"] if is_oracle_policy and detail is not None else _selected_index(detail)
+        if (
+            not is_oracle_policy
+            and true_model_inference_executed
+            and not bool(detail_payload.get("finite_outputs"))
+        ):
+            model_inference_failure = True
+            model_inference_failure_count += 1
+            step_reasons.append("model_inference_failure")
+            step_reasons.append("model_inference_non_finite_output")
         selected_candidate = _candidate_at(candidates, selected_index)
         selected_cell = _cell_tuple(_candidate_cell(selected_candidate)) if selected_candidate is not None else None
         selected_cost = _candidate_cost(selected_candidate) if selected_candidate is not None else None
         selected_risk = _finite_or_none(selected_candidate.get("risk")) if selected_candidate is not None else None
+        selected_risk_source = str((selected_candidate or {}).get("risk_source") or "unavailable")
+        selected_risk_route_derived = bool((selected_candidate or {}).get("risk_route_derived", False))
+        selected_planner_validation_backend = str((selected_candidate or {}).get("planner_validation_backend") or "")
+        selected_validation_evidence_kind = str((selected_candidate or {}).get("validation_evidence_kind") or "")
         selected_energy = _finite_or_none(selected_candidate.get("energy_cost")) if selected_candidate is not None else None
         selected_value = _finite_or_none(selected_candidate.get("value")) if selected_candidate is not None else None
-        mask_violation = _mask_violation(adapter["action_mask"], selected_index)
+        mask_violation = selected_index is not None and _mask_violation(adapter["action_mask"], selected_index)
         if mask_violation:
             mask_violation_count += 1
             step_reasons.append("model_inference_mask_violation")
-        if selected_candidate is None or selected_cell is None:
+        if model_inference_failure:
+            pass
+        elif selected_candidate is None or selected_cell is None:
             path_planning_failure_count += 1
             step_reasons.append("path_planning_failure")
         elif not _candidate_is_valid(selected_candidate):
@@ -721,6 +977,8 @@ def _run_policy_episode(
             coverage_return += coverage_delta
             valuable_area_covered += len(new_cells) * _float_default(selected_value)
         coverage_rates.append(len(covered_cells) / denominator)
+        coverage_rate_raw_values.append(_coverage_rate_from_count(len(covered_cells), denominator_context))
+        coverage_rate_capped_values.append(_coverage_rate_capped(coverage_rate_raw_values[-1]))
         if detail is not None:
             selected_probabilities.append(float(detail_payload["selected_probability"]))
             selected_ranks.append(int(detail_payload["selected_rank"]))
@@ -757,10 +1015,26 @@ def _run_policy_episode(
             "action_entropy": entropies[-1] if entropies else 0.0,
             "path_cost": selected_cost,
             "risk": selected_risk,
+            "selected_risk_source": selected_risk_source,
+            "selected_risk_route_derived": selected_risk_route_derived,
+            "selected_planner_validation_backend": selected_planner_validation_backend,
+            "selected_validation_evidence_kind": selected_validation_evidence_kind,
             "energy_cost": selected_energy,
             "coverage_rate_delta": coverage_delta,
             "cumulative_coverage_rate_delta": cumulative_delta,
             "final_coverage_rate": coverage_rates[-1],
+            "raw_covered_cell_count": len(covered_cells),
+            "raw_new_covered_cell_count": len(new_cells),
+            "coverage_rate_raw": coverage_rate_raw_values[-1],
+            "coverage_rate_capped": coverage_rate_capped_values[-1],
+            "coverage_saturation_exceeded": bool(
+                coverage_rate_raw_values[-1] is not None and coverage_rate_raw_values[-1] > 1.0 + TOLERANCE
+            ),
+            "coverage_saturation_excess": _coverage_saturation_excess(coverage_rate_raw_values[-1]),
+            "coverage_denominator_cells": denominator_context["coverage_denominator_cells"],
+            "coverage_denominator_mode": denominator_context["coverage_denominator_mode"],
+            "coverage_denominator_source": denominator_context["coverage_denominator_source"],
+            "coverage_denominator_reason_codes": denominator_context["coverage_denominator_reason_codes"],
             "new_covered_cell_count": len(new_cells),
             "revisited_cell_count": len(revisited_cells),
             "coverage_gain_per_path_cost": _safe_ratio(coverage_delta, selected_cost),
@@ -770,7 +1044,10 @@ def _run_policy_episode(
             "true_model_inference_executed": true_model_inference_executed,
             "dynamic_candidate_validation_missing": dynamic_candidate_validation_missing,
             "finite_outputs": detail_payload["finite_outputs"],
+            "model_inference_failure": model_inference_failure,
             "model_inference_mask_violation": mask_violation,
+            "candidate_generation_exhausted": False,
+            "terminal_reason": None,
             "executed": executed,
             "reason_codes": unique_sorted(step_reasons),
         }
@@ -793,6 +1070,7 @@ def _run_policy_episode(
                     "oracle_rollout_executed": oracle_rollout_executed,
                     "true_model_inference_executed": true_model_inference_executed,
                     "dynamic_candidate_validation_missing": dynamic_candidate_validation_missing,
+                    "model_inference_failure_count": int(model_inference_failure),
                     "model_inference_mask_violation_count": int(mask_violation),
                     "detail": detail_payload,
                     "reason_codes": unique_sorted(step_reasons),
@@ -804,7 +1082,16 @@ def _run_policy_episode(
 
     executed_step_count = sum(1 for row in steps if row["executed"])
     coverage_curve_auc = _coverage_curve_auc(coverage_rates, config["rollout_steps"])
+    coverage_curve_auc_capped = _coverage_curve_auc_nullable(coverage_rate_capped_values, config["rollout_steps"])
     cumulative_delta = coverage_rates[-1] - coverage_rates[0]
+    coverage_rate_raw = coverage_rate_raw_values[-1]
+    coverage_rate_capped = coverage_rate_capped_values[-1]
+    initial_coverage_rate_capped = coverage_rate_capped_values[0]
+    coverage_rate_delta_capped = (
+        None
+        if coverage_rate_capped is None or initial_coverage_rate_capped is None
+        else float(coverage_rate_capped) - float(initial_coverage_rate_capped)
+    )
     total_seen_cells = new_cell_total + revisited_cell_total
     coverage_per_100m = _safe_ratio_v2(new_cell_total * 100.0, path_cost_total, "coverage_per_100m")
     risk_per_100m = _safe_ratio_v2(risk_total * 100.0, path_cost_total, "risk_per_100m")
@@ -822,12 +1109,30 @@ def _run_policy_episode(
         "policy": policy_name,
         "rollout_steps": config["rollout_steps"],
         "executed_step_count": executed_step_count,
+        "episode_termination_reason": episode_termination_reason,
+        "candidate_generation_exhausted": candidate_generation_exhausted_count > 0,
+        "candidate_generation_exhausted_step": candidate_generation_exhausted_step,
+        "candidate_generation_exhausted_count": candidate_generation_exhausted_count,
+        "model_inference_failure_count": model_inference_failure_count,
         "initial_coverage_rate": coverage_rates[0],
         "final_coverage_rate": coverage_rates[-1],
         "coverage_rate_delta": cumulative_delta,
         "cumulative_coverage_rate_delta": cumulative_delta,
         "coverage_return": coverage_return,
         "coverage_curve_auc": coverage_curve_auc,
+        "raw_covered_cell_count": len(covered_cells),
+        "raw_new_covered_cell_count": new_cell_total,
+        "coverage_rate_raw": coverage_rate_raw,
+        "coverage_rate_capped": coverage_rate_capped,
+        "final_coverage_rate_capped": coverage_rate_capped,
+        "coverage_rate_delta_capped": coverage_rate_delta_capped,
+        "coverage_curve_auc_capped": coverage_curve_auc_capped,
+        "coverage_saturation_exceeded": bool(coverage_rate_raw is not None and coverage_rate_raw > 1.0 + TOLERANCE),
+        "coverage_saturation_excess": _coverage_saturation_excess(coverage_rate_raw),
+        "coverage_denominator_cells": denominator_context["coverage_denominator_cells"],
+        "coverage_denominator_mode": denominator_context["coverage_denominator_mode"],
+        "coverage_denominator_source": denominator_context["coverage_denominator_source"],
+        "coverage_denominator_reason_codes": denominator_context["coverage_denominator_reason_codes"],
         "new_covered_cell_count": new_cell_total,
         "total_new_cell_count": new_cell_total,
         "revisited_cell_count": revisited_cell_total,
@@ -923,6 +1228,18 @@ def _comparison_pairs(episodes: list[dict[str, Any]], config: dict[str, Any]) ->
             "xunce_total_new_cell_count": _episode_number(xunce, "total_new_cell_count"),
             "incumbent_total_new_cell_count": _episode_number(incumbent, "total_new_cell_count"),
             "coverage_delta_cells": coverage_delta,
+            "xunce_raw_covered_cell_count": _episode_number(xunce, "raw_covered_cell_count"),
+            "incumbent_raw_covered_cell_count": _episode_number(incumbent, "raw_covered_cell_count"),
+            "xunce_final_coverage_rate_raw": xunce.get("coverage_rate_raw"),
+            "incumbent_final_coverage_rate_raw": incumbent.get("coverage_rate_raw"),
+            "coverage_rate_delta_raw": _nullable_delta(xunce.get("coverage_rate_raw"), incumbent.get("coverage_rate_raw")),
+            "xunce_final_coverage_rate_capped": xunce.get("final_coverage_rate_capped"),
+            "incumbent_final_coverage_rate_capped": incumbent.get("final_coverage_rate_capped"),
+            "coverage_rate_delta_capped": _nullable_delta(xunce.get("final_coverage_rate_capped"), incumbent.get("final_coverage_rate_capped")),
+            "xunce_coverage_saturation_exceeded": bool(xunce.get("coverage_saturation_exceeded")),
+            "incumbent_coverage_saturation_exceeded": bool(incumbent.get("coverage_saturation_exceeded")),
+            "xunce_coverage_saturation_excess": _episode_number(xunce, "coverage_saturation_excess"),
+            "incumbent_coverage_saturation_excess": _episode_number(incumbent, "coverage_saturation_excess"),
             "xunce_roi_weighted_coverage_total": _episode_number(xunce, "roi_weighted_coverage_total"),
             "incumbent_roi_weighted_coverage_total": _episode_number(incumbent, "roi_weighted_coverage_total"),
             "roi_weighted_coverage_delta": roi_delta,
@@ -966,6 +1283,18 @@ def _comparison_aggregate(pairs: list[dict[str, Any]], config: dict[str, Any]) -
             "incumbent_win_count": sum(1 for outcome in outcomes if outcome == "incumbent_win"),
             "tie_count": sum(1 for outcome in outcomes if outcome == "tie"),
         }
+    final_raw_rates = [
+        value
+        for row in pairs
+        for value in (row.get("xunce_final_coverage_rate_raw"), row.get("incumbent_final_coverage_rate_raw"))
+        if _finite_or_none(value) is not None
+    ]
+    saturation_excesses = [
+        value
+        for row in pairs
+        for value in (row.get("xunce_coverage_saturation_excess"), row.get("incumbent_coverage_saturation_excess"))
+        if _finite_or_none(value) is not None
+    ]
     return {
         "schema_version": "xunce-exploration-coverage-comparison-aggregate/v1",
         "scenario_count": len(pairs),
@@ -973,6 +1302,12 @@ def _comparison_aggregate(pairs: list[dict[str, Any]], config: dict[str, Any]) -
         "xunce_coverage_tie_count": tie_count,
         "xunce_coverage_loss_count": loss_count,
         "xunce_coverage_win_rate": _safe_ratio(win_count, len(pairs)) or 0.0,
+        "coverage_rate_saturation_episode_count": sum(
+            int(bool(row.get("xunce_coverage_saturation_exceeded"))) + int(bool(row.get("incumbent_coverage_saturation_exceeded")))
+            for row in pairs
+        ),
+        "max_final_coverage_rate_raw": max((float(value) for value in final_raw_rates), default=0.0),
+        "max_coverage_rate_saturation_excess": max((float(value) for value in saturation_excesses), default=0.0),
         **_distribution_fields("coverage_delta_cells", [row.get("coverage_delta_cells") for row in pairs]),
         **_distribution_fields("path_cost_delta_m", [row.get("path_cost_delta_m") for row in pairs]),
         **_distribution_fields("risk_delta", [row.get("risk_delta") for row in pairs]),
@@ -1098,6 +1433,15 @@ def _coverage_comparison_audit(
         repo_root=repo_root,
         output_root=output_root,
     )
+    candidate_generation_exhausted_count = sum(int(row.get("candidate_generation_exhausted_count", 0) or 0) for row in episodes)
+    model_inference_failure_count = sum(int(row.get("model_inference_failure_count", 0) or 0) for row in episodes)
+    coverage_rate_saturation_episode_count = sum(1 for row in episodes if row.get("coverage_saturation_exceeded") is True)
+    final_raw_rates = [row.get("coverage_rate_raw") for row in episodes if _finite_or_none(row.get("coverage_rate_raw")) is not None]
+    saturation_excesses = [
+        row.get("coverage_saturation_excess")
+        for row in episodes
+        if _finite_or_none(row.get("coverage_saturation_excess")) is not None
+    ]
     return {
         "schema_version": "xunce-exploration-coverage-comparison-audit/v1",
         "dynamic_validation_audit": dynamic_audit,
@@ -1171,8 +1515,29 @@ def _coverage_comparison_audit(
         "dynamic_validation_full_adapter_evidence_passed": dynamic_audit["dynamic_validation_full_adapter_evidence_passed"],
         "dynamic_planner_validation_backend_counts": dynamic_audit["planner_validation_backend_counts"],
         "dynamic_sidecar_grid_astar_fallback_count": dynamic_audit["sidecar_grid_astar_fallback_count"],
+        "coverage_frontier_candidate_count": dynamic_audit["coverage_frontier_candidate_count"],
+        "undercovered_component_candidate_count": dynamic_audit["undercovered_component_candidate_count"],
+        "candidate_generation_algorithm_source_counts": dynamic_audit["candidate_generation_algorithm_source_counts"],
+        "low_cost_bridge_candidate_count": dynamic_audit["low_cost_bridge_candidate_count"],
+        "conservative_local_candidate_count": dynamic_audit["conservative_local_candidate_count"],
+        "validated_pareto_frontier_count": dynamic_audit["validated_pareto_frontier_count"],
+        "validated_low_cost_candidate_count": dynamic_audit["validated_low_cost_candidate_count"],
+        "validated_efficiency_candidate_count": dynamic_audit["validated_efficiency_candidate_count"],
+        "prevalidation_proposal_drop_count": dynamic_audit["prevalidation_proposal_drop_count"],
+        "postvalidation_candidate_drop_count": dynamic_audit["postvalidation_candidate_drop_count"],
+        "risk_source_counts": dynamic_audit["risk_source_counts"],
+        "formal_risk_source_counts": dynamic_audit["formal_risk_source_counts"],
+        "selected_risk_source_counts": dynamic_audit["selected_risk_source_counts"],
+        "route_derived_risk_count": dynamic_audit["route_derived_risk_count"],
+        "roi_weight_source_counts": dynamic_audit["roi_weight_source_counts"],
+        "candidate_selection_mode": dynamic_audit["candidate_selection_mode"],
         "dynamic_validation_source_root": dynamic_audit["dynamic_validation_source_root"],
         "dynamic_candidate_generation_missing_count": dynamic_audit["dynamic_candidate_generation_missing_count"],
+        "candidate_generation_exhausted_count": candidate_generation_exhausted_count,
+        "model_inference_failure_count": model_inference_failure_count,
+        "coverage_rate_saturation_episode_count": coverage_rate_saturation_episode_count,
+        "max_final_coverage_rate_raw": max((float(value) for value in final_raw_rates), default=0.0),
+        "max_coverage_rate_saturation_excess": max((float(value) for value in saturation_excesses), default=0.0),
         "state_conditioned_candidate_generation": dynamic_audit["state_conditioned_candidate_generation"],
         "candidate_set_hash_mismatch_count": _candidate_set_hash_mismatch_count(steps),
         "paired_decision_audit_row_count": len(paired_decision_rows),
@@ -1229,7 +1594,13 @@ def _dynamic_validation_audit(
         1
         for row in steps
         if "dynamic_candidate_generation_missing" in set(row.get("reason_codes", []))
-        or "no_valid_dynamic_candidates" in set(row.get("reason_codes", []))
+    )
+    candidate_generation_exhausted = sum(
+        1
+        for row in steps
+        if row.get("candidate_generation_exhausted") is True
+        or row.get("terminal_reason") == "candidate_generation_exhausted"
+        or "candidate_generation_exhausted" in set(row.get("reason_codes", []))
     )
     backend_counts = _count_by_field(dynamic_validation_rows, "planner_validation_backend")
     evidence_kind_counts = _count_by_field(dynamic_validation_rows, "validation_evidence_kind")
@@ -1292,6 +1663,12 @@ def _dynamic_validation_audit(
         output_root=output_root,
     )
     dynamic_work_root = Path(str(config.get("dynamic_validation_work_root", "")))
+    formal_validation_rows = [
+        row
+        for row in dynamic_validation_rows
+        if row.get("proposal_validated_by_path_feedback") is True and row.get("proposal_only") is False
+    ]
+    selected_step_rows = [row for row in steps if row.get("executed") is True and row.get("selected_cell") is not None]
     return {
         "schema_version": "xunce-exploration-coverage-dynamic-validation-audit/v1",
         "dynamic_candidate_generation_executed": generation_executed,
@@ -1325,9 +1702,30 @@ def _dynamic_validation_audit(
         "dynamic_validation_full_adapter_evidence_passed": full_adapter_evidence,
         "dynamic_validation_source_root": str(source["root"]),
         "dynamic_candidate_generation_missing_count": generation_missing,
+        "candidate_generation_exhausted_count": candidate_generation_exhausted,
         "state_conditioned_candidate_generation": bool(config.get("state_conditioned_candidate_generation", True)) and generation_executed,
         "path_feedback_validation_source_counts": _count_by_field(dynamic_validation_rows, "path_feedback_validation_source"),
         "frontier_candidate_source_counts": _count_by_field(dynamic_validation_rows, "frontier_candidate_source"),
+        "candidate_generation_algorithm_source_counts": _count_by_field(dynamic_validation_rows, "candidate_generation_algorithm_source"),
+        "coverage_frontier_candidate_count": sum(1 for row in dynamic_validation_rows if row.get("frontier_candidate_source") == "coverage_frontier_boundary"),
+        "undercovered_component_candidate_count": sum(
+            1
+            for row in dynamic_validation_rows
+            if row.get("frontier_candidate_source") in {"undercovered_component_centroid", "undercovered_component_boundary"}
+        ),
+        "low_cost_bridge_candidate_count": sum(1 for row in dynamic_validation_rows if row.get("frontier_candidate_source") == "low_cost_bridge_candidate"),
+        "conservative_local_candidate_count": sum(1 for row in dynamic_validation_rows if row.get("frontier_candidate_source") == "conservative_local_candidate"),
+        "validated_pareto_frontier_count": sum(1 for row in formal_validation_rows if row.get("candidate_selection_role") == "pareto_frontier"),
+        "validated_low_cost_candidate_count": sum(1 for row in formal_validation_rows if row.get("candidate_selection_role") == "low_cost"),
+        "validated_efficiency_candidate_count": sum(1 for row in formal_validation_rows if row.get("candidate_selection_role") == "coverage_efficiency"),
+        "prevalidation_proposal_drop_count": max(0, len(dynamic_proposals) - validation_attempts),
+        "postvalidation_candidate_drop_count": max(0, validation_success - sum(int(row.get("dynamic_validated_candidate_count", 0) or 0) for row in steps)),
+        "risk_source_counts": _count_by_field(dynamic_validation_rows, "risk_source"),
+        "formal_risk_source_counts": _count_by_field(formal_validation_rows, "risk_source"),
+        "selected_risk_source_counts": _count_by_field(selected_step_rows, "selected_risk_source"),
+        "route_derived_risk_count": sum(1 for row in dynamic_validation_rows if row.get("risk_route_derived") is True),
+        "roi_weight_source_counts": _count_by_field(dynamic_validation_rows, "roi_weight_source"),
+        "candidate_selection_mode": "validated_pareto_diverse" if generation_executed else "",
     }
 
 
@@ -1617,20 +2015,38 @@ def _model_inference_audit(model_bundle: dict[str, Any], inference_rows: list[di
     reason_codes = list(model_bundle["reason_codes"])
     if not model_bundle["xunce_checkpoint_loaded"] or not model_bundle["incumbent_checkpoint_loaded"]:
         reason_codes.append("true_model_inference_not_executed")
-    executed_rows = [row for row in inference_rows if row.get("true_model_inference_executed")]
-    finite_count = sum(1 for row in inference_rows if row.get("detail", {}).get("finite_outputs") is True)
+    auditable_rows = [
+        row
+        for row in inference_rows
+        if row.get("inference_skipped_reason") != "candidate_generation_exhausted"
+        and "candidate_generation_exhausted" not in set(row.get("reason_codes", []))
+    ]
+    executed_rows = [row for row in auditable_rows if row.get("true_model_inference_executed")]
+    finite_count = sum(1 for row in auditable_rows if row.get("detail", {}).get("finite_outputs") is True)
     mask_violation_count = sum(_int_value(row.get("model_inference_mask_violation_count")) for row in inference_rows)
-    if inference_rows and len(executed_rows) != len(inference_rows):
+    model_inference_failure_count = sum(
+        _int_value(row.get("model_inference_failure_count"))
+        for row in auditable_rows
+    )
+    model_inference_failure_count += sum(
+        1
+        for row in auditable_rows
+        if "model_inference_failure" in set(row.get("reason_codes", []))
+        and _int_value(row.get("model_inference_failure_count")) == 0
+    )
+    if auditable_rows and len(executed_rows) != len(auditable_rows):
         reason_codes.append("true_model_inference_not_executed")
-    if inference_rows and finite_count != len(inference_rows):
+    if auditable_rows and finite_count != len(auditable_rows):
         reason_codes.append("model_inference_non_finite_output")
+    if model_inference_failure_count:
+        reason_codes.append("model_inference_failure")
     if mask_violation_count:
         reason_codes.append("model_inference_mask_violation")
     true_model_inference_executed = bool(
-        inference_rows
-        and len(executed_rows) == len(inference_rows)
+        len(executed_rows) == len(auditable_rows)
         and model_bundle["xunce_checkpoint_loaded"]
         and model_bundle["incumbent_checkpoint_loaded"]
+        and model_inference_failure_count == 0
     )
     return {
         "schema_version": "xunce-exploration-coverage-model-inference-audit/v1",
@@ -1642,6 +2058,7 @@ def _model_inference_audit(model_bundle: dict[str, Any], inference_rows: list[di
         "xunce_parameter_count": model_bundle["xunce_parameter_count"],
         "incumbent_parameter_count": model_bundle["incumbent_parameter_count"],
         "model_inference_finite_output_count": finite_count,
+        "model_inference_failure_count": model_inference_failure_count,
         "model_inference_mask_violation_count": mask_violation_count,
         "passed": not reason_codes,
         "reason_codes": unique_sorted(reason_codes),
@@ -1710,6 +2127,8 @@ def _decision(
             reasons.append("dynamic_candidate_generation_missing")
         if comparison.get("dynamic_validation_attempt_count", 0) <= 0:
             reasons.append("dynamic_candidate_validation_not_executed")
+    if model_inference.get("model_inference_failure_count", 0) > 0:
+        reasons.append("model_inference_failure")
     reasons = unique_sorted(reasons)
     coverage_advantage = (
         not reasons
@@ -1742,7 +2161,7 @@ def _decision(
             next_change = FIX_XUNCE_CHECKPOINT_NEXT_REQUIRED_CHANGE
         elif "missing_incumbent_policy_checkpoint" in reasons or "incumbent_checkpoint_format_unsupported" in reasons:
             next_change = FIX_INCUMBENT_CHECKPOINT_NEXT_REQUIRED_CHANGE
-        elif "true_model_inference_not_executed" in reasons:
+        elif "true_model_inference_not_executed" in reasons or "model_inference_failure" in reasons:
             next_change = FIX_RUNNER_NEXT_REQUIRED_CHANGE
         elif "model_inference_mask_violation" in reasons or any("boundary" in reason for reason in reasons):
             next_change = BOUNDARY_NEXT_REQUIRED_CHANGE
@@ -1764,6 +2183,8 @@ def _decision(
         diagnostic_reasons.append("dynamic_candidate_validation_missing")
     if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process" and comparison.get("dynamic_validation_success_count", 0) <= 0:
         diagnostic_reasons.append("dynamic_candidate_validation_no_success")
+    if comparison.get("candidate_generation_exhausted_count", 0) > 0:
+        diagnostic_reasons.append("candidate_generation_exhausted")
     if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
         if comparison.get("dynamic_path_length_preflight_failure_count", 0) > 0:
             diagnostic_reasons.append("dynamic_validation_path_length_preflight_failed")
@@ -1874,6 +2295,11 @@ def _summary(
         "xunce_safety_regression_count": comparison["xunce_safety_regression_count"],
         "model_inference_mask_violation_count": model_inference["model_inference_mask_violation_count"],
         "model_inference_finite_output_count": model_inference["model_inference_finite_output_count"],
+        "model_inference_failure_count": model_inference["model_inference_failure_count"],
+        "candidate_generation_exhausted_count": comparison["candidate_generation_exhausted_count"],
+        "coverage_rate_saturation_episode_count": comparison["coverage_rate_saturation_episode_count"],
+        "max_final_coverage_rate_raw": comparison["max_final_coverage_rate_raw"],
+        "max_coverage_rate_saturation_excess": comparison["max_coverage_rate_saturation_excess"],
         "open_grid_fallback_count": comparison["open_grid_fallback_count"],
         "unreachable_selected_count": comparison["unreachable_selected_count"],
         "path_planning_failure_count": comparison["path_planning_failure_count"],
@@ -1922,8 +2348,25 @@ def _summary(
         "dynamic_validation_full_adapter_evidence_passed": comparison["dynamic_validation_full_adapter_evidence_passed"],
         "dynamic_planner_validation_backend_counts": comparison["dynamic_planner_validation_backend_counts"],
         "dynamic_sidecar_grid_astar_fallback_count": comparison["dynamic_sidecar_grid_astar_fallback_count"],
+        "coverage_frontier_candidate_count": comparison["coverage_frontier_candidate_count"],
+        "undercovered_component_candidate_count": comparison["undercovered_component_candidate_count"],
+        "candidate_generation_algorithm_source_counts": comparison["candidate_generation_algorithm_source_counts"],
+        "low_cost_bridge_candidate_count": comparison["low_cost_bridge_candidate_count"],
+        "conservative_local_candidate_count": comparison["conservative_local_candidate_count"],
+        "validated_pareto_frontier_count": comparison["validated_pareto_frontier_count"],
+        "validated_low_cost_candidate_count": comparison["validated_low_cost_candidate_count"],
+        "validated_efficiency_candidate_count": comparison["validated_efficiency_candidate_count"],
+        "prevalidation_proposal_drop_count": comparison["prevalidation_proposal_drop_count"],
+        "postvalidation_candidate_drop_count": comparison["postvalidation_candidate_drop_count"],
+        "risk_source_counts": comparison["risk_source_counts"],
+        "formal_risk_source_counts": comparison["formal_risk_source_counts"],
+        "selected_risk_source_counts": comparison["selected_risk_source_counts"],
+        "route_derived_risk_count": comparison["route_derived_risk_count"],
+        "roi_weight_source_counts": comparison["roi_weight_source_counts"],
+        "candidate_selection_mode": comparison["candidate_selection_mode"],
         "dynamic_validation_source_root": comparison["dynamic_validation_source_root"],
         "dynamic_candidate_generation_missing_count": comparison["dynamic_candidate_generation_missing_count"],
+        "dynamic_candidate_generation_exhausted_count": comparison["candidate_generation_exhausted_count"],
         "state_conditioned_candidate_generation": comparison["state_conditioned_candidate_generation"],
         "candidate_set_hash_mismatch_count": comparison["candidate_set_hash_mismatch_count"],
         "paired_decision_audit_row_count": comparison["paired_decision_audit_row_count"],

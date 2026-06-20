@@ -517,6 +517,173 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertTrue(summary["adapter_audit_passed"])
         self.assertFalse(summary["dynamic_validation_full_adapter_evidence_passed"])
 
+    def test_dynamic_candidate_exhaustion_cleanly_terminates_without_model_failure(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        original_dynamic_builder = module.build_dynamic_frontier_nbv_candidates
+
+        def exhausted_dynamic_candidates(**kwargs):
+            scenario_id = str(kwargs["scenario"].get("scenario_id", "scenario_000"))
+            proposal = {
+                "scenario_id": scenario_id,
+                "roi_group": "roi_0",
+                "proposal_id": f"{scenario_id}:exhausted",
+                "cell": [99, 99],
+                "proposal_only": True,
+                "proposal_validated_by_path_feedback": False,
+                "reachable": False,
+                "planner_reachable": False,
+                "open_grid_fallback_used": False,
+                "frontier_candidate_source": "frontier_boundary",
+                "candidate_generation_source": "dynamic_frontier_nbv_in_process/v1",
+                "coverage_source": "geometric_counterfactual_from_dynamic_frontier_nbv/v1",
+                "coverage_validated_by_path_feedback": False,
+                "coverage_validation_source": "offline_geometric_counterfactual_not_path_feedback",
+                "failure_reason": "proposal_unreachable",
+            }
+            return [], [proposal], [dict(proposal)]
+
+        module.build_dynamic_frontier_nbv_candidates = exhausted_dynamic_candidates
+        try:
+            self._update_config(
+                required_scenario_count=1,
+                rollout_steps=2,
+                candidate_refresh_mode="dynamic_frontier_nbv_in_process",
+                coverage_metric_mode="path_line_plus_endpoint",
+                include_oracle_baselines=False,
+                dynamic_validation_work_root=str(self.temp_dir / "_xunce_dynamic_validation_work"),
+                dynamic_validation_max_path_length=1000,
+            )
+            summary = module.run_xunce_high_fidelity_exploration_coverage_comparison(
+                config_path=self.config_path,
+                output_root=self.output_root,
+                repo_root=self.repo_root,
+            )
+        finally:
+            module.build_dynamic_frontier_nbv_candidates = original_dynamic_builder
+
+        self.assertEqual(summary["candidate_generation_exhausted_count"], 2)
+        self.assertEqual(summary["dynamic_candidate_generation_missing_count"], 0)
+        self.assertEqual(summary["model_inference_mask_violation_count"], 0)
+        self.assertEqual(summary["model_inference_failure_count"], 0)
+        self.assertEqual(summary["path_planning_failure_count"], 0)
+        self.assertNotIn("true_model_inference_not_executed", summary["reason_codes"])
+        self.assertNotIn("model_inference_non_finite_output", summary["reason_codes"])
+        self.assertNotIn("model_inference_mask_violation", summary["reason_codes"])
+        self.assertIn("candidate_generation_exhausted", summary["diagnostic_reason_codes"])
+
+        steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-steps.jsonl")
+        self.assertEqual(len(steps), 2)
+        for row in steps:
+            self.assertFalse(row["executed"])
+            self.assertIsNone(row["selected_action_index"])
+            self.assertIsNone(row["selected_cell"])
+            self.assertEqual(row["terminal_reason"], "candidate_generation_exhausted")
+            self.assertTrue(row["candidate_generation_exhausted"])
+            self.assertFalse(row["model_inference_failure"])
+            self.assertFalse(row["model_inference_mask_violation"])
+            self.assertFalse(row["true_model_inference_executed"])
+            self.assertIn("candidate_generation_exhausted", row["reason_codes"])
+            self.assertIn("no_valid_dynamic_candidates", row["reason_codes"])
+
+        episodes = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
+        self.assertEqual(len(episodes), 2)
+        for episode in episodes:
+            self.assertEqual(episode["episode_termination_reason"], "candidate_generation_exhausted")
+            self.assertTrue(episode["candidate_generation_exhausted"])
+            self.assertEqual(episode["candidate_generation_exhausted_step"], 0)
+            self.assertEqual(episode["candidate_generation_exhausted_count"], 1)
+
+    def test_model_inference_failure_is_separate_from_candidate_exhaustion(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        original_score = module._score_xunce_model
+
+        def failing_score(*args, **kwargs):
+            raise RuntimeError("synthetic scorer failure")
+
+        module._score_xunce_model = failing_score
+        try:
+            self._update_config(required_scenario_count=1, rollout_steps=1)
+            summary = module.run_xunce_high_fidelity_exploration_coverage_comparison(
+                config_path=self.config_path,
+                output_root=self.output_root,
+                repo_root=self.repo_root,
+            )
+        finally:
+            module._score_xunce_model = original_score
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertGreater(summary["model_inference_failure_count"], 0)
+        self.assertEqual(summary["candidate_generation_exhausted_count"], 0)
+        self.assertIn("model_inference_failure", summary["reason_codes"])
+
+    def test_coverage_rate_reports_raw_capped_and_saturation_fields(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            coverage_denominator_mode="fixed_config_cells",
+            coverage_denominator_cells=1,
+        )
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertGreater(summary["coverage_rate_saturation_episode_count"], 0)
+        self.assertGreater(summary["max_final_coverage_rate_raw"], 1.0)
+        self.assertGreater(summary["max_coverage_rate_saturation_excess"], 0.0)
+
+        episodes = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
+        self.assertTrue(episodes)
+        for episode in episodes:
+            self.assertGreater(episode["coverage_rate_raw"], 1.0)
+            self.assertEqual(episode["coverage_rate_capped"], 1.0)
+            self.assertTrue(episode["coverage_saturation_exceeded"])
+            self.assertGreater(episode["coverage_saturation_excess"], 0.0)
+            self.assertIn("coverage_denominator_mode", episode)
+
+        pairs = self._read_jsonl(self.output_root / "xunce-exploration-coverage-comparison-pairs.jsonl")
+        self.assertEqual(len(pairs), 1)
+        self.assertIn("xunce_final_coverage_rate_capped", pairs[0])
+        self.assertIn("incumbent_final_coverage_rate_capped", pairs[0])
+        self.assertIn("coverage_rate_delta_capped", pairs[0])
+        self.assertIn("coverage_delta_cells", pairs[0])
+
+        aggregate = self._read_json(self.output_root / "xunce-exploration-coverage-comparison-aggregate.json")
+        self.assertEqual(aggregate["coverage_delta_cells_mean"], pairs[0]["coverage_delta_cells"])
+        self.assertGreater(aggregate["coverage_rate_saturation_episode_count"], 0)
+
+    def test_roi_valid_cells_denominator_reads_sidecar_passable_mask(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            coverage_denominator_mode="roi_valid_cells",
+        )
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        episodes = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
+        self.assertTrue(episodes)
+        for episode in episodes:
+            self.assertEqual(episode["coverage_denominator_mode"], "roi_valid_cells")
+            self.assertEqual(episode["coverage_denominator_source"], "sidecar_passable_mask_valid_cells/v1")
+            self.assertEqual(episode["coverage_denominator_cells"], 128 * 128)
+
     def test_dynamic_v2_oracles_do_not_select_masked_candidate(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,

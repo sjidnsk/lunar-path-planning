@@ -747,9 +747,15 @@ def _validation_evidence_kind(
 def _risk_source(candidate: dict[str, Any], proposal: dict[str, Any]) -> str:
     if _finite_float(candidate.get("risk")) is None:
         return "unavailable"
+    if candidate.get("risk_source"):
+        return str(candidate["risk_source"])
     generation = candidate.get("candidate_generation")
     if isinstance(generation, dict) and generation.get("risk_source"):
         return str(generation["risk_source"])
+    if isinstance(generation, dict) and generation.get("risk_provenance_source"):
+        return str(generation["risk_provenance_source"])
+    if proposal.get("risk_source"):
+        return str(proposal["risk_source"])
     if proposal.get("risk") is not None or proposal.get("path_risk_peak") is not None:
         return "goal_experimental_fallback"
     return "sidecar_cost_proxy_no_path_risk"

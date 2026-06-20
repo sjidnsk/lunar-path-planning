@@ -45,9 +45,10 @@ def evaluate_candidate_paths_with_in_process_astar_batch(
 
     sidecar = _load_sidecar(sidecar_path)
     grid_spec = _grid_spec_from_contract(contract, GridSpec)
+    cost_array = np.asarray(sidecar["cost"], dtype=float)
     cost_grid = CostGrid(
         spec=grid_spec,
-        cost=np.asarray(sidecar["cost"], dtype=float),
+        cost=cost_array,
         passable_mask=np.asarray(sidecar["passable_mask"], dtype=bool),
         metadata={"source": str(sidecar_path), "adapter": BATCH_ASTAR_BACKEND},
     )
@@ -88,7 +89,12 @@ def evaluate_candidate_paths_with_in_process_astar_batch(
                     max_iterations=max_iterations,
                 ),
             )
-            route_payload = _route_payload_from_result(result, risk=_proposal_risk(row), risk_source=_proposal_risk_source(row))
+            route_payload = _route_payload_from_result(
+                result,
+                sidecar_cost=cost_array,
+                fallback_risk=_proposal_risk(row),
+                fallback_risk_source=_proposal_risk_source(row),
+            )
             route_cache[route_key] = dict(route_payload)
         rows.append(_row_from_route_payload(row, route_payload, route_cache_hit=cache_hit))
     return rows
@@ -136,23 +142,56 @@ def _row_from_route_payload(row: dict[str, Any], route: dict[str, Any], *, route
     if risk is not None:
         result["risk"] = risk
     result["risk_source"] = str(route.get("risk_source") or "sidecar_cost_proxy_no_path_risk")
+    result["risk_provenance_source"] = str(route.get("risk_provenance_source") or result["risk_source"])
+    result["risk_route_derived"] = bool(route.get("risk_route_derived", False))
+    result["risk_proxy_reason_codes"] = list(route.get("risk_proxy_reason_codes", []))
+    for key in ("path_cost_proxy_mean", "path_cost_proxy_peak", "path_cost_proxy_p95"):
+        value = _finite_float(route.get(key))
+        if value is not None:
+            result[key] = value
+    result["path_cost_source"] = str(route.get("path_cost_source") or "in_process_astar_route_total_cost/v1")
+    result["path_length_source"] = str(route.get("path_length_source") or "in_process_astar_diagnostics/v1")
     return result
 
 
-def _route_payload_from_result(result: Any, *, risk: float, risk_source: str) -> dict[str, Any]:
+def _route_payload_from_result(
+    result: Any,
+    *,
+    sidecar_cost: np.ndarray,
+    fallback_risk: float,
+    fallback_risk_source: str,
+) -> dict[str, Any]:
     failure_reason = getattr(result, "failure_reason", None)
     diagnostics = getattr(result, "diagnostics", None)
     path_length = getattr(diagnostics, "path_length_m", None)
     success = bool(getattr(result, "success", False))
+    proxy = _path_cost_proxy(sidecar_cost, getattr(result, "path_cells", ())) if success else {}
+    risk = fallback_risk
+    risk_source = fallback_risk_source
+    reason_codes: list[str] = []
+    if success and fallback_risk_source == "sidecar_cost_proxy_no_path_risk":
+        proxy_mean = _finite_float(proxy.get("path_cost_proxy_mean"))
+        if proxy_mean is not None:
+            risk = proxy_mean
+            risk_source = "sidecar_path_cost_proxy/v1"
+            reason_codes.append("risk_proxy_from_path_cost_not_physical_risk")
+        else:
+            reason_codes.append("route_cells_unavailable")
     payload = {
         "reachable": success,
         "path_cost": float(getattr(result, "total_cost", 0.0)) if success else None,
         "path_length": float(path_length) if path_length is not None and math.isfinite(float(path_length)) else None,
         "risk": risk,
         "risk_source": risk_source,
+        "risk_provenance_source": risk_source,
+        "risk_route_derived": False,
+        "risk_proxy_reason_codes": reason_codes,
+        "path_cost_source": "in_process_astar_route_total_cost/v1",
+        "path_length_source": "in_process_astar_diagnostics/v1",
         "failure_reason": None if success else _failure_reason_value(failure_reason),
         "open_grid_fallback_used": False,
     }
+    payload.update(proxy)
     return payload
 
 
@@ -174,10 +213,45 @@ def _failure_row(row: dict[str, Any], reason: str, *, route_cache_hit: bool) -> 
             "coverage_validated_by_path_feedback": False,
             "coverage_validation_source": "offline_geometric_counterfactual_not_path_feedback",
             "risk_source": "unavailable",
+            "risk_provenance_source": "unavailable",
+            "risk_route_derived": False,
+            "risk_proxy_reason_codes": [reason],
+            "path_cost_source": "unavailable",
+            "path_length_source": "unavailable",
             "route_cache_hit": bool(route_cache_hit),
         }
     )
     return result
+
+
+def _path_cost_proxy(sidecar_cost: np.ndarray, path_cells: Any) -> dict[str, Any]:
+    values: list[float] = []
+    for cell in path_cells or ():
+        x = getattr(cell, "x", None)
+        y = getattr(cell, "y", None)
+        try:
+            xi = int(x)
+            yi = int(y)
+        except (TypeError, ValueError):
+            continue
+        if yi < 0 or xi < 0 or yi >= sidecar_cost.shape[0] or xi >= sidecar_cost.shape[1]:
+            continue
+        value = _finite_float(sidecar_cost[yi, xi])
+        if value is not None:
+            values.append(value)
+    if not values:
+        return {
+            "path_cost_proxy_mean": None,
+            "path_cost_proxy_peak": None,
+            "path_cost_proxy_p95": None,
+        }
+    ordered = sorted(values)
+    p95_index = min(len(ordered) - 1, int(math.ceil(0.95 * len(ordered))) - 1)
+    return {
+        "path_cost_proxy_mean": float(sum(values) / len(values)),
+        "path_cost_proxy_peak": float(max(values)),
+        "path_cost_proxy_p95": float(ordered[p95_index]),
+    }
 
 
 def _load_sidecar(path: Path) -> dict[str, Any]:

@@ -179,6 +179,60 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         self.assertIn("true_model_inference_not_executed", summary["blocking_reason_codes"])
         self.assertEqual(summary["comparison_verdict"], "inconclusive")
 
+    def test_candidate_generation_exhaustion_is_diagnostic_not_blocker(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        coverage_summary_path = self.coverage_root / "xunce-exploration-coverage-comparison-summary.json"
+        coverage_summary = json.loads(coverage_summary_path.read_text(encoding="utf-8"))
+        coverage_summary["candidate_generation_exhausted_count"] = 24
+        coverage_summary["model_inference_failure_count"] = 0
+        coverage_summary_path.write_text(json.dumps(coverage_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertNotIn("candidate_generation_exhausted", summary["blocking_reason_codes"])
+        self.assertIn("candidate_generation_exhausted", summary["diagnostic_reason_codes"])
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["candidate_generation_exhausted_count"], 24)
+
+    def test_model_inference_failure_count_is_hard_blocker(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        coverage_summary_path = self.coverage_root / "xunce-exploration-coverage-comparison-summary.json"
+        coverage_summary = json.loads(coverage_summary_path.read_text(encoding="utf-8"))
+        coverage_summary["model_inference_failure_count"] = 2
+        coverage_summary_path.write_text(json.dumps(coverage_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("model_inference_failure", summary["blocking_reason_codes"])
+
+    def test_legacy_coverage_summary_missing_new_episode_fields_does_not_crash(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("candidate_generation_exhausted_count", summary["coverage_rollout_comparison_summary"])
+        self.assertEqual(summary["coverage_rollout_comparison_summary"]["candidate_generation_exhausted_count"], 0)
+
     def test_runner_writes_summary_and_accepts_plan_only(self) -> None:
         self._write_complete_evidence()
 

@@ -4737,6 +4737,31 @@ ROI-breakdown rows use the same fallback order: scenario `roi_group`, slice
 This is reporting/audit metadata propagation only; it does not affect model
 selection, A* validation, or coverage/risk/cost calculations.
 
+Long dynamic rollouts distinguish clean episode termination from model failure.
+When dynamic frontier-NBV generation runs but no validated candidates remain, the
+episode terminates with `terminal_reason=candidate_generation_exhausted`; this is
+reported as a diagnostic and is not counted as mask violation, path planning
+failure, or true-inference failure. Coverage reporting also separates raw counts
+from percentage-style rates: `raw_covered_cell_count` and pairwise
+`coverage_delta_cells` remain the primary comparison facts, while
+`coverage_rate_raw`, `coverage_rate_capped`, `coverage_saturation_exceeded`, and
+`coverage_saturation_excess` make denominator saturation explicit for long
+rollouts.
+
+Stage 18.4E refines the dynamic candidate generator itself. The v1 dynamic
+frontier label is now interpreted as a coverage frontier: the boundary between
+currently covered cells and uncovered valid ROI/passable cells, not a claim of a
+complete unknown-map frontier. Each step now proposes candidates from
+`coverage_frontier_boundary`, `undercovered_component_centroid`,
+`undercovered_component_boundary`, `low_cost_bridge_candidate`, and
+`conservative_local_candidate` families. Coverage estimates are clipped to the
+ROI/passable cell set and retain geometric-counterfactual provenance; A* still
+validates reachability, path cost, and path length, while risk remains an
+explicit sidecar/path-cost proxy rather than physical executor risk. The public
+`candidate_generation_source` remains `dynamic_frontier_nbv_in_process/v1` for
+compatibility; the algorithm-level provenance is recorded as
+`candidate_generation_algorithm_source=map_aware_coverage_frontier_nbv/v1`.
+
 The older Stage 18C-v2 `dynamic_from_coverage_memory` mode remains available as
 a historical baseline through extra runner arguments:
 

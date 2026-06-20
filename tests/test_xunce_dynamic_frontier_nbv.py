@@ -43,7 +43,10 @@ def test_dynamic_frontier_nbv_builds_validated_state_conditioned_candidates(tmp_
     assert formal
     assert candidate_set_hash(formal)
     assert covered_cells_hash(covered)
-    assert {row["frontier_candidate_source"] for row in proposals} >= {"frontier_boundary", "roi_undercovered_boundary"}
+    assert {row["frontier_candidate_source"] for row in proposals} >= {
+        "coverage_frontier_boundary",
+        "undercovered_component_centroid",
+    }
     for row in formal:
         assert row["proposal_only"] is False
         assert row["proposal_validated_by_path_feedback"] is True
@@ -53,11 +56,114 @@ def test_dynamic_frontier_nbv_builds_validated_state_conditioned_candidates(tmp_
         assert row["risk"] >= 0
         assert row["path_length"] >= 0
         assert row["candidate_generation_source"] == "dynamic_frontier_nbv_in_process/v1"
+        assert row["candidate_generation_algorithm_source"] == "map_aware_coverage_frontier_nbv/v1"
         assert row["coverage_source"] == "geometric_counterfactual_from_dynamic_frontier_nbv/v1"
         assert row["coverage_validated_by_path_feedback"] is False
         assert row["coverage_validation_source"] == "offline_geometric_counterfactual_not_path_feedback"
         assert row["validation_batch_hash"]
         assert str(tmp_path / "validation") in row["validation_work_root"]
+        assert row["candidate_selection_mode"] == "validated_pareto_diverse"
+
+
+def test_dynamic_frontier_nbv_coverage_is_clipped_to_passable_roi_cells(tmp_path) -> None:
+    repo_root = _scripts_on_path()
+    from scripts.xunce_dynamic_frontier_nbv import build_dynamic_frontier_nbv_candidates
+
+    passable_mask = [[True for _ in range(8)] for _ in range(8)]
+    for y in range(8):
+        passable_mask[y][7] = False
+    contract_path, sidecar_path = _write_contract_and_sidecar(tmp_path, passable_mask=passable_mask)
+    scenario = {"scenario_id": "dynamic-clipped", "path_feedback": {"candidates": []}}
+    slice_row = {
+        "scenario_id": "dynamic-clipped",
+        "contract": str(contract_path),
+        "sidecar": str(sidecar_path),
+        "map_source": {"roi": {"width": 8, "height": 8}},
+    }
+
+    formal, proposals, validations = build_dynamic_frontier_nbv_candidates(
+        scenario=scenario,
+        slice_row=slice_row,
+        current_cell=(5, 5),
+        covered_cells={(5, 5)},
+        step_index=0,
+        config={**_dynamic_config(), "dynamic_proposal_pool_limit_per_step": 5},
+        repo_root=repo_root,
+        output_work_root=tmp_path / "validation",
+        validation_cache={},
+    )
+
+    assert proposals
+    assert validations
+    assert all((row["cell"][0] != 7) for row in proposals)
+    assert formal
+    for row in proposals + validations + formal:
+        assert row["coverage_denominator_mode"] == "roi_valid_cells"
+        assert row["coverage_denominator_source"] == "dynamic_roi_valid_cells/v1"
+        assert row["coverage_denominator_cells"] == 56.0
+
+
+def test_dynamic_frontier_nbv_small_pool_keeps_undercovered_component_source(tmp_path) -> None:
+    repo_root = _scripts_on_path()
+    from scripts.xunce_dynamic_frontier_nbv import build_dynamic_frontier_nbv_candidates
+
+    contract_path, sidecar_path = _write_contract_and_sidecar(tmp_path)
+    scenario = {"scenario_id": "dynamic-small-pool", "path_feedback": {"candidates": []}}
+    slice_row = {
+        "scenario_id": "dynamic-small-pool",
+        "contract": str(contract_path),
+        "sidecar": str(sidecar_path),
+        "map_source": {"roi": {"width": 8, "height": 8}},
+    }
+
+    _formal, proposals, _validations = build_dynamic_frontier_nbv_candidates(
+        scenario=scenario,
+        slice_row=slice_row,
+        current_cell=(0, 0),
+        covered_cells={(0, 0), (0, 1)},
+        step_index=0,
+        config={**_dynamic_config(), "dynamic_proposal_pool_limit_per_step": 3},
+        repo_root=repo_root,
+        output_work_root=tmp_path / "validation",
+        validation_cache={},
+    )
+
+    sources = {row["frontier_candidate_source"] for row in proposals}
+    assert "coverage_frontier_boundary" in sources
+    assert {"undercovered_component_centroid", "undercovered_component_boundary"} & sources
+
+
+def test_dynamic_frontier_nbv_roi_weight_provenance_from_config_map(tmp_path) -> None:
+    repo_root = _scripts_on_path()
+    from scripts.xunce_dynamic_frontier_nbv import build_dynamic_frontier_nbv_candidates
+
+    contract_path, sidecar_path = _write_contract_and_sidecar(tmp_path)
+    scenario = {"scenario_id": "dynamic-roi-weight", "roi_group": "roi_0", "path_feedback": {"candidates": []}}
+    slice_row = {
+        "scenario_id": "dynamic-roi-weight",
+        "contract": str(contract_path),
+        "sidecar": str(sidecar_path),
+        "map_source": {"roi": {"width": 8, "height": 8}},
+    }
+    config = {**_dynamic_config(), "roi_group_weight_map": {"roi_0": 2.5}}
+
+    formal, proposals, validations = build_dynamic_frontier_nbv_candidates(
+        scenario=scenario,
+        slice_row=slice_row,
+        current_cell=(0, 0),
+        covered_cells={(0, 0)},
+        step_index=0,
+        config=config,
+        repo_root=repo_root,
+        output_work_root=tmp_path / "validation",
+        validation_cache={},
+    )
+
+    assert formal
+    for row in proposals + validations + formal:
+        assert row["roi_weight"] == 2.5
+        assert row["roi_weight_source"] == "config.roi_group_weight_map"
+        assert row["roi_weighted_coverage_delta"] == row["expected_coverage_rate_delta"] * 2.5
 
 
 def test_dynamic_frontier_nbv_changes_candidates_when_state_changes(tmp_path) -> None:
@@ -202,12 +308,13 @@ def _dynamic_config() -> dict:
         "coverage_radius_cells": 1,
         "coverage_metric_mode": "path_line_plus_endpoint",
         "coverage_denominator_cells": 1000,
+        "coverage_denominator_mode": "roi_valid_cells",
         "allow_open_grid_fallback": False,
         "path_budget_m": 5000.0,
     }
 
 
-def _write_contract_and_sidecar(tmp_path: Path) -> tuple[Path, Path]:
+def _write_contract_and_sidecar(tmp_path: Path, *, passable_mask: list[list[bool]] | None = None) -> tuple[Path, Path]:
     contract = {
         "schema_version": "model-explorer-contract/v1",
         "grid": {
@@ -226,7 +333,7 @@ def _write_contract_and_sidecar(tmp_path: Path) -> tuple[Path, Path]:
     sidecar = {
         "schema_version": "path-planner-sidecar/v1",
         "cost": [[1.0 for _ in range(8)] for _ in range(8)],
-        "passable_mask": [[True for _ in range(8)] for _ in range(8)],
+        "passable_mask": passable_mask or [[True for _ in range(8)] for _ in range(8)],
         "metadata": {"fixture": "dynamic"},
     }
     contract_path = tmp_path / "contract.json"

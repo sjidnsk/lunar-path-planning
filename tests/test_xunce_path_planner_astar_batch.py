@@ -43,7 +43,12 @@ def test_in_process_batch_astar_validates_multiple_proposals_without_route_adapt
     assert all(row["reachable"] is True for row in rows)
     assert all(row["path_cost"] > 0 for row in rows)
     assert all(row["path_length"] > 0 for row in rows)
-    assert all("risk_source" in row for row in rows)
+    assert {row["risk_source"] for row in rows} == {"sidecar_path_cost_proxy/v1"}
+    assert all(row["risk_route_derived"] is False for row in rows)
+    assert all(row["path_cost_proxy_mean"] >= 1.0 for row in rows)
+    assert all(row["path_cost_proxy_peak"] >= row["path_cost_proxy_mean"] for row in rows)
+    assert all(row["path_cost_source"] == "in_process_astar_route_total_cost/v1" for row in rows)
+    assert all(row["path_length_source"] == "in_process_astar_diagnostics/v1" for row in rows)
     assert all(row["coverage_validated_by_path_feedback"] is False for row in rows)
     assert not list((tmp_path / "work").glob("path-planner-*.json"))
     assert not list((tmp_path / "work").rglob("path-planner-request.json"))

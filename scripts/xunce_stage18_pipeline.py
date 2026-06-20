@@ -314,6 +314,16 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
             blocking.append("dynamic_contract_sidecar_missing")
         if int(coverage.get("dynamic_candidate_generation_missing_count", 0) or 0) > 0:
             blocking.append("dynamic_candidate_generation_missing")
+        if int(coverage.get("model_inference_failure_count", 0) or 0) > 0:
+            blocking.append("model_inference_failure")
+        if int(coverage.get("candidate_generation_exhausted_count", 0) or 0) > 0:
+            diagnostic.append("candidate_generation_exhausted")
+        if (
+            int(coverage.get("coverage_frontier_candidate_count", 0) or 0)
+            + int(coverage.get("undercovered_component_candidate_count", 0) or 0)
+            <= 0
+        ):
+            diagnostic.append("dynamic_candidate_source_not_frontier_dominant")
         if coverage.get("dynamic_validation_full_adapter_evidence_passed") is not True:
             if int(coverage.get("sidecar_grid_astar_screening_count", 0) or 0) > 0 or int(coverage.get("dynamic_sidecar_grid_astar_fallback_count", 0) or 0) > 0:
                 diagnostic.append("sidecar_screening_not_full_adapter_evidence")
@@ -712,8 +722,27 @@ def _coverage_summary(coverage: dict[str, Any], aggregate: dict[str, Any]) -> di
         "adapter_error_message_samples": coverage.get("adapter_error_message_samples"),
         "planner_validation_backend_counts": coverage.get("planner_validation_backend_counts", coverage.get("dynamic_planner_validation_backend_counts")),
         "validation_evidence_kind_counts": coverage.get("validation_evidence_kind_counts"),
+        "coverage_frontier_candidate_count": coverage.get("coverage_frontier_candidate_count", 0),
+        "undercovered_component_candidate_count": coverage.get("undercovered_component_candidate_count", 0),
+        "candidate_generation_algorithm_source_counts": coverage.get("candidate_generation_algorithm_source_counts", {}),
+        "low_cost_bridge_candidate_count": coverage.get("low_cost_bridge_candidate_count", 0),
+        "conservative_local_candidate_count": coverage.get("conservative_local_candidate_count", 0),
+        "validated_pareto_frontier_count": coverage.get("validated_pareto_frontier_count", 0),
+        "validated_low_cost_candidate_count": coverage.get("validated_low_cost_candidate_count", 0),
+        "validated_efficiency_candidate_count": coverage.get("validated_efficiency_candidate_count", 0),
+        "risk_source_counts": coverage.get("risk_source_counts", {}),
+        "formal_risk_source_counts": coverage.get("formal_risk_source_counts", {}),
+        "selected_risk_source_counts": coverage.get("selected_risk_source_counts", {}),
+        "route_derived_risk_count": coverage.get("route_derived_risk_count", 0),
+        "roi_weight_source_counts": coverage.get("roi_weight_source_counts", {}),
+        "candidate_selection_mode": coverage.get("candidate_selection_mode"),
         "dynamic_validation_full_adapter_evidence_passed": coverage.get("dynamic_validation_full_adapter_evidence_passed"),
-        "dynamic_candidate_generation_missing_count": coverage.get("dynamic_candidate_generation_missing_count"),
+        "dynamic_candidate_generation_missing_count": coverage.get("dynamic_candidate_generation_missing_count", 0),
+        "candidate_generation_exhausted_count": coverage.get("candidate_generation_exhausted_count", 0),
+        "model_inference_failure_count": coverage.get("model_inference_failure_count", 0),
+        "coverage_rate_saturation_episode_count": coverage.get("coverage_rate_saturation_episode_count", aggregate.get("coverage_rate_saturation_episode_count", 0)),
+        "max_final_coverage_rate_raw": coverage.get("max_final_coverage_rate_raw", aggregate.get("max_final_coverage_rate_raw", 0)),
+        "max_coverage_rate_saturation_excess": coverage.get("max_coverage_rate_saturation_excess", aggregate.get("max_coverage_rate_saturation_excess", 0)),
         "paired_decision_audit_row_count": coverage.get("paired_decision_audit_row_count"),
         "candidate_generation_effect_scope": coverage.get("candidate_generation_effect_scope"),
         "model_selection_evidence_scope": coverage.get("model_selection_evidence_scope"),
@@ -788,6 +817,10 @@ def _candidate_summary(stage18_2: dict[str, Any], quant: dict[str, Any]) -> dict
         "safe_efficient_candidate_count": quant.get("safe_efficient_candidate_count", stage18_2.get("safe_efficient_candidate_count")),
         "candidate_coverage_spread_range": stage18_2.get("candidate_coverage_spread_range"),
         "candidate_validation_mode": stage18_2.get("candidate_validation_mode"),
+        "coverage_frontier_candidate_count": stage18_2.get("coverage_frontier_candidate_count"),
+        "undercovered_component_candidate_count": stage18_2.get("undercovered_component_candidate_count"),
+        "low_cost_bridge_candidate_count": stage18_2.get("low_cost_bridge_candidate_count"),
+        "candidate_selection_mode": stage18_2.get("candidate_selection_mode"),
     }
 
 
