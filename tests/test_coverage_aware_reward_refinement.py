@@ -58,9 +58,12 @@ class CoverageAwareRewardRefinementTests(unittest.TestCase):
         self.assertEqual(summary["reward_refinement_status"], "passed")
         self.assertEqual(summary["reason_codes"], [])
         self.assertEqual(summary["next_required_change"], "coverage_driven_ppo_improvement_run")
-        self.assertGreater(summary["reward_component_source_status"]["coverage_gain_bonus"]["positive_count"], 0)
-        self.assertGreater(summary["reward_component_source_status"]["valuable_area_bonus"]["positive_count"], 0)
-        self.assertGreater(summary["reward_component_source_status"]["information_gain_bonus"]["positive_count"], 0)
+        self.assertEqual(summary["profile_id"], "xunce-coverage-cost-risk-budget-v2")
+        self.assertEqual(summary["profile_version"], "v2")
+        self.assertTrue(summary["profile_hash"])
+        self.assertGreater(summary["reward_component_source_status"]["coverage_component"]["positive_count"], 0)
+        self.assertGreater(summary["reward_component_source_status"]["valuable_coverage_component"]["positive_count"], 0)
+        self.assertGreater(summary["reward_component_source_status"]["information_component"]["positive_count"], 0)
         self.assertFalse(summary["runs_new_ppo_update"])
         self.assertFalse(summary["publishes_checkpoint"])
         self.assertFalse(summary["replaces_default_policy"])
@@ -109,7 +112,7 @@ class CoverageAwareRewardRefinementTests(unittest.TestCase):
         self.assertIn("expected_actual_coverage_confusion", summary["reason_codes"])
         audit_rows = self._read_jsonl(self.output_root / "reward-component-audit.jsonl")
         selected = next(row for row in audit_rows if row["actor"] == "selected_ppo_candidate")
-        self.assertEqual(selected["reward_components"]["coverage_gain_bonus"], 0.0)
+        self.assertEqual(selected["reward_components"]["coverage_component"], 0.0)
 
     def test_missing_valuable_and_information_sources_do_not_create_positive_bonus(self) -> None:
         from scripts.run_coverage_aware_reward_refinement import (
@@ -153,10 +156,10 @@ class CoverageAwareRewardRefinementTests(unittest.TestCase):
         self.assertIn("valuable_coverage_signal_missing", summary["reason_codes"])
         self.assertIn("information_gain_signal_missing", summary["reason_codes"])
         audit_rows = self._read_jsonl(self.output_root / "reward-component-audit.jsonl")
-        self.assertTrue(all(row["reward_components"]["valuable_area_bonus"] == 0.0 for row in audit_rows))
-        self.assertTrue(all(row["reward_components"]["information_gain_bonus"] == 0.0 for row in audit_rows))
+        self.assertTrue(all(row["reward_components"]["valuable_coverage_component"] == 0.0 for row in audit_rows))
+        self.assertTrue(all(row["reward_components"]["information_component"] == 0.0 for row in audit_rows))
 
-    def test_path_risk_energy_penalties_use_candidate_features_when_step_deltas_are_zero(self) -> None:
+    def test_path_and_risk_components_use_candidate_features_when_step_deltas_are_zero(self) -> None:
         from scripts.run_coverage_aware_reward_refinement import (
             run_coverage_aware_reward_refinement,
         )
@@ -192,12 +195,12 @@ class CoverageAwareRewardRefinementTests(unittest.TestCase):
             for row in self._read_jsonl(self.output_root / "reward-component-audit.jsonl")
             if row["actor"] == "selected_ppo_candidate"
         )
-        self.assertLess(selected["reward_components"]["path_cost_penalty"], 0.0)
-        self.assertLess(selected["reward_components"]["risk_penalty"], 0.0)
-        self.assertLess(selected["reward_components"]["energy_penalty"], 0.0)
-        self.assertEqual(selected["source_fields"]["path_cost_penalty"], "observation.candidate_features.path_cost")
-        self.assertEqual(selected["source_fields"]["risk_penalty"], "observation.candidate_features.risk")
-        self.assertEqual(selected["source_fields"]["energy_penalty"], "observation.candidate_features.energy_cost")
+        self.assertLess(selected["reward_components"]["path_cost_component"], 0.0)
+        self.assertLess(selected["reward_components"]["risk_component"], 0.0)
+        self.assertNotIn("energy_penalty", selected["reward_components"])
+        self.assertEqual(selected["source_fields"]["path_cost_component"], "observation.candidate_features.path_cost")
+        self.assertEqual(selected["source_fields"]["risk_component"], "observation.candidate_features.risk")
+        self.assertEqual(selected["audit_only_reward_fields"]["energy_cost_source"], "observation.candidate_features.energy_cost")
 
     def test_fallback_gain_claimed_as_policy_is_penalized_and_rejected(self) -> None:
         from scripts.run_coverage_aware_reward_refinement import (
@@ -231,9 +234,9 @@ class CoverageAwareRewardRefinementTests(unittest.TestCase):
         self.assertEqual(summary["status"], "failed")
         self.assertIn("fallback_policy_gain_contamination", summary["reason_codes"])
         fallback_row = next(row for row in self._read_jsonl(self.output_root / "reward-component-audit.jsonl") if row["actor"] == "source_fallback")
-        self.assertLess(fallback_row["reward_components"]["fallback_penalty"], 0.0)
+        self.assertLess(fallback_row["reward_components"]["fallback_component"], 0.0)
 
-    def test_controlled_regression_gets_penalty_and_blocks_refinement(self) -> None:
+    def test_controlled_regression_is_audit_only_and_blocks_refinement(self) -> None:
         from scripts.run_coverage_aware_reward_refinement import (
             run_coverage_aware_reward_refinement,
         )
@@ -264,7 +267,8 @@ class CoverageAwareRewardRefinementTests(unittest.TestCase):
         self.assertEqual(summary["status"], "failed")
         self.assertIn("controlled_regression_present", summary["reason_codes"])
         selected = next(row for row in self._read_jsonl(self.output_root / "reward-component-audit.jsonl") if row["actor"] == "selected_ppo_candidate")
-        self.assertLess(selected["reward_components"]["controlled_regression_penalty"], 0.0)
+        self.assertNotIn("controlled_regression_penalty", selected["reward_components"])
+        self.assertEqual(selected["audit_only_reward_fields"]["controlled_regression_reason_count"], 1)
 
     def test_teacher_skill_retention_bonus_requires_action_evidence(self) -> None:
         from scripts.run_coverage_aware_reward_refinement import (
@@ -301,11 +305,13 @@ class CoverageAwareRewardRefinementTests(unittest.TestCase):
         audit_rows = self._read_jsonl(self.output_root / "reward-component-audit.jsonl")
         aligned = next(row for row in audit_rows if row["context_id"] == "selected_ppo_candidate-context-0")
         safe_disagreement = next(row for row in audit_rows if row["context_id"] == "selected_ppo_candidate-context-1")
-        self.assertGreater(aligned["reward_components"]["teacher_skill_retention_bonus"], 0.0)
-        self.assertGreater(safe_disagreement["reward_components"]["teacher_skill_retention_bonus"], 0.0)
+        self.assertNotIn("teacher_skill_retention_bonus", aligned["reward_components"])
+        self.assertNotIn("teacher_skill_retention_bonus", safe_disagreement["reward_components"])
+        self.assertGreater(aligned["audit_only_reward_fields"]["teacher_skill_retention_bonus"], 0.0)
+        self.assertGreater(safe_disagreement["audit_only_reward_fields"]["teacher_skill_retention_bonus"], 0.0)
         self.assertLess(
-            safe_disagreement["reward_components"]["teacher_skill_retention_bonus"],
-            aligned["reward_components"]["teacher_skill_retention_bonus"],
+            safe_disagreement["audit_only_reward_fields"]["teacher_skill_retention_bonus"],
+            aligned["audit_only_reward_fields"]["teacher_skill_retention_bonus"],
         )
 
     def test_teacher_equivalent_candidate_is_not_marked_as_performance_improved(self) -> None:

@@ -97,6 +97,10 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertIn("path_cost_total_m", first_episode)
         self.assertIn("risk_total", first_episode)
         self.assertIn("risk_cost_weighted_total", first_episode)
+        self.assertIn("soft_risk_exposure_total", first_episode)
+        self.assertIn("path_risk_peak_max", first_episode)
+        self.assertIn("hard_risk_violation_count", first_episode)
+        self.assertIn("risk_boundary_violation_steps", first_episode)
         self.assertIn("risk_source", first_episode)
         self.assertIn("roi_weighted_coverage_source", first_episode)
         self.assertIn("coverage_per_100m", first_episode)
@@ -113,12 +117,21 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             "path_cost_delta_m",
             "risk_delta",
             "risk_cost_weighted_delta",
+            "soft_risk_exposure_delta",
+            "hard_risk_violation_delta",
+            "hard_risk_violation_count",
+            "path_risk_peak_delta",
             "coverage_per_100m_delta",
             "risk_per_100m_delta",
             "greedy_oracle_coverage_regret_xunce",
             "greedy_oracle_coverage_regret_incumbent",
             "cost_aware_oracle_utility_regret_xunce",
             "cost_aware_oracle_utility_regret_incumbent",
+            "path_cost_budget_exceeded",
+            "risk_budget_exceeded",
+            "risk_cost_weighted_budget_exceeded",
+            "coverage_efficiency_regression",
+            "coverage_gain_per_path_cost_delta_audit_only",
             "undefined_metric_reason_codes",
         ):
             self.assertIn(field, first_pair)
@@ -126,6 +139,9 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
 
         aggregate = self._read_json(self.output_root / "xunce-exploration-coverage-comparison-aggregate.json")
         self.assertEqual(aggregate["scenario_count"], 24)
+        self.assertEqual(aggregate["profile_id"], "xunce-coverage-cost-risk-budget-v2")
+        self.assertEqual(aggregate["profile_version"], "v2")
+        self.assertTrue(aggregate["profile_hash"])
         self.assertIn("coverage_delta_cells_mean", aggregate)
         self.assertIn("coverage_delta_cells_median", aggregate)
         self.assertIn("coverage_delta_cells_iqr", aggregate)
@@ -137,6 +153,76 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(summary["xunce_path_cost_delta_vs_incumbent"], aggregate["path_cost_delta_m_mean"])
         self.assertEqual(summary["xunce_risk_delta_vs_incumbent"], aggregate["risk_delta_mean"])
         self.assertIn("comparison_utility_profiles", summary)
+        self.assertEqual(summary["profile_id"], "xunce-coverage-cost-risk-budget-v2")
+        self.assertEqual(summary["profile_version"], "v2")
+        self.assertTrue(summary["profile_hash"])
+        self.assertEqual(summary["canonical_guard_thresholds"]["max_path_cost_delta_m"], 20.0)
+        self.assertEqual(summary["canonical_guard_thresholds"]["max_risk_delta"], 0.5)
+        self.assertTrue(summary["comparison_utility_profiles_diagnostic_only"])
+        self.assertEqual(summary["stage19_readiness_source"], "canonical_guard_not_utility_profiles")
+        manifest = self._read_json(self.output_root / "xunce-exploration-coverage-comparison-manifest.json")
+        self.assertEqual(manifest["profile_id"], summary["profile_id"])
+        self.assertEqual(manifest["profile_version"], summary["profile_version"])
+        self.assertEqual(manifest["profile_hash"], summary["profile_hash"])
+
+    def test_strict_v3_profile_loads_without_v2_only_risk_guard_keys(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        self._update_config(
+            canonical_reward_profile=str(self.repo_root / "configs" / "xunce_canonical_reward_guard_profile_v3.json"),
+            include_roi_weighted_coverage=True,
+        )
+
+        config = module._load_config(self.config_path, self.repo_root)
+
+        self.assertEqual(config["profile_id"], "xunce-coverage-cost-risk-boundary-v3")
+        self.assertEqual(config["profile_version"], "v3")
+        self.assertTrue(config["profile_hash"])
+        thresholds = config["canonical_guard_thresholds"]
+        self.assertIsNone(thresholds["max_risk_delta"])
+        self.assertFalse(thresholds["risk_delta_hard_gate_enabled"])
+        self.assertTrue(thresholds["candidate_level_risk_delta_guard_is_diagnostic_only"])
+        self.assertEqual(thresholds["max_soft_risk_exposure_delta"], 25.0)
+
+    def test_canonical_reward_rerank_oracle_is_diagnostic_only(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        rerank_profile = self.repo_root / "configs" / "xunce_canonical_reward_guard_profile_v3_path_cost_w080.json"
+        self._update_config(
+            canonical_reward_profile=str(self.repo_root / "configs" / "xunce_canonical_reward_guard_profile_v3.json"),
+            canonical_reward_rerank_profile=str(rerank_profile),
+            include_canonical_reward_rerank_oracle=True,
+            required_scenario_count=2,
+            rollout_steps=1,
+            include_roi_weighted_coverage=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(summary["include_canonical_reward_rerank_oracle"])
+        self.assertEqual(summary["canonical_reward_rerank_profile_id"], "xunce-coverage-cost-risk-boundary-v3-path-cost-w080")
+        steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-steps.jsonl")
+        policies = {row["policy"] for row in steps}
+        self.assertEqual(policies, {"xunce", "incumbent", "canonical_reward_rerank_oracle"})
+        xunce_rows = [row for row in steps if row["policy"] == "xunce"]
+        incumbent_rows = [row for row in steps if row["policy"] == "incumbent"]
+        oracle_rows = [row for row in steps if row["policy"] == "canonical_reward_rerank_oracle"]
+        self.assertTrue(all(row["true_model_inference_executed"] for row in xunce_rows + incumbent_rows))
+        self.assertTrue(all(row["oracle_rollout_executed"] is False for row in xunce_rows + incumbent_rows))
+        self.assertTrue(all(row["true_model_inference_executed"] is False for row in oracle_rows))
+        self.assertTrue(all(row["oracle_rollout_executed"] is True for row in oracle_rows))
+        self.assertTrue(all(row["selected_reward_components"] for row in oracle_rows))
+        self.assertTrue(all(row["selected_reward_profile_id"] == "xunce-coverage-cost-risk-boundary-v3-path-cost-w080" for row in oracle_rows))
+        paired_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-paired-decision-audit.jsonl")
+        self.assertTrue(paired_rows)
+        self.assertFalse(any(row["executing_policy"] == "canonical_reward_rerank_oracle" for row in paired_rows))
 
     def test_masked_unreachable_candidate_is_not_selected(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
@@ -451,6 +537,94 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertIn("metadata_roi_1", roi_groups)
         self.assertNotIn("unknown", roi_groups)
 
+    def test_candidate_metric_audit_is_emitted_when_enabled(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._update_config(
+            required_scenario_count=2,
+            rollout_steps=1,
+            candidate_refresh_mode="dynamic_frontier_nbv_in_process",
+            coverage_metric_mode="path_line_plus_endpoint",
+            include_roi_weighted_coverage=True,
+            dynamic_proposal_pool_limit_per_step=8,
+            dynamic_max_candidates_per_step=3,
+            dynamic_validation_work_root=str(self.temp_dir / "_xunce_dynamic_validation_work"),
+            dynamic_validation_max_path_length=1000,
+            emit_candidate_metric_audit=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        audit_path = self.output_root / "xunce-exploration-coverage-candidate-metric-audit.jsonl"
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["candidate_metric_audit"], str(audit_path))
+        self.assertGreater(summary["candidate_metric_audit_row_count"], 0)
+        self.assertEqual(summary["normalized_config"]["dynamic_max_candidates_per_step"], 3)
+        self.assertEqual(summary["normalized_config"]["dynamic_proposal_pool_limit_per_step"], 8)
+        self.assertTrue(audit_path.is_file())
+        rows = self._read_jsonl(audit_path)
+        required = {
+            "schema_version",
+            "scenario_id",
+            "split",
+            "roi_group",
+            "policy",
+            "executing_policy",
+            "step_index",
+            "current_cell",
+            "covered_cells_hash",
+            "candidate_set_id",
+            "candidate_set_hash",
+            "candidate_index",
+            "candidate_cell",
+            "action_mask_valid",
+            "expected_new_coverage_cell_count",
+            "roi_weighted_coverage_delta",
+            "path_cost",
+            "risk",
+            "risk_proxy",
+            "risk_cost_weighted",
+            "path_allowed_by_risk",
+            "hard_risk_flags",
+            "soft_risk_flags",
+            "soft_risk_exposure",
+            "path_risk_exposure",
+            "path_risk_peak",
+            "high_risk_distance_m",
+            "recovery_margin_min",
+            "risk_semantics_source",
+            "risk_proxy_is_physical_risk",
+            "risk_source",
+            "risk_proxy_source",
+            "coverage_gain_per_path_cost",
+            "profile_id",
+            "profile_version",
+            "profile_hash",
+        }
+        self.assertTrue(rows)
+        self.assertTrue(all(required <= row.keys() for row in rows))
+        self.assertTrue(all(row["profile_hash"] == summary["profile_hash"] for row in rows))
+        paired_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-paired-decision-audit.jsonl")
+        paired_keys = {
+            (row["scenario_id"], row["step_index"], row["candidate_set_hash"], row["covered_cells_hash"])
+            for row in paired_rows
+        }
+        candidate_keys = {
+            (row["scenario_id"], row["step_index"], row["candidate_set_hash"], row["covered_cells_hash"])
+            for row in rows
+        }
+        self.assertTrue(paired_keys)
+        self.assertTrue(paired_keys <= candidate_keys)
+        manifest = self._read_json(self.output_root / "xunce-exploration-coverage-comparison-manifest.json")
+        self.assertEqual(manifest["candidate_metric_audit_row_count"], len(rows))
+        self.assertEqual(manifest["normalized_config"]["dynamic_max_candidates_per_step"], 3)
+
     def test_dynamic_frontier_nbv_adapter_sample_audit_compares_batch_astar_rows(self) -> None:
         from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
 
@@ -753,11 +927,10 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         finally:
             module._run_policy_episode = original_run_policy
 
-        self.assertFalse(summary["xunce_coverage_advantage_established"])
-        self.assertGreater(summary["xunce_efficiency_regression_count"], 0)
+        self.assertTrue(summary["xunce_coverage_advantage_established"])
+        self.assertEqual(summary["xunce_efficiency_regression_count"], 0)
         self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
-        self.assertIn("xunce_coverage_advantage_with_efficiency_regression", summary["diagnostic_reason_codes"])
-        self.assertEqual(summary["diagnostic_recommended_change"], "refine_coverage_reward_and_cost_guard")
+        self.assertNotIn("xunce_coverage_advantage_with_efficiency_regression", summary["diagnostic_reason_codes"])
 
     def test_pairwise_metrics_record_undefined_ratio_reasons(self) -> None:
         from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module

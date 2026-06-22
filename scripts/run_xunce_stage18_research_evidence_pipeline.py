@@ -34,6 +34,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quantization-root")
     parser.add_argument("--oracle-root")
     parser.add_argument("--coverage-comparison-root")
+    parser.add_argument("--stage18-5-attribution-root")
+    parser.add_argument("--stage18-6-guard-refinement-root")
+    parser.add_argument("--stage18-7-candidate-count-scaling-root")
+    parser.add_argument("--stage18-9-trajectory-risk-reward-root")
+    parser.add_argument("--stage18-11-path-cost-weight-calibration-root")
+    parser.add_argument("--stage19-evaluator-critic-preflight-root")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[1]
@@ -45,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
         "stage18_4_quantization_root": args.quantization_root,
         "stage18_4_oracle_root": args.oracle_root,
         "stage18_4_coverage_comparison_root": args.coverage_comparison_root,
+        "stage18_5_attribution_root": args.stage18_5_attribution_root,
+        "stage18_6_guard_refinement_root": args.stage18_6_guard_refinement_root,
+        "stage18_7_candidate_count_scaling_root": args.stage18_7_candidate_count_scaling_root,
+        "stage18_9_trajectory_risk_reward_root": args.stage18_9_trajectory_risk_reward_root,
+        "stage18_11_path_cost_weight_calibration_root": args.stage18_11_path_cost_weight_calibration_root,
+        "stage19_evaluator_critic_preflight_root": args.stage19_evaluator_critic_preflight_root,
     }
     try:
         summary = build_stage18_pipeline_summary(

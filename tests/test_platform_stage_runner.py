@@ -40,6 +40,13 @@ SUPPORTED_STAGE_IDS = {
     "xunce-risk-constrained-frontier-nbv-candidate-generation",
     "xunce-risk-aware-frontier-nbv-candidate-repair",
     "xunce-true-frontier-nbv-candidate-source-replacement",
+    "xunce-stage18-5-evidence-attribution-review",
+    "xunce-stage18-6-coverage-reward-cost-risk-guard-refinement",
+    "xunce-stage18-7-candidate-count-scaling-audit",
+    "xunce-stage18-9-trajectory-risk-boundary-reward-audit",
+    "xunce-stage18-9-strict-v3-evidence-rollup",
+    "xunce-stage18-11-path-cost-weight-calibration",
+    "xunce-stage19-evaluator-critic-preflight",
     "xunce-stage18i-evidence-closure-audit",
     "xunce-stage18-research-evidence-pipeline",
 }

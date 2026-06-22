@@ -12,11 +12,21 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+MODEL_EXPLORER_SRC = SCRIPT_DIR.parent / "model-explorer" / "src"
+if str(MODEL_EXPLORER_SRC) not in sys.path:
+    sys.path.insert(0, str(MODEL_EXPLORER_SRC))
 
 try:
     from git_provenance import git_snapshot
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
+
+from model_explorer.policy.canonical_reward import (
+    CANONICAL_REWARD_COMPONENTS,
+    CanonicalRewardGuardProfile,
+    compute_canonical_reward_components,
+    load_canonical_reward_profile,
+)
 
 
 SUMMARY_SCHEMA_VERSION = "coverage-aware-reward-refinement-summary/v1"
@@ -38,6 +48,7 @@ SHADOW_STEPS_FILE = "multihorizon-shadow-rollout-steps.jsonl"
 CONNECT_SOURCE_SUMMARY_FILE = "connect-reward-component-source-fields-summary.json"
 CONNECT_SOURCE_PROVENANCE_FILE = "component-provenance.jsonl"
 DEFAULT_CONNECT_SOURCE_ROOT = Path("outputs/path_feedback_batch_connect_reward_component_source_fields_v1")
+DEFAULT_CANONICAL_PROFILE = Path("configs/xunce_canonical_reward_guard_profile_v2.json")
 
 SUMMARY_FILE = "coverage-aware-reward-refinement-summary.json"
 REWARD_COMPONENT_AUDIT_FILE = "reward-component-audit.jsonl"
@@ -52,30 +63,12 @@ FALLBACK_ACTORS = {"source_fallback", "fallback", "teacher_fallback"}
 VALID_ACTUAL_GAIN_SOURCES = {"map", "sidecar", "path_feedback"}
 TOLERANCE = 1e-9
 
-REWARD_WEIGHTS = {
-    "coverage_gain_bonus": 1.0,
-    "valuable_area_bonus": 1.0,
-    "information_gain_bonus": 1.0,
+LEGACY_AUDIT_WEIGHTS = {
     "teacher_skill_retention_bonus": 0.1,
     "safe_disagreement_retention_bonus": 0.05,
-    "path_cost_penalty": 0.01,
-    "risk_penalty": 0.05,
-    "energy_penalty": 0.005,
-    "fallback_penalty": 1.0,
-    "controlled_regression_penalty": 2.0,
 }
 
-REWARD_COMPONENTS = (
-    "coverage_gain_bonus",
-    "valuable_area_bonus",
-    "information_gain_bonus",
-    "teacher_skill_retention_bonus",
-    "path_cost_penalty",
-    "risk_penalty",
-    "energy_penalty",
-    "fallback_penalty",
-    "controlled_regression_penalty",
-)
+REWARD_COMPONENTS = CANONICAL_REWARD_COMPONENTS
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--coverage-performance-root", required=True)
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--reward-component-source-root")
+    parser.add_argument("--canonical-profile")
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -106,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
         reward_component_source_root=_resolve_path(Path(args.reward_component_source_root), repo_root, repo_root)
         if args.reward_component_source_root
+        else None,
+        canonical_profile_path=_resolve_path(Path(args.canonical_profile), repo_root, repo_root)
+        if args.canonical_profile
         else None,
     )
     print(
@@ -134,6 +131,7 @@ def run_coverage_aware_reward_refinement(
     output_root: Path,
     repo_root: Path,
     reward_component_source_root: Path | None = None,
+    canonical_profile_path: Path | None = None,
 ) -> dict[str, Any]:
     repo_root = Path(repo_root)
     formal_training_root = Path(formal_training_root)
@@ -143,6 +141,12 @@ def run_coverage_aware_reward_refinement(
     coverage_performance_root = Path(coverage_performance_root)
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
+    canonical_profile_path = (
+        Path(canonical_profile_path)
+        if canonical_profile_path is not None
+        else repo_root / DEFAULT_CANONICAL_PROFILE
+    )
+    canonical_profile = load_canonical_reward_profile(canonical_profile_path)
 
     paths = {
         "summary": output_root / SUMMARY_FILE,
@@ -227,7 +231,12 @@ def run_coverage_aware_reward_refinement(
         reason_codes=reason_codes,
     )
 
-    component_rows = _reward_component_rows(delta_rows, shadow_steps, component_source_overlay)
+    component_rows = _reward_component_rows(
+        delta_rows,
+        shadow_steps,
+        component_source_overlay,
+        canonical_profile=canonical_profile,
+    )
     source_field_audit = _source_field_audit(component_rows, collector_reward_audit)
     rescore_comparison = _rescore_comparison(
         component_rows=component_rows,
@@ -279,6 +288,10 @@ def run_coverage_aware_reward_refinement(
             reward_component_source_root
             or (repo_root / DEFAULT_CONNECT_SOURCE_ROOT)
         ),
+        "canonical_reward_profile": str(canonical_profile_path),
+        "profile_id": canonical_profile.profile_id,
+        "profile_version": canonical_profile.profile_version,
+        "profile_hash": canonical_profile.profile_hash,
         "formal_training_summary": str(formal_summary_path),
         "formal_seed_summaries": str(seed_summaries_path),
         "post_training_replay_summary": str(replay_summary_path),
@@ -295,7 +308,7 @@ def run_coverage_aware_reward_refinement(
         "reward_rescore_comparison": str(paths["rescore_comparison"]),
         "rejection_report": str(paths["rejection_report"]),
         "report": str(paths["report"]),
-        "reward_contract": _reward_contract_payload(),
+        "reward_contract": _reward_contract_payload(canonical_profile),
         "reward_component_source_status": source_field_audit["component_status"],
         "existing_reward_audit": collector_reward_audit,
         "selected_actor": SELECTED_ACTOR,
@@ -380,6 +393,8 @@ def _reward_component_rows(
     delta_rows: list[dict[str, Any]],
     shadow_steps: list[dict[str, Any]],
     component_source_overlay: list[dict[str, Any]] | None = None,
+    *,
+    canonical_profile: CanonicalRewardGuardProfile,
 ) -> list[dict[str, Any]]:
     shadow_index: dict[str, dict[str, Any]] = {}
     for step in shadow_steps:
@@ -419,77 +434,72 @@ def _reward_component_rows(
         )
         valid_actual_delta = _finite(actual_delta) and gain_source in VALID_ACTUAL_GAIN_SOURCES
 
-        components = {name: 0.0 for name in REWARD_COMPONENTS}
-        source_fields: dict[str, str | None] = {name: None for name in REWARD_COMPONENTS}
-        source_values: dict[str, float | None] = {name: None for name in REWARD_COMPONENTS}
-
-        if valid_actual_delta and not fallback_contamination:
-            coverage_gain = max(float(actual_delta), 0.0)
-            components["coverage_gain_bonus"] = _round(
-                coverage_gain * REWARD_WEIGHTS["coverage_gain_bonus"]
-            )
-            source_fields["coverage_gain_bonus"] = "coverage_rate_delta"
-            source_values["coverage_gain_bonus"] = float(actual_delta)
-
+        coverage_gain = max(float(actual_delta), 0.0) if valid_actual_delta and not fallback_contamination else 0.0
         value_metric = _valuable_metric(merged, shadow, actual_delta)
-        if value_metric["present"]:
-            valuable_value = max(float(value_metric["value"]), 0.0)
-            components["valuable_area_bonus"] = _round(
-                valuable_value * REWARD_WEIGHTS["valuable_area_bonus"]
-            )
-            source_fields["valuable_area_bonus"] = _overlay_source_field(
-                merged,
-                "valuable_area_bonus",
-                value_metric["source"],
-            )
-            source_values["valuable_area_bonus"] = valuable_value
-
+        valuable_value = max(float(value_metric["value"]), 0.0) if value_metric["present"] else 0.0
         info_metric = _information_metric(merged, shadow)
-        if info_metric["present"]:
-            info_value = max(float(info_metric["value"]), 0.0)
-            components["information_gain_bonus"] = _round(
-                info_value * REWARD_WEIGHTS["information_gain_bonus"]
-            )
-            source_fields["information_gain_bonus"] = _overlay_source_field(
-                merged,
-                "information_gain_bonus",
-                info_metric["source"],
-            )
-            source_values["information_gain_bonus"] = info_value
-
+        info_value = max(float(info_metric["value"]), 0.0) if info_metric["present"] else 0.0
+        path_metric = _cost_metric(merged, shadow, "path_cost")
+        path_cost = max(float(path_metric["value"]), 0.0) if path_metric["present"] else 0.0
+        risk_metric = _cost_metric(merged, shadow, "risk")
+        risk = max(float(risk_metric["value"]), 0.0) if risk_metric["present"] else 0.0
+        energy_metric = _cost_metric(merged, shadow, "energy_cost")
         retention = _teacher_retention_bonus(merged, controlled_reasons)
-        if retention["present"]:
-            components["teacher_skill_retention_bonus"] = _round(float(retention["bonus"]))
-            source_fields["teacher_skill_retention_bonus"] = retention["source"]
-            source_values["teacher_skill_retention_bonus"] = float(retention["bonus"])
-
-        for field_name, component_name, weight_name in (
-            ("path_cost", "path_cost_penalty", "path_cost_penalty"),
-            ("risk", "risk_penalty", "risk_penalty"),
-            ("energy_cost", "energy_penalty", "energy_penalty"),
-        ):
-            metric = _cost_metric(merged, shadow, field_name)
-            if metric["present"]:
-                value = max(float(metric["value"]), 0.0)
-                components[component_name] = _round(-value * REWARD_WEIGHTS[weight_name])
-                source_fields[component_name] = _overlay_source_field(
-                    merged,
-                    component_name,
-                    metric["source"],
-                )
-                source_values[component_name] = value
-
-        source_fields["fallback_penalty"] = "controlled_choice_source"
-        source_values["fallback_penalty"] = 1.0 if fallback_like else 0.0
-        if fallback_like:
-            components["fallback_penalty"] = _round(-REWARD_WEIGHTS["fallback_penalty"])
-
-        source_fields["controlled_regression_penalty"] = "controlled_regression_reason_codes"
-        source_values["controlled_regression_penalty"] = float(len(controlled_reasons))
-        if controlled_reasons:
-            components["controlled_regression_penalty"] = _round(
-                -REWARD_WEIGHTS["controlled_regression_penalty"] * len(controlled_reasons)
-            )
+        component_result = compute_canonical_reward_components(
+            {
+                "coverage_gain_rate": coverage_gain,
+                "valuable_coverage": valuable_value,
+                "information_gain": info_value,
+                "path_cost_m": path_cost,
+                "risk_proxy": risk,
+                "fallback_used": fallback_like,
+                "failure": False,
+            },
+            canonical_profile,
+        )
+        components = dict(component_result.components)
+        source_fields: dict[str, str | None] = {
+            "coverage_component": "coverage_rate_delta",
+            "valuable_coverage_component": _overlay_source_field(
+                merged,
+                "valuable_coverage_component",
+                value_metric["source"],
+            ) if value_metric["present"] else None,
+            "information_component": _overlay_source_field(
+                merged,
+                "information_component",
+                info_metric["source"],
+            ) if info_metric["present"] else None,
+            "path_cost_component": _overlay_source_field(
+                merged,
+                "path_cost_component",
+                path_metric["source"],
+            ) if path_metric["present"] else None,
+            "risk_component": _overlay_source_field(
+                merged,
+                "risk_component",
+                risk_metric["source"],
+            ) if risk_metric["present"] else None,
+            "fallback_component": "controlled_choice_source",
+            "failure_component": "failure_reason",
+        }
+        source_values: dict[str, float | None] = {
+            "coverage_component": float(actual_delta) if _finite(actual_delta) else None,
+            "valuable_coverage_component": valuable_value,
+            "information_component": info_value,
+            "path_cost_component": path_cost,
+            "risk_component": risk,
+            "fallback_component": 1.0 if fallback_like else 0.0,
+            "failure_component": 0.0,
+        }
+        audit_only_reward_fields = {
+            "teacher_skill_retention_bonus": float(retention["bonus"]) if retention["present"] else 0.0,
+            "teacher_skill_retention_source": retention["source"],
+            "energy_cost": float(energy_metric["value"]) if energy_metric["present"] else 0.0,
+            "energy_cost_source": energy_metric["source"],
+            "controlled_regression_reason_count": len(controlled_reasons),
+            "controlled_regression_penalty_removed_from_soft_reward": True,
+        }
 
         rows.append(
             {
@@ -518,9 +528,13 @@ def _reward_component_rows(
                 "expected_actual_coverage_confusion": expected_actual_confused,
                 "controlled_regression_reason_codes": controlled_reasons,
                 "reward_components": components,
-                "coverage_aware_reward": _round(sum(components.values())),
+                "coverage_aware_reward": component_result.reward,
+                "profile_id": canonical_profile.profile_id,
+                "profile_version": canonical_profile.profile_version,
+                "profile_hash": canonical_profile.profile_hash,
                 "source_fields": source_fields,
                 "source_values": source_values,
+                "audit_only_reward_fields": audit_only_reward_fields,
                 "existing_reward": _float(merged.get("reward")),
                 "existing_reward_components": merged.get("reward_components")
                 if isinstance(merged.get("reward_components"), dict)
@@ -750,13 +764,13 @@ def _teacher_retention_bonus(row: dict[str, Any], controlled_reasons: list[str])
     if has_actions and _int(controlled_action) == _int(teacher_action):
         return {
             "present": True,
-            "bonus": REWARD_WEIGHTS["teacher_skill_retention_bonus"],
+            "bonus": LEGACY_AUDIT_WEIGHTS["teacher_skill_retention_bonus"],
             "source": "controlled_action_index/teacher_action_index",
         }
     if detail == "policy_safe_disagreement" and not controlled_reasons:
         return {
             "present": True,
-            "bonus": REWARD_WEIGHTS["safe_disagreement_retention_bonus"],
+            "bonus": LEGACY_AUDIT_WEIGHTS["safe_disagreement_retention_bonus"],
             "source": "controlled_choice_detail",
         }
     if has_actions or detail:
@@ -846,9 +860,9 @@ def _collector_reward_audit(
         and not any(
             name
             in {
-                "coverage_gain_bonus",
-                "valuable_area_bonus",
-                "information_gain_bonus",
+                "coverage_component",
+                "valuable_coverage_component",
+                "information_component",
             }
             for name in current_component_names
         )
@@ -991,18 +1005,16 @@ def _rejection_report(
     missing_components = source_field_audit["missing_required_components"]
     if missing_components:
         _add_reason(reasons, "reward_component_source_missing")
-    if "coverage_gain_bonus" in missing_components:
+    if "coverage_component" in missing_components:
         _add_reason(reasons, "actual_coverage_signal_missing")
-    if "valuable_area_bonus" in missing_components:
+    if "valuable_coverage_component" in missing_components:
         _add_reason(reasons, "valuable_coverage_signal_missing")
-    if "information_gain_bonus" in missing_components:
+    if "information_component" in missing_components:
         _add_reason(reasons, "information_gain_signal_missing")
-    if "path_cost_penalty" in missing_components:
+    if "path_cost_component" in missing_components:
         _add_reason(reasons, "path_cost_signal_missing")
-    if "risk_penalty" in missing_components:
+    if "risk_component" in missing_components:
         _add_reason(reasons, "risk_signal_missing")
-    if "energy_penalty" in missing_components:
-        _add_reason(reasons, "energy_signal_missing")
     if SELECTED_ACTOR not in rescore_comparison["actor_rescores"]:
         _add_reason(reasons, "selected_ppo_candidate_evidence_missing")
 
@@ -1035,14 +1047,25 @@ def _next_required_change(reason_codes: list[str]) -> str:
     return "coverage_aware_reward_refinement"
 
 
-def _reward_contract_payload() -> dict[str, Any]:
+def _reward_contract_payload(canonical_profile: CanonicalRewardGuardProfile) -> dict[str, Any]:
     return {
         "formula": (
-            "coverage_gain_bonus + valuable_area_bonus + information_gain_bonus + "
-            "teacher_skill_retention_bonus - path_cost_penalty - risk_penalty - "
-            "energy_penalty - fallback_penalty - controlled_regression_penalty"
+            "coverage_component + valuable_coverage_component + information_component + "
+            "path_cost_component + risk_component + fallback_component + failure_component"
         ),
-        "weights": REWARD_WEIGHTS,
+        "profile_id": canonical_profile.profile_id,
+        "profile_version": canonical_profile.profile_version,
+        "profile_hash": canonical_profile.profile_hash,
+        "weights": canonical_profile.soft_reward_components,
+        "normalizers": canonical_profile.normalizers,
+        "guards": canonical_profile.guards,
+        "signed_components": list(REWARD_COMPONENTS),
+        "audit_only_fields": [
+            "teacher_skill_retention_bonus",
+            "safe_disagreement_retention_bonus",
+            "energy_cost",
+            "controlled_regression_reason_codes",
+        ],
         "actual_coverage_sources": sorted(VALID_ACTUAL_GAIN_SOURCES),
         "fallback_policy_gain_disallowed": True,
         "expected_coverage_as_actual_gain_disallowed": True,
@@ -1238,7 +1261,7 @@ def _render_report(
     rejection_report: dict[str, Any],
 ) -> str:
     lines = [
-        "# Coverage-Aware Reward Refinement v1",
+        "# Coverage-Aware Reward Refinement v2",
         "",
         f"Status: `{summary['status']}`",
         f"Reward refinement status: `{summary['reward_refinement_status']}`",

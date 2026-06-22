@@ -14,6 +14,11 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
             value = str(path)
             if value not in sys.path:
                 sys.path.insert(0, value)
+        from model_explorer.policy.canonical_reward import load_canonical_reward_profile
+
+        self.reward_profile = load_canonical_reward_profile(
+            self.repo_root / "configs" / "xunce_canonical_reward_guard_profile_v2.json"
+        )
         self.temp_dir = Path(tempfile.mkdtemp(prefix="coverage-driven-ppo-"))
         self.formal_root = self.temp_dir / "formal-training"
         self.replay_root = self.temp_dir / "post-training-replay"
@@ -88,7 +93,8 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         self.assertTrue(all(math.isfinite(row["log_prob"]) for row in batch_rows))
         self.assertTrue(all(math.isfinite(row["value"]) for row in batch_rows))
         self.assertEqual(batch_rows[0]["reward"], rows[0]["coverage_aware_reward"])
-        self.assertIn("coverage_gain_bonus", batch_rows[0]["reward_components"])
+        self.assertIn("coverage_component", batch_rows[0]["reward_components"])
+        self.assertEqual(batch_rows[0]["profile_hash"], self.reward_profile.profile_hash)
         self.assertEqual(batch_rows[0]["info"]["controlled_action_index"], 0)
         self.assertEqual(batch_rows[0]["info"]["source_reward_audit_index"], 0)
 
@@ -138,6 +144,31 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         self.assertFalse(summary["replaces_default_policy"])
         self.assertFalse(summary["performance_claimed"])
 
+    def test_rejects_coverage_reward_rows_without_profile_hash(self) -> None:
+        from scripts.run_coverage_driven_ppo_improvement_run import (
+            run_coverage_driven_ppo_improvement_run,
+        )
+
+        rows = [self._reward_row("ctx-selected-0", step_index=0, coverage_delta=0.20, valuable=0.12)]
+        rows[0].pop("profile_hash")
+        self._write_inputs(rows, baseline_coverage_return=0.10, baseline_valuable=0.05)
+
+        summary = run_coverage_driven_ppo_improvement_run(
+            formal_training_root=self.formal_root,
+            post_training_replay_root=self.replay_root,
+            selected_candidate_root=self.selected_root,
+            coverage_signal_root=self.signal_root,
+            coverage_performance_root=self.performance_root,
+            reward_refinement_root=self.reward_root,
+            reward_source_root=self.reward_source_root,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertIn("canonical_reward_profile_hash_missing", summary["reason_codes"])
+        self.assertFalse(summary["runs_new_ppo_update"])
+
     def test_blocks_update_when_reward_source_contract_is_not_passed(self) -> None:
         from scripts.run_coverage_driven_ppo_improvement_run import (
             run_coverage_driven_ppo_improvement_run,
@@ -171,6 +202,44 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         self.assertFalse(summary["publishes_checkpoint"])
         self.assertFalse(summary["replaces_default_policy"])
         self.assertFalse(summary["performance_claimed"])
+
+    def test_v3_profile_rejects_incomplete_stage18_9_readiness_before_ppo_update(self) -> None:
+        from model_explorer.policy.canonical_reward import load_canonical_reward_profile
+        from scripts.run_coverage_driven_ppo_improvement_run import (
+            run_coverage_driven_ppo_improvement_run,
+        )
+
+        self.reward_profile = load_canonical_reward_profile(
+            self.repo_root / "configs" / "xunce_canonical_reward_guard_profile_v3.json"
+        )
+        rows = [
+            self._reward_row("ctx-selected-0", step_index=0, coverage_delta=0.20, valuable=0.12),
+            self._reward_row("ctx-selected-1", step_index=1, coverage_delta=0.18, valuable=0.10),
+        ]
+        self._write_inputs(rows, baseline_coverage_return=0.10, baseline_valuable=0.05)
+        stage18_9_root = self.temp_dir / "stage18-9-incomplete"
+        self._write_stage18_9_summary(
+            stage18_9_root,
+            include_readiness=False,
+            include_guard_details=False,
+        )
+
+        summary = run_coverage_driven_ppo_improvement_run(
+            formal_training_root=self.formal_root,
+            post_training_replay_root=self.replay_root,
+            selected_candidate_root=self.selected_root,
+            coverage_signal_root=self.signal_root,
+            coverage_performance_root=self.performance_root,
+            reward_refinement_root=self.reward_root,
+            reward_source_root=self.reward_source_root,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            stage18_9_trajectory_risk_reward_root=stage18_9_root,
+        )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertIn("stage18_9_readiness_not_passed", summary["reason_codes"])
+        self.assertFalse(summary["runs_new_ppo_update"])
 
     def _write_inputs(
         self,
@@ -314,6 +383,9 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
                 "reward_refinement_status": reward_refinement_status,
                 "next_required_change": "coverage_driven_ppo_improvement_run",
                 "reward_component_audit": str(self.reward_root / "reward-component-audit.jsonl"),
+                "profile_id": self.reward_profile.profile_id,
+                "profile_version": self.reward_profile.profile_version,
+                "profile_hash": self.reward_profile.profile_hash,
                 "source_field_missing_component_count": source_missing_component_count,
                 "component_source_overlay_row_count": len(rows),
                 "controlled_regression_count": 0,
@@ -344,6 +416,53 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
                 "performance_claimed": False,
             },
         )
+
+    def _write_stage18_9_summary(
+        self,
+        root: Path,
+        *,
+        include_readiness: bool = True,
+        include_guard_details: bool = True,
+    ) -> None:
+        payload = {
+            "schema_version": "xunce-stage18-9-trajectory-risk-reward-summary/v1",
+            "status": "passed",
+            "profile_id": self.reward_profile.profile_id,
+            "profile_version": self.reward_profile.profile_version,
+            "profile_hash": self.reward_profile.profile_hash,
+            "trajectory_guard_passed": True,
+            "stage19_authorized": False,
+            "next_stage_routing": {
+                "schema_version": "xunce-stage18-9-next-stage-routing/v1",
+                "primary_route": "prepare_stage19_evaluator_critic_preflight",
+                "stage19_authorized": False,
+            },
+            "runs_new_ppo_update": False,
+            "publishes_checkpoint": False,
+            "replaces_default_policy": False,
+            "connects_real_executor": False,
+            "starts_online_canary": False,
+            "canary_traffic_fraction": 0.0,
+        }
+        if include_readiness:
+            payload["stage19_readiness"] = {
+                "schema_version": "xunce-stage18-9-stage19-readiness/v1",
+                "readiness": "ready_for_stage19_preflight_human_review_only",
+                "authorized": False,
+                "trajectory_guard_passed": True,
+            }
+        if include_guard_details:
+            payload["path_risk_boundary_summary"] = {
+                "path_risk_boundary_passed": True,
+                "hard_risk_violation_count": 0,
+            }
+            payload["trajectory_guard_summary"] = {
+                "coverage_advantage_established": True,
+                "path_cost_budget_passed": True,
+                "coverage_efficiency_passed": True,
+                "soft_risk_exposure_passed": True,
+            }
+        self._write_json(root / "xunce-stage18-9-trajectory-risk-reward-summary.json", payload)
 
     def _observation(self):
         from model_explorer.policy.features import PolicyObservation
@@ -426,17 +545,64 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         return log_prob, value
 
     def _reward_row(self, context_id: str, *, step_index: int, coverage_delta: float, valuable: float) -> dict:
-        reward_components = {
-            "coverage_gain_bonus": coverage_delta,
-            "valuable_area_bonus": valuable,
-            "information_gain_bonus": coverage_delta,
-            "teacher_skill_retention_bonus": 0.1,
-            "path_cost_penalty": -0.01,
-            "risk_penalty": -0.005,
-            "energy_penalty": -0.0005,
-            "fallback_penalty": 0.0,
-            "controlled_regression_penalty": 0.0,
+        from model_explorer.policy.canonical_reward import compute_canonical_reward_components
+
+        metrics = {
+            "coverage_gain_rate": coverage_delta,
+            "valuable_coverage": valuable,
+            "roi_coverage": valuable,
+            "information_gain": coverage_delta,
+            "path_cost_m": 1.0,
+            "risk_proxy": 0.1,
+            "soft_risk_exposure": 0.1,
+            "path_allowed_by_risk": True,
+            "hard_risk_violation_count": 0,
+            "fallback_used": False,
+            "failure": False,
         }
+        component_result = compute_canonical_reward_components(
+            metrics,
+            self.reward_profile,
+        )
+        reward_components = component_result.components
+        if self.reward_profile.profile_version == "v3":
+            source_fields = {
+                "coverage_component": "coverage_rate_delta",
+                "roi_coverage_component": "path_feedback.coverage_rate_delta*path_feedback.candidates.utility",
+                "information_component": "path_feedback.coverage_rate_delta",
+                "path_cost_component": "observation.candidate_features.path_cost",
+                "soft_risk_component": "path_feedback.candidates.soft_risk_exposure",
+                "fallback_component": "controlled_choice_source",
+                "failure_component": "failure_reason",
+            }
+            source_values = {
+                "coverage_component": coverage_delta,
+                "roi_coverage_component": valuable,
+                "information_component": coverage_delta,
+                "path_cost_component": 1.0,
+                "soft_risk_component": 0.1,
+                "fallback_component": 0.0,
+                "failure_component": 0.0,
+            }
+        else:
+            source_fields = {
+                "coverage_component": "coverage_rate_delta",
+                "valuable_coverage_component": "path_feedback.coverage_rate_delta*path_feedback.candidates.utility",
+                "information_component": "path_feedback.coverage_rate_delta",
+                "path_cost_component": "observation.candidate_features.path_cost",
+                "risk_component": "path_feedback.candidates.risk",
+                "fallback_component": "controlled_choice_source",
+                "failure_component": "failure_reason",
+            }
+            source_values = {
+                "coverage_component": coverage_delta,
+                "valuable_coverage_component": valuable,
+                "information_component": coverage_delta,
+                "path_cost_component": 1.0,
+                "risk_component": 0.1,
+                "fallback_component": 0.0,
+                "failure_component": 0.0,
+            }
         return {
             "schema_version": "coverage-aware-reward-component-audit-row/v1",
             "reward_audit_index": step_index,
@@ -464,28 +630,15 @@ class CoverageDrivenPpoImprovementRunTests(unittest.TestCase):
             "expected_actual_coverage_confusion": False,
             "controlled_regression_reason_codes": [],
             "reward_components": reward_components,
-            "coverage_aware_reward": round(sum(reward_components.values()), 12),
-            "source_fields": {
-                "coverage_gain_bonus": "coverage_rate_delta",
-                "valuable_area_bonus": "path_feedback.coverage_rate_delta*path_feedback.candidates.utility",
-                "information_gain_bonus": "path_feedback.coverage_rate_delta",
-                "teacher_skill_retention_bonus": "controlled_action_index/teacher_action_index",
-                "path_cost_penalty": "observation.candidate_features.path_cost",
-                "risk_penalty": "path_feedback.candidates.risk",
-                "energy_penalty": "observation.candidate_features.energy_cost",
-                "fallback_penalty": "controlled_choice_source",
-                "controlled_regression_penalty": "controlled_regression_reason_codes",
-            },
-            "source_values": {
-                "coverage_gain_bonus": coverage_delta,
-                "valuable_area_bonus": valuable,
-                "information_gain_bonus": coverage_delta,
-                "path_cost_penalty": 1.0,
-                "risk_penalty": 0.1,
-                "energy_penalty": 0.1,
-            },
+            "coverage_aware_reward": component_result.reward,
+            "profile_id": self.reward_profile.profile_id,
+            "profile_version": self.reward_profile.profile_version,
+            "profile_hash": self.reward_profile.profile_hash,
+            "source_fields": source_fields,
+            "source_values": source_values,
             "path_cost": 1.0,
             "risk": 0.1,
+            "soft_risk_exposure": 0.1,
             "energy_cost": 0.1,
             "new_area_covered": coverage_delta,
             "valuable_area_covered": valuable,

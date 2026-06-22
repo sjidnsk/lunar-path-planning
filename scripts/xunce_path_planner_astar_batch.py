@@ -9,6 +9,11 @@ from typing import Any, MutableMapping
 
 import numpy as np
 
+try:
+    from scripts.xunce_path_risk_semantics import classify_path_risk
+except ImportError:  # pragma: no cover - supports direct script-path imports.
+    from xunce_path_risk_semantics import classify_path_risk
+
 
 BATCH_ASTAR_VALIDATION_MODE = "in_process_path_planner_astar_batch"
 BATCH_ASTAR_VALIDATION_SOURCE = "in_process_path_planner_astar_batch/v1"
@@ -92,6 +97,7 @@ def evaluate_candidate_paths_with_in_process_astar_batch(
             route_payload = _route_payload_from_result(
                 result,
                 sidecar_cost=cost_array,
+                risk_config=planner_options,
                 fallback_risk=_proposal_risk(row),
                 fallback_risk_source=_proposal_risk_source(row),
             )
@@ -106,13 +112,27 @@ def _row_from_route_payload(row: dict[str, Any], route: dict[str, Any], *, route
     path_length = _finite_float(route.get("path_length"))
     risk = _finite_float(route.get("risk"))
     open_grid_fallback = bool(route.get("open_grid_fallback_used", False))
-    formal = reachable and path_cost is not None and path_length is not None and risk is not None and not open_grid_fallback
+    hard_risk_flags = [str(flag) for flag in route.get("hard_risk_flags", [])]
+    path_allowed_by_risk = bool(route.get("path_allowed_by_risk", not hard_risk_flags))
+    formal = (
+        reachable
+        and path_cost is not None
+        and path_length is not None
+        and risk is not None
+        and not open_grid_fallback
+        and path_allowed_by_risk
+    )
     flags = []
     if not reachable:
         flags.append("proposal_unreachable")
     if open_grid_fallback:
         flags.append("proposal_open_grid_fallback")
+    for hard_flag in hard_risk_flags:
+        if hard_flag not in flags:
+            flags.append(hard_flag)
     failure_reason = route.get("failure_reason")
+    if not path_allowed_by_risk and not failure_reason:
+        failure_reason = "path_risk_disallowed"
     if failure_reason and str(failure_reason) not in flags:
         flags.append(str(failure_reason))
     result = dict(row)
@@ -145,6 +165,15 @@ def _row_from_route_payload(row: dict[str, Any], route: dict[str, Any], *, route
     result["risk_provenance_source"] = str(route.get("risk_provenance_source") or result["risk_source"])
     result["risk_route_derived"] = bool(route.get("risk_route_derived", False))
     result["risk_proxy_reason_codes"] = list(route.get("risk_proxy_reason_codes", []))
+    result["path_allowed_by_risk"] = path_allowed_by_risk
+    result["hard_risk_flags"] = hard_risk_flags
+    result["soft_risk_flags"] = [str(flag) for flag in route.get("soft_risk_flags", [])]
+    result["path_risk_peak"] = _finite_float(route.get("path_risk_peak"))
+    result["path_risk_exposure"] = _finite_float(route.get("path_risk_exposure"))
+    result["high_risk_distance_m"] = _finite_float(route.get("high_risk_distance_m"))
+    result["recovery_margin_min"] = _finite_float(route.get("recovery_margin_min"))
+    result["risk_semantics_source"] = str(route.get("risk_semantics_source") or "path_cost_proxy_risk_semantics/v1")
+    result["risk_proxy_is_physical_risk"] = bool(route.get("risk_proxy_is_physical_risk", False))
     for key in ("path_cost_proxy_mean", "path_cost_proxy_peak", "path_cost_proxy_p95"):
         value = _finite_float(route.get(key))
         if value is not None:
@@ -158,6 +187,7 @@ def _route_payload_from_result(
     result: Any,
     *,
     sidecar_cost: np.ndarray,
+    risk_config: dict[str, Any] | None = None,
     fallback_risk: float,
     fallback_risk_source: str,
 ) -> dict[str, Any]:
@@ -192,6 +222,14 @@ def _route_payload_from_result(
         "open_grid_fallback_used": False,
     }
     payload.update(proxy)
+    payload.update(
+        classify_path_risk(
+            payload,
+            sidecar_cost=sidecar_cost,
+            path_cells=getattr(result, "path_cells", ()),
+            config=risk_config,
+        )
+    )
     return payload
 
 
@@ -216,6 +254,15 @@ def _failure_row(row: dict[str, Any], reason: str, *, route_cache_hit: bool) -> 
             "risk_provenance_source": "unavailable",
             "risk_route_derived": False,
             "risk_proxy_reason_codes": [reason],
+            "path_allowed_by_risk": False,
+            "hard_risk_flags": ["planning_failed"],
+            "soft_risk_flags": [],
+            "path_risk_peak": None,
+            "path_risk_exposure": None,
+            "high_risk_distance_m": 0.0,
+            "recovery_margin_min": None,
+            "risk_semantics_source": "path_cost_proxy_risk_semantics/v1",
+            "risk_proxy_is_physical_risk": False,
             "path_cost_source": "unavailable",
             "path_length_source": "unavailable",
             "route_cache_hit": bool(route_cache_hit),

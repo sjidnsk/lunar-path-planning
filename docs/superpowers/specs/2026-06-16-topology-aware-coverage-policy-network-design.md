@@ -15,6 +15,16 @@ coverage-memory-aware candidate graph ranking. It does not replace the planner,
 change the action space, install default policy, connect a real executor,
 publish checkpoints, or claim real-world performance.
 
+Stage 18.7 is a prerequisite audit before using candidate-count arguments to
+justify architecture or reward changes. It tests only candidate-set cardinality:
+`dynamic_max_candidates_per_step` is swept over `6/12/24/36`, with proposal pool
+limits `48/96/192/288`. Candidate generation mode, selection mode, validation
+mode, coverage metric, canonical reward/guard profile, checkpoints, action
+space, network, and default A* must remain unchanged. Each sweep must emit
+candidate metric audit rows and must pass through Stage 18.6 guard refinement;
+Stage 18.7 may report that higher counts expose more guard-clean candidates, but
+it cannot authorize Stage 19 or training by itself.
+
 ## Platform Boundary
 
 The Xunce research chain must use the Python-first cross-platform runner for
@@ -702,20 +712,68 @@ artifacts. Each stage should be committed and pushed separately.
      comparison facts; `coverage_rate_capped` and
      `coverage_saturation_exceeded` are reporting diagnostics for long rollouts
      whose legacy denominator can be exceeded.
-   - Stage 18.4E updates the dynamic generator to
-     `candidate_generation_algorithm_source=map_aware_coverage_frontier_nbv/v1`
-     while keeping the public refresh source
-     `dynamic_frontier_nbv_in_process/v1` for compatibility. The generator now
-     treats frontier as a coverage frontier over valid ROI/passable cells,
-     proposes undercovered component centroid/boundary candidates, keeps
-     low-cost bridge and conservative local backups, clips coverage estimates
-     to valid cells, and selects validated candidates with a Pareto-diverse
-     rule instead of pure coverage-first sorting. A* validates reachability,
-     path cost, and path length; `risk` remains a documented sidecar/path-cost
-     proxy, not a physical executor risk integral.
-   - Stage 18D, 18E, 18F.1, 18G.1, and 18G.2 remain available as legacy
-     diagnostics or optional experiments; they are no longer the mainline
-     preconditions for comparing Xunce and incumbent.
+  - Stage 18.4E updates the dynamic generator to
+    `candidate_generation_algorithm_source=map_aware_coverage_frontier_nbv/v1`
+    while keeping the public refresh source
+    `dynamic_frontier_nbv_in_process/v1` for compatibility. The generator now
+    treats frontier as a coverage frontier over valid ROI/passable cells,
+    proposes undercovered component centroid/boundary candidates, keeps
+    low-cost bridge and conservative local backups, clips coverage estimates
+    to valid cells, and selects validated candidates with a Pareto-diverse
+    rule instead of pure coverage-first sorting. A* validates reachability,
+    path cost, and path length; `risk` remains a documented sidecar/path-cost
+    proxy, not a physical executor risk integral.
+  - Stage 18.5 is implemented as `xunce-stage18-5-evidence-attribution-review`
+    with runner `scripts/run_xunce_stage18_5_evidence_attribution_review.py`.
+    It consumes the Stage 18.4E coverage comparison summary, aggregate, pairs,
+    episodes, and paired decision audit, then writes attribution, guard,
+    routing, report, and manifest artifacts under
+    `outputs/path_feedback_batch_xunce_stage18_5_evidence_attribution_review_v1/`.
+    Its guard requires coverage gains to remain inside path-cost and risk
+    budgets: positive raw coverage alone is not an advantage when path cost,
+    risk proxy, risk-cost-weighted exposure, coverage per 100m, or coverage gain
+    per path cost regress. Attribution classes are non-exclusive:
+    `candidate_generation`, `policy_preference`, `path_cost`, `risk_proxy`, and
+    `candidate_exhaustion`.
+  - The current Stage 18.4E dynamic root is evidence-readable but not release or
+    training ready. Stage 18.5 routes it to
+    `refine_coverage_reward_and_cost_guard` because coverage gain is paired with
+    cost/risk regression and same-candidate-set policy advantage is not
+    established. `xunce-stage18-research-evidence-pipeline` can optionally
+    consume this output through `stage18_5_attribution_root` or
+    `--stage18-5-attribution-root`; without it, an unestablished Xunce advantage
+    routes to `review_xunce_incumbent_comparison_metrics`.
+  - Stage 18.6 is implemented as
+    `xunce-stage18-6-coverage-reward-cost-risk-guard-refinement` with runner
+    `scripts/run_xunce_stage18_6_coverage_reward_cost_risk_guard_refinement.py`.
+    It consumes the Stage 18.5 attribution root, the Stage 18.4E coverage
+    comparison root, and `configs/xunce_canonical_reward_guard_profile_v2.json`
+    read-only. It does not change the canonical profile; it replays the v2
+    budget guard with path cost delta <= 20m, risk delta <= 0.5,
+    risk-cost-weighted delta <= 25, and non-regressing coverage per 100m.
+    Stage 18.6 also validates profile id/version/hash lineage across Stage
+    18.5, Stage 18.4E pairs, and optional candidate metric audit rows.
+  - Stage 18.6 can only claim candidate-level guarded reselection when Stage
+    18.4E emits `xunce-exploration-coverage-candidate-metric-audit.jsonl`
+    through `emit_candidate_metric_audit=true` or `--emit-candidate-metric-audit`.
+    Without that file it must set
+    `full_candidate_metric_replay_available=false`,
+    `counterfactual_reselection_claimed=false`, and route to
+    `rerun_stage18_4e_with_candidate_metric_audit`. Pipeline consumption of
+    Stage 18.6 is allowlist-only and cannot route to legacy PPO training.
+  - Stage 18.8 fixes the candidate-level risk guard semantics without changing
+    the canonical v2 profile or reward formula. Candidate-level guard-clean
+    replay compares each candidate against the incumbent selected candidate in
+    the same paired decision row: `risk_delta = candidate_risk_proxy -
+    incumbent_selected_risk_proxy`, with the v2 budget applied to that delta.
+    Absolute candidate `risk` / `risk_proxy` is recorded as sidecar/path-cost
+    proxy provenance only; it is not a physical executor risk and is not gated
+    by `risk <= 0.5`. Extra candidate metric keys are diagnostic because
+    Xunce/incumbent/oracle trajectories can emit additional candidate sets; only
+    missing paired decision keys block full candidate replay.
+  - Stage 18D, 18E, 18F.1, 18G.1, and 18G.2 remain available as legacy
+    diagnostics or optional experiments; they are no longer the mainline
+    preconditions for comparing Xunce and incumbent.
    - The consolidated summary must separate `evidence_status`,
      `candidate_validity_status`, `comparison_verdict`, `overall_conclusion`,
      `release_readiness`, and `training_readiness`. A valid evidence chain can
@@ -735,3 +793,96 @@ The design is ready for implementation planning when:
 - evaluation includes both coverage/generalization and parameter/latency
   constraints;
 - the route preserves current policy scoring interfaces and guarded ranking.
+
+## Stage 18.9 Risk/Reward Contract Update
+
+Stage 18.9 changes the readiness authority from candidate-level risk deltas to a
+whole-trajectory risk boundary and reward audit. The intended contract is:
+
+- hard risk filters paths before reward: failed planning, unreachable route,
+  mask violation, open-grid fallback, out-of-bounds/no-go traversal, platform
+  capability violation, low autonomous terrain confidence, or unrecoverable
+  path segment;
+- soft risk remains path telemetry: `path_risk_peak`, `path_risk_exposure`,
+  `high_risk_distance_m`, and `recovery_margin_min`;
+- reward ranks only allowed paths and uses `path_cost` as the dominant cost
+  term;
+- if `path_cost` already includes terrain/risk proxy cost, the v3
+  `soft_risk_component` must stay tiny or audit-only;
+- Stage 18.6 and Stage 18.7 are diagnostic views and cannot bypass Stage 18.9
+  for Stage 19 readiness;
+- new v3 PPO inputs require Stage 18.9 readiness lineage and cannot rely on
+  legacy v2 reward artifacts alone.
+
+## Stage 18.9 Strict V3 Evidence Run
+
+Strict v3 evidence is the clean route after the risk/reward contract update. The
+6/12/24/36 candidate-count sweeps must be regenerated with
+`configs/xunce_canonical_reward_guard_profile_v3.json` from Stage 18.4E through
+Stage 18.9, so every artifact carries the same
+`xunce-coverage-cost-risk-boundary-v3` `profile_hash`.
+
+`scripts/xunce_stage18_guard_thresholds.py` is the compatibility boundary. For
+v2 it preserves candidate-level risk-delta guards. For v3 it maps the profile to
+trajectory thresholds, sets `risk_delta_hard_gate_enabled=false`, and marks
+candidate-level risk-delta clean rates as diagnostic only. Stage 18.9 remains
+the readiness authority.
+
+`scripts/run_xunce_stage18_9_strict_v3_evidence_rollup.py` aggregates the four
+strict v3 Stage 18.9 roots plus the strict Stage 18.7 diagnostic root. It routes
+missing or non-v3 lineage to `rerun_stage18_9_strict_v3_required_inputs`, hard
+risk violations to `repair_path_risk_boundary_filtering`, coverage/cost
+failures to `refine_coverage_cost_reward_weights`, abnormal soft-risk exposure
+to `calibrate_soft_risk_exposure_weight`, and only trajectory-clean evidence to
+`prepare_stage19_evaluator_critic_preflight`. The rollup always keeps
+`stage19_authorized=false` and never starts PPO, publishes checkpoints, replaces
+the default policy, connects a real executor, or starts canary traffic.
+### Stage 18.11 Path Cost Weight Calibration
+
+Stage 18.11 calibrates path-cost reward weight under the strict v3 evidence
+contract. The primary mission metric remains final whole-task coverage above
+99%; path cost and soft risk are constraints and secondary objectives. A lower
+path cost result is not sufficient when final coverage remains below 99%.
+
+The stage reads existing strict v3 Stage 18.4E candidate metric audits and
+performs one-step observed-candidate-set replay for stable v3 path-cost profile
+variants. This replay is counterfactual ranking only: it does not modify the
+fixed Xunce checkpoint, does not claim trajectory outcome, and does not
+authorize Stage 19.
+
+The high-fidelity coverage runner may optionally include
+`canonical_reward_rerank_oracle`. This policy is diagnostic only. It uses the
+selected canonical v3 reward profile to pick the highest-reward candidate among
+the current valid candidates and writes reward components plus profile lineage.
+It must not replace Xunce or incumbent rows, must not enter paired decision
+readiness, and must keep PPO, checkpoint publication, default policy
+replacement, executor connection, and canary traffic disabled.
+
+If Stage 18.11 cannot show observed or diagnostic rollout final coverage at or
+above 99%, the next route is
+`stage18_12_rollout_horizon_or_mission_budget_scaling_for_99pct_coverage`.
+
+### Stage 19 Evaluator / Critic Preflight
+
+Stage 19 consumes the passed Stage 18.11 path-cost calibration evidence and
+prepares a human-review-only evaluator/critic handoff. It is not a training
+stage. The current practical target is the diagnostic reward-rerank oracle with
+`candidate_count=36` and `path_cost_weight=0.1`; the `path_cost_weight=0.0`
+rollout remains only a coverage upper-bound reference because it is more costly.
+
+The preflight uses capped final coverage for the 99% gate. Raw coverage may
+exceed 1.0 after denominator saturation and is retained only as diagnostic
+telemetry. The Stage 19 runner also compares the fixed Xunce checkpoint against
+the oracle target and keeps `xunce_checkpoint_advantage_established=false` when
+the checkpoint has not learned the oracle behavior.
+
+Stage 19 writes `xunce-stage19-evaluator-critic-preflight-summary.json`,
+`xunce-stage19-diagnostic-rollout-evaluator.json`,
+`xunce-stage19-practical-target-selection.json`,
+`xunce-stage19-preference-pair-audit.jsonl`,
+`xunce-stage19-critic-target-readiness.json`,
+`xunce-stage19-next-stage-routing.json`, report, and manifest. A passing Stage
+19 route is `stage20_reward_rerank_oracle_preference_dataset_preparation`, but
+`stage20_authorized=false`: Stage 20 is preference evidence preparation and
+review, not PPO training, checkpoint publication, default-policy replacement,
+executor connection, or canary launch.

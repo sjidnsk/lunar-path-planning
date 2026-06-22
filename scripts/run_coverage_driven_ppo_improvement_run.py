@@ -12,6 +12,9 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+MODEL_EXPLORER_SRC = SCRIPT_DIR.parent / "model-explorer" / "src"
+if str(MODEL_EXPLORER_SRC) not in sys.path:
+    sys.path.insert(0, str(MODEL_EXPLORER_SRC))
 
 try:
     from git_provenance import git_snapshot
@@ -19,6 +22,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.run_limited_ppo_update_smoke import run_limited_ppo_update_smoke
+
+from model_explorer.policy.canonical_reward import CANONICAL_REWARD_COMPONENTS, CANONICAL_REWARD_COMPONENTS_V3
 
 
 SUMMARY_SCHEMA_VERSION = "coverage-driven-ppo-improvement-run-summary/v1"
@@ -37,6 +42,13 @@ REWARD_REFINEMENT_SUMMARY_FILE = "coverage-aware-reward-refinement-summary.json"
 REWARD_COMPONENT_AUDIT_FILE = "reward-component-audit.jsonl"
 REWARD_SOURCE_SUMMARY_FILE = "connect-reward-component-source-fields-summary.json"
 SHADOW_STEPS_FILE = "multihorizon-shadow-rollout-steps.jsonl"
+STAGE18_9_SUMMARY_FILE = "xunce-stage18-9-trajectory-risk-reward-summary.json"
+STAGE18_9_SUMMARY_SCHEMA_VERSION = "xunce-stage18-9-trajectory-risk-reward-summary/v1"
+STAGE18_9_ROUTING_SCHEMA_VERSION = "xunce-stage18-9-next-stage-routing/v1"
+STAGE18_9_STAGE19_READINESS_SCHEMA_VERSION = "xunce-stage18-9-stage19-readiness/v1"
+STAGE18_9_EXPECTED_PROFILE_ID = "xunce-coverage-cost-risk-boundary-v3"
+STAGE18_9_EXPECTED_PROFILE_VERSION = "v3"
+STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE = "prepare_stage19_evaluator_critic_preflight"
 
 SUMMARY_FILE = "coverage-driven-ppo-improvement-run-summary.json"
 BATCH_DIR = "coverage-aware-ppo-batch"
@@ -59,20 +71,20 @@ POST_ACTOR = "post_improvement_ppo"
 PRE_ACTOR = "pre_improvement_selected_ppo"
 BASELINE_ACTORS = {"teacher", "source_default", "default_policy", PRE_ACTOR}
 VALID_ACTUAL_GAIN_SOURCES = {"map", "sidecar", "path_feedback"}
-REQUIRED_SOURCE_COMPONENTS = (
-    "coverage_gain_bonus",
-    "valuable_area_bonus",
-    "information_gain_bonus",
-    "teacher_skill_retention_bonus",
-    "path_cost_penalty",
-    "risk_penalty",
-    "energy_penalty",
-    "fallback_penalty",
-    "controlled_regression_penalty",
-)
+REQUIRED_SOURCE_COMPONENTS = CANONICAL_REWARD_COMPONENTS
 DISCOUNT_FACTOR = 0.99
 TOLERANCE = 1.0e-9
 MAX_ALLOWED_RELATIVE_REGRESSION = 0.05
+STAGE18_9_FORBIDDEN_TRUE_FIELDS = (
+    "runs_new_ppo_update",
+    "publishes_checkpoint",
+    "replaces_default_policy",
+    "connects_real_executor",
+    "starts_online_canary",
+    "real_world_release_approved",
+    "real_world_performance_claimed",
+    "default_policy_replacement_approved",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--coverage-performance-root", required=True)
     parser.add_argument("--reward-refinement-root", required=True)
     parser.add_argument("--reward-source-root", required=True)
+    parser.add_argument("--stage18-9-trajectory-risk-reward-root")
     parser.add_argument("--output-root", required=True)
     args = parser.parse_args(argv)
 
@@ -101,6 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         coverage_performance_root=_resolve_path(Path(args.coverage_performance_root), repo_root, repo_root),
         reward_refinement_root=_resolve_path(Path(args.reward_refinement_root), repo_root, repo_root),
         reward_source_root=_resolve_path(Path(args.reward_source_root), repo_root, repo_root),
+        stage18_9_trajectory_risk_reward_root=(
+            _resolve_path(Path(args.stage18_9_trajectory_risk_reward_root), repo_root, repo_root)
+            if args.stage18_9_trajectory_risk_reward_root
+            else None
+        ),
         output_root=_resolve_path(Path(args.output_root), repo_root, repo_root),
         repo_root=repo_root,
     )
@@ -131,6 +149,7 @@ def run_coverage_driven_ppo_improvement_run(
     coverage_performance_root: Path,
     reward_refinement_root: Path,
     reward_source_root: Path,
+    stage18_9_trajectory_risk_reward_root: Path | None = None,
     output_root: Path,
     repo_root: Path,
 ) -> dict[str, Any]:
@@ -142,6 +161,7 @@ def run_coverage_driven_ppo_improvement_run(
     coverage_performance_root = Path(coverage_performance_root)
     reward_refinement_root = Path(reward_refinement_root)
     reward_source_root = Path(reward_source_root)
+    stage18_9_trajectory_risk_reward_root = Path(stage18_9_trajectory_risk_reward_root) if stage18_9_trajectory_risk_reward_root is not None else None
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -157,6 +177,11 @@ def run_coverage_driven_ppo_improvement_run(
     coverage_performance_summary_path = coverage_performance_root / COVERAGE_PERFORMANCE_SUMMARY_FILE
     reward_refinement_summary_path = reward_refinement_root / REWARD_REFINEMENT_SUMMARY_FILE
     reward_source_summary_path = reward_source_root / REWARD_SOURCE_SUMMARY_FILE
+    stage18_9_summary_path = (
+        stage18_9_trajectory_risk_reward_root / STAGE18_9_SUMMARY_FILE
+        if stage18_9_trajectory_risk_reward_root is not None
+        else None
+    )
 
     formal_summary = _read_json(formal_summary_path, input_reasons, "formal_training_summary")
     seed_summaries = _read_jsonl(seed_summaries_path, input_reasons, "formal_seed_summaries")
@@ -178,6 +203,11 @@ def run_coverage_driven_ppo_improvement_run(
         "reward_refinement_summary",
     )
     reward_source_summary = _read_json(reward_source_summary_path, input_reasons, "reward_source_summary")
+    stage18_9_summary = (
+        _read_json(stage18_9_summary_path, input_reasons, "stage18_9_trajectory_risk_reward_summary")
+        if stage18_9_summary_path is not None
+        else {}
+    )
 
     reward_rows_path = _resolve_optional_path(
         reward_refinement_summary.get("reward_component_audit"),
@@ -214,6 +244,8 @@ def run_coverage_driven_ppo_improvement_run(
         coverage_signal_summary=coverage_signal_summary,
         reward_refinement_summary=reward_refinement_summary,
         reward_source_summary=reward_source_summary,
+        stage18_9_summary=stage18_9_summary,
+        stage18_9_root_provided=stage18_9_trajectory_risk_reward_root is not None,
         base_candidate_root=base_candidate_root,
         reason_codes=reason_codes,
     )
@@ -224,6 +256,9 @@ def run_coverage_driven_ppo_improvement_run(
         collector_root=paths["batch_root"],
         selected_summary=selected_summary,
         reason_codes=reason_codes,
+        expected_profile_id=reward_refinement_summary.get("profile_id"),
+        expected_profile_version=reward_refinement_summary.get("profile_version"),
+        expected_profile_hash=reward_refinement_summary.get("profile_hash"),
     )
 
     update_summary: dict[str, Any] = {}
@@ -287,6 +322,7 @@ def run_coverage_driven_ppo_improvement_run(
         "coverage_performance_root": str(coverage_performance_root),
         "reward_refinement_root": str(reward_refinement_root),
         "reward_source_root": str(reward_source_root),
+        "stage18_9_trajectory_risk_reward_root": str(stage18_9_trajectory_risk_reward_root) if stage18_9_trajectory_risk_reward_root is not None else None,
         "output_root": str(output_root),
         "summary": str(paths["summary"]),
         "coverage_aware_batch_root": str(paths["batch_root"]),
@@ -308,6 +344,9 @@ def run_coverage_driven_ppo_improvement_run(
         "base_candidate_root": str(base_candidate_root),
         "reward_component_audit": str(reward_rows_path),
         "shadow_steps": str(shadow_steps_path),
+        "profile_id": reward_refinement_summary.get("profile_id"),
+        "profile_version": reward_refinement_summary.get("profile_version"),
+        "profile_hash": reward_refinement_summary.get("profile_hash"),
         "previous_metric_table": str(metric_table_path),
         "coverage_aware_reward_transition_count": batch["trainable_transition_count"],
         "batch_candidate_row_count": batch["candidate_row_count"],
@@ -401,6 +440,8 @@ def _validate_upstream(
     coverage_signal_summary: dict[str, Any],
     reward_refinement_summary: dict[str, Any],
     reward_source_summary: dict[str, Any],
+    stage18_9_summary: dict[str, Any],
+    stage18_9_root_provided: bool,
     base_candidate_root: Path,
     reason_codes: list[str],
 ) -> None:
@@ -443,6 +484,19 @@ def _validate_upstream(
         "reward_refinement_status"
     ) != "passed":
         _add_reason(reason_codes, "coverage_reward_source_not_passed")
+    if not reward_refinement_summary.get("profile_hash"):
+        _add_reason(reason_codes, "canonical_reward_profile_hash_missing")
+    profile_version = reward_refinement_summary.get("profile_version")
+    if profile_version not in {"v2", "v3"}:
+        _add_reason(reason_codes, "canonical_reward_profile_version_invalid")
+    if profile_version == "v3":
+        if not stage18_9_root_provided:
+            _add_reason(reason_codes, "stage18_9_readiness_missing")
+        elif not _stage18_9_readiness_is_valid(stage18_9_summary):
+            _add_reason(reason_codes, "stage18_9_readiness_not_passed")
+        for field in ("profile_id", "profile_version", "profile_hash"):
+            if reward_refinement_summary.get(field) and stage18_9_summary.get(field) != reward_refinement_summary.get(field):
+                _add_reason(reason_codes, f"stage18_9_{field}_mismatch")
     if _int(reward_refinement_summary.get("source_field_missing_component_count")) > 0:
         _add_reason(reason_codes, "coverage_reward_source_not_passed")
     if reward_source_summary.get("status") != "passed" or reward_source_summary.get(
@@ -454,6 +508,64 @@ def _validate_upstream(
             _add_reason(reason_codes, "guard_regression")
 
 
+def _stage18_9_readiness_is_valid(summary: dict[str, Any]) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    if summary.get("schema_version") != STAGE18_9_SUMMARY_SCHEMA_VERSION:
+        return False
+    if summary.get("status") != "passed" or summary.get("trajectory_guard_passed") is not True:
+        return False
+    if (
+        summary.get("profile_id") != STAGE18_9_EXPECTED_PROFILE_ID
+        or summary.get("profile_version") != STAGE18_9_EXPECTED_PROFILE_VERSION
+        or not isinstance(summary.get("profile_hash"), str)
+        or not summary.get("profile_hash")
+    ):
+        return False
+    routing = summary.get("next_stage_routing")
+    if (
+        not isinstance(routing, dict)
+        or routing.get("schema_version") != STAGE18_9_ROUTING_SCHEMA_VERSION
+        or routing.get("primary_route") != STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE
+        or routing.get("stage19_authorized") is not False
+    ):
+        return False
+    readiness = summary.get("stage19_readiness")
+    if (
+        not isinstance(readiness, dict)
+        or readiness.get("schema_version") != STAGE18_9_STAGE19_READINESS_SCHEMA_VERSION
+        or readiness.get("readiness") != "ready_for_stage19_preflight_human_review_only"
+        or readiness.get("authorized") is not False
+        or readiness.get("trajectory_guard_passed") is not True
+    ):
+        return False
+    if summary.get("stage19_authorized") is not False:
+        return False
+    boundary = summary.get("path_risk_boundary_summary")
+    if (
+        not isinstance(boundary, dict)
+        or boundary.get("path_risk_boundary_passed") is not True
+        or _int(boundary.get("hard_risk_violation_count")) != 0
+    ):
+        return False
+    trajectory = summary.get("trajectory_guard_summary")
+    if not isinstance(trajectory, dict):
+        return False
+    for field in (
+        "coverage_advantage_established",
+        "path_cost_budget_passed",
+        "coverage_efficiency_passed",
+        "soft_risk_exposure_passed",
+    ):
+        if trajectory.get(field) is not True:
+            return False
+    if any(summary.get(field) is True for field in STAGE18_9_FORBIDDEN_TRUE_FIELDS):
+        return False
+    if float(summary.get("canary_traffic_fraction", 0.0) or 0.0) != 0.0:
+        return False
+    return True
+
+
 def _materialize_coverage_aware_batch(
     *,
     reward_rows: list[dict[str, Any]],
@@ -461,6 +573,9 @@ def _materialize_coverage_aware_batch(
     collector_root: Path,
     selected_summary: dict[str, Any],
     reason_codes: list[str],
+    expected_profile_id: Any = None,
+    expected_profile_version: Any = None,
+    expected_profile_hash: Any = None,
 ) -> dict[str, Any]:
     shadow_index: dict[str, dict[str, Any]] = {}
     for step in shadow_steps:
@@ -475,8 +590,17 @@ def _materialize_coverage_aware_batch(
             continue
         candidate_count += 1
         shadow = _matching_shadow(row, shadow_index)
-        transition, row_reasons = _transition_from_reward_row(index, row, shadow)
+        transition, row_reasons = _transition_from_reward_row(
+            index,
+            row,
+            shadow,
+            expected_profile_id=expected_profile_id,
+            expected_profile_version=expected_profile_version,
+            expected_profile_hash=expected_profile_hash,
+        )
         if transition is None:
+            for reason in row_reasons:
+                _add_reason(reason_codes, reason)
             rejected_rows.append(
                 {
                     "reward_audit_index": row.get("reward_audit_index", index),
@@ -522,6 +646,9 @@ def _materialize_coverage_aware_batch(
                 for name in transition.get("reward_components", {})
             }
         ),
+        "profile_id": expected_profile_id,
+        "profile_version": expected_profile_version,
+        "profile_hash": expected_profile_hash,
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
         "performance_claimed": False,
@@ -544,6 +671,10 @@ def _transition_from_reward_row(
     index: int,
     row: dict[str, Any],
     shadow: dict[str, Any],
+    *,
+    expected_profile_id: Any = None,
+    expected_profile_version: Any = None,
+    expected_profile_hash: Any = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     reasons: list[str] = []
     if str(row.get("split") or shadow.get("split") or "") != "train":
@@ -558,7 +689,16 @@ def _transition_from_reward_row(
         reasons.append("controlled_regression_present")
     if str(row.get("actual_coverage_gain_source") or "") not in VALID_ACTUAL_GAIN_SOURCES:
         reasons.append("actual_coverage_source_invalid")
-    for component in REQUIRED_SOURCE_COMPONENTS:
+    if not row.get("profile_hash"):
+        reasons.append("canonical_reward_profile_hash_missing")
+    elif expected_profile_hash and row.get("profile_hash") != expected_profile_hash:
+        reasons.append("canonical_reward_profile_hash_mismatch")
+    if expected_profile_id and row.get("profile_id") != expected_profile_id:
+        reasons.append("canonical_reward_profile_id_mismatch")
+    if expected_profile_version and row.get("profile_version") != expected_profile_version:
+        reasons.append("canonical_reward_profile_version_mismatch")
+    required_components = CANONICAL_REWARD_COMPONENTS_V3 if expected_profile_version == "v3" else REQUIRED_SOURCE_COMPONENTS
+    for component in required_components:
         source_fields = row.get("source_fields") if isinstance(row.get("source_fields"), dict) else {}
         if not source_fields.get(component):
             reasons.append("reward_component_source_missing")
@@ -594,14 +734,14 @@ def _transition_from_reward_row(
         "coverage_rate_delta": _float_or_default(row.get("coverage_rate_delta"), 0.0),
         "cumulative_coverage_rate_delta": _float_or_default(row.get("cumulative_coverage_rate_delta"), 0.0),
         "final_coverage_rate": _float_or_default(row.get("final_coverage_rate"), 0.0),
-        "path_cost": _float_or_default(row.get("path_cost") or row.get("source_values", {}).get("path_cost_penalty"), 0.0),
-        "risk": _float_or_default(row.get("risk") or row.get("source_values", {}).get("risk_penalty"), 0.0),
-        "energy_cost": _float_or_default(row.get("energy_cost") or row.get("source_values", {}).get("energy_penalty"), 0.0),
-        "valuable_area_covered": _float_or_default(row.get("valuable_area_covered") or reward_components.get("valuable_area_bonus"), 0.0),
-        "information_gain": _float_or_default(row.get("information_gain") or reward_components.get("information_gain_bonus"), 0.0),
+        "path_cost": _float_or_default(row.get("path_cost") or row.get("source_values", {}).get("path_cost_component"), 0.0),
+        "risk": _float_or_default(row.get("risk") or row.get("source_values", {}).get("risk_component"), 0.0),
+        "energy_cost": _float_or_default(row.get("energy_cost"), 0.0),
+        "valuable_area_covered": _float_or_default(row.get("valuable_area_covered") or row.get("source_values", {}).get("valuable_coverage_component"), 0.0),
+        "information_gain": _float_or_default(row.get("information_gain") or row.get("source_values", {}).get("information_component"), 0.0),
         "new_area_covered": _float_or_default(row.get("new_area_covered") or row.get("coverage_rate_delta"), 0.0),
         "failure_reason": None,
-        "total_cost": _float_or_default(row.get("path_cost") or row.get("source_values", {}).get("path_cost_penalty"), 0.0),
+        "total_cost": _float_or_default(row.get("path_cost") or row.get("source_values", {}).get("path_cost_component"), 0.0),
         "failure_count": 0,
         "replan_count": 0,
         "ppo_trainable": True,
@@ -619,6 +759,9 @@ def _transition_from_reward_row(
         "scenario_id": row.get("scenario_id") or shadow.get("scenario_id"),
         "scenario_family": row.get("scenario_family") or shadow.get("scenario_family"),
         "source_reward_audit_index": row.get("reward_audit_index", index),
+        "profile_id": row.get("profile_id"),
+        "profile_version": row.get("profile_version"),
+        "profile_hash": row.get("profile_hash"),
         "source_fields": row.get("source_fields") if isinstance(row.get("source_fields"), dict) else {},
         "source_values": row.get("source_values") if isinstance(row.get("source_values"), dict) else {},
         "reward_components": reward_components,
@@ -633,6 +776,9 @@ def _transition_from_reward_row(
         "value": float(value),
         "reward": float(reward),
         "reward_components": reward_components,
+        "profile_id": row.get("profile_id"),
+        "profile_version": row.get("profile_version"),
+        "profile_hash": row.get("profile_hash"),
         "next_observation": None,
         "done": False,
         "info": info,
@@ -697,6 +843,9 @@ def _transition_record(index: int, transition: dict[str, Any]) -> dict[str, Any]
         "rejection_reason_codes": [],
         "reward": transition["reward"],
         "reward_components": transition.get("reward_components", {}),
+        "profile_id": transition.get("profile_id"),
+        "profile_version": transition.get("profile_version"),
+        "profile_hash": transition.get("profile_hash"),
         "reward_audit": {"reason_codes": []},
         "counter_deltas": {"ppo_trainable_transition_count": 1, "diagnostic_transition_count": 0},
         "info": info,

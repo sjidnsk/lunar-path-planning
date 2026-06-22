@@ -68,11 +68,17 @@ class RefinedCoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         self.assertEqual(summary["counterfactual_advantage_nonzero_count"], 1)
         self.assertEqual(summary["fallback_gain_contamination_count"], 0)
         self.assertEqual(summary["controlled_regression_count"], 0)
-        self.assertTrue(summary["runs_new_ppo_update"])
+        self.assertFalse(summary["runs_new_ppo_update"])
+        self.assertTrue(summary["legacy_v1_reward_components_read_only"])
+        self.assertTrue(summary["canonical_v2_training_consumer_blocked"])
+        self.assertIn("legacy_v1_reward_components_blocked_by_canonical_v2", summary["reason_codes"])
         self.assertFalse(summary["publishes_checkpoint"])
         self.assertFalse(summary["replaces_default_policy"])
         self.assertFalse(summary["performance_claimed"])
-        self.assertNotEqual(summary["next_required_change"], "fix_refined_advantage_materialization")
+        self.assertEqual(
+            summary["next_required_change"],
+            "migrate_refined_ppo_to_canonical_reward_v2_or_use_stage18_5_guard",
+        )
 
         refined_rows = self._read_jsonl(
             self.output_root / "refined-coverage-ppo-batch" / "refined-trainable-transitions.jsonl"
@@ -82,6 +88,9 @@ class RefinedCoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         self.assertEqual(refined["action_index"], 1)
         self.assertEqual(refined["teacher_action_index"], 0)
         self.assertGreater(refined["counterfactual_coverage_advantage"], 0.0)
+        self.assertTrue(refined["legacy_read_only"])
+        self.assertFalse(refined["ppo_trainable"])
+        self.assertTrue(refined["canonical_v2_training_consumer_blocked"])
         self.assertGreater(refined["coverage_rank_margin"], 0.0)
         self.assertGreater(refined["teacher_margin_target"], 0.0)
         self.assertTrue(math.isfinite(refined["log_prob"]))
@@ -95,20 +104,24 @@ class RefinedCoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         self.assertEqual(transition["info"]["controlled_action_index"], 1)
         self.assertEqual(transition["info"]["teacher_action_index"], 0)
         self.assertGreater(transition["info"]["counterfactual_coverage_advantage"], 0.0)
+        self.assertFalse(transition["info"]["ppo_trainable"])
+        self.assertTrue(transition["info"]["legacy_read_only"])
         self.assertIn("counterfactual_coverage_advantage_bonus", transition["reward_components"])
 
         for filename in (
             "refined-coverage-driven-ppo-improvement-run-summary.json",
             "coverage-driven-ppo-improvement-run-summary.json",
             "advantage-margin-audit.jsonl",
-            "coverage-driven-ppo-update-summary.json",
-            "coverage-driven-experimental-policy-candidate-metadata.json",
-            "coverage-driven-ppo-replay-audit.json",
             "refined-coverage-driven-ppo-performance-metric-table.jsonl",
             "stage5a-rerun-summary.json",
             "refined-coverage-driven-ppo-improvement-run-report.md",
         ):
             self.assertTrue((self.output_root / filename).is_file(), filename)
+        for filename in (
+            "coverage-driven-ppo-update-summary.json",
+            "coverage-driven-experimental-policy-candidate-metadata.json",
+        ):
+            self.assertFalse((self.output_root / filename).is_file(), filename)
 
     def test_fails_without_fake_zero_when_no_safe_better_pair_can_be_materialized(self) -> None:
         from scripts.run_refined_coverage_driven_ppo_improvement_run import (
@@ -134,7 +147,11 @@ class RefinedCoverageDrivenPpoImprovementRunTests(unittest.TestCase):
         self.assertEqual(summary["safe_better_training_pair_count"], 0)
         self.assertEqual(summary["counterfactual_advantage_nonzero_count"], 0)
         self.assertIn("insufficient_refined_advantage_materialization", summary["reason_codes"])
-        self.assertEqual(summary["next_required_change"], "fix_refined_advantage_materialization")
+        self.assertIn("legacy_v1_reward_components_blocked_by_canonical_v2", summary["reason_codes"])
+        self.assertEqual(
+            summary["next_required_change"],
+            "migrate_refined_ppo_to_canonical_reward_v2_or_use_stage18_5_guard",
+        )
         self.assertFalse(summary["runs_new_ppo_update"])
         self.assertFalse(summary["performance_claimed"])
 

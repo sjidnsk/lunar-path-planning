@@ -114,6 +114,7 @@ MAX_ALLOWED_RELATIVE_REGRESSION = 0.05
 DISCOUNT_FACTOR = 0.99
 COVERAGE_SIGNAL_FIELDS = ("expected_coverage_rate_delta", "information_gain", "value")
 REFINED_PPO_ADVANTAGE_SCALE = 1.0
+LEGACY_V1_REWARD_COMPONENT_BLOCKER = "legacy_v1_reward_components_blocked_by_canonical_v2"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -275,6 +276,7 @@ def run_refined_coverage_driven_ppo_improvement_run(
         reward_summary=reward_summary,
         reason_codes=reason_codes,
     )
+    _add_reason(reason_codes, LEGACY_V1_REWARD_COMPONENT_BLOCKER)
 
     base_candidate_root = _base_candidate_root(
         old_summary=old_summary,
@@ -417,6 +419,11 @@ def run_refined_coverage_driven_ppo_improvement_run(
         "coverage_performance_root": str(coverage_performance_root),
         "reward_refinement_root": str(reward_refinement_root),
         "output_root": str(output_root),
+        "legacy_v1_reward_components_read_only": True,
+        "canonical_v2_training_consumer_blocked": True,
+        "profile_id": reward_summary.get("profile_id") or old_summary.get("profile_id"),
+        "profile_version": reward_summary.get("profile_version") or old_summary.get("profile_version"),
+        "profile_hash": reward_summary.get("profile_hash") or old_summary.get("profile_hash"),
         "summary": str(paths["summary"]),
         "compatibility_summary": str(paths["compat_summary"]),
         "refined_batch_root": str(paths["refined_batch_root"]),
@@ -802,7 +809,9 @@ def _refined_transition(
         "failure_reason": None,
         "failure_count": 0,
         "replan_count": 0,
-        "ppo_trainable": True,
+        "ppo_trainable": False,
+        "legacy_read_only": True,
+        "canonical_v2_training_consumer_blocked": True,
         "controlled_choice_source": "policy",
         "controlled_choice_detail": "policy_safe_better_counterfactual_refined_reward",
         "controlled_action_index": action_index,
@@ -813,7 +822,7 @@ def _refined_transition(
         "step_index": _int(candidate.get("step_index")),
         "source_step_index": _int(info.get("source_step_index", candidate.get("step_index"))),
         "split": "train",
-        "gate_reason_codes": [],
+        "gate_reason_codes": [LEGACY_V1_REWARD_COMPONENT_BLOCKER],
         "scenario_id": candidate.get("scenario_id") or info.get("scenario_id"),
         "scenario_family": candidate.get("scenario_family") or info.get("scenario_family"),
         "fallback_like": False,
@@ -826,8 +835,11 @@ def _refined_transition(
         "ppo_return": float(value + ppo_advantage),
         "ppo_advantage_signal": float(advantage_for_ppo),
         "expanded_family_weight": expanded_family_weight,
-        "ppo_advantage_scale": float(ppo_advantage_scale),
-        "counterfactual_coverage_source_path": counterfactual.get("source_path"),
+            "ppo_advantage_scale": float(ppo_advantage_scale),
+            "legacy_read_only": True,
+            "canonical_v2_training_consumer_blocked": True,
+            "legacy_blocker_reason": LEGACY_V1_REWARD_COMPONENT_BLOCKER,
+            "counterfactual_coverage_source_path": counterfactual.get("source_path"),
         "counterfactual_coverage_match_method": counterfactual.get("match_method") or candidate.get("match_method"),
         "counterfactual_coverage_source_confidence": _float_or_default(
             counterfactual.get("source_confidence"),
@@ -859,6 +871,9 @@ def _refined_transition(
             "ppo_return": float(value + ppo_advantage),
             "reward": float(reward),
             "reward_components": reward_components,
+            "ppo_trainable": False,
+            "legacy_read_only": True,
+            "canonical_v2_training_consumer_blocked": True,
             "done": bool(transition.get("done", True)),
             "next_observation": None,
             "info": info,
@@ -1021,7 +1036,10 @@ def _refined_transition_record(
         "energy_cost": candidate.get("energy_cost"),
         "fallback_like": False,
         "controlled_regression_reason_codes": [],
-        "ppo_trainable": True,
+        "ppo_trainable": False,
+        "legacy_read_only": True,
+        "canonical_v2_training_consumer_blocked": True,
+        "legacy_blocker_reason": LEGACY_V1_REWARD_COMPONENT_BLOCKER,
     }
 
 
@@ -1287,6 +1305,8 @@ def _next_required_change(
     controlled_regression_count: int,
     fallback_gain_contamination_count: int,
 ) -> str:
+    if LEGACY_V1_REWARD_COMPONENT_BLOCKER in reason_codes:
+        return "migrate_refined_ppo_to_canonical_reward_v2_or_use_stage18_5_guard"
     if (
         refined["safe_better_training_pair_count"] <= 0
         or refined["counterfactual_advantage_nonzero_count"] <= 0

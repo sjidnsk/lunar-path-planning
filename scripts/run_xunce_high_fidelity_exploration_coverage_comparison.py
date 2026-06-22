@@ -30,6 +30,7 @@ try:
         resolve_roi_group,
     )
     from xunce_frontier_nbv_validation import IN_PROCESS_VALIDATION_MODE, validate_candidate_cells
+    from xunce_stage18_guard_thresholds import stage18_guard_thresholds
     from run_xunce_high_fidelity_real_map_comparison import (
         _boundary_audit as _stage18b_boundary_audit,
         _candidate_at,
@@ -49,6 +50,7 @@ try:
         _score_xunce_model,
         _selected_index,
     )
+    from model_explorer.policy.canonical_reward import compute_canonical_reward_components, load_canonical_reward_profile
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json, write_jsonl
@@ -61,6 +63,7 @@ except ModuleNotFoundError:  # pragma: no cover
         resolve_roi_group,
     )
     from scripts.xunce_frontier_nbv_validation import IN_PROCESS_VALIDATION_MODE, validate_candidate_cells
+    from scripts.xunce_stage18_guard_thresholds import stage18_guard_thresholds
     from scripts.run_xunce_high_fidelity_real_map_comparison import (
         _boundary_audit as _stage18b_boundary_audit,
         _candidate_at,
@@ -80,12 +83,14 @@ except ModuleNotFoundError:  # pragma: no cover
         _score_xunce_model,
         _selected_index,
     )
+    from model_explorer.policy.canonical_reward import compute_canonical_reward_components, load_canonical_reward_profile
 
 
 CONFIG_SCHEMA_VERSION = "xunce-high-fidelity-exploration-coverage-comparison-config/v1"
 SUMMARY_SCHEMA_VERSION = "xunce-exploration-coverage-comparison-summary/v1"
 DEFAULT_CONFIG = "configs/xunce_high_fidelity_exploration_coverage_comparison_v1.json"
 DEFAULT_OUTPUT_ROOT = "outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_v1"
+DEFAULT_CANONICAL_PROFILE = "configs/xunce_canonical_reward_guard_profile_v2.json"
 
 SUMMARY_FILE = "xunce-exploration-coverage-comparison-summary.json"
 EPISODES_FILE = "xunce-exploration-coverage-episodes.jsonl"
@@ -96,6 +101,7 @@ DYNAMIC_PROPOSALS_FILE = "xunce-exploration-coverage-dynamic-proposals.jsonl"
 DYNAMIC_VALIDATION_RESULTS_FILE = "xunce-exploration-coverage-dynamic-validation-results.jsonl"
 DYNAMIC_VALIDATION_AUDIT_FILE = "xunce-exploration-coverage-dynamic-validation-audit.json"
 PAIRED_DECISION_AUDIT_FILE = "xunce-exploration-coverage-paired-decision-audit.jsonl"
+CANDIDATE_METRIC_AUDIT_FILE = "xunce-exploration-coverage-candidate-metric-audit.jsonl"
 MODEL_INFERENCE_FILE = "xunce-exploration-coverage-model-inference.jsonl"
 ROI_BREAKDOWN_FILE = "xunce-exploration-coverage-roi-breakdown.json"
 DECISION_AUDIT_FILE = "xunce-exploration-coverage-decision-audit.json"
@@ -117,6 +123,7 @@ REVIEW_COMPARISON_NEXT_REQUIRED_CHANGE = "review_xunce_incumbent_comparison_metr
 
 POLICIES = ("xunce", "incumbent")
 ORACLE_POLICIES = ("greedy_coverage_oracle", "cost_aware_coverage_oracle")
+CANONICAL_REWARD_RERANK_ORACLE = "canonical_reward_rerank_oracle"
 MODEL_POLICY_INFERENCE_KIND = "true_checkpoint_inference"
 ORACLE_POLICY_INFERENCE_KIND = "oracle_offline_policy"
 TOLERANCE = 1.0e-12
@@ -168,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dynamic-adapter-audit-min-per-frontier-source", type=int)
     parser.add_argument("--include-oracle-baselines", action="store_true")
     parser.add_argument("--include-roi-weighted-coverage", action="store_true")
+    parser.add_argument("--emit-candidate-metric-audit", action="store_true")
+    parser.add_argument("--include-canonical-reward-rerank-oracle", action="store_true")
+    parser.add_argument("--canonical-reward-rerank-profile")
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[1]
     overrides = {
@@ -197,6 +207,9 @@ def main(argv: list[str] | None = None) -> int:
             "dynamic_adapter_audit_min_per_frontier_source": args.dynamic_adapter_audit_min_per_frontier_source,
             "include_oracle_baselines": True if args.include_oracle_baselines else None,
             "include_roi_weighted_coverage": True if args.include_roi_weighted_coverage else None,
+            "emit_candidate_metric_audit": True if args.emit_candidate_metric_audit else None,
+            "include_canonical_reward_rerank_oracle": True if args.include_canonical_reward_rerank_oracle else None,
+            "canonical_reward_rerank_profile": args.canonical_reward_rerank_profile,
         }.items()
         if value is not None
     }
@@ -242,7 +255,15 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     boundary = _boundary_audit(config, source)
     model_bundle = _load_model_bundle(config, source, repo_root)
     source_match = _source_match_audit(config, source)
-    episodes, steps, inference_rows, dynamic_proposals, dynamic_validation_rows, paired_decision_rows = _run_coverage_rollouts(
+    (
+        episodes,
+        steps,
+        inference_rows,
+        dynamic_proposals,
+        dynamic_validation_rows,
+        paired_decision_rows,
+        candidate_metric_rows,
+    ) = _run_coverage_rollouts(
         config,
         source,
         model_bundle,
@@ -259,6 +280,7 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
         dynamic_proposals=dynamic_proposals,
         dynamic_validation_rows=dynamic_validation_rows,
         paired_decision_rows=paired_decision_rows,
+        candidate_metric_rows=candidate_metric_rows,
         source=source,
         config=config,
         repo_root=repo_root,
@@ -294,8 +316,14 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
         "schema_version": "xunce-exploration-coverage-comparison-manifest/v1",
         "generated_at": generated_at,
         "config": str(config_path),
+        "normalized_config": _normalized_config_snapshot(config),
         "output_root": str(output_root),
+        "profile_id": config["profile_id"],
+        "profile_version": config["profile_version"],
+        "profile_hash": config["profile_hash"],
         "artifacts": {key: str(value) for key, value in paths.items()},
+        "candidate_metric_audit": str(paths["candidate_metric_audit"]) if config["emit_candidate_metric_audit"] else None,
+        "candidate_metric_audit_row_count": len(candidate_metric_rows) if config["emit_candidate_metric_audit"] else 0,
         "summary_status": summary["status"],
         "next_required_change": summary["next_required_change"],
     }
@@ -308,6 +336,8 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     write_jsonl(paths["dynamic_validation_results"], dynamic_validation_rows)
     write_json(paths["dynamic_validation_audit"], comparison["dynamic_validation_audit"])
     write_jsonl(paths["paired_decision_audit"], paired_decision_rows)
+    if config["emit_candidate_metric_audit"]:
+        write_jsonl(paths["candidate_metric_audit"], candidate_metric_rows)
     write_jsonl(paths["model_inference"], inference_rows)
     write_json(paths["roi_breakdown"], roi_breakdown)
     write_json(paths["decision_audit"], decision)
@@ -369,7 +399,46 @@ def _load_config(
         raise ConfigError("coverage_metric_mode must be endpoint_footprint or path_line_plus_endpoint")
     normalized["include_oracle_baselines"] = _require_bool(payload.get("include_oracle_baselines", False), "include_oracle_baselines")
     normalized["include_roi_weighted_coverage"] = _require_bool(payload.get("include_roi_weighted_coverage", False), "include_roi_weighted_coverage")
-    normalized["comparison_utility_profiles"] = _comparison_utility_profiles(payload.get("comparison_utility_profiles"))
+    normalized["emit_candidate_metric_audit"] = _require_bool(payload.get("emit_candidate_metric_audit", False), "emit_candidate_metric_audit")
+    canonical_profile_path = resolve_path(
+        Path(str(payload.get("canonical_reward_profile", DEFAULT_CANONICAL_PROFILE))),
+        repo_root,
+    )
+    canonical_profile = load_canonical_reward_profile(canonical_profile_path)
+    guard_thresholds = stage18_guard_thresholds(canonical_profile)
+    normalized["canonical_reward_profile"] = str(canonical_profile_path)
+    normalized["profile_id"] = canonical_profile.profile_id
+    normalized["profile_version"] = canonical_profile.profile_version
+    normalized["profile_hash"] = canonical_profile.profile_hash
+    normalized["canonical_guard_thresholds"] = guard_thresholds.to_artifact_dict()
+    normalized["include_canonical_reward_rerank_oracle"] = _require_bool(
+        payload.get("include_canonical_reward_rerank_oracle", False),
+        "include_canonical_reward_rerank_oracle",
+    )
+    rerank_profile_path = payload.get("canonical_reward_rerank_profile")
+    if normalized["include_canonical_reward_rerank_oracle"]:
+        if rerank_profile_path is None:
+            rerank_profile_path = canonical_profile_path
+        else:
+            rerank_profile_path = resolve_path(Path(str(rerank_profile_path)), repo_root)
+        rerank_profile = load_canonical_reward_profile(Path(rerank_profile_path))
+        if rerank_profile.profile_version != "v3":
+            raise ConfigError("canonical_reward_rerank_profile must use profile_version v3")
+        normalized["canonical_reward_rerank_profile"] = str(Path(rerank_profile_path))
+        normalized["canonical_reward_rerank_profile_id"] = rerank_profile.profile_id
+        normalized["canonical_reward_rerank_profile_version"] = rerank_profile.profile_version
+        normalized["canonical_reward_rerank_profile_hash"] = rerank_profile.profile_hash
+    else:
+        normalized["canonical_reward_rerank_profile"] = None
+        normalized["canonical_reward_rerank_profile_id"] = None
+        normalized["canonical_reward_rerank_profile_version"] = None
+        normalized["canonical_reward_rerank_profile_hash"] = None
+    utility_profile_payload = payload.get("comparison_utility_profiles")
+    if utility_profile_payload is None:
+        utility_profile_payload = _comparison_utility_profiles_from_canonical(canonical_profile)
+    normalized["comparison_utility_profiles"] = _comparison_utility_profiles(utility_profile_payload)
+    normalized["comparison_utility_profiles_diagnostic_only"] = True
+    normalized["stage19_readiness_source"] = "canonical_guard_not_utility_profiles"
     normalized["dynamic_candidate_validation_mode"] = _require_string(
         payload.get("dynamic_candidate_validation_mode", "in_process_path_planner_astar_batch"),
         "dynamic_candidate_validation_mode",
@@ -473,6 +542,7 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
         "dynamic_validation_results": output_root / DYNAMIC_VALIDATION_RESULTS_FILE,
         "dynamic_validation_audit": output_root / DYNAMIC_VALIDATION_AUDIT_FILE,
         "paired_decision_audit": output_root / PAIRED_DECISION_AUDIT_FILE,
+        "candidate_metric_audit": output_root / CANDIDATE_METRIC_AUDIT_FILE,
         "model_inference": output_root / MODEL_INFERENCE_FILE,
         "roi_breakdown": output_root / ROI_BREAKDOWN_FILE,
         "decision_audit": output_root / DECISION_AUDIT_FILE,
@@ -605,7 +675,15 @@ def _run_coverage_rollouts(
     *,
     repo_root: Path,
     output_root: Path,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     scenarios = source["path_feedback"].get("scenarios", [])
     if not isinstance(scenarios, list):
         scenarios = []
@@ -616,6 +694,7 @@ def _run_coverage_rollouts(
     dynamic_proposals: list[dict[str, Any]] = []
     dynamic_validation_rows: list[dict[str, Any]] = []
     paired_decision_rows: list[dict[str, Any]] = []
+    candidate_metric_rows: list[dict[str, Any]] = []
     validation_cache: dict[str, list[dict[str, Any]]] = {}
     for scenario_index, scenario in enumerate(scenarios[: config["required_scenario_count"]]):
         if not isinstance(scenario, dict):
@@ -624,6 +703,8 @@ def _run_coverage_rollouts(
         slice_row = slice_by_id.get(scenario_id, {})
         roi_group = resolve_roi_group(scenario, slice_row)
         policy_names = POLICIES + (ORACLE_POLICIES if config["include_oracle_baselines"] else ())
+        if config["include_canonical_reward_rerank_oracle"]:
+            policy_names = policy_names + (CANONICAL_REWARD_RERANK_ORACLE,)
         for policy_name in policy_names:
             episode = _run_policy_episode(
                 policy_name=policy_name,
@@ -645,7 +726,8 @@ def _run_coverage_rollouts(
             dynamic_proposals.extend(episode.get("dynamic_proposals", []))
             dynamic_validation_rows.extend(episode.get("dynamic_validation_rows", []))
             paired_decision_rows.extend(episode.get("paired_decision_rows", []))
-    return episodes, steps, inference_rows, dynamic_proposals, dynamic_validation_rows, paired_decision_rows
+            candidate_metric_rows.extend(episode.get("candidate_metric_rows", []))
+    return episodes, steps, inference_rows, dynamic_proposals, dynamic_validation_rows, paired_decision_rows, candidate_metric_rows
 
 
 def _run_policy_episode(
@@ -677,6 +759,11 @@ def _run_policy_episode(
     path_cost_total = 0.0
     risk_total = 0.0
     risk_cost_weighted_total = 0.0
+    soft_risk_exposure_total = 0.0
+    high_risk_distance_total_m = 0.0
+    path_risk_peaks: list[float] = []
+    hard_risk_violation_count = 0
+    risk_boundary_violation_steps = 0
     energy_total = 0.0
     new_cell_total = 0
     revisited_cell_total = 0
@@ -699,6 +786,7 @@ def _run_policy_episode(
     dynamic_proposals: list[dict[str, Any]] = []
     dynamic_validation_rows: list[dict[str, Any]] = []
     paired_decision_rows: list[dict[str, Any]] = []
+    candidate_metric_rows: list[dict[str, Any]] = []
 
     for step_index in range(config["rollout_steps"]):
         cell_before = current_cell
@@ -833,10 +921,28 @@ def _run_policy_episode(
             scenario_index + step_index,
             model_bundle.get("xunce_config") or {},
         )
+        if config["emit_candidate_metric_audit"]:
+            candidate_metric_rows.extend(
+                _candidate_metric_audit_rows(
+                    candidates,
+                    scenario_id=scenario_id,
+                    roi_group=roi_group,
+                    split=split,
+                    policy_name=policy_name,
+                    step_index=step_index,
+                    current_cell=cell_before,
+                    covered_cells=covered_cells,
+                    covered_cells_hash_value=covered_hash,
+                    candidate_set_id=candidate_set_id,
+                    candidate_set_hash_value=candidate_set_hash_value,
+                    action_mask=adapter["action_mask"],
+                    config=config,
+                )
+            )
         step_reasons: list[str] = []
         detail: dict[str, Any] | None = None
         true_model_inference_executed = False
-        is_oracle_policy = policy_name in ORACLE_POLICIES
+        is_oracle_policy = _is_oracle_policy(policy_name)
         oracle_rollout_executed = False
         policy_inference_kind = ORACLE_POLICY_INFERENCE_KIND if is_oracle_policy else MODEL_POLICY_INFERENCE_KIND
         model_inference_failure = False
@@ -847,26 +953,17 @@ def _run_policy_episode(
             if not candidate_batch["dynamic_generation_executed"]:
                 step_reasons.append("dynamic_candidate_generation_missing")
         if is_oracle_policy:
-            selected_index = _oracle_selected_index(
+            oracle_detail = _oracle_policy_detail(
                 policy_name,
                 candidates,
                 current_cell=current_cell,
                 covered_cells=covered_cells,
+                coverage_denominator=float(denominator),
                 config=config,
             )
             true_model_inference_executed = False
             oracle_rollout_executed = True
-            detail = {
-                "logits": [],
-                "masked_logits": [],
-                "action_probs": [],
-                "value": 0.0,
-                "selected_action_index": selected_index,
-                "selected_probability": 1.0 if selected_index is not None else 0.0,
-                "selected_rank": 1 if selected_index is not None else 0,
-                "finite_outputs": True,
-                "latency_ms": 0.0,
-            }
+            detail = oracle_detail
         elif not model_bundle["xunce_checkpoint_loaded"] or not model_bundle["incumbent_checkpoint_loaded"]:
             step_reasons.append("true_model_inference_not_executed")
         elif not adapter["has_valid_action"]:
@@ -917,6 +1014,19 @@ def _run_policy_episode(
         selected_cell = _cell_tuple(_candidate_cell(selected_candidate)) if selected_candidate is not None else None
         selected_cost = _candidate_cost(selected_candidate) if selected_candidate is not None else None
         selected_risk = _finite_or_none(selected_candidate.get("risk")) if selected_candidate is not None else None
+        selected_soft_risk_exposure = _finite_or_none((selected_candidate or {}).get("soft_risk_exposure"))
+        if selected_soft_risk_exposure is None:
+            selected_soft_risk_exposure = _finite_or_none((selected_candidate or {}).get("path_risk_exposure"))
+        if selected_soft_risk_exposure is None and selected_cost is not None and selected_risk is not None:
+            selected_soft_risk_exposure = float(selected_cost) * float(selected_risk)
+        selected_path_risk_peak = _finite_or_none((selected_candidate or {}).get("path_risk_peak"))
+        selected_high_risk_distance_m = _finite_or_none((selected_candidate or {}).get("high_risk_distance_m")) or 0.0
+        selected_path_allowed_by_risk = (selected_candidate or {}).get("path_allowed_by_risk")
+        selected_hard_risk_flags = [str(flag) for flag in ((selected_candidate or {}).get("hard_risk_flags") or [])]
+        selected_hard_risk_violation = bool(
+            selected_candidate is not None
+            and (selected_path_allowed_by_risk is False or selected_hard_risk_flags)
+        )
         selected_risk_source = str((selected_candidate or {}).get("risk_source") or "unavailable")
         selected_risk_route_derived = bool((selected_candidate or {}).get("risk_route_derived", False))
         selected_planner_validation_backend = str((selected_candidate or {}).get("planner_validation_backend") or "")
@@ -970,6 +1080,13 @@ def _run_policy_episode(
             path_cost_total += float(selected_cost)
             risk_total += _float_default(selected_risk)
             risk_cost_weighted_total += float(selected_cost) * _float_default(selected_risk)
+            soft_risk_exposure_total += _float_default(selected_soft_risk_exposure)
+            high_risk_distance_total_m += _float_default(selected_high_risk_distance_m)
+            if selected_path_risk_peak is not None:
+                path_risk_peaks.append(float(selected_path_risk_peak))
+            if selected_hard_risk_violation:
+                hard_risk_violation_count += 1
+                risk_boundary_violation_steps += 1
             energy_total += _float_default(selected_energy)
             new_cell_total += len(new_cells)
             revisited_cell_total += len(revisited_cells)
@@ -1013,8 +1130,18 @@ def _run_policy_episode(
             "selected_probability": detail_payload["selected_probability"],
             "selected_rank": detail_payload["selected_rank"],
             "action_entropy": entropies[-1] if entropies else 0.0,
+            "selected_reward_components": detail_payload.get("reward_components"),
+            "selected_reward_profile_id": detail_payload.get("profile_id"),
+            "selected_reward_profile_hash": detail_payload.get("profile_hash"),
             "path_cost": selected_cost,
             "risk": selected_risk,
+            "path_allowed_by_risk": selected_path_allowed_by_risk,
+            "hard_risk_flags": selected_hard_risk_flags,
+            "soft_risk_exposure": selected_soft_risk_exposure,
+            "path_risk_exposure": selected_soft_risk_exposure,
+            "path_risk_peak": selected_path_risk_peak,
+            "high_risk_distance_m": selected_high_risk_distance_m,
+            "risk_boundary_violation": selected_hard_risk_violation,
             "selected_risk_source": selected_risk_source,
             "selected_risk_route_derived": selected_risk_route_derived,
             "selected_planner_validation_backend": selected_planner_validation_backend,
@@ -1149,6 +1276,12 @@ def _run_policy_episode(
         "risk_source": "candidate_risk_scalar_rollout_sum/v1",
         "risk_cost_weighted_total": risk_cost_weighted_total,
         "risk_cost_weighted_source": "sum_path_cost_times_candidate_risk_scalar/v1",
+        "soft_risk_exposure_total": soft_risk_exposure_total,
+        "soft_risk_exposure_source": "sum_selected_path_risk_exposure_or_path_cost_times_risk_proxy/v1",
+        "path_risk_peak_max": max(path_risk_peaks) if path_risk_peaks else None,
+        "high_risk_distance_total_m": high_risk_distance_total_m,
+        "hard_risk_violation_count": hard_risk_violation_count,
+        "risk_boundary_violation_steps": risk_boundary_violation_steps,
         "energy_cost": energy_total,
         "coverage_gain_per_path_cost": _safe_ratio(coverage_return, path_cost_total),
         "coverage_gain_per_meter": _safe_ratio(coverage_return, path_cost_total),
@@ -1174,6 +1307,7 @@ def _run_policy_episode(
         "dynamic_proposals": dynamic_proposals,
         "dynamic_validation_rows": dynamic_validation_rows,
         "paired_decision_rows": paired_decision_rows,
+        "candidate_metric_rows": candidate_metric_rows,
     }
 
 
@@ -1196,10 +1330,14 @@ def _comparison_pairs(episodes: list[dict[str, Any]], config: dict[str, Any]) ->
         path_cost_delta = _episode_number(xunce, "path_cost_total_m") - _episode_number(incumbent, "path_cost_total_m")
         risk_delta = _episode_number(xunce, "risk_total") - _episode_number(incumbent, "risk_total")
         risk_cost_delta = _episode_number(xunce, "risk_cost_weighted_total") - _episode_number(incumbent, "risk_cost_weighted_total")
+        soft_risk_exposure_delta = _episode_number(xunce, "soft_risk_exposure_total") - _episode_number(incumbent, "soft_risk_exposure_total")
+        hard_risk_violation_delta = _episode_number(xunce, "hard_risk_violation_count") - _episode_number(incumbent, "hard_risk_violation_count")
+        path_risk_peak_delta = _nullable_delta(xunce.get("path_risk_peak_max"), incumbent.get("path_risk_peak_max"))
         xunce_coverage_per_100m = _safe_ratio_v2(_episode_number(xunce, "total_new_cell_count") * 100.0, _episode_number(xunce, "path_cost_total_m"), "xunce_coverage_per_100m")
         incumbent_coverage_per_100m = _safe_ratio_v2(_episode_number(incumbent, "total_new_cell_count") * 100.0, _episode_number(incumbent, "path_cost_total_m"), "incumbent_coverage_per_100m")
         xunce_risk_per_100m = _safe_ratio_v2(_episode_number(xunce, "risk_total") * 100.0, _episode_number(xunce, "path_cost_total_m"), "xunce_risk_per_100m")
         incumbent_risk_per_100m = _safe_ratio_v2(_episode_number(incumbent, "risk_total") * 100.0, _episode_number(incumbent, "path_cost_total_m"), "incumbent_risk_per_100m")
+        coverage_per_100m_delta = _nullable_delta(xunce_coverage_per_100m["value"], incumbent_coverage_per_100m["value"])
         incremental_cost = _incremental_ratio(path_cost_delta, coverage_delta, "incremental_cost_per_extra_cell")
         greedy_xunce_regret = _oracle_coverage_regret(greedy_oracle, xunce)
         greedy_incumbent_regret = _oracle_coverage_regret(greedy_oracle, incumbent)
@@ -1218,6 +1356,25 @@ def _comparison_pairs(episodes: list[dict[str, Any]], config: dict[str, Any]) ->
             + incumbent_risk_per_100m["reason_codes"]
             + incremental_cost["reason_codes"]
             + _missing_oracle_reasons(greedy_oracle, cost_aware_oracle)
+        )
+        guard_thresholds = config["canonical_guard_thresholds"]
+        path_cost_budget_exceeded = path_cost_delta > float(guard_thresholds["max_path_cost_delta_m"]) + TOLERANCE
+        risk_budget_exceeded = (
+            bool(guard_thresholds.get("risk_delta_hard_gate_enabled", True))
+            and guard_thresholds.get("max_risk_delta") is not None
+            and risk_delta > float(guard_thresholds["max_risk_delta"]) + TOLERANCE
+        )
+        risk_cost_weighted_budget_exceeded = (
+            risk_cost_delta > float(
+                guard_thresholds.get("max_soft_risk_exposure_delta")
+                if guard_thresholds.get("candidate_level_risk_delta_guard_is_diagnostic_only")
+                else guard_thresholds["max_risk_cost_weighted_delta"]
+            )
+            + TOLERANCE
+        )
+        coverage_efficiency_regression = (
+            coverage_per_100m_delta is not None
+            and coverage_per_100m_delta < float(guard_thresholds["min_coverage_per_100m_delta"]) - TOLERANCE
         )
         row = {
             "schema_version": "xunce-exploration-coverage-comparison-pair/v1",
@@ -1252,9 +1409,19 @@ def _comparison_pairs(episodes: list[dict[str, Any]], config: dict[str, Any]) ->
             "xunce_risk_cost_weighted_total": _episode_number(xunce, "risk_cost_weighted_total"),
             "incumbent_risk_cost_weighted_total": _episode_number(incumbent, "risk_cost_weighted_total"),
             "risk_cost_weighted_delta": risk_cost_delta,
+            "xunce_soft_risk_exposure_total": _episode_number(xunce, "soft_risk_exposure_total"),
+            "incumbent_soft_risk_exposure_total": _episode_number(incumbent, "soft_risk_exposure_total"),
+            "soft_risk_exposure_delta": soft_risk_exposure_delta,
+            "xunce_hard_risk_violation_count": _episode_number(xunce, "hard_risk_violation_count"),
+            "incumbent_hard_risk_violation_count": _episode_number(incumbent, "hard_risk_violation_count"),
+            "hard_risk_violation_delta": hard_risk_violation_delta,
+            "hard_risk_violation_count": _episode_number(xunce, "hard_risk_violation_count"),
+            "xunce_path_risk_peak_max": xunce.get("path_risk_peak_max"),
+            "incumbent_path_risk_peak_max": incumbent.get("path_risk_peak_max"),
+            "path_risk_peak_delta": path_risk_peak_delta,
             "xunce_coverage_per_100m": xunce_coverage_per_100m["value"],
             "incumbent_coverage_per_100m": incumbent_coverage_per_100m["value"],
-            "coverage_per_100m_delta": _nullable_delta(xunce_coverage_per_100m["value"], incumbent_coverage_per_100m["value"]),
+            "coverage_per_100m_delta": coverage_per_100m_delta,
             "xunce_risk_per_100m": xunce_risk_per_100m["value"],
             "incumbent_risk_per_100m": incumbent_risk_per_100m["value"],
             "risk_per_100m_delta": _nullable_delta(xunce_risk_per_100m["value"], incumbent_risk_per_100m["value"]),
@@ -1264,6 +1431,20 @@ def _comparison_pairs(episodes: list[dict[str, Any]], config: dict[str, Any]) ->
             "cost_aware_oracle_utility_regret_xunce": cost_xunce_regret,
             "cost_aware_oracle_utility_regret_incumbent": cost_incumbent_regret,
             "utility_profile_outcomes": profile_outcomes,
+            "canonical_guard_profile_id": config["profile_id"],
+            "canonical_guard_profile_version": config["profile_version"],
+            "canonical_guard_profile_hash": config["profile_hash"],
+            "canonical_guard_thresholds": guard_thresholds,
+            "path_cost_budget_exceeded": path_cost_budget_exceeded,
+            "risk_budget_exceeded": risk_budget_exceeded,
+            "risk_cost_weighted_budget_exceeded": risk_cost_weighted_budget_exceeded,
+            "soft_risk_exposure_budget_exceeded": risk_cost_weighted_budget_exceeded
+            if guard_thresholds.get("candidate_level_risk_delta_guard_is_diagnostic_only")
+            else False,
+            "coverage_efficiency_regression": coverage_efficiency_regression,
+            "coverage_gain_per_path_cost_delta_audit_only": (
+                guard_thresholds["coverage_gain_per_path_cost_delta_mode"] == "audit_only"
+            ),
             "pairwise_outcome": _coverage_pairwise_outcome(coverage_delta),
             "undefined_metric_reason_codes": reason_codes,
         }
@@ -1298,6 +1479,9 @@ def _comparison_aggregate(pairs: list[dict[str, Any]], config: dict[str, Any]) -
     return {
         "schema_version": "xunce-exploration-coverage-comparison-aggregate/v1",
         "scenario_count": len(pairs),
+        "profile_id": config["profile_id"],
+        "profile_version": config["profile_version"],
+        "profile_hash": config["profile_hash"],
         "xunce_coverage_win_count": win_count,
         "xunce_coverage_tie_count": tie_count,
         "xunce_coverage_loss_count": loss_count,
@@ -1311,6 +1495,10 @@ def _comparison_aggregate(pairs: list[dict[str, Any]], config: dict[str, Any]) -
         **_distribution_fields("coverage_delta_cells", [row.get("coverage_delta_cells") for row in pairs]),
         **_distribution_fields("path_cost_delta_m", [row.get("path_cost_delta_m") for row in pairs]),
         **_distribution_fields("risk_delta", [row.get("risk_delta") for row in pairs]),
+        **_distribution_fields("risk_cost_weighted_delta", [row.get("risk_cost_weighted_delta") for row in pairs]),
+        **_distribution_fields("soft_risk_exposure_delta", [row.get("soft_risk_exposure_delta") for row in pairs]),
+        **_distribution_fields("hard_risk_violation_delta", [row.get("hard_risk_violation_delta") for row in pairs]),
+        "hard_risk_violation_count": sum(int(row.get("hard_risk_violation_count", 0) or 0) for row in pairs),
         **_distribution_fields("coverage_per_100m_delta", [row.get("coverage_per_100m_delta") for row in pairs]),
         "greedy_oracle_coverage_regret_delta_mean": _mean(
             [
@@ -1338,6 +1526,7 @@ def _coverage_comparison_audit(
     dynamic_proposals: list[dict[str, Any]],
     dynamic_validation_rows: list[dict[str, Any]],
     paired_decision_rows: list[dict[str, Any]],
+    candidate_metric_rows: list[dict[str, Any]],
     source: dict[str, Any],
     config: dict[str, Any],
     repo_root: Path,
@@ -1360,11 +1549,13 @@ def _coverage_comparison_audit(
     min_roi_deltas: list[float] = []
     gain_per_cost_deltas: list[float] = []
     gain_per_risk_deltas: list[float] = []
+    pair_by_scenario = {str(row["scenario_id"]): row for row in comparison_pairs}
     for policies in pairs.values():
         xunce = policies.get("xunce")
         incumbent = policies.get("incumbent")
         if not xunce or not incumbent:
             continue
+        pair_row = pair_by_scenario.get(str(xunce["scenario_id"]), {})
         coverage_delta = float(xunce["coverage_return"]) - float(incumbent["coverage_return"])
         coverage_return_deltas.append(coverage_delta)
         coverage_auc_deltas.append(float(xunce["coverage_curve_auc"]) - float(incumbent["coverage_curve_auc"]))
@@ -1381,18 +1572,19 @@ def _coverage_comparison_audit(
             xunce_worse += 1
         else:
             xunce_tie += 1
-        if float(xunce["risk"]) > float(incumbent["risk"]) + TOLERANCE:
+        if pair_row.get("risk_budget_exceeded") is True or pair_row.get("risk_cost_weighted_budget_exceeded") is True:
             risk_regression += 1
-        if float(xunce["path_cost"]) > float(incumbent["path_cost"]) + TOLERANCE:
+        if pair_row.get("path_cost_budget_exceeded") is True:
             path_cost_regression += 1
-        if cost_delta < -TOLERANCE or risk_delta < -TOLERANCE or float(xunce["path_cost"]) > float(incumbent["path_cost"]) + TOLERANCE:
+        if pair_row.get("path_cost_budget_exceeded") is True or pair_row.get("coverage_efficiency_regression") is True:
             efficiency_regression += 1
         if (
             int(xunce["mask_violation_count"]) > int(incumbent["mask_violation_count"])
             or int(xunce["unreachable_selected_count"]) > int(incumbent["unreachable_selected_count"])
             or int(xunce["path_planning_failure_count"]) > int(incumbent["path_planning_failure_count"])
             or int(xunce["open_grid_fallback_count"]) > int(incumbent["open_grid_fallback_count"])
-            or float(xunce["risk"]) > float(incumbent["risk"]) + TOLERANCE
+            or pair_row.get("risk_budget_exceeded") is True
+            or pair_row.get("risk_cost_weighted_budget_exceeded") is True
         ):
             safety_regression += 1
     if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
@@ -1541,6 +1733,7 @@ def _coverage_comparison_audit(
         "state_conditioned_candidate_generation": dynamic_audit["state_conditioned_candidate_generation"],
         "candidate_set_hash_mismatch_count": _candidate_set_hash_mismatch_count(steps),
         "paired_decision_audit_row_count": len(paired_decision_rows),
+        "candidate_metric_audit_row_count": len(candidate_metric_rows) if config["emit_candidate_metric_audit"] else 0,
         "candidate_generation_effect_scope": (
             "dynamic_generator_plus_policy_closed_loop"
             if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process"
@@ -2138,8 +2331,6 @@ def _decision(
         and comparison["xunce_efficiency_regression_count"] == 0
         and model_inference["model_inference_mask_violation_count"] == 0
         and comparison["open_grid_fallback_count"] == 0
-        and comparison["coverage_gain_per_risk_delta_vs_incumbent"] >= -TOLERANCE
-        and comparison["coverage_gain_per_path_cost_delta_vs_incumbent"] >= -TOLERANCE
         and (
             comparison["incumbent_oracle_regret"] <= TOLERANCE
             or comparison["xunce_oracle_regret"] < comparison["incumbent_oracle_regret"] - TOLERANCE
@@ -2279,6 +2470,7 @@ def _summary(
         "xunce_checkpoint_loaded": model_inference["xunce_checkpoint_loaded"],
         "incumbent_checkpoint_loaded": model_inference["incumbent_checkpoint_loaded"],
         "scenario_count": comparison["scenario_count"],
+        "normalized_config": _normalized_config_snapshot(config),
         "rollout_steps": config["rollout_steps"],
         "coverage_radius_cells": config["coverage_radius_cells"],
         "coverage_radius_sensitivity": config["coverage_radius_sensitivity"],
@@ -2287,6 +2479,18 @@ def _summary(
         "coverage_metric_mode": config["coverage_metric_mode"],
         "include_oracle_baselines": config["include_oracle_baselines"],
         "include_roi_weighted_coverage": config["include_roi_weighted_coverage"],
+        "canonical_reward_profile": config["canonical_reward_profile"],
+        "profile_id": config["profile_id"],
+        "profile_version": config["profile_version"],
+        "profile_hash": config["profile_hash"],
+        "include_canonical_reward_rerank_oracle": config["include_canonical_reward_rerank_oracle"],
+        "canonical_reward_rerank_profile": config["canonical_reward_rerank_profile"],
+        "canonical_reward_rerank_profile_id": config["canonical_reward_rerank_profile_id"],
+        "canonical_reward_rerank_profile_version": config["canonical_reward_rerank_profile_version"],
+        "canonical_reward_rerank_profile_hash": config["canonical_reward_rerank_profile_hash"],
+        "canonical_guard_thresholds": config["canonical_guard_thresholds"],
+        "comparison_utility_profiles_diagnostic_only": config["comparison_utility_profiles_diagnostic_only"],
+        "stage19_readiness_source": config["stage19_readiness_source"],
         "xunce_coverage_advantage_established": decision["xunce_coverage_advantage_established"],
         "xunce_coverage_better_count": comparison["xunce_coverage_better_count"],
         "xunce_coverage_worse_count": comparison["xunce_coverage_worse_count"],
@@ -2404,6 +2608,8 @@ def _summary(
         "dynamic_validation_results": str(paths["dynamic_validation_results"]),
         "dynamic_validation_audit": str(paths["dynamic_validation_audit"]),
         "paired_decision_audit": str(paths["paired_decision_audit"]),
+        "candidate_metric_audit": str(paths["candidate_metric_audit"]) if config["emit_candidate_metric_audit"] else None,
+        "candidate_metric_audit_row_count": comparison["candidate_metric_audit_row_count"],
         "model_inference": str(paths["model_inference"]),
         "roi_breakdown": str(paths["roi_breakdown"]),
         "decision_audit": str(paths["decision_audit"]),
@@ -2413,6 +2619,27 @@ def _summary(
         "git_provenance": git_snapshot(repo_root),
         **_boundary_fields(),
     }
+
+
+def _normalized_config_snapshot(config: dict[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    for key, value in sorted(config.items()):
+        output[key] = _json_safe_config_value(value)
+    return output
+
+
+def _json_safe_config_value(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_json_safe_config_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe_config_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe_config_value(item) for key, item in sorted(value.items(), key=lambda item: str(item[0]))}
+    return str(value)
 
 
 def _roi_breakdown(episodes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2642,6 +2869,106 @@ def _dynamic_artifact_row(
     return payload
 
 
+def _candidate_metric_audit_rows(
+    candidates: list[dict[str, Any]],
+    *,
+    scenario_id: str,
+    roi_group: str,
+    split: Any,
+    policy_name: str,
+    step_index: int,
+    current_cell: tuple[int, int],
+    covered_cells: set[tuple[int, int]],
+    covered_cells_hash_value: str,
+    candidate_set_id: str,
+    candidate_set_hash_value: str,
+    action_mask: list[bool],
+    config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for candidate_index, candidate in enumerate(candidates):
+        cell = _cell_tuple(_candidate_cell(candidate))
+        coverage_count = _finite_or_none(candidate.get("expected_new_coverage_cell_count"))
+        if coverage_count is None and cell is not None:
+            footprint = _coverage_cells(
+                start=current_cell,
+                end=cell,
+                radius=int(config["coverage_radius_cells"]),
+                mode=str(config["coverage_metric_mode"]),
+            )
+            coverage_count = float(len(footprint - covered_cells))
+        path_cost = _candidate_cost(candidate)
+        risk = _finite_or_none(candidate.get("risk"))
+        roi_gain = _finite_or_none(candidate.get("roi_weighted_coverage_delta"))
+        if roi_gain is None:
+            roi_gain = coverage_count
+        risk_cost_weighted = None
+        if path_cost is not None and risk is not None:
+            risk_cost_weighted = float(path_cost) * float(risk)
+        soft_risk_exposure = _finite_or_none(candidate.get("soft_risk_exposure"))
+        if soft_risk_exposure is None:
+            soft_risk_exposure = _finite_or_none(candidate.get("path_risk_exposure"))
+        if soft_risk_exposure is None:
+            soft_risk_exposure = risk_cost_weighted
+        rows.append(
+            {
+                "schema_version": "xunce-exploration-coverage-candidate-metric-audit-row/v1",
+                "scenario_id": scenario_id,
+                "split": split,
+                "roi_group": roi_group,
+                "policy": policy_name,
+                "executing_policy": policy_name,
+                "step_index": step_index,
+                "current_cell": list(current_cell),
+                "covered_cells_hash": covered_cells_hash_value,
+                "candidate_set_id": candidate_set_id,
+                "candidate_set_hash": candidate_set_hash_value,
+                "candidate_index": candidate_index,
+                "candidate_cell": list(cell) if cell is not None else None,
+                "action_mask_valid": bool(action_mask[candidate_index]) if candidate_index < len(action_mask) else False,
+                "expected_new_coverage_cell_count": coverage_count,
+                "roi_weighted_coverage_delta": roi_gain,
+                "path_cost": path_cost,
+                "risk": risk,
+                "risk_proxy": risk,
+                "risk_cost_weighted": risk_cost_weighted,
+                "path_allowed_by_risk": candidate.get("path_allowed_by_risk"),
+                "hard_risk_flags": list(candidate.get("hard_risk_flags") or []),
+                "soft_risk_flags": list(candidate.get("soft_risk_flags") or []),
+                "soft_risk_exposure": soft_risk_exposure,
+                "path_risk_exposure": soft_risk_exposure,
+                "path_risk_peak": _finite_or_none(candidate.get("path_risk_peak")),
+                "high_risk_distance_m": _finite_or_none(candidate.get("high_risk_distance_m")),
+                "recovery_margin_min": _finite_or_none(candidate.get("recovery_margin_min")),
+                "risk_semantics_source": str(candidate.get("risk_semantics_source") or "legacy_candidate_risk_scalar"),
+                "risk_proxy_is_physical_risk": bool(candidate.get("risk_proxy_is_physical_risk", False)),
+                "risk_source": str(candidate.get("risk_source") or "offline_proxy"),
+                "risk_proxy_source": str(candidate.get("risk_source") or "offline_proxy"),
+                "coverage_gain_per_path_cost": _safe_ratio(coverage_count or 0.0, path_cost or 0.0),
+                "profile_id": config["profile_id"],
+                "profile_version": config["profile_version"],
+                "profile_hash": config["profile_hash"],
+            }
+        )
+    return rows
+
+
+def _candidate_hard_risk_violation(candidate: dict[str, Any]) -> bool:
+    return candidate.get("path_allowed_by_risk") is False or bool(candidate.get("hard_risk_flags") or [])
+
+
+def _candidate_soft_risk_exposure(candidate: dict[str, Any]) -> float:
+    value = _finite_or_none(candidate.get("soft_risk_exposure"))
+    if value is None:
+        value = _finite_or_none(candidate.get("path_risk_exposure"))
+    if value is None:
+        path_cost = _candidate_cost(candidate)
+        risk = _finite_or_none(candidate.get("risk"))
+        if path_cost is not None and risk is not None:
+            value = float(path_cost) * float(risk)
+    return 0.0 if value is None else float(value)
+
+
 def _selected_candidate_metrics(candidates: list[dict[str, Any]], selected_index: Any) -> dict[str, Any]:
     candidate = _candidate_at(candidates, selected_index)
     if candidate is None:
@@ -2716,7 +3043,7 @@ def _paired_decision_audit_row(
     adapter: dict[str, Any],
     model_bundle: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if executing_policy in ORACLE_POLICIES:
+    if _is_oracle_policy(executing_policy):
         return None
     row = {
         "schema_version": "xunce-exploration-coverage-paired-decision-audit/v1",
@@ -2770,17 +3097,27 @@ def _paired_decision_audit_row(
     return row
 
 
-def _oracle_selected_index(
+def _is_oracle_policy(policy_name: str) -> bool:
+    return policy_name in ORACLE_POLICIES or policy_name == CANONICAL_REWARD_RERANK_ORACLE
+
+
+def _oracle_policy_detail(
     policy_name: str,
     candidates: list[dict[str, Any]],
     *,
     current_cell: tuple[int, int],
     covered_cells: set[tuple[int, int]],
+    coverage_denominator: float,
     config: dict[str, Any],
-) -> int | None:
-    scored: list[tuple[float, float, float, int]] = []
+) -> dict[str, Any]:
+    scored: list[tuple[float, float, float, int, dict[str, float] | None, float | None, str | None, str | None]] = []
+    rerank_profile = None
+    if policy_name == CANONICAL_REWARD_RERANK_ORACLE:
+        rerank_profile = load_canonical_reward_profile(Path(config["canonical_reward_rerank_profile"]))
     for index, candidate in enumerate(candidates):
         if not _candidate_is_valid(candidate):
+            continue
+        if policy_name == CANONICAL_REWARD_RERANK_ORACLE and _candidate_hard_risk_violation(candidate):
             continue
         cell = _cell_tuple(_candidate_cell(candidate))
         if cell is None:
@@ -2794,7 +3131,29 @@ def _oracle_selected_index(
         new_count = len(coverage_cells - covered_cells)
         path_cost = _candidate_cost(candidate) or 0.0
         risk = _finite_or_none(candidate.get("risk")) or 0.0
-        if policy_name == "cost_aware_coverage_oracle":
+        reward_components = None
+        reward_value = None
+        profile_id = None
+        profile_hash = None
+        if policy_name == CANONICAL_REWARD_RERANK_ORACLE and rerank_profile is not None:
+            metrics = {
+                "coverage_gain_rate": float(new_count) / max(float(coverage_denominator), TOLERANCE),
+                "roi_coverage": _finite_or_none(candidate.get("roi_weighted_coverage_delta")) or float(new_count),
+                "information_gain": 0.0,
+                "path_cost_m": path_cost,
+                "soft_risk_exposure": _candidate_soft_risk_exposure(candidate),
+                "hard_risk_violation": False,
+                "fallback_used": False,
+                "failure": False,
+            }
+            result = compute_canonical_reward_components(metrics, rerank_profile)
+            primary = float(result.reward)
+            secondary = float(new_count)
+            reward_components = dict(result.components)
+            reward_value = float(result.reward)
+            profile_id = result.profile_id
+            profile_hash = result.profile_hash
+        elif policy_name == "cost_aware_coverage_oracle":
             profile = config.get("comparison_utility_profiles", {}).get("risk_aware", DEFAULT_COMPARISON_UTILITY_PROFILES["risk_aware"])
             roi_gain = _finite_or_none(candidate.get("roi_weighted_coverage_delta"))
             if roi_gain is None:
@@ -2808,10 +3167,24 @@ def _oracle_selected_index(
         else:
             primary = float(new_count)
             secondary = -float(path_cost)
-        scored.append((primary, secondary, -float(risk), index))
-    if not scored:
-        return None
-    return max(scored)[3]
+        scored.append((primary, secondary, -float(risk), index, reward_components, reward_value, profile_id, profile_hash))
+    selected = max(scored) if scored else None
+    selected_index = selected[3] if selected is not None else None
+    return {
+        "logits": [],
+        "masked_logits": [],
+        "action_probs": [],
+        "value": 0.0,
+        "selected_action_index": selected_index,
+        "selected_probability": 1.0 if selected_index is not None else 0.0,
+        "selected_rank": 1 if selected_index is not None else 0,
+        "finite_outputs": True,
+        "latency_ms": 0.0,
+        "reward_components": selected[4] if selected is not None else None,
+        "reward": selected[5] if selected is not None else None,
+        "profile_id": selected[6] if selected is not None else None,
+        "profile_hash": selected[7] if selected is not None else None,
+    }
 
 
 def _coverage_cells(
@@ -2986,9 +3359,9 @@ def _episode_number(episode: dict[str, Any], field: str) -> float:
         "risk_total": "risk",
         "roi_weighted_coverage_total": "valuable_area_covered",
     }
-    value = _finite_or_none(episode.get(field))
-    if value is None and field in aliases:
-        value = _finite_or_none(episode.get(aliases[field]))
+    value = _finite_or_none(episode.get(aliases[field])) if field in aliases else None
+    if value is None:
+        value = _finite_or_none(episode.get(field))
     return 0.0 if value is None else float(value)
 
 
@@ -3044,6 +3417,21 @@ def _missing_oracle_reasons(greedy_oracle: dict[str, Any] | None, cost_aware_ora
     if cost_aware_oracle is None:
         reasons.append("missing_cost_aware_oracle_episode")
     return reasons
+
+
+def _comparison_utility_profiles_from_canonical(profile: Any) -> dict[str, dict[str, float]]:
+    weights = profile.soft_reward_components
+    normalizers = profile.normalizers
+    path_cost_weight = float(weights["path_cost_weight"]) / max(float(normalizers["path_cost_m"]), TOLERANCE)
+    if profile.profile_version == "v3":
+        risk_weight = float(weights["soft_risk_weight"]) / max(float(normalizers["soft_risk_exposure"]), TOLERANCE)
+    else:
+        risk_weight = float(weights["risk_weight"]) / max(float(normalizers["risk_proxy"]), TOLERANCE)
+    return {
+        "coverage_first": {"cost_weight": 0.0, "risk_weight": 0.0},
+        "cost_aware": {"cost_weight": path_cost_weight, "risk_weight": 0.0},
+        "risk_aware": {"cost_weight": path_cost_weight, "risk_weight": risk_weight},
+    }
 
 
 def _comparison_utility_profiles(payload: Any) -> dict[str, dict[str, float]]:

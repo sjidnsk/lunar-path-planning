@@ -99,6 +99,7 @@ TARGET_FAMILIES = (
 LOW_OBSERVATION_FAMILY = "low_observation_count"
 DEFAULT_MINIMUM_LOW_OBSERVATION_COUNT = 32
 TOLERANCE = 1.0e-9
+LEGACY_V1_REWARD_COMPONENT_BLOCKER = "legacy_v1_reward_components_blocked_by_canonical_v2"
 
 RELEASE_BOUNDARY_TRUE_KEYS = (
     "checkpoint_publication_approved",
@@ -245,6 +246,7 @@ def run_family_balanced_coverage_driven_ppo_rerun(
     )
 
     reason_codes = _unique([*input_reasons, *prepared["reason_codes"]])
+    _add_reason(reason_codes, LEGACY_V1_REWARD_COMPONENT_BLOCKER)
     docs_audit = _docs_audit(repo_root)
     if not docs_audit["docs_updated"]:
         _add_reason(reason_codes, "docs_not_updated")
@@ -644,6 +646,11 @@ def _summary(
         "coverage_performance_root": str(coverage_performance_root),
         "reward_refinement_root": str(reward_refinement_root),
         "output_root": str(output_root),
+        "legacy_v1_reward_components_read_only": True,
+        "canonical_v2_training_consumer_blocked": True,
+        "profile_id": refined_summary.get("profile_id"),
+        "profile_version": refined_summary.get("profile_version"),
+        "profile_hash": refined_summary.get("profile_hash"),
         "summary": str(paths["summary"]),
         "source_ledger": str(paths["source_ledger"]),
         "compatible_input_audit": str(paths["input_audit"]),
@@ -798,6 +805,9 @@ def _family_balanced_advantage(row: dict[str, Any], *, family_weight: float) -> 
     advantage = max(float(advantage), 1.0e-6)
     return {
         "family_balanced_ppo_advantage": advantage,
+        "legacy_read_only": True,
+        "canonical_v2_training_consumer_blocked": True,
+        "legacy_blocker_reason": LEGACY_V1_REWARD_COMPONENT_BLOCKER,
         "components": {
             "coverage_gain_bonus": coverage_gain_bonus,
             "valuable_area_bonus": valuable_area_bonus,
@@ -1046,6 +1056,8 @@ def _base_candidate_root(
 
 
 def _failed_next_required_change(reason_codes: list[str]) -> str:
+    if LEGACY_V1_REWARD_COMPONENT_BLOCKER in reason_codes:
+        return "migrate_family_balanced_rerun_to_canonical_reward_v2_or_use_stage18_5_guard"
     if any(
         reason in reason_codes
         for reason in (

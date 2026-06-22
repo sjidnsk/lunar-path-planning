@@ -1,0 +1,37 @@
+{
+  "schema_version": "xunce-stage18-9-strict-v3-evidence-rollup-config/v1",
+  "artifact_workspace_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run",
+  "canonical_reward_profile": "configs/xunce_canonical_reward_guard_profile_v3.json",
+  "stage18_7_candidate_count_scaling_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/outputs/path_feedback_batch_xunce_stage18_7_candidate_count_scaling_audit_strict_v3",
+  "counts": [
+    {
+      "candidate_count": 6,
+      "proposal_pool_limit": 48,
+      "stage18_9_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_006/stage18_9"
+    },
+    {
+      "candidate_count": 12,
+      "proposal_pool_limit": 96,
+      "stage18_9_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_012/stage18_9"
+    },
+    {
+      "candidate_count": 24,
+      "proposal_pool_limit": 192,
+      "stage18_9_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_024/stage18_9"
+    },
+    {
+      "candidate_count": 36,
+      "proposal_pool_limit": 288,
+      "stage18_9_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_036/stage18_9"
+    }
+  ],
+  "canary_traffic_fraction": 0.0,
+  "runs_new_ppo_update": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "default_policy_replacement_approved": false,
+  "real_world_release_approved": false,
+  "real_world_performance_claimed": false
+}

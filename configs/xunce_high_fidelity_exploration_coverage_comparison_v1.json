@@ -33,6 +33,7 @@
   "dynamic_sidecar_fallback_mode": "diagnostic_only",
   "include_oracle_baselines": false,
   "include_roi_weighted_coverage": false,
+  "emit_candidate_metric_audit": false,
   "allow_open_grid_fallback": false,
   "require_context_ids": true,
   "require_contract_and_sidecar_paths": true,

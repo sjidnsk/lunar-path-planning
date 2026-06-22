@@ -204,6 +204,48 @@
       "default_output_root": "outputs/path_feedback_batch_xunce_stage18i_evidence_closure_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage18-5-evidence-attribution-review": {
+      "script": "scripts/run_xunce_stage18_5_evidence_attribution_review.py",
+      "default_config": "configs/xunce_stage18_5_evidence_attribution_review_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_stage18_5_evidence_attribution_review_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage18-6-coverage-reward-cost-risk-guard-refinement": {
+      "script": "scripts/run_xunce_stage18_6_coverage_reward_cost_risk_guard_refinement.py",
+      "default_config": "configs/xunce_stage18_6_coverage_reward_cost_risk_guard_refinement_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_stage18_6_coverage_reward_cost_risk_guard_refinement_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage18-7-candidate-count-scaling-audit": {
+      "script": "scripts/run_xunce_stage18_7_candidate_count_scaling_audit.py",
+      "default_config": "configs/xunce_stage18_7_candidate_count_scaling_audit_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage18_7_candidate_count_scaling_audit/outputs/path_feedback_batch_xunce_stage18_7_candidate_count_scaling_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage18-9-trajectory-risk-boundary-reward-audit": {
+      "script": "scripts/run_xunce_stage18_9_trajectory_risk_boundary_reward_audit.py",
+      "default_config": "configs/xunce_stage18_9_trajectory_risk_boundary_reward_audit_v1.json",
+      "default_output_root": "outputs/path_feedback_batch_xunce_stage18_9_trajectory_risk_boundary_reward_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage18-9-strict-v3-evidence-rollup": {
+      "script": "scripts/run_xunce_stage18_9_strict_v3_evidence_rollup.py",
+      "default_config": "configs/xunce_stage18_9_strict_v3_evidence_rollup_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/outputs/path_feedback_batch_xunce_stage18_9_strict_v3_evidence_rollup_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage18-11-path-cost-weight-calibration": {
+      "script": "scripts/run_xunce_stage18_11_path_cost_weight_calibration.py",
+      "default_config": "configs/xunce_stage18_11_path_cost_weight_calibration_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage18_11_path_cost_weight_calibration/outputs/path_feedback_batch_xunce_stage18_11_path_cost_weight_calibration_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage19-evaluator-critic-preflight": {
+      "script": "scripts/run_xunce_stage19_evaluator_critic_preflight.py",
+      "default_config": "configs/xunce_stage19_evaluator_critic_preflight_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage19_evaluator_critic_preflight/outputs/path_feedback_batch_xunce_stage19_evaluator_critic_preflight_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18-research-evidence-pipeline": {
       "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
       "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",

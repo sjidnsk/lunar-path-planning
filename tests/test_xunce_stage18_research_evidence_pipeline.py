@@ -46,6 +46,10 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         self.assertEqual(summary["candidate_validity_status"], "passed")
         self.assertEqual(summary["comparison_verdict"], "xunce_advantage_not_established")
         self.assertEqual(summary["overall_conclusion"], "evidence_valid_but_xunce_advantage_not_established")
+        self.assertEqual(summary["next_required_change"], "review_xunce_incumbent_comparison_metrics")
+        self.assertIsNone(summary["stage18_5_attribution_summary"])
+        self.assertIsNone(summary["stage18_5_guard_verdict"])
+        self.assertIsNone(summary["stage18_5_primary_next_required_change"])
         self.assertIn("oracle_not_separable", summary["diagnostic_reason_codes"])
         self.assertIn("comparison_metric_summary", summary)
         self.assertIn("coverage_delta_distribution", summary)
@@ -300,6 +304,770 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         self.assertIn("dynamic_frontier_nbv_in_process", coverage_commands[0]["display"])
         self.assertIn("in_process_path_planner_astar_batch", coverage_commands[0]["display"])
 
+    def test_pipeline_consumes_stage18_5_attribution_when_available(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="failed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertEqual(summary["stage18_5_guard_verdict"], "failed")
+        self.assertEqual(summary["stage18_5_primary_next_required_change"], "refine_coverage_reward_and_cost_guard")
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+        self.assertEqual(summary["stage18_5_attribution_summary"]["status"], "failed")
+        self.assertFalse(summary["stage18_5_attribution_summary"]["stage19_authorized"])
+        self.assertEqual(summary["release_readiness"], "not_authorized")
+        self.assertEqual(summary["training_readiness"], "not_authorized")
+
+    def test_valid_stage18_5_route_overrides_dynamic_rollout_refresh_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence(dynamic_rollout=False)
+        stage18_5_root = self.temp_dir / "stage18_5_dynamic_override"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="failed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("missing_dynamic_frontier_nbv_rollout_comparison", summary["missing_reason_codes"])
+        self.assertEqual(summary["stage18_5_primary_next_required_change"], "refine_coverage_reward_and_cost_guard")
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_stale_stage18_5_attribution_summary_does_not_override_pipeline_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5_stale"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="failed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+            coverage_comparison_root=self.temp_dir / "other_coverage_root",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("stale_stage18_5_attribution_root", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_5_attribution_summary"])
+        self.assertIsNone(summary["stage18_5_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refresh_stage18_research_evidence_pipeline")
+
+    def test_malformed_stage18_5_attribution_summary_does_not_override_pipeline_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        for case_name, mutation in {
+            "bad_routing_schema": lambda payload: payload["next_stage_routing"].update({"schema_version": "bad/v1"}),
+            "arbitrary_route": lambda payload: payload["next_stage_routing"].update({"primary_route": "publish_checkpoint_now"}),
+            "missing_stage19_authorized": lambda payload: payload["next_stage_routing"].pop("stage19_authorized"),
+            "bad_guard_schema": lambda payload: payload["guard_evaluation"].update({"schema_version": "bad/v1"}),
+            "boundary_violation": lambda payload: payload.update({"publishes_checkpoint": True}),
+        }.items():
+            with self.subTest(case_name=case_name):
+                self.tearDown()
+                self.setUp()
+                self._write_complete_evidence()
+                stage18_5_root = self.temp_dir / f"stage18_5_{case_name}"
+                self._write_stage18_5_attribution_summary(
+                    stage18_5_root,
+                    status="failed",
+                    guard_passed=False,
+                    primary_route="refine_coverage_reward_and_cost_guard",
+                )
+                path = stage18_5_root / "xunce-stage18-5-evidence-attribution-summary.json"
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                mutation(payload)
+                path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                config = json.loads(self.config_path.read_text(encoding="utf-8"))
+                config["stage18_5_attribution_root"] = str(stage18_5_root)
+                self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                summary = build_stage18_pipeline_summary(
+                    config_path=self.config_path,
+                    output_root=self.output_root,
+                    repo_root=self.repo_root,
+                    plan_only=True,
+                )
+
+                self.assertIsNone(summary["stage18_5_primary_next_required_change"])
+                expected_route = (
+                    "resolve_stage18_research_evidence_boundary_rejections"
+                    if case_name == "boundary_violation"
+                    else "refresh_stage18_research_evidence_pipeline"
+                )
+                self.assertEqual(summary["next_required_change"], expected_route)
+                self.assertTrue(
+                    {
+                        "invalid_stage18_5_attribution_summary",
+                        "invalid_stage18_5_guard_summary_schema",
+                        "invalid_stage18_5_routing_summary_schema",
+                        "boundary_violation",
+                    }
+                    & set(summary["blocking_reason_codes"])
+                )
+
+    def test_stage18_5_cli_override_is_accepted(self) -> None:
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5_cli"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=True,
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/run_xunce_stage18_research_evidence_pipeline.py",
+                "--config",
+                str(self.config_path),
+                "--output-root",
+                str(self.output_root),
+                "--repo-root",
+                str(self.repo_root),
+                "--stage18-5-attribution-root",
+                str(stage18_5_root),
+                "--plan-only",
+            ],
+            cwd=self.repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["next_required_change"], "prepare_stage19_evaluator_critic_preflight")
+
+    def test_pipeline_consumes_valid_stage18_6_guard_refinement_root(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="rerun_stage18_4e_with_candidate_metric_audit",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertEqual(summary["stage18_6_guard_refinement_verdict"], "failed")
+        self.assertEqual(summary["stage18_6_primary_next_required_change"], "rerun_stage18_4e_with_candidate_metric_audit")
+        self.assertEqual(summary["next_required_change"], "rerun_stage18_4e_with_candidate_metric_audit")
+        self.assertEqual(summary["stage18_6_candidate_metric_readiness"]["full_candidate_metric_replay_available"], False)
+        self.assertFalse(summary["stage18_6_guard_refinement_summary"]["stage19_authorized"])
+
+    def test_stale_stage18_6_guard_refinement_root_does_not_override_stage18_5_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6_stale"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            coverage_comparison_root=self.temp_dir / "other_coverage",
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("stale_stage18_6_guard_refinement_root", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_6_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_stage18_6_summary_missing_lineage_paths_does_not_override_stage18_5_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6_missing_lineage_paths"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+            guard_refinement_passed=True,
+            same_candidate_set_guard_clean_advantage_established=True,
+        )
+        summary_path = stage18_6_root / "xunce-stage18-6-guard-refinement-summary.json"
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        payload.pop("coverage_comparison_root")
+        payload.pop("stage18_5_attribution_root")
+        summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("stale_stage18_6_guard_refinement_root", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_6_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_malformed_stage18_6_route_does_not_override_stage18_5_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6_bad_route"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="coverage_driven_ppo_improvement_run",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("invalid_stage18_6_guard_refinement_summary", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_6_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_stage18_6_profile_mismatch_does_not_override_stage18_5_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6_bad_profile"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+            profile_hash="fixture-profile-hash",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="rerun_stage18_4e_with_candidate_metric_audit",
+            profile_hash="different-profile-hash",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("invalid_stage18_6_guard_refinement_profile_lineage", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_6_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_inconsistent_stage18_6_preflight_route_does_not_override_stage18_5_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6_inconsistent_preflight"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+            guard_refinement_passed=False,
+            full_candidate_metric_replay_available=False,
+            same_candidate_set_guard_clean_advantage_established=False,
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("invalid_stage18_6_guard_refinement_preflight_semantics", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_6_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_stage18_6_cli_override_is_accepted(self) -> None:
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5_cli"
+        stage18_6_root = self.temp_dir / "stage18_6_cli"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="rerun_stage18_4e_with_candidate_metric_audit",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/run_xunce_stage18_research_evidence_pipeline.py",
+                "--config",
+                str(self.config_path),
+                "--output-root",
+                str(self.output_root),
+                "--repo-root",
+                str(self.repo_root),
+                "--stage18-5-attribution-root",
+                str(stage18_5_root),
+                "--stage18-6-guard-refinement-root",
+                str(stage18_6_root),
+                "--plan-only",
+            ],
+            cwd=self.repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["next_required_change"], "rerun_stage18_4e_with_candidate_metric_audit")
+
+    def test_pipeline_consumes_valid_stage18_7_candidate_count_scaling_root(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6"
+        stage18_7_root = self.temp_dir / "stage18_7"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_7_candidate_count_scaling_summary(
+            stage18_7_root,
+            primary_route="expand_candidate_generation_roi_complexity",
+            stage18_6_guard_refinement_passed_count=0,
+            same_candidate_set_guard_clean_advantage_established_count=0,
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        config["stage18_7_candidate_count_scaling_root"] = str(stage18_7_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertEqual(summary["stage18_7_primary_next_required_change"], "expand_candidate_generation_roi_complexity")
+        self.assertEqual(summary["next_required_change"], "expand_candidate_generation_roi_complexity")
+        self.assertFalse(summary["stage18_7_candidate_count_scaling_summary"]["stage19_authorized"])
+
+    def test_malformed_stage18_7_preflight_route_does_not_override_stage18_6_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6"
+        stage18_7_root = self.temp_dir / "stage18_7_bad_preflight"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_7_candidate_count_scaling_summary(
+            stage18_7_root,
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+            stage18_6_guard_refinement_passed_count=0,
+            same_candidate_set_guard_clean_advantage_established_count=0,
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        config["stage18_7_candidate_count_scaling_root"] = str(stage18_7_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("invalid_stage18_7_candidate_count_scaling_preflight_semantics", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_7_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_forged_stage18_7_preflight_rows_do_not_override_stage18_6_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_6_root = self.temp_dir / "stage18_6"
+        stage18_7_root = self.temp_dir / "stage18_7_forged"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_7_candidate_count_scaling_summary(
+            stage18_7_root,
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+            stage18_6_guard_refinement_passed_count=1,
+            same_candidate_set_guard_clean_advantage_established_count=1,
+            candidate_count_results=[],
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_6_guard_refinement_root"] = str(stage18_6_root)
+        config["stage18_7_candidate_count_scaling_root"] = str(stage18_7_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("invalid_stage18_7_candidate_count_scaling_results", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_7_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_stage18_7_without_stage18_6_root_does_not_override_stage18_5_route(self) -> None:
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5"
+        stage18_7_root = self.temp_dir / "stage18_7_no_stage18_6"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_7_candidate_count_scaling_summary(
+            stage18_7_root,
+            primary_route="expand_candidate_generation_roi_complexity",
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["stage18_5_attribution_root"] = str(stage18_5_root)
+        config["stage18_7_candidate_count_scaling_root"] = str(stage18_7_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+            plan_only=True,
+        )
+
+        self.assertIn("missing_stage18_6_guard_refinement_for_stage18_7", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_7_primary_next_required_change"])
+        self.assertEqual(summary["next_required_change"], "refine_coverage_reward_and_cost_guard")
+
+    def test_stage18_7_cli_override_is_accepted(self) -> None:
+        self._write_complete_evidence()
+        stage18_5_root = self.temp_dir / "stage18_5_cli"
+        stage18_6_root = self.temp_dir / "stage18_6_cli"
+        stage18_7_root = self.temp_dir / "stage18_7_cli"
+        self._write_stage18_5_attribution_summary(
+            stage18_5_root,
+            status="passed",
+            guard_passed=False,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_6_guard_refinement_summary(
+            stage18_6_root,
+            stage18_5_root=stage18_5_root,
+            primary_route="refine_coverage_reward_and_cost_guard",
+        )
+        self._write_stage18_7_candidate_count_scaling_summary(
+            stage18_7_root,
+            primary_route="run_missing_candidate_count_sweeps_with_metric_audit",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/run_xunce_stage18_research_evidence_pipeline.py",
+                "--config",
+                str(self.config_path),
+                "--output-root",
+                str(self.output_root),
+                "--repo-root",
+                str(self.repo_root),
+                "--stage18-5-attribution-root",
+                str(stage18_5_root),
+                "--stage18-6-guard-refinement-root",
+                str(stage18_6_root),
+                "--stage18-7-candidate-count-scaling-root",
+                str(stage18_7_root),
+                "--plan-only",
+            ],
+            cwd=self.repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["next_required_change"], "run_missing_candidate_count_sweeps_with_metric_audit")
+
+    def test_pipeline_prefers_valid_stage18_9_trajectory_risk_reward_root(self) -> None:
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self._write_complete_evidence()
+        stage18_9_root = self.temp_dir / "stage18_9"
+        self._write_stage18_9_trajectory_risk_reward_summary(
+            stage18_9_root,
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+            trajectory_guard_passed=True,
+        )
+        config["stage18_9_trajectory_risk_reward_root"] = str(stage18_9_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["next_required_change"], "prepare_stage19_evaluator_critic_preflight")
+        self.assertEqual(summary["stage18_9_trajectory_risk_reward_verdict"], "passed")
+        self.assertFalse(summary["stage18_9_trajectory_risk_reward_summary"]["stage19_authorized"])
+
+    def test_malformed_stage18_9_preflight_route_does_not_override_stage18_7_route(self) -> None:
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self._write_complete_evidence()
+        stage18_9_root = self.temp_dir / "stage18_9_bad_preflight"
+        self._write_stage18_9_trajectory_risk_reward_summary(
+            stage18_9_root,
+            primary_route="prepare_stage19_evaluator_critic_preflight",
+            trajectory_guard_passed=False,
+        )
+        config["stage18_9_trajectory_risk_reward_root"] = str(stage18_9_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertIn("invalid_stage18_9_trajectory_risk_reward_preflight_semantics", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_9_primary_next_required_change"])
+
+    def test_stage18_9_v2_profile_is_rejected_by_pipeline(self) -> None:
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self._write_complete_evidence()
+        stage18_9_root = self.temp_dir / "stage18_9_v2_profile"
+        self._write_stage18_9_trajectory_risk_reward_summary(
+            stage18_9_root,
+            primary_route="calibrate_soft_risk_exposure_weight",
+            trajectory_guard_passed=False,
+            profile_id="xunce-coverage-cost-risk-budget-v2",
+            profile_version="v2",
+            profile_hash="fixture-profile-hash-v2",
+        )
+        config["stage18_9_trajectory_risk_reward_root"] = str(stage18_9_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertIn("invalid_stage18_9_trajectory_risk_reward_profile_lineage", summary["blocking_reason_codes"])
+        self.assertIsNone(summary["stage18_9_primary_next_required_change"])
+
+    def test_stage18_9_cli_override_is_accepted(self) -> None:
+        self._write_complete_evidence()
+        stage18_9_root = self.temp_dir / "stage18_9_cli"
+        self._write_stage18_9_trajectory_risk_reward_summary(
+            stage18_9_root,
+            primary_route="calibrate_soft_risk_exposure_weight",
+            trajectory_guard_passed=False,
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/run_xunce_stage18_research_evidence_pipeline.py",
+                "--config",
+                str(self.config_path),
+                "--output-root",
+                str(self.output_root),
+                "--repo-root",
+                str(self.repo_root),
+                "--stage18-9-trajectory-risk-reward-root",
+                str(stage18_9_root),
+            ],
+            cwd=self.repo_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["next_required_change"], "calibrate_soft_risk_exposure_weight")
+
+    def test_pipeline_prefers_valid_stage19_evaluator_critic_preflight_root(self) -> None:
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self._write_complete_evidence()
+        stage18_11_root = self.temp_dir / "stage18_11"
+        stage19_root = self.temp_dir / "stage19"
+        self._write_stage18_11_path_cost_weight_calibration_summary(stage18_11_root)
+        self._write_stage19_evaluator_critic_preflight_summary(stage19_root, stage18_11_root=stage18_11_root)
+        config["stage18_11_path_cost_weight_calibration_root"] = str(stage18_11_root)
+        config["stage19_evaluator_critic_preflight_root"] = str(stage19_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["next_required_change"], "stage20_reward_rerank_oracle_preference_dataset_preparation")
+        self.assertEqual(summary["stage18_11_primary_next_required_change"], "prepare_stage19_evaluator_critic_preflight")
+        self.assertEqual(summary["stage19_primary_next_required_change"], "stage20_reward_rerank_oracle_preference_dataset_preparation")
+        self.assertEqual(summary["stage19_primary_target_candidate_count"], 36)
+        self.assertEqual(summary["stage19_primary_target_path_cost_weight"], 0.1)
+        self.assertTrue(summary["stage19_oracle_target_feasible"])
+        self.assertFalse(summary["stage19_xunce_checkpoint_advantage_established"])
+        self.assertFalse(summary["stage19_training_authorized"])
+
     def _write_config(self) -> None:
         payload = {
             "schema_version": "xunce-stage18-research-evidence-pipeline-config/v1",
@@ -472,6 +1240,345 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
                     "cost_aware": {"xunce_win_count": 6, "incumbent_win_count": 14, "tie_count": 4},
                     "risk_aware": {"xunce_win_count": 5, "incumbent_win_count": 15, "tie_count": 4},
                 },
+            },
+        )
+
+    def _write_stage18_5_attribution_summary(
+        self,
+        root: Path,
+        *,
+        status: str,
+        guard_passed: bool,
+        primary_route: str,
+        coverage_comparison_root: Path | None = None,
+        profile_hash: str = "fixture-profile-hash",
+        profile_id: str = "xunce-coverage-cost-risk-budget-v2",
+        profile_version: str = "v2",
+    ) -> None:
+        self._write_json(
+            root / "xunce-stage18-5-evidence-attribution-summary.json",
+            {
+                "schema_version": "xunce-stage18-5-evidence-attribution-summary/v1",
+                "status": status,
+                "coverage_comparison_root": str((coverage_comparison_root or self.coverage_root).resolve()),
+                "profile_id": profile_id,
+                "profile_version": profile_version,
+                "profile_hash": profile_hash,
+                "evidence_authenticity_gate_passed": True,
+                "candidate_validity_gate_passed": True,
+                "next_required_change": primary_route,
+                "guard_evaluation": {
+                    "schema_version": "xunce-stage18-5-guard-evaluation/v1",
+                    "passed": guard_passed,
+                    "failed_guards": [] if guard_passed else ["path_cost_regression"],
+                    "thresholds": {
+                        "profile_id": profile_id,
+                        "profile_version": profile_version,
+                        "profile_hash": profile_hash,
+                    },
+                },
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage18-5-next-stage-routing/v1",
+                    "primary_route": primary_route,
+                    "stage19_authorized": False,
+                },
+                "stage19_readiness": {
+                    "readiness": "ready_for_stage19_preflight_human_review_only" if guard_passed else "not_authorized",
+                    "authorized": False,
+                },
+                "canary_traffic_fraction": 0.0,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "runs_new_ppo_update": False,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
+                "default_policy_replacement_approved": False,
+            },
+        )
+
+    def _write_stage18_6_guard_refinement_summary(
+        self,
+        root: Path,
+        *,
+        stage18_5_root: Path,
+        primary_route: str,
+        coverage_comparison_root: Path | None = None,
+        profile_hash: str = "fixture-profile-hash",
+        profile_id: str = "xunce-coverage-cost-risk-budget-v2",
+        profile_version: str = "v2",
+        guard_refinement_passed: bool | None = None,
+        full_candidate_metric_replay_available: bool = False,
+        same_candidate_set_guard_clean_advantage_established: bool = False,
+    ) -> None:
+        passed = primary_route == "prepare_stage19_evaluator_critic_preflight" if guard_refinement_passed is None else guard_refinement_passed
+        self._write_json(
+            root / "xunce-stage18-6-guard-refinement-summary.json",
+            {
+                "schema_version": "xunce-stage18-6-guard-refinement-summary/v1",
+                "status": "passed",
+                "coverage_comparison_root": str((coverage_comparison_root or self.coverage_root).resolve()),
+                "stage18_5_attribution_root": str(stage18_5_root.resolve()),
+                "profile_id": profile_id,
+                "profile_version": profile_version,
+                "profile_hash": profile_hash,
+                "guard_refinement_passed": passed,
+                "counterfactual_reselection_claimed": False,
+                "candidate_metric_readiness": {
+                    "schema_version": "xunce-stage18-6-candidate-metric-readiness/v1",
+                    "full_candidate_metric_replay_available": full_candidate_metric_replay_available,
+                    "counterfactual_reselection_claim_allowed": full_candidate_metric_replay_available,
+                    "reason_codes": [] if full_candidate_metric_replay_available else ["missing_candidate_metric_audit"],
+                },
+                "paired_decision_summary": {
+                    "same_candidate_set_guard_clean_advantage_established": same_candidate_set_guard_clean_advantage_established,
+                },
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage18-6-next-stage-routing/v1",
+                    "primary_route": primary_route,
+                    "stage19_authorized": False,
+                },
+                "stage19_readiness": {
+                    "readiness": "not_authorized",
+                    "authorized": False,
+                },
+                "canary_traffic_fraction": 0.0,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "runs_new_ppo_update": False,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
+                "default_policy_replacement_approved": False,
+            },
+        )
+
+    def _write_stage18_7_candidate_count_scaling_summary(
+        self,
+        root: Path,
+        *,
+        primary_route: str,
+        profile_hash: str = "fixture-profile-hash",
+        profile_id: str = "xunce-coverage-cost-risk-budget-v2",
+        profile_version: str = "v2",
+        stage18_6_guard_refinement_passed_count: int = 0,
+        same_candidate_set_guard_clean_advantage_established_count: int = 0,
+        stage19_authorized: bool = False,
+        candidate_count_results: list[dict] | None = None,
+    ) -> None:
+        if candidate_count_results is None:
+            candidate_count_results = [
+                {
+                    "schema_version": "xunce-stage18-7-candidate-count-scaling-result/v1",
+                    "candidate_count": count,
+                    "proposal_pool_limit": pool,
+                    "expected_proposal_pool_limit": pool,
+                    "profile_hash": profile_hash,
+                    "candidate_metric_replay_available": True,
+                    "guard_refinement_passed": stage18_6_guard_refinement_passed_count > 0,
+                    "stage18_6_next_required_change": "prepare_stage19_evaluator_critic_preflight"
+                    if primary_route == "prepare_stage19_evaluator_critic_preflight"
+                    else "refine_coverage_reward_and_cost_guard",
+                    "stage19_authorized": False,
+                    "guard_clean_candidate_available_rate": 0.25,
+                    "xunce_selected_guard_clean_rate": 1.0
+                    if stage18_6_guard_refinement_passed_count > 0
+                    else 0.0,
+                    "incumbent_selected_guard_clean_rate": 0.0,
+                    "same_candidate_set_guard_clean_advantage_established": same_candidate_set_guard_clean_advantage_established_count > 0,
+                    "boundary_flags_all_false": True,
+                    "sweep_complete": True,
+                }
+                for count, pool in ((6, 48), (12, 96), (24, 192), (36, 288))
+            ]
+        self._write_json(
+            root / "xunce-stage18-7-candidate-count-scaling-summary.json",
+            {
+                "schema_version": "xunce-stage18-7-candidate-count-scaling-summary/v1",
+                "status": "passed",
+                "profile_id": profile_id,
+                "profile_version": profile_version,
+                "profile_hash": profile_hash,
+                "sweep_complete_count": 4,
+                "stage18_6_guard_refinement_passed_count": stage18_6_guard_refinement_passed_count,
+                "same_candidate_set_guard_clean_advantage_established_count": same_candidate_set_guard_clean_advantage_established_count,
+                "best_guard_clean_candidate_available_rate": 0.25,
+                "best_xunce_selected_guard_clean_rate": 0.0,
+                "best_incumbent_selected_guard_clean_rate": 1.0,
+                "candidate_count_results": candidate_count_results,
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage18-7-next-stage-routing/v1",
+                    "primary_route": primary_route,
+                    "stage19_authorized": stage19_authorized,
+                },
+                "stage19_readiness": {
+                    "readiness": "ready_for_stage19_preflight_human_review_only"
+                    if primary_route == "prepare_stage19_evaluator_critic_preflight"
+                    else "not_authorized",
+                    "authorized": stage19_authorized,
+                },
+                "canary_traffic_fraction": 0.0,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "runs_new_ppo_update": False,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
+                "default_policy_replacement_approved": False,
+            },
+        )
+
+    def _write_stage18_9_trajectory_risk_reward_summary(
+        self,
+        root: Path,
+        *,
+        primary_route: str,
+        trajectory_guard_passed: bool,
+        coverage_comparison_root: Path | None = None,
+        profile_hash: str = "fixture-profile-hash-v3",
+        profile_id: str = "xunce-coverage-cost-risk-boundary-v3",
+        profile_version: str = "v3",
+    ) -> None:
+        self._write_json(
+            root / "xunce-stage18-9-trajectory-risk-reward-summary.json",
+            {
+                "schema_version": "xunce-stage18-9-trajectory-risk-reward-summary/v1",
+                "status": "passed" if trajectory_guard_passed else "failed",
+                "coverage_comparison_root": str((coverage_comparison_root or self.coverage_root).resolve()),
+                "profile_id": profile_id,
+                "profile_version": profile_version,
+                "profile_hash": profile_hash,
+                "trajectory_guard_passed": trajectory_guard_passed,
+                "path_risk_boundary_summary": {
+                    "path_risk_boundary_passed": trajectory_guard_passed,
+                    "hard_risk_violation_count": 0 if trajectory_guard_passed else 1,
+                },
+                "trajectory_guard_summary": {
+                    "coverage_advantage_established": trajectory_guard_passed,
+                    "path_cost_budget_passed": trajectory_guard_passed,
+                    "coverage_efficiency_passed": trajectory_guard_passed,
+                    "soft_risk_exposure_passed": trajectory_guard_passed,
+                },
+                "candidate_diagnostics": {"diagnostic_only": True},
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage18-9-next-stage-routing/v1",
+                    "primary_route": primary_route,
+                    "stage19_authorized": False,
+                },
+                "stage19_readiness": {
+                    "schema_version": "xunce-stage18-9-stage19-readiness/v1",
+                    "readiness": "ready_for_stage19_preflight_human_review_only"
+                    if primary_route == "prepare_stage19_evaluator_critic_preflight"
+                    else "not_authorized",
+                    "authorized": False,
+                    "trajectory_guard_passed": trajectory_guard_passed,
+                },
+                "canary_traffic_fraction": 0.0,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "runs_new_ppo_update": False,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
+                "default_policy_replacement_approved": False,
+            },
+        )
+
+    def _write_stage18_11_path_cost_weight_calibration_summary(self, root: Path) -> None:
+        self._write_json(
+            root / "xunce-stage18-11-path-cost-weight-calibration-summary.json",
+            {
+                "schema_version": "xunce-stage18-11-path-cost-weight-calibration-summary/v1",
+                "status": "passed",
+                "profile_id": "xunce-coverage-cost-risk-boundary-v3",
+                "profile_version": "v3",
+                "profile_hash": "fixture-profile-hash-v3",
+                "target_final_coverage_rate": 0.99,
+                "best_diagnostic_rollout_candidate_count": 36,
+                "best_diagnostic_rollout_path_cost_weight": 0.1,
+                "best_diagnostic_final_coverage_rate_mean": 1.0,
+                "best_diagnostic_final_coverage_rate_max": 1.0,
+                "diagnostic_rollout_summary": {
+                    "complete_diagnostic_rollout_count": 4,
+                    "best_final_coverage_rate_mean": 1.0,
+                    "best_hard_risk_violation_count": 0.0,
+                },
+                "next_required_change": "prepare_stage19_evaluator_critic_preflight",
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage18-11-next-stage-routing/v1",
+                    "primary_route": "prepare_stage19_evaluator_critic_preflight",
+                    "stage19_authorized": False,
+                },
+                "stage19_authorized": False,
+                "stage19_readiness": {
+                    "schema_version": "xunce-stage18-11-stage19-readiness/v1",
+                    "readiness": "ready_for_stage19_preflight_human_review_only",
+                    "authorized": False,
+                },
+                "canary_traffic_fraction": 0.0,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "runs_new_ppo_update": False,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
+                "default_policy_replacement_approved": False,
+            },
+        )
+
+    def _write_stage19_evaluator_critic_preflight_summary(self, root: Path, *, stage18_11_root: Path) -> None:
+        self._write_json(
+            root / "xunce-stage19-evaluator-critic-preflight-summary.json",
+            {
+                "schema_version": "xunce-stage19-evaluator-critic-preflight-summary/v1",
+                "status": "passed",
+                "stage18_11_path_cost_weight_calibration_root": str(stage18_11_root.resolve()),
+                "profile_id": "xunce-coverage-cost-risk-boundary-v3",
+                "profile_version": "v3",
+                "profile_hash": "fixture-profile-hash-v3",
+                "oracle_target_feasible": True,
+                "primary_target_selected": True,
+                "selected_candidate_count": 36,
+                "selected_path_cost_weight": 0.1,
+                "xunce_checkpoint_advantage_established": False,
+                "training_or_release_authorized": False,
+                "stage20_authorized": False,
+                "practical_target_selection": {
+                    "schema_version": "xunce-stage19-practical-target-selection/v1",
+                    "primary_target_feasible": True,
+                    "primary_budget_passed": True,
+                    "selected_candidate_count": 36,
+                    "selected_path_cost_weight": 0.1,
+                },
+                "critic_target_readiness": {
+                    "schema_version": "xunce-stage19-critic-target-readiness/v1",
+                    "critic_target_ready": True,
+                    "preference_pair_count": 4,
+                },
+                "next_required_change": "stage20_reward_rerank_oracle_preference_dataset_preparation",
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage19-next-stage-routing/v1",
+                    "primary_route": "stage20_reward_rerank_oracle_preference_dataset_preparation",
+                    "stage20_authorized": False,
+                },
+                "stage20_readiness": {
+                    "schema_version": "xunce-stage19-stage20-readiness/v1",
+                    "readiness": "ready_for_stage20_preference_dataset_preparation_human_review_only",
+                    "authorized": False,
+                },
+                "canary_traffic_fraction": 0.0,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "runs_new_ppo_update": False,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
             },
         )
 

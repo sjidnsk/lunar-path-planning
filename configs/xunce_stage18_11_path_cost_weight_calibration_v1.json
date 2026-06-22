@@ -1,0 +1,53 @@
+{
+  "schema_version": "xunce-stage18-11-path-cost-weight-calibration-config/v1",
+  "artifact_workspace_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run",
+  "canonical_observed_profile": "configs/xunce_canonical_reward_guard_profile_v3.json",
+  "profile_variants": [
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w000.json",
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w005.json",
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w010.json",
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w020.json",
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w030.json",
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w040.json",
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w060.json",
+    "configs/xunce_canonical_reward_guard_profile_v3_path_cost_w080.json"
+  ],
+  "sweeps": [
+    {
+      "candidate_count": 6,
+      "proposal_pool_limit": 48,
+      "coverage_comparison_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_006/stage18_4e"
+    },
+    {
+      "candidate_count": 12,
+      "proposal_pool_limit": 96,
+      "coverage_comparison_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_012/stage18_4e"
+    },
+    {
+      "candidate_count": 24,
+      "proposal_pool_limit": 192,
+      "coverage_comparison_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_024/stage18_4e"
+    },
+    {
+      "candidate_count": 36,
+      "proposal_pool_limit": 288,
+      "coverage_comparison_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_036/stage18_4e"
+    }
+  ],
+  "target_final_coverage_rate": 0.99,
+  "rollout_steps": 40,
+  "required_scenario_count": 24,
+  "diagnostic_rollout_workspace_root": "D:/CodexDownloads/lunar-path-planning/stage18_11_path_cost_weight_calibration/diagnostic_rollouts",
+  "canary_traffic_fraction": 0.0,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "runs_new_ppo_update": false,
+  "real_world_release_approved": false,
+  "real_world_performance_claimed": false,
+  "default_policy_replacement_approved": false,
+  "modifies_network": false,
+  "modifies_action_space": false,
+  "modifies_default_astar": false
+}

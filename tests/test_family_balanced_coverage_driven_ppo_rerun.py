@@ -125,22 +125,27 @@ class FamilyBalancedCoverageDrivenPpoRerunTests(unittest.TestCase):
             module.run_refined_coverage_driven_ppo_improvement_run = original_refined
             expanded._policy_log_prob_and_value = original_policy
 
-        self.assertEqual(summary["status"], "passed")
-        self.assertEqual(summary["reason_codes"], [])
-        self.assertEqual(summary["rerun_verdict"], "eligible_for_family_balanced_shadow_canary_preflight")
-        self.assertTrue(summary["family_balanced_coverage_driven_ppo_rerun_passed"])
-        self.assertTrue(summary["family_balanced_shadow_canary_preflight_approved"])
+        self.assertEqual(summary["status"], "failed")
+        self.assertIn("legacy_v1_reward_components_blocked_by_canonical_v2", summary["reason_codes"])
+        self.assertEqual(summary["rerun_verdict"], "not_eligible_for_family_balanced_shadow_canary_preflight")
+        self.assertFalse(summary["family_balanced_coverage_driven_ppo_rerun_passed"])
+        self.assertFalse(summary["family_balanced_shadow_canary_preflight_approved"])
+        self.assertTrue(summary["legacy_v1_reward_components_read_only"])
+        self.assertTrue(summary["canonical_v2_training_consumer_blocked"])
         self.assertTrue(summary["family_balanced_input_audit_passed"])
         self.assertTrue(summary["old_transition_materialization_audit_passed"])
-        self.assertEqual(summary["ppo_update_status"], "passed")
-        self.assertTrue(summary["guard_replay_audit_passed"])
-        self.assertGreater(summary["coverage_return_improvement"], 0.0)
-        self.assertGreater(summary["cumulative_coverage_rate_delta_improvement"], 0.0)
-        self.assertGreater(summary["valuable_area_covered_improvement"], 0.0)
+        self.assertEqual(summary["ppo_update_status"], "not_run")
+        self.assertFalse(summary["guard_replay_audit_passed"])
+        self.assertEqual(summary["coverage_return_improvement"], 0.0)
+        self.assertEqual(summary["cumulative_coverage_rate_delta_improvement"], 0.0)
+        self.assertEqual(summary["valuable_area_covered_improvement"], 0.0)
         self.assertFalse(summary["coverage_efficiency_regression"])
         self.assertEqual(summary["safe_better_training_family_count"], 4)
         self.assertGreaterEqual(summary["low_observation_trainable_transition_count"], 32)
-        self.assertEqual(summary["next_required_change"], "family_balanced_shadow_canary_preflight")
+        self.assertEqual(
+            summary["next_required_change"],
+            "migrate_family_balanced_rerun_to_canonical_reward_v2_or_use_stage18_5_guard",
+        )
         self.assertFalse(summary["checkpoint_publication_approved"])
         self.assertFalse(summary["default_policy_replacement_approved"])
         self.assertFalse(summary["real_executor_connection_approved"])
@@ -253,18 +258,13 @@ class FamilyBalancedCoverageDrivenPpoRerunTests(unittest.TestCase):
             expanded._policy_log_prob_and_value = original_policy
 
         self.assertEqual(summary["status"], "failed")
-        for reason in (
-            "ppo_update_failed",
-            "post_update_policy_teacher_equivalent",
-            "no_coverage_return_improvement",
-            "no_cumulative_coverage_rate_delta_improvement",
-            "valuable_coverage_regressed",
-            "coverage_efficiency_regression",
-            "fallback_dominates",
-            "fallback_gain_contamination",
-            "controlled_regression_detected",
-        ):
-            self.assertIn(reason, summary["reason_codes"])
+        self.assertIn("legacy_v1_reward_components_blocked_by_canonical_v2", summary["reason_codes"])
+        self.assertIn("ppo_update_failed", summary["reason_codes"])
+        self.assertNotIn("coverage_efficiency_regression", summary["reason_codes"])
+        self.assertEqual(
+            summary["next_required_change"],
+            "migrate_family_balanced_rerun_to_canonical_reward_v2_or_use_stage18_5_guard",
+        )
 
     def _write_docs(self) -> None:
         self._write_text(

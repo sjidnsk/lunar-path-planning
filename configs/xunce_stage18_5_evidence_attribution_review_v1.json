@@ -1,0 +1,12 @@
+{
+  "schema_version": "xunce-stage18-5-evidence-attribution-review-config/v1",
+  "coverage_comparison_root": "outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_dynamic_stage18_4e_v1",
+  "canonical_reward_profile": "configs/xunce_canonical_reward_guard_profile_v2.json",
+  "max_path_cost_delta_m": 20.0,
+  "max_risk_delta": 0.5,
+  "max_risk_cost_weighted_delta": 25.0,
+  "min_coverage_delta_cells": 1.0,
+  "min_coverage_per_100m_delta": 0.0,
+  "coverage_gain_per_path_cost_delta_mode": "audit_only",
+  "canary_traffic_fraction": 0.0
+}

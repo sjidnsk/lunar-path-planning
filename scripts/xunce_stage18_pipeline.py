@@ -12,6 +12,22 @@ from platform_command import display_command, python_script_command
 
 CONFIG_SCHEMA_VERSION = "xunce-stage18-research-evidence-pipeline-config/v1"
 SUMMARY_SCHEMA_VERSION = "xunce-stage18-research-evidence-pipeline-summary/v1"
+STAGE18_5_ATTRIBUTION_SCHEMA_VERSION = "xunce-stage18-5-evidence-attribution-summary/v1"
+STAGE18_5_GUARD_SCHEMA_VERSION = "xunce-stage18-5-guard-evaluation/v1"
+STAGE18_5_ROUTING_SCHEMA_VERSION = "xunce-stage18-5-next-stage-routing/v1"
+STAGE18_6_GUARD_REFINEMENT_SCHEMA_VERSION = "xunce-stage18-6-guard-refinement-summary/v1"
+STAGE18_6_ROUTING_SCHEMA_VERSION = "xunce-stage18-6-next-stage-routing/v1"
+STAGE18_7_CANDIDATE_COUNT_SCALING_SCHEMA_VERSION = "xunce-stage18-7-candidate-count-scaling-summary/v1"
+STAGE18_7_ROUTING_SCHEMA_VERSION = "xunce-stage18-7-next-stage-routing/v1"
+STAGE18_9_TRAJECTORY_RISK_REWARD_SCHEMA_VERSION = "xunce-stage18-9-trajectory-risk-reward-summary/v1"
+STAGE18_9_ROUTING_SCHEMA_VERSION = "xunce-stage18-9-next-stage-routing/v1"
+STAGE18_9_STAGE19_READINESS_SCHEMA_VERSION = "xunce-stage18-9-stage19-readiness/v1"
+STAGE18_9_EXPECTED_PROFILE_ID = "xunce-coverage-cost-risk-boundary-v3"
+STAGE18_9_EXPECTED_PROFILE_VERSION = "v3"
+STAGE18_11_PATH_COST_WEIGHT_SCHEMA_VERSION = "xunce-stage18-11-path-cost-weight-calibration-summary/v1"
+STAGE18_11_ROUTING_SCHEMA_VERSION = "xunce-stage18-11-next-stage-routing/v1"
+STAGE19_EVALUATOR_CRITIC_SCHEMA_VERSION = "xunce-stage19-evaluator-critic-preflight-summary/v1"
+STAGE19_ROUTING_SCHEMA_VERSION = "xunce-stage19-next-stage-routing/v1"
 
 ROI_EXPANSION_SUMMARY_FILE = "xunce-high-fidelity-real-map-roi-expansion-summary.json"
 STAGE18I_SUMMARY_FILES = (
@@ -32,6 +48,63 @@ REFRESH_STAGE18_NEXT_REQUIRED_CHANGE = "refresh_stage18_research_evidence_pipeli
 ROOT_REPAIR_NEXT_REQUIRED_CHANGE = "rerun_stage18_downstream_evidence_for_candidate_root"
 BOUNDARY_REPAIR_NEXT_REQUIRED_CHANGE = "resolve_stage18_research_evidence_boundary_rejections"
 DYNAMIC_ROLLOUT_NEXT_REQUIRED_CHANGE = "run_dynamic_frontier_nbv_rollout_comparison"
+STAGE18_5_ATTRIBUTION_SUMMARY_FILE = "xunce-stage18-5-evidence-attribution-summary.json"
+STAGE18_6_GUARD_REFINEMENT_SUMMARY_FILE = "xunce-stage18-6-guard-refinement-summary.json"
+STAGE18_7_CANDIDATE_COUNT_SCALING_SUMMARY_FILE = "xunce-stage18-7-candidate-count-scaling-summary.json"
+STAGE18_9_TRAJECTORY_RISK_REWARD_SUMMARY_FILE = "xunce-stage18-9-trajectory-risk-reward-summary.json"
+STAGE18_11_PATH_COST_WEIGHT_SUMMARY_FILE = "xunce-stage18-11-path-cost-weight-calibration-summary.json"
+STAGE19_EVALUATOR_CRITIC_SUMMARY_FILE = "xunce-stage19-evaluator-critic-preflight-summary.json"
+STAGE18_5_ALLOWED_ROUTES = {
+    "rerun_xunce_stage18_4e_coverage_comparison_with_required_artifacts",
+    "resolve_stage18_5_evidence_review_boundary_rejections",
+    "refine_coverage_reward_and_cost_guard",
+    "establish_same_candidate_set_policy_selection_advantage",
+    STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE,
+}
+STAGE18_6_ALLOWED_ROUTES = {
+    "rerun_stage18_4e_with_candidate_metric_audit",
+    "rerun_xunce_stage18_5_evidence_attribution_review",
+    "rerun_xunce_stage18_4e_coverage_comparison_with_required_artifacts",
+    "resolve_stage18_6_guard_refinement_boundary_rejections",
+    "expand_candidate_generation_roi_complexity",
+    "refine_coverage_reward_and_cost_guard",
+    STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE,
+}
+STAGE18_7_ALLOWED_ROUTES = {
+    "run_missing_candidate_count_sweeps_with_metric_audit",
+    "repair_stage18_7_lineage_or_config_drift",
+    "continue_candidate_count_scaling_with_bounded_budget",
+    "expand_candidate_generation_roi_complexity",
+    "refine_coverage_reward_and_cost_guard",
+    "resolve_stage18_7_candidate_count_scaling_boundary_rejections",
+    STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE,
+}
+STAGE18_9_ALLOWED_ROUTES = {
+    "resolve_stage18_9_boundary_rejections",
+    "rerun_required_stage18_9_inputs",
+    "repair_path_risk_boundary_filtering",
+    "refine_coverage_cost_reward_weights",
+    "calibrate_soft_risk_exposure_weight",
+    STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE,
+}
+STAGE18_11_ALLOWED_ROUTES = {
+    "resolve_stage18_11_boundary_rejections",
+    "rerun_stage18_11_required_inputs",
+    "repair_path_risk_boundary_filtering",
+    "run_stage18_11_reward_rerank_diagnostic_rollouts",
+    "stage18_12_rollout_horizon_or_mission_budget_scaling_for_99pct_coverage",
+    "continue_path_cost_weight_calibration_at_99pct_coverage",
+    STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE,
+}
+STAGE19_ALLOWED_ROUTES = {
+    "resolve_stage19_evaluator_critic_preflight_boundary_rejections",
+    "rerun_stage18_11_reward_rerank_diagnostic_rollouts",
+    "repair_path_risk_boundary_filtering",
+    "stage18_12_rollout_horizon_or_mission_budget_scaling_for_99pct_coverage",
+    "continue_path_cost_weight_calibration_at_99pct_coverage",
+    "collect_more_reward_rerank_preference_evidence",
+    "stage20_reward_rerank_oracle_preference_dataset_preparation",
+}
 
 BOUNDARY_FIELDS = tuple(global_99_boundary_defaults()) + (
     "default_policy_replacement_approved",
@@ -65,6 +138,12 @@ class Stage18RootSet:
     quantization_root: Path
     oracle_root: Path
     coverage_comparison_root: Path
+    attribution_root: Path | None = None
+    guard_refinement_root: Path | None = None
+    candidate_count_scaling_root: Path | None = None
+    trajectory_risk_reward_root: Path | None = None
+    path_cost_weight_calibration_root: Path | None = None
+    evaluator_critic_preflight_root: Path | None = None
 
 
 MODULE_SPECS: tuple[Stage18ModuleSpec, ...] = (
@@ -163,6 +242,36 @@ def load_stage18_config(
         if not isinstance(value, str) or not value:
             raise ConfigError(f"{key} must be a non-empty path string")
         config[key] = str(resolve_path(Path(value), repo_root).resolve())
+    attribution_root = merged.get("stage18_5_attribution_root")
+    if attribution_root is not None:
+        if not isinstance(attribution_root, str) or not attribution_root:
+            raise ConfigError("stage18_5_attribution_root must be a non-empty path string")
+        config["stage18_5_attribution_root"] = str(resolve_path(Path(attribution_root), repo_root).resolve())
+    guard_refinement_root = merged.get("stage18_6_guard_refinement_root")
+    if guard_refinement_root is not None:
+        if not isinstance(guard_refinement_root, str) or not guard_refinement_root:
+            raise ConfigError("stage18_6_guard_refinement_root must be a non-empty path string")
+        config["stage18_6_guard_refinement_root"] = str(resolve_path(Path(guard_refinement_root), repo_root).resolve())
+    candidate_count_scaling_root = merged.get("stage18_7_candidate_count_scaling_root")
+    if candidate_count_scaling_root is not None:
+        if not isinstance(candidate_count_scaling_root, str) or not candidate_count_scaling_root:
+            raise ConfigError("stage18_7_candidate_count_scaling_root must be a non-empty path string")
+        config["stage18_7_candidate_count_scaling_root"] = str(resolve_path(Path(candidate_count_scaling_root), repo_root).resolve())
+    trajectory_risk_reward_root = merged.get("stage18_9_trajectory_risk_reward_root")
+    if trajectory_risk_reward_root is not None:
+        if not isinstance(trajectory_risk_reward_root, str) or not trajectory_risk_reward_root:
+            raise ConfigError("stage18_9_trajectory_risk_reward_root must be a non-empty path string")
+        config["stage18_9_trajectory_risk_reward_root"] = str(resolve_path(Path(trajectory_risk_reward_root), repo_root).resolve())
+    path_cost_weight_calibration_root = merged.get("stage18_11_path_cost_weight_calibration_root")
+    if path_cost_weight_calibration_root is not None:
+        if not isinstance(path_cost_weight_calibration_root, str) or not path_cost_weight_calibration_root:
+            raise ConfigError("stage18_11_path_cost_weight_calibration_root must be a non-empty path string")
+        config["stage18_11_path_cost_weight_calibration_root"] = str(resolve_path(Path(path_cost_weight_calibration_root), repo_root).resolve())
+    evaluator_critic_preflight_root = merged.get("stage19_evaluator_critic_preflight_root")
+    if evaluator_critic_preflight_root is not None:
+        if not isinstance(evaluator_critic_preflight_root, str) or not evaluator_critic_preflight_root:
+            raise ConfigError("stage19_evaluator_critic_preflight_root must be a non-empty path string")
+        config["stage19_evaluator_critic_preflight_root"] = str(resolve_path(Path(evaluator_critic_preflight_root), repo_root).resolve())
     return config
 
 
@@ -175,6 +284,12 @@ def root_set_from_config(config: dict[str, Any]) -> Stage18RootSet:
         quantization_root=Path(config["stage18_4_quantization_root"]),
         oracle_root=Path(config["stage18_4_oracle_root"]),
         coverage_comparison_root=Path(config["stage18_4_coverage_comparison_root"]),
+        attribution_root=Path(config["stage18_5_attribution_root"]) if config.get("stage18_5_attribution_root") else None,
+        guard_refinement_root=Path(config["stage18_6_guard_refinement_root"]) if config.get("stage18_6_guard_refinement_root") else None,
+        candidate_count_scaling_root=Path(config["stage18_7_candidate_count_scaling_root"]) if config.get("stage18_7_candidate_count_scaling_root") else None,
+        trajectory_risk_reward_root=Path(config["stage18_9_trajectory_risk_reward_root"]) if config.get("stage18_9_trajectory_risk_reward_root") else None,
+        path_cost_weight_calibration_root=Path(config["stage18_11_path_cost_weight_calibration_root"]) if config.get("stage18_11_path_cost_weight_calibration_root") else None,
+        evaluator_critic_preflight_root=Path(config["stage19_evaluator_critic_preflight_root"]) if config.get("stage19_evaluator_critic_preflight_root") else None,
     )
 
 
@@ -219,6 +334,30 @@ def build_stage18_pipeline_summary(
         "stage_command_plan": commands,
         "single_step_comparison_summary": diagnostics["single_step_comparison_summary"],
         "coverage_rollout_comparison_summary": diagnostics["coverage_rollout_comparison_summary"],
+        "stage18_5_attribution_summary": diagnostics["stage18_5_attribution_summary"],
+        "stage18_5_guard_verdict": diagnostics["stage18_5_guard_verdict"],
+        "stage18_5_primary_next_required_change": diagnostics["stage18_5_primary_next_required_change"],
+        "stage18_6_guard_refinement_summary": diagnostics["stage18_6_guard_refinement_summary"],
+        "stage18_6_guard_refinement_verdict": diagnostics["stage18_6_guard_refinement_verdict"],
+        "stage18_6_primary_next_required_change": diagnostics["stage18_6_primary_next_required_change"],
+        "stage18_6_candidate_metric_readiness": diagnostics["stage18_6_candidate_metric_readiness"],
+        "stage18_7_candidate_count_scaling_summary": diagnostics["stage18_7_candidate_count_scaling_summary"],
+        "stage18_7_candidate_count_scaling_verdict": diagnostics["stage18_7_candidate_count_scaling_verdict"],
+        "stage18_7_primary_next_required_change": diagnostics["stage18_7_primary_next_required_change"],
+        "stage18_9_trajectory_risk_reward_summary": diagnostics["stage18_9_trajectory_risk_reward_summary"],
+        "stage18_9_trajectory_risk_reward_verdict": diagnostics["stage18_9_trajectory_risk_reward_verdict"],
+        "stage18_9_primary_next_required_change": diagnostics["stage18_9_primary_next_required_change"],
+        "stage18_11_path_cost_weight_calibration_summary": diagnostics["stage18_11_path_cost_weight_calibration_summary"],
+        "stage18_11_path_cost_weight_calibration_verdict": diagnostics["stage18_11_path_cost_weight_calibration_verdict"],
+        "stage18_11_primary_next_required_change": diagnostics["stage18_11_primary_next_required_change"],
+        "stage19_evaluator_critic_preflight_summary": diagnostics["stage19_evaluator_critic_preflight_summary"],
+        "stage19_evaluator_critic_preflight_verdict": diagnostics["stage19_evaluator_critic_preflight_verdict"],
+        "stage19_primary_next_required_change": diagnostics["stage19_primary_next_required_change"],
+        "stage19_primary_target_candidate_count": diagnostics["stage19_primary_target_candidate_count"],
+        "stage19_primary_target_path_cost_weight": diagnostics["stage19_primary_target_path_cost_weight"],
+        "stage19_oracle_target_feasible": diagnostics["stage19_oracle_target_feasible"],
+        "stage19_xunce_checkpoint_advantage_established": diagnostics["stage19_xunce_checkpoint_advantage_established"],
+        "stage19_training_authorized": diagnostics["stage19_training_authorized"],
         "comparison_metric_summary": diagnostics["comparison_metric_summary"],
         "coverage_delta_distribution": diagnostics["coverage_delta_distribution"],
         "cost_delta_distribution": diagnostics["cost_delta_distribution"],
@@ -250,6 +389,12 @@ def load_stage18_evidence(roots: Stage18RootSet) -> dict[str, Any]:
         "missing_stage18_4_coverage_comparison",
     )
     coverage_aggregate = _read_optional_json(roots.coverage_comparison_root / COVERAGE_COMPARISON_AGGREGATE_FILE)
+    attribution, stage18_5_blocking = _read_stage18_5_attribution(roots)
+    guard_refinement, stage18_6_blocking = _read_stage18_6_guard_refinement(roots)
+    candidate_count_scaling, stage18_7_blocking = _read_stage18_7_candidate_count_scaling(roots)
+    trajectory_risk_reward, stage18_9_blocking = _read_stage18_9_trajectory_risk_reward(roots)
+    path_cost_weight_calibration, stage18_11_blocking = _read_stage18_11_path_cost_weight_calibration(roots)
+    evaluator_critic_preflight, stage19_blocking = _read_stage19_evaluator_critic_preflight(roots)
     return {
         "stage18_1": stage18_1,
         "stage18_2": stage18_2,
@@ -259,6 +404,18 @@ def load_stage18_evidence(roots: Stage18RootSet) -> dict[str, Any]:
         "oracle": oracle,
         "coverage_comparison": coverage,
         "coverage_comparison_aggregate": coverage_aggregate,
+        "stage18_5_attribution": attribution,
+        "stage18_5_blocking_reason_codes": stage18_5_blocking,
+        "stage18_6_guard_refinement": guard_refinement,
+        "stage18_6_blocking_reason_codes": stage18_6_blocking,
+        "stage18_7_candidate_count_scaling": candidate_count_scaling,
+        "stage18_7_blocking_reason_codes": stage18_7_blocking,
+        "stage18_9_trajectory_risk_reward": trajectory_risk_reward,
+        "stage18_9_blocking_reason_codes": stage18_9_blocking,
+        "stage18_11_path_cost_weight_calibration": path_cost_weight_calibration,
+        "stage18_11_blocking_reason_codes": stage18_11_blocking,
+        "stage19_evaluator_critic_preflight": evaluator_critic_preflight,
+        "stage19_blocking_reason_codes": stage19_blocking,
         "missing_reason_codes": unique_sorted(missing),
     }
 
@@ -276,9 +433,21 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
     oracle = evidence["oracle"]
     coverage = evidence["coverage_comparison"]
     coverage_aggregate = evidence["coverage_comparison_aggregate"]
+    attribution = evidence["stage18_5_attribution"]
+    guard_refinement = evidence["stage18_6_guard_refinement"]
+    candidate_count_scaling = evidence["stage18_7_candidate_count_scaling"]
+    trajectory_risk_reward = evidence["stage18_9_trajectory_risk_reward"]
+    path_cost_weight_calibration = evidence["stage18_11_path_cost_weight_calibration"]
+    evaluator_critic_preflight = evidence["stage19_evaluator_critic_preflight"]
 
     if _boundary_violation(*(payload for payload in evidence.values() if isinstance(payload, dict))):
         blocking.append("boundary_violation")
+    blocking.extend(evidence.get("stage18_5_blocking_reason_codes", []))
+    blocking.extend(evidence.get("stage18_6_blocking_reason_codes", []))
+    blocking.extend(evidence.get("stage18_7_blocking_reason_codes", []))
+    blocking.extend(evidence.get("stage18_9_blocking_reason_codes", []))
+    blocking.extend(evidence.get("stage18_11_blocking_reason_codes", []))
+    blocking.extend(evidence.get("stage19_blocking_reason_codes", []))
     if model and model.get("true_model_inference_executed") is not True:
         blocking.append("true_model_inference_not_executed")
     if model and model.get("proxy_selection_used") is True:
@@ -338,20 +507,47 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
 
     evidence_status = _evidence_status(missing=missing, blocking=blocking)
     candidate_validity_status = _candidate_validity_status(missing=missing, blocking=blocking, stage18_2=stage18_2, quant=quant)
-    comparison_verdict = _comparison_verdict(evidence_status=evidence_status, model=model, coverage=coverage)
+    stage18_5_summary = _stage18_5_attribution_summary(attribution)
+    stage18_6_summary = _stage18_6_guard_refinement_summary(guard_refinement)
+    stage18_7_summary = _stage18_7_candidate_count_scaling_summary(candidate_count_scaling)
+    stage18_9_summary = _stage18_9_trajectory_risk_reward_summary(trajectory_risk_reward)
+    stage18_11_summary = _stage18_11_path_cost_weight_calibration_summary(path_cost_weight_calibration)
+    stage19_summary = _stage19_evaluator_critic_preflight_summary(evaluator_critic_preflight)
+    comparison_verdict = _comparison_verdict(
+        evidence_status=evidence_status,
+        model=model,
+        coverage=coverage,
+        stage18_5_summary=stage18_5_summary,
+        stage18_9_summary=stage18_9_summary,
+    )
     overall_conclusion = _overall_conclusion(
         evidence_status=evidence_status,
         candidate_validity_status=candidate_validity_status,
         comparison_verdict=comparison_verdict,
     )
-
+    stage18_5_route = stage18_5_summary["primary_next_required_change"]
+    stage18_6_route = stage18_6_summary["primary_next_required_change"]
+    stage18_7_route = stage18_7_summary["primary_next_required_change"]
+    stage18_9_route = stage18_9_summary["primary_next_required_change"]
+    stage18_11_route = stage18_11_summary["primary_next_required_change"]
+    stage19_route = stage19_summary["primary_next_required_change"]
     return {
         "status": "failed" if blocking else "partial" if missing else "passed",
         "evidence_status": evidence_status,
         "candidate_validity_status": candidate_validity_status,
         "comparison_verdict": comparison_verdict,
         "overall_conclusion": overall_conclusion,
-        "next_required_change": _next_required_change(missing=missing, blocking=blocking, comparison_verdict=comparison_verdict),
+        "next_required_change": _next_required_change(
+            missing=missing,
+            blocking=blocking,
+            comparison_verdict=comparison_verdict,
+            stage18_5_route=stage18_5_route,
+            stage18_6_route=stage18_6_route,
+            stage18_7_route=stage18_7_route,
+            stage18_9_route=stage18_9_route,
+            stage18_11_route=stage18_11_route,
+            stage19_route=stage19_route,
+        ),
         "reason_codes": unique_sorted([*missing, *blocking]),
         "missing_reason_codes": unique_sorted(missing),
         "blocking_reason_codes": unique_sorted(blocking),
@@ -360,6 +556,30 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
         "module_results": module_results,
         "single_step_comparison_summary": _single_step_summary(model),
         "coverage_rollout_comparison_summary": _coverage_summary(coverage, coverage_aggregate),
+        "stage18_5_attribution_summary": stage18_5_summary["summary"],
+        "stage18_5_guard_verdict": stage18_5_summary["guard_verdict"],
+        "stage18_5_primary_next_required_change": stage18_5_route,
+        "stage18_6_guard_refinement_summary": stage18_6_summary["summary"],
+        "stage18_6_guard_refinement_verdict": stage18_6_summary["guard_verdict"],
+        "stage18_6_primary_next_required_change": stage18_6_route,
+        "stage18_6_candidate_metric_readiness": stage18_6_summary["candidate_metric_readiness"],
+        "stage18_7_candidate_count_scaling_summary": stage18_7_summary["summary"],
+        "stage18_7_candidate_count_scaling_verdict": stage18_7_summary["guard_verdict"],
+        "stage18_7_primary_next_required_change": stage18_7_route,
+        "stage18_9_trajectory_risk_reward_summary": stage18_9_summary["summary"],
+        "stage18_9_trajectory_risk_reward_verdict": stage18_9_summary["guard_verdict"],
+        "stage18_9_primary_next_required_change": stage18_9_route,
+        "stage18_11_path_cost_weight_calibration_summary": stage18_11_summary["summary"],
+        "stage18_11_path_cost_weight_calibration_verdict": stage18_11_summary["guard_verdict"],
+        "stage18_11_primary_next_required_change": stage18_11_route,
+        "stage19_evaluator_critic_preflight_summary": stage19_summary["summary"],
+        "stage19_evaluator_critic_preflight_verdict": stage19_summary["guard_verdict"],
+        "stage19_primary_next_required_change": stage19_route,
+        "stage19_primary_target_candidate_count": stage19_summary["primary_target_candidate_count"],
+        "stage19_primary_target_path_cost_weight": stage19_summary["primary_target_path_cost_weight"],
+        "stage19_oracle_target_feasible": stage19_summary["oracle_target_feasible"],
+        "stage19_xunce_checkpoint_advantage_established": stage19_summary["xunce_checkpoint_advantage_established"],
+        "stage19_training_authorized": stage19_summary["training_authorized"],
         "comparison_metric_summary": _comparison_metric_summary(coverage, coverage_aggregate),
         "coverage_delta_distribution": _distribution_summary(coverage_aggregate, "coverage_delta_cells"),
         "cost_delta_distribution": _distribution_summary(coverage_aggregate, "path_cost_delta_m"),
@@ -462,6 +682,118 @@ def build_stage18_command_plan(*, repo_root: Path, roots: Stage18RootSet) -> lis
             ],
         ),
     ]
+    if roots.attribution_root is not None:
+        commands.append(
+            (
+                "18.5",
+                "xunce-stage18-5-evidence-attribution-review",
+                [
+                    "--output-root",
+                    str(roots.attribution_root),
+                    "--extra-arg",
+                    "--coverage-comparison-root",
+                    "--extra-arg",
+                    str(roots.coverage_comparison_root),
+                ],
+            )
+        )
+    if roots.guard_refinement_root is not None:
+        stage18_6_args = [
+            "--output-root",
+            str(roots.guard_refinement_root),
+        ]
+        if roots.attribution_root is not None:
+            stage18_6_args.extend(
+                [
+                    "--extra-arg",
+                    "--stage18-5-attribution-root",
+                    "--extra-arg",
+                    str(roots.attribution_root),
+                ]
+            )
+        stage18_6_args.extend(
+            [
+                "--extra-arg",
+                "--coverage-comparison-root",
+                "--extra-arg",
+                str(roots.coverage_comparison_root),
+            ]
+        )
+        commands.append(
+            (
+                "18.6",
+                "xunce-stage18-6-coverage-reward-cost-risk-guard-refinement",
+                stage18_6_args,
+            )
+        )
+    if roots.candidate_count_scaling_root is not None:
+        commands.append(
+            (
+                "18.7",
+                "xunce-stage18-7-candidate-count-scaling-audit",
+                [
+                    "--output-root",
+                    str(roots.candidate_count_scaling_root),
+                ],
+            )
+        )
+    if roots.trajectory_risk_reward_root is not None:
+        stage18_9_args = [
+            "--output-root",
+            str(roots.trajectory_risk_reward_root),
+            "--extra-arg",
+            "--coverage-comparison-root",
+            "--extra-arg",
+            str(roots.coverage_comparison_root),
+        ]
+        if roots.candidate_count_scaling_root is not None:
+            stage18_9_args.extend(
+                [
+                    "--extra-arg",
+                    "--stage18-7-candidate-count-scaling-root",
+                    "--extra-arg",
+                    str(roots.candidate_count_scaling_root),
+                ]
+            )
+        commands.append(
+            (
+                "18.9",
+                "xunce-stage18-9-trajectory-risk-boundary-reward-audit",
+                stage18_9_args,
+            )
+        )
+    if roots.path_cost_weight_calibration_root is not None:
+        commands.append(
+            (
+                "18.11",
+                "xunce-stage18-11-path-cost-weight-calibration",
+                [
+                    "--output-root",
+                    str(roots.path_cost_weight_calibration_root),
+                ],
+            )
+        )
+    if roots.evaluator_critic_preflight_root is not None:
+        stage19_args = [
+            "--output-root",
+            str(roots.evaluator_critic_preflight_root),
+        ]
+        if roots.path_cost_weight_calibration_root is not None:
+            stage19_args.extend(
+                [
+                    "--extra-arg",
+                    "--stage18-11-path-cost-weight-calibration-root",
+                    "--extra-arg",
+                    str(roots.path_cost_weight_calibration_root),
+                ]
+            )
+        commands.append(
+            (
+                "19",
+                "xunce-stage19-evaluator-critic-preflight",
+                stage19_args,
+            )
+        )
     plan: list[dict[str, Any]] = []
     for module, stage_id, args in commands:
         argv = python_script_command(run_stage, "--stage", stage_id, *args)
@@ -485,6 +817,12 @@ def resolved_roots_payload(roots: Stage18RootSet) -> dict[str, str]:
         "stage18_4_quantization_root": str(roots.quantization_root),
         "stage18_4_oracle_root": str(roots.oracle_root),
         "stage18_4_coverage_comparison_root": str(roots.coverage_comparison_root),
+        "stage18_5_attribution_root": str(roots.attribution_root) if roots.attribution_root is not None else None,
+        "stage18_6_guard_refinement_root": str(roots.guard_refinement_root) if roots.guard_refinement_root is not None else None,
+        "stage18_7_candidate_count_scaling_root": str(roots.candidate_count_scaling_root) if roots.candidate_count_scaling_root is not None else None,
+        "stage18_9_trajectory_risk_reward_root": str(roots.trajectory_risk_reward_root) if roots.trajectory_risk_reward_root is not None else None,
+        "stage18_11_path_cost_weight_calibration_root": str(roots.path_cost_weight_calibration_root) if roots.path_cost_weight_calibration_root is not None else None,
+        "stage19_evaluator_critic_preflight_root": str(roots.evaluator_critic_preflight_root) if roots.evaluator_critic_preflight_root is not None else None,
     }
 
 
@@ -510,6 +848,23 @@ def render_stage18_report(summary: dict[str, Any]) -> str:
             f"- next_required_change: `{summary['next_required_change']}`",
             f"- release_readiness: `{summary['release_readiness']}`",
             f"- training_readiness: `{summary['training_readiness']}`",
+            f"- stage18_5_guard_verdict: `{summary['stage18_5_guard_verdict']}`",
+            f"- stage18_5_primary_next_required_change: `{summary['stage18_5_primary_next_required_change']}`",
+            f"- stage18_6_guard_refinement_verdict: `{summary['stage18_6_guard_refinement_verdict']}`",
+            f"- stage18_6_primary_next_required_change: `{summary['stage18_6_primary_next_required_change']}`",
+            f"- stage18_7_candidate_count_scaling_verdict: `{summary['stage18_7_candidate_count_scaling_verdict']}`",
+            f"- stage18_7_primary_next_required_change: `{summary['stage18_7_primary_next_required_change']}`",
+            f"- stage18_9_trajectory_risk_reward_verdict: `{summary['stage18_9_trajectory_risk_reward_verdict']}`",
+            f"- stage18_9_primary_next_required_change: `{summary['stage18_9_primary_next_required_change']}`",
+            f"- stage18_11_path_cost_weight_calibration_verdict: `{summary['stage18_11_path_cost_weight_calibration_verdict']}`",
+            f"- stage18_11_primary_next_required_change: `{summary['stage18_11_primary_next_required_change']}`",
+            f"- stage19_evaluator_critic_preflight_verdict: `{summary['stage19_evaluator_critic_preflight_verdict']}`",
+            f"- stage19_primary_next_required_change: `{summary['stage19_primary_next_required_change']}`",
+            f"- stage19_primary_target_candidate_count: `{summary['stage19_primary_target_candidate_count']}`",
+            f"- stage19_primary_target_path_cost_weight: `{summary['stage19_primary_target_path_cost_weight']}`",
+            f"- stage19_oracle_target_feasible: `{summary['stage19_oracle_target_feasible']}`",
+            f"- stage19_xunce_checkpoint_advantage_established: `{summary['stage19_xunce_checkpoint_advantage_established']}`",
+            f"- stage19_training_authorized: `{summary['stage19_training_authorized']}`",
             "",
             "## Quantitative Comparison",
             "",
@@ -545,6 +900,421 @@ def _read_optional_json(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _read_stage18_5_attribution(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.attribution_root is None:
+        return {}, []
+    path = roots.attribution_root / STAGE18_5_ATTRIBUTION_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage18_5_attribution_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    if payload.get("schema_version") != STAGE18_5_ATTRIBUTION_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_5_attribution_summary_schema"]
+    coverage_root = payload.get("coverage_comparison_root")
+    if not isinstance(coverage_root, str) or not coverage_root:
+        return {}, ["missing_stage18_5_coverage_comparison_root"]
+    if not _same_path(coverage_root, roots.coverage_comparison_root):
+        return {}, ["stale_stage18_5_attribution_root"]
+    routing = payload.get("next_stage_routing")
+    guard = payload.get("guard_evaluation")
+    if not isinstance(routing, dict):
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    if routing.get("schema_version") != STAGE18_5_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_5_routing_summary_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or not route or route not in STAGE18_5_ALLOWED_ROUTES:
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    if routing.get("stage19_authorized") is not False:
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    if not isinstance(guard, dict):
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    if guard.get("schema_version") != STAGE18_5_GUARD_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_5_guard_summary_schema"]
+    if not isinstance(guard.get("passed"), bool):
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    failed_guards = guard.get("failed_guards")
+    if failed_guards is not None and not isinstance(failed_guards, list):
+        return {}, ["invalid_stage18_5_attribution_summary"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    return payload, []
+
+
+def _read_stage18_6_guard_refinement(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.guard_refinement_root is None:
+        return {}, []
+    path = roots.guard_refinement_root / STAGE18_6_GUARD_REFINEMENT_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage18_6_guard_refinement_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    if payload.get("schema_version") != STAGE18_6_GUARD_REFINEMENT_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_6_guard_refinement_summary_schema"]
+    if not _same_path(payload.get("coverage_comparison_root"), roots.coverage_comparison_root):
+        return {}, ["stale_stage18_6_guard_refinement_root"]
+    if roots.attribution_root is not None and not _same_path(payload.get("stage18_5_attribution_root"), roots.attribution_root):
+        return {}, ["stale_stage18_6_guard_refinement_root"]
+    if not _valid_profile_identity(payload):
+        return {}, ["invalid_stage18_6_guard_refinement_profile_lineage"]
+    if roots.attribution_root is not None:
+        stage18_5_payload = _read_json_if_present(roots.attribution_root / STAGE18_5_ATTRIBUTION_SUMMARY_FILE)
+        if not _valid_profile_identity(stage18_5_payload) or not _profile_identity_matches(payload, stage18_5_payload):
+            return {}, ["invalid_stage18_6_guard_refinement_profile_lineage"]
+    routing = payload.get("next_stage_routing")
+    if not isinstance(routing, dict):
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    if routing.get("schema_version") != STAGE18_6_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_6_guard_refinement_routing_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or route not in STAGE18_6_ALLOWED_ROUTES:
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    if routing.get("stage19_authorized") is not False:
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    readiness = payload.get("stage19_readiness")
+    if not isinstance(readiness, dict) or readiness.get("authorized") is not False:
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    if not isinstance(payload.get("guard_refinement_passed"), bool):
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    candidate_readiness = payload.get("candidate_metric_readiness")
+    if not isinstance(candidate_readiness, dict):
+        return {}, ["invalid_stage18_6_guard_refinement_summary"]
+    if route == STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE and not _stage18_6_preflight_semantics_are_clean(payload):
+        return {}, ["invalid_stage18_6_guard_refinement_preflight_semantics"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    return payload, []
+
+
+def _read_stage18_7_candidate_count_scaling(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.candidate_count_scaling_root is None:
+        return {}, []
+    if roots.guard_refinement_root is None:
+        return {}, ["missing_stage18_6_guard_refinement_for_stage18_7"]
+    path = roots.candidate_count_scaling_root / STAGE18_7_CANDIDATE_COUNT_SCALING_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage18_7_candidate_count_scaling_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage18_7_candidate_count_scaling_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage18_7_candidate_count_scaling_summary"]
+    if payload.get("schema_version") != STAGE18_7_CANDIDATE_COUNT_SCALING_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_7_candidate_count_scaling_summary_schema"]
+    if not _valid_profile_identity(payload):
+        return {}, ["invalid_stage18_7_candidate_count_scaling_profile_lineage"]
+    stage18_6_payload = _read_json_if_present(roots.guard_refinement_root / STAGE18_6_GUARD_REFINEMENT_SUMMARY_FILE)
+    if not _valid_profile_identity(stage18_6_payload) or not _profile_identity_matches(payload, stage18_6_payload):
+        return {}, ["invalid_stage18_7_candidate_count_scaling_profile_lineage"]
+    routing = payload.get("next_stage_routing")
+    if not isinstance(routing, dict):
+        return {}, ["invalid_stage18_7_candidate_count_scaling_summary"]
+    if routing.get("schema_version") != STAGE18_7_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_7_candidate_count_scaling_routing_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or route not in STAGE18_7_ALLOWED_ROUTES:
+        return {}, ["invalid_stage18_7_candidate_count_scaling_summary"]
+    if routing.get("stage19_authorized") is not False:
+        return {}, ["invalid_stage18_7_candidate_count_scaling_summary"]
+    readiness = payload.get("stage19_readiness")
+    if not isinstance(readiness, dict) or readiness.get("authorized") is not False:
+        return {}, ["invalid_stage18_7_candidate_count_scaling_summary"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    if not _stage18_7_results_are_valid(payload):
+        return {}, ["invalid_stage18_7_candidate_count_scaling_results"]
+    if route == STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE and not _stage18_7_preflight_semantics_are_clean(payload):
+        return {}, ["invalid_stage18_7_candidate_count_scaling_preflight_semantics"]
+    if route == STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE and not _stage18_6_preflight_semantics_are_clean(stage18_6_payload):
+        return {}, ["invalid_stage18_7_candidate_count_scaling_preflight_semantics"]
+    return payload, []
+
+
+def _read_stage18_9_trajectory_risk_reward(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.trajectory_risk_reward_root is None:
+        return {}, []
+    path = roots.trajectory_risk_reward_root / STAGE18_9_TRAJECTORY_RISK_REWARD_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage18_9_trajectory_risk_reward_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary"]
+    if payload.get("schema_version") != STAGE18_9_TRAJECTORY_RISK_REWARD_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary_schema"]
+    if not _same_path(payload.get("coverage_comparison_root"), roots.coverage_comparison_root):
+        return {}, ["stale_stage18_9_trajectory_risk_reward_root"]
+    if roots.candidate_count_scaling_root is not None and payload.get("stage18_7_candidate_count_scaling_root") is not None:
+        if not _same_path(payload.get("stage18_7_candidate_count_scaling_root"), roots.candidate_count_scaling_root):
+            return {}, ["stale_stage18_9_trajectory_risk_reward_root"]
+    if not _valid_stage18_9_profile_identity(payload):
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_profile_lineage"]
+    routing = payload.get("next_stage_routing")
+    if not isinstance(routing, dict):
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary"]
+    if routing.get("schema_version") != STAGE18_9_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_routing_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or route not in STAGE18_9_ALLOWED_ROUTES:
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary"]
+    if routing.get("stage19_authorized") is not False:
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary"]
+    readiness = payload.get("stage19_readiness")
+    if (
+        not isinstance(readiness, dict)
+        or readiness.get("schema_version") != STAGE18_9_STAGE19_READINESS_SCHEMA_VERSION
+        or readiness.get("authorized") is not False
+    ):
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary"]
+    if not isinstance(payload.get("trajectory_guard_passed"), bool):
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_summary"]
+    if route == STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE and not _stage18_9_preflight_semantics_are_clean(payload):
+        return {}, ["invalid_stage18_9_trajectory_risk_reward_preflight_semantics"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    return payload, []
+
+
+def _read_stage18_11_path_cost_weight_calibration(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.path_cost_weight_calibration_root is None:
+        return {}, []
+    path = roots.path_cost_weight_calibration_root / STAGE18_11_PATH_COST_WEIGHT_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage18_11_path_cost_weight_calibration_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage18_11_path_cost_weight_calibration_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage18_11_path_cost_weight_calibration_summary"]
+    if payload.get("schema_version") != STAGE18_11_PATH_COST_WEIGHT_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_11_path_cost_weight_calibration_summary_schema"]
+    if payload.get("profile_id") != STAGE18_9_EXPECTED_PROFILE_ID or payload.get("profile_version") != STAGE18_9_EXPECTED_PROFILE_VERSION:
+        return {}, ["invalid_stage18_11_path_cost_weight_calibration_profile_lineage"]
+    routing = payload.get("next_stage_routing")
+    if not isinstance(routing, dict) or routing.get("schema_version") != STAGE18_11_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage18_11_path_cost_weight_calibration_routing_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or route not in STAGE18_11_ALLOWED_ROUTES:
+        return {}, ["invalid_stage18_11_path_cost_weight_calibration_route"]
+    if routing.get("stage19_authorized") is not False or payload.get("stage19_authorized") is not False:
+        return {}, ["stage18_11_stage19_authorized_not_false"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    if route == STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE and not _stage18_11_preflight_semantics_are_clean(payload):
+        return {}, ["invalid_stage18_11_path_cost_weight_calibration_preflight_semantics"]
+    return payload, []
+
+
+def _read_stage19_evaluator_critic_preflight(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.evaluator_critic_preflight_root is None:
+        return {}, []
+    path = roots.evaluator_critic_preflight_root / STAGE19_EVALUATOR_CRITIC_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage19_evaluator_critic_preflight_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage19_evaluator_critic_preflight_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage19_evaluator_critic_preflight_summary"]
+    if payload.get("schema_version") != STAGE19_EVALUATOR_CRITIC_SCHEMA_VERSION:
+        return {}, ["invalid_stage19_evaluator_critic_preflight_summary_schema"]
+    if payload.get("profile_id") != STAGE18_9_EXPECTED_PROFILE_ID or payload.get("profile_version") != STAGE18_9_EXPECTED_PROFILE_VERSION:
+        return {}, ["invalid_stage19_evaluator_critic_preflight_profile_lineage"]
+    if roots.path_cost_weight_calibration_root is not None and payload.get("stage18_11_path_cost_weight_calibration_root") is not None:
+        if not _same_path(payload.get("stage18_11_path_cost_weight_calibration_root"), roots.path_cost_weight_calibration_root):
+            return {}, ["stale_stage19_evaluator_critic_preflight_root"]
+    routing = payload.get("next_stage_routing")
+    if not isinstance(routing, dict) or routing.get("schema_version") != STAGE19_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage19_evaluator_critic_preflight_routing_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or route not in STAGE19_ALLOWED_ROUTES:
+        return {}, ["invalid_stage19_evaluator_critic_preflight_route"]
+    if routing.get("stage20_authorized") is not False or payload.get("stage20_authorized") is not False:
+        return {}, ["stage19_stage20_authorized_not_false"]
+    if payload.get("training_or_release_authorized") is not False:
+        return {}, ["stage19_training_authorized_not_false"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    if route == "stage20_reward_rerank_oracle_preference_dataset_preparation" and not _stage19_preflight_semantics_are_clean(payload):
+        return {}, ["invalid_stage19_evaluator_critic_preflight_semantics"]
+    return payload, []
+
+
+def _read_json_if_present(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _valid_profile_identity(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return all(isinstance(payload.get(field), str) and bool(payload.get(field)) for field in ("profile_id", "profile_version", "profile_hash"))
+
+
+def _valid_stage18_9_profile_identity(payload: dict[str, Any]) -> bool:
+    return (
+        _valid_profile_identity(payload)
+        and payload.get("profile_id") == STAGE18_9_EXPECTED_PROFILE_ID
+        and payload.get("profile_version") == STAGE18_9_EXPECTED_PROFILE_VERSION
+    )
+
+
+def _profile_identity_matches(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return all(left.get(field) == right.get(field) for field in ("profile_id", "profile_version", "profile_hash"))
+
+
+def _stage18_6_preflight_semantics_are_clean(payload: dict[str, Any]) -> bool:
+    candidate_readiness = payload.get("candidate_metric_readiness")
+    paired_summary = payload.get("paired_decision_summary")
+    readiness = payload.get("stage19_readiness")
+    return (
+        payload.get("guard_refinement_passed") is True
+        and isinstance(candidate_readiness, dict)
+        and candidate_readiness.get("full_candidate_metric_replay_available") is True
+        and isinstance(paired_summary, dict)
+        and paired_summary.get("same_candidate_set_guard_clean_advantage_established") is True
+        and isinstance(readiness, dict)
+        and readiness.get("authorized") is False
+    )
+
+
+def _stage18_7_preflight_semantics_are_clean(payload: dict[str, Any]) -> bool:
+    readiness = payload.get("stage19_readiness")
+    rows = payload.get("candidate_count_results")
+    if not isinstance(rows, list) or len(rows) != 4:
+        return False
+    clean_rows = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("guard_refinement_passed") is True
+        and row.get("same_candidate_set_guard_clean_advantage_established") is True
+        and row.get("candidate_metric_replay_available") is True
+        and row.get("stage19_authorized") is False
+        and float(row.get("guard_clean_candidate_available_rate", 0.0) or 0.0) > 0.0
+        and float(row.get("xunce_selected_guard_clean_rate", 0.0) or 0.0)
+        >= float(row.get("incumbent_selected_guard_clean_rate", 0.0) or 0.0)
+    ]
+    return (
+        isinstance(readiness, dict)
+        and readiness.get("authorized") is False
+        and int(payload.get("stage18_6_guard_refinement_passed_count", 0) or 0) > 0
+        and int(payload.get("same_candidate_set_guard_clean_advantage_established_count", 0) or 0) > 0
+        and float(payload.get("best_guard_clean_candidate_available_rate", 0.0) or 0.0) > 0.0
+        and bool(clean_rows)
+    )
+
+
+def _stage18_9_preflight_semantics_are_clean(payload: dict[str, Any]) -> bool:
+    readiness = payload.get("stage19_readiness")
+    boundary = payload.get("path_risk_boundary_summary")
+    trajectory = payload.get("trajectory_guard_summary")
+    return (
+        payload.get("status") == "passed"
+        and payload.get("trajectory_guard_passed") is True
+        and isinstance(readiness, dict)
+        and readiness.get("schema_version") == STAGE18_9_STAGE19_READINESS_SCHEMA_VERSION
+        and readiness.get("readiness") == "ready_for_stage19_preflight_human_review_only"
+        and readiness.get("authorized") is False
+        and readiness.get("trajectory_guard_passed") is True
+        and isinstance(boundary, dict)
+        and int(boundary.get("hard_risk_violation_count", 0) or 0) == 0
+        and boundary.get("path_risk_boundary_passed") is True
+        and isinstance(trajectory, dict)
+        and trajectory.get("coverage_advantage_established") is True
+        and trajectory.get("path_cost_budget_passed") is True
+        and trajectory.get("coverage_efficiency_passed") is True
+        and trajectory.get("soft_risk_exposure_passed") is True
+    )
+
+
+def _stage18_11_preflight_semantics_are_clean(payload: dict[str, Any]) -> bool:
+    readiness = payload.get("stage19_readiness")
+    diagnostic = payload.get("diagnostic_rollout_summary")
+    return (
+        payload.get("status") == "passed"
+        and payload.get("next_required_change") == STAGE19_PREFLIGHT_NEXT_REQUIRED_CHANGE
+        and payload.get("stage19_authorized") is False
+        and isinstance(readiness, dict)
+        and readiness.get("authorized") is False
+        and isinstance(diagnostic, dict)
+        and int(diagnostic.get("complete_diagnostic_rollout_count", 0) or 0) >= 4
+        and float(diagnostic.get("best_final_coverage_rate_mean", 0.0) or 0.0) >= 0.99
+        and float(diagnostic.get("best_hard_risk_violation_count", 0.0) or 0.0) <= 0.0
+    )
+
+
+def _stage19_preflight_semantics_are_clean(payload: dict[str, Any]) -> bool:
+    readiness = payload.get("stage20_readiness")
+    target = payload.get("practical_target_selection")
+    critic = payload.get("critic_target_readiness")
+    return (
+        payload.get("status") == "passed"
+        and payload.get("oracle_target_feasible") is True
+        and payload.get("primary_target_selected") is True
+        and payload.get("xunce_checkpoint_advantage_established") is False
+        and payload.get("stage20_authorized") is False
+        and payload.get("training_or_release_authorized") is False
+        and isinstance(readiness, dict)
+        and readiness.get("authorized") is False
+        and isinstance(target, dict)
+        and target.get("primary_target_feasible") is True
+        and target.get("primary_budget_passed") is True
+        and isinstance(critic, dict)
+        and critic.get("critic_target_ready") is True
+    )
+
+
+def _stage18_7_results_are_valid(payload: dict[str, Any]) -> bool:
+    rows = payload.get("candidate_count_results")
+    if not isinstance(rows, list):
+        return False
+    expected = {(6, 48), (12, 96), (24, 192), (36, 288)}
+    observed: set[tuple[int, int]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return False
+        if row.get("schema_version") != "xunce-stage18-7-candidate-count-scaling-result/v1":
+            return False
+        try:
+            count = int(row.get("candidate_count"))
+            pool = int(row.get("proposal_pool_limit"))
+            expected_pool = int(row.get("expected_proposal_pool_limit", pool))
+        except (TypeError, ValueError):
+            return False
+        if (count, pool) not in expected or expected_pool != pool:
+            return False
+        observed.add((count, pool))
+        if row.get("stage19_authorized") is not False:
+            return False
+        if row.get("boundary_flags_all_false") is False:
+            return False
+        route = row.get("stage18_6_next_required_change")
+        if route is not None and route not in STAGE18_6_ALLOWED_ROUTES:
+            return False
+        profile_hash = row.get("profile_hash")
+        if profile_hash is not None and profile_hash != payload.get("profile_hash"):
+            return False
+    return observed == expected
 
 
 def _read_first_json(root: Path, filenames: tuple[str, ...], missing: list[str], reason_code: str) -> dict[str, Any]:
@@ -605,7 +1375,7 @@ def _root_consistency_reasons(
 
 def _same_path(value: Any, expected: Path) -> bool:
     if not isinstance(value, str) or not value:
-        return True
+        return False
     return Path(value).resolve() == expected.resolve()
 
 
@@ -633,9 +1403,24 @@ def _candidate_validity_status(
     return "partial"
 
 
-def _comparison_verdict(*, evidence_status: str, model: dict[str, Any], coverage: dict[str, Any]) -> str:
+def _comparison_verdict(
+    *,
+    evidence_status: str,
+    model: dict[str, Any],
+    coverage: dict[str, Any],
+    stage18_5_summary: dict[str, Any],
+    stage18_9_summary: dict[str, Any],
+) -> str:
     if evidence_status != "passed":
         return "inconclusive"
+    stage18_9 = stage18_9_summary.get("summary") if isinstance(stage18_9_summary, dict) else None
+    if isinstance(stage18_9, dict) and stage18_9.get("trajectory_guard_passed") is True:
+        return "xunce_advantage_established"
+    stage18_5 = stage18_5_summary.get("summary") if isinstance(stage18_5_summary, dict) else None
+    if not isinstance(stage18_5, dict):
+        return "xunce_advantage_not_established"
+    if stage18_5.get("stage19_authorized") is not True:
+        return "xunce_advantage_not_established"
     if model.get("xunce_candidate_advantage_established") is True or coverage.get("xunce_coverage_advantage_established") is True:
         return "xunce_advantage_established"
     return "xunce_advantage_not_established"
@@ -653,11 +1438,34 @@ def _overall_conclusion(*, evidence_status: str, candidate_validity_status: str,
     return "stage18_comparison_inconclusive"
 
 
-def _next_required_change(*, missing: list[str], blocking: list[str], comparison_verdict: str) -> str:
+def _next_required_change(
+    *,
+    missing: list[str],
+    blocking: list[str],
+    comparison_verdict: str,
+    stage18_5_route: str | None = None,
+    stage18_6_route: str | None = None,
+    stage18_7_route: str | None = None,
+    stage18_9_route: str | None = None,
+    stage18_11_route: str | None = None,
+    stage19_route: str | None = None,
+) -> str:
     if "boundary_violation" in blocking:
         return BOUNDARY_REPAIR_NEXT_REQUIRED_CHANGE
     if "stale_or_mixed_stage18_roots" in blocking:
         return ROOT_REPAIR_NEXT_REQUIRED_CHANGE
+    if stage19_route:
+        return stage19_route
+    if stage18_11_route:
+        return stage18_11_route
+    if stage18_9_route:
+        return stage18_9_route
+    if stage18_7_route:
+        return stage18_7_route
+    if stage18_6_route:
+        return stage18_6_route
+    if stage18_5_route:
+        return stage18_5_route
     if "missing_dynamic_frontier_nbv_rollout_comparison" in missing:
         return DYNAMIC_ROLLOUT_NEXT_REQUIRED_CHANGE
     if blocking:
@@ -665,8 +1473,192 @@ def _next_required_change(*, missing: list[str], blocking: list[str], comparison
     if missing:
         return REFRESH_STAGE18_NEXT_REQUIRED_CHANGE
     if comparison_verdict == "xunce_advantage_not_established":
-        return "review_xunce_incumbent_comparison_metrics_or_prepare_stage19_evaluator_preflight"
+        return REVIEW_METRICS_NEXT_REQUIRED_CHANGE
     return REVIEW_METRICS_NEXT_REQUIRED_CHANGE
+
+
+def _stage18_5_attribution_summary(attribution: dict[str, Any]) -> dict[str, Any]:
+    if not attribution:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+        }
+    routing = attribution.get("next_stage_routing", {})
+    guard = attribution.get("guard_evaluation", {})
+    stage19 = attribution.get("stage19_readiness", {})
+    return {
+        "summary": {
+            "status": attribution.get("status"),
+            "evidence_authenticity_gate_passed": attribution.get("evidence_authenticity_gate_passed"),
+            "candidate_validity_gate_passed": attribution.get("candidate_validity_gate_passed"),
+            "guard_passed": guard.get("passed"),
+            "failed_guards": guard.get("failed_guards", []),
+            "primary_next_required_change": routing.get("primary_route", attribution.get("next_required_change")),
+            "stage19_authorized": bool(routing.get("stage19_authorized") is True or stage19.get("authorized") is True),
+            "stage19_readiness": stage19.get("readiness"),
+        },
+        "guard_verdict": "passed" if guard.get("passed") is True else "failed",
+        "primary_next_required_change": routing.get("primary_route", attribution.get("next_required_change")),
+    }
+
+
+def _stage18_6_guard_refinement_summary(guard_refinement: dict[str, Any]) -> dict[str, Any]:
+    if not guard_refinement:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+            "candidate_metric_readiness": None,
+        }
+    routing = guard_refinement.get("next_stage_routing", {})
+    readiness = guard_refinement.get("stage19_readiness", {})
+    candidate_readiness = guard_refinement.get("candidate_metric_readiness", {})
+    return {
+        "summary": {
+            "status": guard_refinement.get("status"),
+            "guard_refinement_passed": guard_refinement.get("guard_refinement_passed"),
+            "counterfactual_reselection_claimed": guard_refinement.get("counterfactual_reselection_claimed"),
+            "candidate_metric_readiness": candidate_readiness,
+            "primary_next_required_change": routing.get("primary_route", guard_refinement.get("next_required_change")),
+            "stage19_authorized": bool(routing.get("stage19_authorized") is True or readiness.get("authorized") is True),
+            "stage19_readiness": readiness.get("readiness"),
+        },
+        "guard_verdict": "passed" if guard_refinement.get("guard_refinement_passed") is True else "failed",
+        "primary_next_required_change": routing.get("primary_route", guard_refinement.get("next_required_change")),
+        "candidate_metric_readiness": candidate_readiness,
+    }
+
+
+def _stage18_7_candidate_count_scaling_summary(candidate_count_scaling: dict[str, Any]) -> dict[str, Any]:
+    if not candidate_count_scaling:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+        }
+    routing = candidate_count_scaling.get("next_stage_routing", {})
+    readiness = candidate_count_scaling.get("stage19_readiness", {})
+    return {
+        "summary": {
+            "status": candidate_count_scaling.get("status"),
+            "sweep_complete_count": candidate_count_scaling.get("sweep_complete_count"),
+            "stage18_6_guard_refinement_passed_count": candidate_count_scaling.get("stage18_6_guard_refinement_passed_count"),
+            "same_candidate_set_guard_clean_advantage_established_count": candidate_count_scaling.get(
+                "same_candidate_set_guard_clean_advantage_established_count"
+            ),
+            "best_guard_clean_candidate_available_rate": candidate_count_scaling.get("best_guard_clean_candidate_available_rate"),
+            "best_xunce_selected_guard_clean_rate": candidate_count_scaling.get("best_xunce_selected_guard_clean_rate"),
+            "best_incumbent_selected_guard_clean_rate": candidate_count_scaling.get("best_incumbent_selected_guard_clean_rate"),
+            "primary_next_required_change": routing.get("primary_route", candidate_count_scaling.get("next_required_change")),
+            "stage19_authorized": bool(routing.get("stage19_authorized") is True or readiness.get("authorized") is True),
+            "stage19_readiness": readiness.get("readiness"),
+        },
+        "guard_verdict": "passed"
+        if candidate_count_scaling.get("stage18_6_guard_refinement_passed_count", 0)
+        and candidate_count_scaling.get("same_candidate_set_guard_clean_advantage_established_count", 0)
+        else "failed",
+        "primary_next_required_change": routing.get("primary_route", candidate_count_scaling.get("next_required_change")),
+    }
+
+
+def _stage18_9_trajectory_risk_reward_summary(trajectory_risk_reward: dict[str, Any]) -> dict[str, Any]:
+    if not trajectory_risk_reward:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+        }
+    routing = trajectory_risk_reward.get("next_stage_routing", {})
+    readiness = trajectory_risk_reward.get("stage19_readiness", {})
+    trajectory_summary = trajectory_risk_reward.get("trajectory_guard_summary", {})
+    boundary_summary = trajectory_risk_reward.get("path_risk_boundary_summary", {})
+    return {
+        "summary": {
+            "status": trajectory_risk_reward.get("status"),
+            "trajectory_guard_passed": trajectory_risk_reward.get("trajectory_guard_passed"),
+            "path_risk_boundary_passed": boundary_summary.get("path_risk_boundary_passed"),
+            "hard_risk_violation_count": boundary_summary.get("hard_risk_violation_count"),
+            "coverage_advantage_established": trajectory_summary.get("coverage_advantage_established"),
+            "path_cost_budget_passed": trajectory_summary.get("path_cost_budget_passed"),
+            "coverage_efficiency_passed": trajectory_summary.get("coverage_efficiency_passed"),
+            "soft_risk_exposure_passed": trajectory_summary.get("soft_risk_exposure_passed"),
+            "candidate_diagnostics": trajectory_risk_reward.get("candidate_diagnostics"),
+            "primary_next_required_change": routing.get("primary_route", trajectory_risk_reward.get("next_required_change")),
+            "stage19_authorized": bool(routing.get("stage19_authorized") is True or readiness.get("authorized") is True),
+            "stage19_readiness": readiness.get("readiness"),
+        },
+        "guard_verdict": "passed" if trajectory_risk_reward.get("trajectory_guard_passed") is True else "failed",
+        "primary_next_required_change": routing.get("primary_route", trajectory_risk_reward.get("next_required_change")),
+    }
+
+
+def _stage18_11_path_cost_weight_calibration_summary(path_cost_weight_calibration: dict[str, Any]) -> dict[str, Any]:
+    if not path_cost_weight_calibration:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+        }
+    routing = path_cost_weight_calibration.get("next_stage_routing", {})
+    readiness = path_cost_weight_calibration.get("stage19_readiness", {})
+    diagnostic = path_cost_weight_calibration.get("diagnostic_rollout_summary", {})
+    return {
+        "summary": {
+            "status": path_cost_weight_calibration.get("status"),
+            "target_final_coverage_rate": path_cost_weight_calibration.get("target_final_coverage_rate"),
+            "best_diagnostic_rollout_candidate_count": path_cost_weight_calibration.get("best_diagnostic_rollout_candidate_count"),
+            "best_diagnostic_rollout_path_cost_weight": path_cost_weight_calibration.get("best_diagnostic_rollout_path_cost_weight"),
+            "best_diagnostic_final_coverage_rate_mean": path_cost_weight_calibration.get("best_diagnostic_final_coverage_rate_mean"),
+            "best_diagnostic_final_coverage_rate_max": path_cost_weight_calibration.get("best_diagnostic_final_coverage_rate_max"),
+            "complete_diagnostic_rollout_count": diagnostic.get("complete_diagnostic_rollout_count") if isinstance(diagnostic, dict) else None,
+            "primary_next_required_change": routing.get("primary_route", path_cost_weight_calibration.get("next_required_change")),
+            "stage19_authorized": bool(routing.get("stage19_authorized") is True or readiness.get("authorized") is True),
+            "stage19_readiness": readiness.get("readiness") if isinstance(readiness, dict) else None,
+        },
+        "guard_verdict": "passed" if path_cost_weight_calibration.get("status") == "passed" else "failed",
+        "primary_next_required_change": routing.get("primary_route", path_cost_weight_calibration.get("next_required_change")),
+    }
+
+
+def _stage19_evaluator_critic_preflight_summary(evaluator_critic_preflight: dict[str, Any]) -> dict[str, Any]:
+    if not evaluator_critic_preflight:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+            "primary_target_candidate_count": None,
+            "primary_target_path_cost_weight": None,
+            "oracle_target_feasible": None,
+            "xunce_checkpoint_advantage_established": None,
+            "training_authorized": None,
+        }
+    routing = evaluator_critic_preflight.get("next_stage_routing", {})
+    readiness = evaluator_critic_preflight.get("stage20_readiness", {})
+    target = evaluator_critic_preflight.get("practical_target_selection", {})
+    critic = evaluator_critic_preflight.get("critic_target_readiness", {})
+    return {
+        "summary": {
+            "status": evaluator_critic_preflight.get("status"),
+            "oracle_target_feasible": evaluator_critic_preflight.get("oracle_target_feasible"),
+            "primary_target_selected": evaluator_critic_preflight.get("primary_target_selected"),
+            "selected_candidate_count": evaluator_critic_preflight.get("selected_candidate_count"),
+            "selected_path_cost_weight": evaluator_critic_preflight.get("selected_path_cost_weight"),
+            "xunce_checkpoint_advantage_established": evaluator_critic_preflight.get("xunce_checkpoint_advantage_established"),
+            "critic_target_ready": critic.get("critic_target_ready") if isinstance(critic, dict) else None,
+            "preference_pair_count": critic.get("preference_pair_count") if isinstance(critic, dict) else None,
+            "primary_next_required_change": routing.get("primary_route", evaluator_critic_preflight.get("next_required_change")),
+            "stage20_authorized": bool(routing.get("stage20_authorized") is True or readiness.get("authorized") is True),
+            "stage20_readiness": readiness.get("readiness") if isinstance(readiness, dict) else None,
+        },
+        "guard_verdict": "passed" if evaluator_critic_preflight.get("status") == "passed" else "failed",
+        "primary_next_required_change": routing.get("primary_route", evaluator_critic_preflight.get("next_required_change")),
+        "primary_target_candidate_count": target.get("selected_candidate_count") if isinstance(target, dict) else None,
+        "primary_target_path_cost_weight": target.get("selected_path_cost_weight") if isinstance(target, dict) else None,
+        "oracle_target_feasible": evaluator_critic_preflight.get("oracle_target_feasible"),
+        "xunce_checkpoint_advantage_established": evaluator_critic_preflight.get("xunce_checkpoint_advantage_established"),
+        "training_authorized": bool(evaluator_critic_preflight.get("training_or_release_authorized") is True),
+    }
 
 
 def _diagnostic_recommendations(diagnostic: list[str]) -> list[str]:
