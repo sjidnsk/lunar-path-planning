@@ -886,3 +886,403 @@ Stage 19 writes `xunce-stage19-evaluator-critic-preflight-summary.json`,
 `stage20_authorized=false`: Stage 20 is preference evidence preparation and
 review, not PPO training, checkpoint publication, default-policy replacement,
 executor connection, or canary launch.
+
+### Stage 20 Reward-Rerank Oracle Imitation Dataset
+
+Stage 20 converts the Stage 19 preference-pair audit into strict teacher-label
+samples for Xunce. A row is trainable only when `baseline_policy=xunce`,
+`same_candidate_set=true`, `hard_risk_clean_pair=true`, and the oracle selected
+a different action from Xunce within the same `candidate_set_hash`.
+Cross-trajectory comparisons, incumbent-only rows, candidate-set mismatches, and
+hard-risk-unclean pairs are excluded and retained only in the exclusion report.
+
+The Stage 20 runner writes
+`xunce-stage20-oracle-imitation-summary.json`,
+`xunce-stage20-oracle-imitation-teacher-samples.jsonl`,
+`xunce-stage20-oracle-imitation-exclusion-report.jsonl`,
+`xunce-stage20-oracle-imitation-dataset-stats.json`,
+`xunce-stage20-oracle-imitation-dry-run-summary.json`,
+`xunce-stage20-next-stage-routing.json`, report, and manifest. Its dry-run uses
+the existing Xunce network/training path for teacher-imitation loss only. It
+does not run PPO and does not save a publishable checkpoint.
+
+If the strict same-candidate teacher sample count is below 24, the dry-run is
+skipped. If it is between 24 and 199, the dry-run may execute, but the route
+remains `collect_more_reward_rerank_same_candidate_preference_evidence`.
+Only at 200 or more trainable samples with a passing dry-run may Stage 20 route
+to `stage20_1_supervised_oracle_imitation_checkpoint_preflight`, and even then
+`stage20_authorized=false`.
+
+### Stage 20.1 Same-Candidate Oracle Imitation Evidence
+
+Stage 20.1 fixes the sample-count blocker exposed by Stage 20. Independent
+oracle and Xunce rollouts quickly diverge, so many Stage 19 preference rows do
+not share the same `candidate_set_hash`. Stage 20.1 therefore collects labels on
+Xunce on-policy states: Xunce still executes its own checkpoint action, while
+the reward-rerank oracle is evaluated on the exact same current cell, covered
+cells hash, and candidate set.
+
+The high-fidelity coverage comparison runner supports
+`--emit-on-policy-oracle-teacher-labels`,
+`--on-policy-oracle-teacher-baseline-policy xunce`, and
+`--on-policy-oracle-teacher-profile <profile>`. It writes
+`xunce-exploration-coverage-on-policy-oracle-teacher-labels.jsonl`; these rows
+are audit labels and do not change Xunce trajectory execution.
+
+The Stage 20.1 runner writes
+`xunce-stage20-1-same-candidate-oracle-imitation-summary.json`,
+`xunce-stage20-1-on-policy-teacher-labels.jsonl`,
+`xunce-stage20-1-teacher-label-exclusion-report.jsonl`,
+`xunce-stage20-1-dataset-stats.json`, routing, report, and manifest. Stage 20
+can merge these labels through
+`--stage20-1-same-candidate-oracle-imitation-root`. Stage 20.1 is still evidence
+collection only: no PPO, no checkpoint publication, no default-policy
+replacement, no executor connection, and no canary launch.
+
+### Stage 21.0 Pure PPO Readiness Audit
+
+Stage 21 starts a separate pure PPO mainline. Oracle-imitation evidence from
+Stage 20/20.1 remains useful as diagnostic signal, but it is not the gate for
+pure PPO. The new contract is:
+
+```text
+Xunce on-policy rollout -> PPO trainable batch -> coverage-first reward ->
+tiny PPO update -> post-update trajectory evaluation -> multi-seed PPO pilot
+```
+
+Stage 21.0 audits the current codebase before any PPO collection or update. It
+checks that the Xunce full network exposes masked logits, probabilities, and a
+value head; that the high-fidelity runner can produce state, candidate sets,
+action masks, coverage/path/risk artifacts; that generic PPO loss and rollout
+transition schemas exist; and that the older PPO smoke path validates old log
+probability and value consistency. It also marks the missing pieces for later
+stages: stochastic Xunce on-policy collector, Xunce-specific PPO batch adapter,
+coverage-first PPO reward profile, post-update trajectory evaluation, and
+multi-seed pilot.
+
+The Stage 21.0 runner is
+`scripts/run_xunce_stage21_0_pure_ppo_readiness_audit.py`. It writes summary,
+capability audit, next-stage routing, report, and manifest under
+`D:\CodexDownloads\lunar-path-planning\stage21_pure_ppo_coverage_first\...`.
+Passing Stage 21.0 routes to
+`implement_stage21_1_xunce_on_policy_ppo_rollout_collector`. It does not run
+PPO, publish a checkpoint, replace default policy, connect executor, or start
+canary traffic.
+
+### Stage 21.1 Xunce On-Policy PPO Rollout Collector
+
+Stage 21.1 implements the first trainable-data boundary for the pure PPO
+mainline. It does not change the high-fidelity evaluator's argmax behavior.
+Instead, a separate collector runner samples Xunce actions from
+`Categorical(logits=masked_logits)` and writes a PPO transition contract with
+`observation`, serialized `xunce_batch`, `action_index`, `old_log_prob`,
+`old_value`, reward, `next_observation`, `done`, and audit `info`.
+
+The sampling mask is stricter than the legacy candidate validity mask:
+`sampling_mask = action_mask & hard_risk_clean_mask`. This preserves the Stage
+18.9 risk-boundary principle: hard-risk paths are not allowed into trainable
+PPO samples and cannot be offset by reward. Full rows remain auditable, but only
+mask-valid, hard-risk-clean, finite reward/log-prob/value transitions are
+trainable.
+
+Stage 21.1 uses canonical v3 as an interim collector reward only. The
+coverage-first reward contract for 99% final coverage is intentionally deferred
+to Stage 21.2. Stage 21.1 still does not run PPO, publish checkpoints, replace
+the default policy, connect a real executor, or start canary traffic.
+
+### Stage 21.2 Coverage-First PPO Reward Contract
+
+Stage 21.2 adds a Stage21-specific reward contract instead of extending
+canonical v3. The profile schema
+`xunce-stage21-coverage-first-ppo-reward-profile/v1` is stored in
+`configs/xunce_stage21_coverage_first_ppo_reward_profile_v1.json`, and the
+computation helper is `model_explorer.policy.coverage_first_reward`.
+
+The fixed component set is:
+`step_coverage_gain_component`, `coverage_progress_component`,
+`final_coverage_bonus_component`, `success_99pct_bonus_component`,
+`path_cost_component`, `soft_risk_component`, `failure_component`, and
+`hard_risk_component`. Terminal final-coverage and 99% success bonuses are only
+active when `done=true`; 40-step rollouts below the 99% target must route to
+horizon or mission-budget scaling rather than being judged by low path cost.
+
+Hard risk remains a boundary, not a tradeable reward term. Hard-risk rows are
+not trainable; if audited, positive coverage components are suppressed or the
+total reward is clamped non-positive. When path cost already includes a risk
+proxy, soft risk is capped to a tiny audit-weighted penalty to avoid double
+counting. Stage 21.2 validates the contract and writes reward evaluation
+artifacts only; it does not run PPO or authorize release.
+
+### Stage 21.3 PPO Batch Validation
+
+Stage 21.3 is the pre-update PPO batch gate. It consumes Stage 21.1 on-policy
+transitions and Stage 21.2 reward evaluations, joins them one-to-one by
+`transition_id`, and writes a trainable batch plus return/advantage and lineage
+audits. The validator rejects blank or duplicate ids, missing or extra reward
+rows, transition/reward `scenario_id`, `step_index`, or `done` mismatches,
+non-trainable reward rows, `hard_risk_rejected` reward rows, negative actions,
+mask-invalid actions, hard-risk mask violations, non-finite old logprob/value,
+reward, return, or advantage, stale old-logprob recomputation, missing
+non-terminal next observations, and malformed episode boundaries.
+
+Episode validation is explicit: each scenario must have unique, monotonic,
+contiguous step indices and exactly one terminal transition, with the terminal
+transition last. Discounted returns and raw advantages are computed per
+scenario. Advantage normalization uses train-split statistics only, and every
+batch row includes `stage21_3_split` so Stage 21.4 can train only on train rows.
+
+The current smoke artifact under
+`D:\CodexDownloads\lunar-path-planning\stage21_pure_ppo_coverage_first\outputs\path_feedback_batch_xunce_stage21_3_ppo_batch_validation_v1`
+passes these gates and routes to `implement_stage21_4_tiny_ppo_update_smoke`.
+Stage 21.3 still does not run PPO, publish checkpoints, replace the default
+policy, connect an executor, or start canary traffic.
+
+### Stage 21.4 Tiny PPO Update Smoke
+
+Stage 21.4 validates the pure-PPO update mechanics for `XunceFullNetworkV1`.
+It is intentionally separate from the generic masked-candidate PPO helper,
+because Xunce requires candidate, edge, memory, context, missing-indicator, and
+action-mask tensors rather than the generic candidate/global feature contract.
+The update recomputes action log probabilities with the Stage 21.1
+`sampling_mask` and `sampling_temperature`, then applies the standard clipped
+PPO objective plus value and entropy terms.
+
+Only Stage 21.3 train-split rows may be consumed. The output checkpoint is
+experimental-only and must include complete Xunce model dimensions in metadata
+so the existing `_load_xunce_checkpoint` path can reload it. Stage 21.4 may
+write `runs_new_ppo_update=true` for this local smoke test, but publication,
+default-policy replacement, executor connection, and canary traffic remain
+forbidden. Any coverage improvement claim is deferred to Stage 21.5
+post-update trajectory evaluation.
+
+### Stage 21.5 Post-Update Offline Trajectory Evaluation
+
+Stage 21.5 compares the Stage 21.4 source checkpoint against the Stage 21.4
+experimental-only checkpoint in a small offline high-fidelity trajectory smoke.
+It does not run another PPO update and does not authorize checkpoint release,
+default-policy replacement, executor connection, or canary traffic.
+
+The runner is
+`scripts/run_xunce_stage21_5_post_update_offline_trajectory_evaluation.py`.
+It runs the same high-fidelity configuration twice, with only the Xunce
+checkpoint and output/work roots changed. The default smoke scope is 2
+scenarios, 4 rollout steps, 36 candidates, and a proposal pool of 288.
+
+Stage 21.5 must compare pre/post Xunce episodes directly. It must not use
+summary `xunce_*_delta_vs_incumbent` fields, because those describe Xunce versus
+incumbent within one run rather than Xunce before versus after the PPO update.
+Instead it reads both `xunce-exploration-coverage-episodes.jsonl` files, filters
+`policy == "xunce"`, verifies matching `scenario_id` sets, and computes deltas
+for final coverage, capped final coverage, coverage AUC, capped coverage AUC,
+new covered cells, path cost, coverage per 100m, soft-risk exposure, hard-risk
+violations, model-inference failures, mask violations, unreachable selections,
+path-planning failures, open-grid fallbacks, and candidate exhaustion.
+It writes `xunce-stage21-5-scenario-trajectory-delta.jsonl` and treats any
+per-scenario coverage/AUC regression as blocking, even when aggregate means do
+not regress.
+
+Routing to `implement_stage21_6_multi_seed_ppo_pilot` is allowed only when both
+final coverage and AUC families do not regress, post-update hard-risk and
+execution-boundary counts remain zero, and Stage 21.4 checkpoint metadata remains
+experimental-only. Because Stage 21.4 currently trains on a tiny smoke batch,
+Stage 21.5 keeps `sample_count_too_low_for_performance_claim=true`; passing it
+is a mechanics and regression signal, not a release-quality performance claim.
+
+### Stage 21.6 Multi-Seed PPO Pilot
+
+Stage 21.6 runs the first conservative multi-seed PPO pilot for the pure-PPO
+mainline. The runner is
+`scripts/run_xunce_stage21_6_multi_seed_ppo_pilot.py`, with config
+`configs/xunce_stage21_6_multi_seed_ppo_pilot_v1.json`. By default it uses
+three seeds, `2101`, `2102`, and `2103`, and keeps the current smoke scope:
+2 scenarios, 4 rollout steps, 36 candidates, and 288 proposal-pool limit.
+
+Each seed reruns the whole Stage21.1 -> Stage21.2 -> Stage21.3 -> Stage21.4 ->
+Stage21.5 chain with its own `sampling_seed`. Stage 21.6 must not reuse one
+batch as multi-seed evidence. The lineage audit records per-seed Stage21.1
+roots, Stage21.3 batch fingerprints, and transition-id fingerprints; duplicates
+route to `repair_stage21_6_seed_lineage_or_batch_reuse`.
+
+The aggregate gate includes mean/std/variance/min/max for final coverage delta
+and coverage-AUC delta, plus the worst seed. It also gates PPO numerical
+stability: KL, entropy, and gradient norms must remain finite and within budget.
+Mean final coverage delta and mean coverage-AUC delta must be strictly positive;
+holding flat is not enough to route to Stage22. Hard risk, model-inference
+failures, mask violations, unreachable selected candidates, path-planning
+failures, and open-grid fallbacks must remain zero.
+
+Stage 21.6 may set `runs_new_ppo_update=true` because it performs local offline
+PPO updates for the pilot. It still must keep `publishes_checkpoint=false`,
+`replaces_default_policy=false`, `connects_real_executor=false`,
+`starts_online_canary=false`, and `canary_traffic_fraction=0.0`. Because the
+default pilot remains small, `sample_count_too_low_for_performance_claim=true`
+prevents treating it as release-quality performance evidence.
+
+### Stage 21.7 Reward / Collector / Advantage / Horizon Repair
+
+Stage 21.7 is the repair stage after a failed Stage 21.6 multi-seed PPO pilot.
+Its runner is
+`scripts/run_xunce_stage21_7_reward_collector_advantage_horizon_repair.py`,
+with config
+`configs/xunce_stage21_7_reward_collector_advantage_horizon_repair_v1.json`.
+
+The stage answers why Stage 21.6 can execute three offline PPO updates while
+final coverage and coverage AUC remain flat. It audits five causes: reward
+signal quality, advantage signal quality, trainable transition count, PPO
+update strength / observable policy shift, and holdout horizon. It derives
+policy shift by joining Stage 21.5 pre/post model-inference rows on scenario,
+step, and candidate-set hash.
+
+Current Stage 21.6 evidence is diagnostic-only: 24 trainable transitions are
+below the 200-transition performance-claim threshold, the holdout covers only
+4 steps, and pre/post policy probabilities move too little to change selected
+actions. Stage 21.7 therefore writes a repaired Stage21.6 smoke config with
+8 scenarios, 10 steps, 3 seeds, 2 PPO epochs, and learning rate `2e-5`, then may
+execute one repaired pilot smoke. The repaired pilot remains experimental
+evidence only: no checkpoint publication, default-policy replacement, executor
+connection, online canary, network change, action-space change, or default A*
+change is authorized.
+
+### Stage 21.8 PPO Update Strength Calibration
+
+Stage 21.8 follows the Stage21.7 repaired pilot when all repaired seeds fail
+with `grad_unstable`. Its runner is
+`scripts/run_xunce_stage21_8_ppo_update_strength_calibration.py`, with config
+`configs/xunce_stage21_8_ppo_update_strength_calibration_v1.json`.
+
+The stage separates two concepts that were easy to conflate: Stage21.4
+`max_grad_norm` clips gradients during the local update, while Stage21.6
+`max_grad_norm` is also used as a stability gate against the recorded
+`pre_clip_grad_norm`. Stage21.8 therefore writes per-combo Stage21.4 and
+Stage21.6 configs, runs a bounded calibration sweep, and reports whether each
+combo is numerically stable, has observable policy shift, and does not regress
+coverage/AUC. Runtime-blocked combos are treated as explicit blockers and are
+not retried by default; retry requires `retry_runtime_blocked_combinations=true`
+or a new `combo_id` / `sweep_work_root`.
+
+Passing Stage21.8 only recommends a repaired Stage21.6 config when the source
+sweep has Stage21.6 `status=passed`, seed stage status, batch fingerprint,
+transition fingerprint, post-clip grad norm, stable gradient/KL/entropy, and
+non-regressing coverage/AUC. It does not authorize formal PPO training,
+checkpoint publication, default-policy replacement, executor connection, online
+canary traffic, network changes, action-space changes, or default A* changes.
+
+### Stage 21.9 Gradient Normalization / Loss Scaling Repair
+
+Stage 21.9 follows Stage21.8 when even the low-learning-rate completed combo
+still has raw `pre_clip_grad_norm` above the Stage21.6 stability gate. The key
+interpretation is that lowering learning rate reduces parameter step size, but
+does not materially reduce the raw gradient produced by the loss. Stage21.9
+therefore repairs the loss and advantage scale rather than continuing to tune
+learning rate blindly.
+
+The stage first audits Stage21.3 train split advantage normalization and then
+reads Stage21.4 loss/gradient artifacts to identify whether policy, value,
+entropy, or total loss dominates the gradient. The default repaired Stage21.4
+config sets `advantage_clip_abs=5.0`,
+`normalize_minibatch_advantages=true`, `loss_scale=0.25`, and
+`value_loss_coefficient=0.1`; it keeps the coverage-first reward target,
+collector, network, action space, and default A* unchanged.
+
+The repaired smoke must be judged from the Stage21.8 sweep result row, not from
+Stage21.4 `status=passed` alone. It must directly check pre-clip gradient, the
+post-clip norm, KL, entropy, parameter delta, observable policy shift,
+coverage/AUC non-regression, and all release/executor/canary boundaries.
+Passing Stage21.9 only routes to another Stage21.6 multi-seed pilot with the
+repaired config. It still does not authorize formal PPO training, checkpoint
+publication, default-policy replacement, executor connection, online canary,
+network changes, action-space changes, or default A* changes.
+
+### Stage 21.10 Stage21.9 Repaired Multi-Seed PPO Pilot
+
+Stage 21.10 runs the next repaired Stage21.6 pilot after Stage21.9 has proven
+that the loss/advantage scale repair brings raw gradients back under the
+Stage21.6 stability gate. The runner is
+`scripts/run_xunce_stage21_10_stage21_9_repaired_multi_seed_ppo_pilot.py`, with
+config `configs/xunce_stage21_10_stage21_9_repaired_multi_seed_ppo_pilot_v1.json`.
+The default Windows config sets `stage21_6_output_subdir=s6` for the nested
+Stage21.6 execution root so high-fidelity dynamic-validation artifact paths stay
+under the legacy 260-character path limit. The Stage21.10 summary records the
+actual nested root in `stage21_6_root`.
+
+The wrapper materializes a new Stage21.4 config instead of reusing the raw
+Stage21.9 config verbatim. It fixes `learning_rate=2e-6`, `epochs=1`,
+`clip_ratio=0.2`, Stage21.4 training `max_grad_norm=1.0`,
+`advantage_clip_abs=5.0`, `normalize_minibatch_advantages=true`,
+`loss_scale=0.25`, and `value_loss_coefficient=0.1`. Stage21.4 `max_grad_norm`
+is the post-clip update limit; Stage21.6/21.10
+`stage21_6_pre_clip_grad_norm_gate=25.0` is the raw pre-clip gradient audit
+gate.
+
+Stage21.10 must not claim improvement from raw Stage21.6 means alone. It also
+reads each seed's Stage21.5 capped final-coverage and capped coverage-AUC
+deltas. Routing to `scale_stage21_ppo_pilot_scenarios_and_horizon` requires
+stable gradients, trusted Stage21.6 lineage, zero hard-risk / execution-boundary
+counts, strictly positive raw mean final coverage and AUC, strictly positive
+capped mean final coverage and AUC, and no worst-seed regression. Otherwise the
+route remains repair-focused, typically
+`repair_stage21_reward_signal_or_advantage_separation`.
+
+This stage may execute local offline PPO updates through Stage21.6, but it is
+still a repaired pilot only. It does not authorize formal PPO training,
+checkpoint publication, default-policy replacement, executor connection, online
+canary traffic, reward-target changes, collector changes, network changes,
+action-space changes, or default A* changes.
+
+Current Stage21.10 evidence completed the repaired three-seed pilot with
+`trainable_transition_count_total=240`, trusted lineage, zero hard-risk /
+execution-boundary counts, and stable gradients
+(`pre_clip_grad_norm_max=2.334965467453003`). However raw and capped final
+coverage / coverage-AUC deltas all remained `0.0`, so the active next route is
+`repair_stage21_reward_signal_or_advantage_separation` rather than a larger PPO
+pilot.
+
+### Stage 21.11 Coverage-Constrained Path-Cost Objective Audit
+
+Stage21.11 is a read-only audit for the Stage21.10 blocker. Its goal is to
+identify whether the no-uplift result comes from the reward objective, return /
+advantage credit assignment, PPO probability shift, or pre/post evaluation
+binding. The audit consumes Stage21.10 and the nested Stage21.6 seed artifacts;
+it does not run another PPO update.
+
+The objective is no longer described as pure coverage-first in isolation. The
+mission target remains final coverage above 99%, but the next reward direction
+must be coverage-constrained path-cost optimization: below 99% coverage, actions
+should still receive strong positive signal for expanding coverage; among
+actions with comparable coverage progress, lower path cost and better
+coverage-per-cost should receive better rank. A low-cost trajectory with poor
+coverage is not a success.
+
+Pre/post probability shift must use strong state binding whenever available:
+`scenario_id + step_index + candidate_set_hash + covered_cells_hash +
+current_cell`. A weaker join can be reported as diagnostic only and cannot be
+used to claim policy behavior changed. Stage21.11 outputs reward separation,
+advantage separation, action-probability shift, objective recommendation,
+recommended Stage21.6 config, routing, report, and manifest artifacts while
+keeping all publish/default-policy/executor/canary fields false.
+
+### Stage 21.12 Coverage-Constrained Reward Profile Repair
+
+Stage21.12 implements the reward-profile repair recommended by Stage21.11. It
+adds `configs/xunce_stage21_coverage_constrained_ppo_reward_profile_v2.json`
+without overwriting the v1 profile. The v2 profile keeps the 99% final coverage
+target as the first success criterion, keeps hard-risk rejection outside the
+positive reward tradeoff, and adds a bounded `coverage_per_cost_component` so
+that path cost matters most when coverage progress is close.
+
+The v2 `coverage_per_cost_component` is computed from
+`coverage_gain / max(path_cost, floor)` and uses a log-bounded component cap.
+This fixes the previous behavior where the coverage-per-cost term could be
+effectively capped by the candidate's own coverage gain and therefore fail to
+prefer lower-cost candidates with nearly equal coverage progress. Soft risk
+remains tiny / audit-weighted when path cost already includes risk proxy.
+
+The Stage21.12 runner
+`scripts/run_xunce_stage21_12_coverage_constrained_reward_profile_repair.py`
+replays existing Stage21.10 transitions with both v1 and v2 profiles, validates
+v1 compatibility with Stage21.2 reward rows, checks advantage correlation on the
+train split, and writes recommended Stage21.2/Stage21.6 configs. It does not run
+PPO. Current evidence passed with v2 reward best-action alignment improving from
+`0.20833333333333334` to `0.29583333333333334`, v2 alignment improvement
+`0.0875`, coverage-priority violation rate `0.020833333333333332`, and the
+route is `run_stage21_13_coverage_constrained_multi_seed_ppo_smoke`.

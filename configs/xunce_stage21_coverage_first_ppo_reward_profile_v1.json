@@ -1,0 +1,46 @@
+{
+  "schema_version": "xunce-stage21-coverage-first-ppo-reward-profile/v1",
+  "profile_id": "xunce-stage21-coverage-first-ppo-reward-v1",
+  "profile_version": "stage21-coverage-first-v1",
+  "target_final_coverage_rate": 0.99,
+  "coverage_cap_rate": 1.0,
+  "horizon_steps": 40,
+  "mission_budget_route_when_below_target": "stage21_12_rollout_horizon_or_mission_budget_scaling_for_99pct_coverage",
+  "weights": {
+    "step_coverage_gain": 4.0,
+    "coverage_progress": 0.5,
+    "final_coverage": 2.0,
+    "success_99pct": 5.0,
+    "path_cost": 0.2,
+    "soft_risk": 0.005,
+    "failure": 1.0,
+    "hard_risk_failure": 5.0
+  },
+  "normalizers": {
+    "coverage_rate_delta": 0.05,
+    "remaining_coverage_gap": 0.99,
+    "final_coverage_rate": 0.99,
+    "path_cost_m": 100.0,
+    "soft_risk_exposure": 25.0
+  },
+  "risk_policy": {
+    "path_cost_includes_risk_proxy": true,
+    "soft_risk_component_mode": "audit_weighted_tiny",
+    "max_soft_risk_to_path_cost_penalty_ratio": 0.1
+  },
+  "hard_risk_policy": {
+    "reject_before_reward": true,
+    "clamp_positive_reward_to_non_positive": true,
+    "failure_floor": -1.0
+  },
+  "component_source_map": {
+    "step_coverage_gain_component": "transition.info.coverage_rate_delta",
+    "coverage_progress_component": "transition.info.final_coverage_rate_after_step",
+    "final_coverage_bonus_component": "terminal transition final coverage",
+    "success_99pct_bonus_component": "terminal transition final coverage >= target_final_coverage_rate",
+    "path_cost_component": "transition.info.path_cost",
+    "soft_risk_component": "transition.info.soft_risk_exposure capped by risk_policy",
+    "failure_component": "transition failure reason",
+    "hard_risk_component": "hard risk rejection signal"
+  }
+}

@@ -1068,6 +1068,67 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
         self.assertFalse(summary["stage19_xunce_checkpoint_advantage_established"])
         self.assertFalse(summary["stage19_training_authorized"])
 
+    def test_pipeline_prefers_valid_stage20_oracle_imitation_dataset_root(self) -> None:
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self._write_complete_evidence()
+        stage18_11_root = self.temp_dir / "stage18_11"
+        stage19_root = self.temp_dir / "stage19"
+        stage20_root = self.temp_dir / "stage20"
+        self._write_stage18_11_path_cost_weight_calibration_summary(stage18_11_root)
+        self._write_stage19_evaluator_critic_preflight_summary(stage19_root, stage18_11_root=stage18_11_root)
+        self._write_stage20_oracle_imitation_dataset_summary(stage20_root, stage19_root=stage19_root)
+        config["stage18_11_path_cost_weight_calibration_root"] = str(stage18_11_root)
+        config["stage19_evaluator_critic_preflight_root"] = str(stage19_root)
+        config["stage20_oracle_imitation_dataset_root"] = str(stage20_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["next_required_change"], "collect_more_reward_rerank_same_candidate_preference_evidence")
+        self.assertEqual(summary["stage20_primary_next_required_change"], "collect_more_reward_rerank_same_candidate_preference_evidence")
+        self.assertEqual(summary["stage20_trainable_pair_count"], 24)
+        self.assertTrue(summary["stage20_dry_run_executed"])
+        self.assertTrue(summary["stage20_dry_run_passed"])
+        self.assertFalse(summary["stage20_checkpoint_training_ready"])
+        self.assertFalse(summary["stage20_training_authorized"])
+
+    def test_pipeline_prefers_valid_stage20_1_same_candidate_oracle_imitation_root(self) -> None:
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self._write_complete_evidence()
+        stage18_11_root = self.temp_dir / "stage18_11"
+        stage19_root = self.temp_dir / "stage19"
+        stage20_root = self.temp_dir / "stage20"
+        stage20_1_root = self.temp_dir / "stage20_1"
+        self._write_stage18_11_path_cost_weight_calibration_summary(stage18_11_root)
+        self._write_stage19_evaluator_critic_preflight_summary(stage19_root, stage18_11_root=stage18_11_root)
+        self._write_stage20_oracle_imitation_dataset_summary(stage20_root, stage19_root=stage19_root)
+        self._write_stage20_1_same_candidate_oracle_imitation_summary(stage20_1_root, stage20_root=stage20_root)
+        config["stage18_11_path_cost_weight_calibration_root"] = str(stage18_11_root)
+        config["stage19_evaluator_critic_preflight_root"] = str(stage19_root)
+        config["stage20_oracle_imitation_dataset_root"] = str(stage20_root)
+        config["stage20_1_same_candidate_oracle_imitation_root"] = str(stage20_1_root)
+        self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        from scripts.xunce_stage18_pipeline import build_stage18_pipeline_summary
+
+        summary = build_stage18_pipeline_summary(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["next_required_change"], "stage20_1_supervised_oracle_imitation_checkpoint_preflight")
+        self.assertEqual(summary["stage20_1_primary_next_required_change"], "stage20_1_supervised_oracle_imitation_checkpoint_preflight")
+        self.assertEqual(summary["stage20_1_trainable_label_count"], 240)
+        self.assertTrue(summary["stage20_1_checkpoint_preflight_ready"])
+        self.assertFalse(summary["stage20_1_training_authorized"])
+
     def _write_config(self) -> None:
         payload = {
             "schema_version": "xunce-stage18-research-evidence-pipeline-config/v1",
@@ -1577,6 +1638,110 @@ class XunceStage18ResearchEvidencePipelineTests(unittest.TestCase):
                 "connects_real_executor": False,
                 "starts_online_canary": False,
                 "runs_new_ppo_update": False,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
+            },
+        )
+
+    def _write_stage20_oracle_imitation_dataset_summary(self, root: Path, *, stage19_root: Path) -> None:
+        self._write_json(
+            root / "xunce-stage20-oracle-imitation-summary.json",
+            {
+                "schema_version": "xunce-stage20-oracle-imitation-summary/v1",
+                "status": "passed",
+                "stage19_evaluator_critic_preflight_root": str(stage19_root.resolve()),
+                "profile_id": "xunce-coverage-cost-risk-boundary-v3",
+                "profile_version": "v3",
+                "profile_hash": "fixture-profile-hash-v3",
+                "teacher_policy": "canonical_reward_rerank_oracle",
+                "teacher_profile_id": "xunce-coverage-cost-risk-boundary-v3-path-cost-w010",
+                "teacher_profile_hash": "teacher-fixture-hash",
+                "trainable_pair_count": 24,
+                "excluded_pair_count": 1896,
+                "dataset_stats": {
+                    "schema_version": "xunce-stage20-oracle-imitation-dataset-stats/v1",
+                    "preference_audit_row_count": 1920,
+                    "trainable_pair_count": 24,
+                    "excluded_pair_count": 1896,
+                    "same_candidate_xunce_pair_count": 24,
+                },
+                "dry_run_summary": {
+                    "schema_version": "xunce-stage20-oracle-imitation-dry-run/v1",
+                    "dry_run_executed": True,
+                    "dry_run_passed": True,
+                    "trainable_sample_count": 24,
+                    "ignored_sample_count": 0,
+                    "teacher_imitation_loss": 0.12,
+                    "teacher_action_accuracy": 0.75,
+                    "reason_codes": [],
+                    "runs_new_ppo_update": False,
+                    "publishes_checkpoint": False,
+                },
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage20-next-stage-routing/v1",
+                    "primary_route": "collect_more_reward_rerank_same_candidate_preference_evidence",
+                    "stage20_authorized": False,
+                    "training_or_release_authorized": False,
+                    "runs_new_ppo_update": False,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "connects_real_executor": False,
+                    "starts_online_canary": False,
+                    "canary_traffic_fraction": 0.0,
+                },
+                "next_required_change": "collect_more_reward_rerank_same_candidate_preference_evidence",
+                "stage20_authorized": False,
+                "training_or_release_authorized": False,
+                "runs_new_ppo_update": False,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "canary_traffic_fraction": 0.0,
+                "real_world_release_approved": False,
+                "real_world_performance_claimed": False,
+            },
+        )
+
+    def _write_stage20_1_same_candidate_oracle_imitation_summary(self, root: Path, *, stage20_root: Path) -> None:
+        self._write_json(
+            root / "xunce-stage20-1-same-candidate-oracle-imitation-summary.json",
+            {
+                "schema_version": "xunce-stage20-1-same-candidate-oracle-imitation-summary/v1",
+                "status": "passed",
+                "stage20_oracle_imitation_dataset_root": str(stage20_root.resolve()),
+                "teacher_policy": "canonical_reward_rerank_oracle",
+                "teacher_profile_id": "xunce-coverage-cost-risk-boundary-v3-path-cost-w010",
+                "teacher_profile_hash": "teacher-fixture-hash",
+                "trainable_label_count": 240,
+                "excluded_label_count": 12,
+                "dataset_stats": {
+                    "schema_version": "xunce-stage20-1-dataset-stats/v1",
+                    "raw_teacher_label_count": 252,
+                    "trainable_label_count": 240,
+                    "excluded_label_count": 12,
+                },
+                "next_stage_routing": {
+                    "schema_version": "xunce-stage20-1-next-stage-routing/v1",
+                    "primary_route": "stage20_1_supervised_oracle_imitation_checkpoint_preflight",
+                    "stage20_authorized": False,
+                    "training_or_release_authorized": False,
+                    "runs_new_ppo_update": False,
+                    "publishes_checkpoint": False,
+                    "replaces_default_policy": False,
+                    "connects_real_executor": False,
+                    "starts_online_canary": False,
+                    "canary_traffic_fraction": 0.0,
+                },
+                "next_required_change": "stage20_1_supervised_oracle_imitation_checkpoint_preflight",
+                "stage20_authorized": False,
+                "training_or_release_authorized": False,
+                "runs_new_ppo_update": False,
+                "publishes_checkpoint": False,
+                "replaces_default_policy": False,
+                "connects_real_executor": False,
+                "starts_online_canary": False,
+                "canary_traffic_fraction": 0.0,
                 "real_world_release_approved": False,
                 "real_world_performance_claimed": False,
             },

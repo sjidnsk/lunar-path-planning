@@ -102,6 +102,7 @@ DYNAMIC_VALIDATION_RESULTS_FILE = "xunce-exploration-coverage-dynamic-validation
 DYNAMIC_VALIDATION_AUDIT_FILE = "xunce-exploration-coverage-dynamic-validation-audit.json"
 PAIRED_DECISION_AUDIT_FILE = "xunce-exploration-coverage-paired-decision-audit.jsonl"
 CANDIDATE_METRIC_AUDIT_FILE = "xunce-exploration-coverage-candidate-metric-audit.jsonl"
+ON_POLICY_ORACLE_TEACHER_LABELS_FILE = "xunce-exploration-coverage-on-policy-oracle-teacher-labels.jsonl"
 MODEL_INFERENCE_FILE = "xunce-exploration-coverage-model-inference.jsonl"
 ROI_BREAKDOWN_FILE = "xunce-exploration-coverage-roi-breakdown.json"
 DECISION_AUDIT_FILE = "xunce-exploration-coverage-decision-audit.json"
@@ -178,6 +179,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--emit-candidate-metric-audit", action="store_true")
     parser.add_argument("--include-canonical-reward-rerank-oracle", action="store_true")
     parser.add_argument("--canonical-reward-rerank-profile")
+    parser.add_argument("--emit-on-policy-oracle-teacher-labels", action="store_true")
+    parser.add_argument("--on-policy-oracle-teacher-baseline-policy")
+    parser.add_argument("--on-policy-oracle-teacher-profile")
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[1]
     overrides = {
@@ -210,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
             "emit_candidate_metric_audit": True if args.emit_candidate_metric_audit else None,
             "include_canonical_reward_rerank_oracle": True if args.include_canonical_reward_rerank_oracle else None,
             "canonical_reward_rerank_profile": args.canonical_reward_rerank_profile,
+            "emit_on_policy_oracle_teacher_labels": True if args.emit_on_policy_oracle_teacher_labels else None,
+            "on_policy_oracle_teacher_baseline_policy": args.on_policy_oracle_teacher_baseline_policy,
+            "on_policy_oracle_teacher_profile": args.on_policy_oracle_teacher_profile,
         }.items()
         if value is not None
     }
@@ -263,6 +270,7 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
         dynamic_validation_rows,
         paired_decision_rows,
         candidate_metric_rows,
+        on_policy_teacher_label_rows,
     ) = _run_coverage_rollouts(
         config,
         source,
@@ -281,6 +289,7 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
         dynamic_validation_rows=dynamic_validation_rows,
         paired_decision_rows=paired_decision_rows,
         candidate_metric_rows=candidate_metric_rows,
+        on_policy_teacher_label_rows=on_policy_teacher_label_rows,
         source=source,
         config=config,
         repo_root=repo_root,
@@ -324,6 +333,12 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
         "artifacts": {key: str(value) for key, value in paths.items()},
         "candidate_metric_audit": str(paths["candidate_metric_audit"]) if config["emit_candidate_metric_audit"] else None,
         "candidate_metric_audit_row_count": len(candidate_metric_rows) if config["emit_candidate_metric_audit"] else 0,
+        "on_policy_oracle_teacher_label_audit": str(paths["on_policy_oracle_teacher_labels"])
+        if config["emit_on_policy_oracle_teacher_labels"]
+        else None,
+        "on_policy_oracle_teacher_label_row_count": len(on_policy_teacher_label_rows)
+        if config["emit_on_policy_oracle_teacher_labels"]
+        else 0,
         "summary_status": summary["status"],
         "next_required_change": summary["next_required_change"],
     }
@@ -338,6 +353,8 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     write_jsonl(paths["paired_decision_audit"], paired_decision_rows)
     if config["emit_candidate_metric_audit"]:
         write_jsonl(paths["candidate_metric_audit"], candidate_metric_rows)
+    if config["emit_on_policy_oracle_teacher_labels"]:
+        write_jsonl(paths["on_policy_oracle_teacher_labels"], on_policy_teacher_label_rows)
     write_jsonl(paths["model_inference"], inference_rows)
     write_json(paths["roi_breakdown"], roi_breakdown)
     write_json(paths["decision_audit"], decision)
@@ -433,6 +450,34 @@ def _load_config(
         normalized["canonical_reward_rerank_profile_id"] = None
         normalized["canonical_reward_rerank_profile_version"] = None
         normalized["canonical_reward_rerank_profile_hash"] = None
+    normalized["emit_on_policy_oracle_teacher_labels"] = _require_bool(
+        payload.get("emit_on_policy_oracle_teacher_labels", False),
+        "emit_on_policy_oracle_teacher_labels",
+    )
+    normalized["on_policy_oracle_teacher_baseline_policy"] = _require_string(
+        payload.get("on_policy_oracle_teacher_baseline_policy", "xunce"),
+        "on_policy_oracle_teacher_baseline_policy",
+    )
+    if normalized["on_policy_oracle_teacher_baseline_policy"] != "xunce":
+        raise ConfigError("on_policy_oracle_teacher_baseline_policy currently supports only xunce")
+    teacher_profile_path = payload.get("on_policy_oracle_teacher_profile")
+    if normalized["emit_on_policy_oracle_teacher_labels"]:
+        if teacher_profile_path is None:
+            teacher_profile_path = rerank_profile_path if rerank_profile_path is not None else canonical_profile_path
+        else:
+            teacher_profile_path = resolve_path(Path(str(teacher_profile_path)), repo_root)
+        teacher_profile = load_canonical_reward_profile(Path(teacher_profile_path))
+        if teacher_profile.profile_version != "v3":
+            raise ConfigError("on_policy_oracle_teacher_profile must use profile_version v3")
+        normalized["on_policy_oracle_teacher_profile"] = str(Path(teacher_profile_path))
+        normalized["on_policy_oracle_teacher_profile_id"] = teacher_profile.profile_id
+        normalized["on_policy_oracle_teacher_profile_version"] = teacher_profile.profile_version
+        normalized["on_policy_oracle_teacher_profile_hash"] = teacher_profile.profile_hash
+    else:
+        normalized["on_policy_oracle_teacher_profile"] = None
+        normalized["on_policy_oracle_teacher_profile_id"] = None
+        normalized["on_policy_oracle_teacher_profile_version"] = None
+        normalized["on_policy_oracle_teacher_profile_hash"] = None
     utility_profile_payload = payload.get("comparison_utility_profiles")
     if utility_profile_payload is None:
         utility_profile_payload = _comparison_utility_profiles_from_canonical(canonical_profile)
@@ -543,6 +588,7 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
         "dynamic_validation_audit": output_root / DYNAMIC_VALIDATION_AUDIT_FILE,
         "paired_decision_audit": output_root / PAIRED_DECISION_AUDIT_FILE,
         "candidate_metric_audit": output_root / CANDIDATE_METRIC_AUDIT_FILE,
+        "on_policy_oracle_teacher_labels": output_root / ON_POLICY_ORACLE_TEACHER_LABELS_FILE,
         "model_inference": output_root / MODEL_INFERENCE_FILE,
         "roi_breakdown": output_root / ROI_BREAKDOWN_FILE,
         "decision_audit": output_root / DECISION_AUDIT_FILE,
@@ -683,6 +729,7 @@ def _run_coverage_rollouts(
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
     scenarios = source["path_feedback"].get("scenarios", [])
     if not isinstance(scenarios, list):
@@ -695,6 +742,7 @@ def _run_coverage_rollouts(
     dynamic_validation_rows: list[dict[str, Any]] = []
     paired_decision_rows: list[dict[str, Any]] = []
     candidate_metric_rows: list[dict[str, Any]] = []
+    on_policy_teacher_label_rows: list[dict[str, Any]] = []
     validation_cache: dict[str, list[dict[str, Any]]] = {}
     for scenario_index, scenario in enumerate(scenarios[: config["required_scenario_count"]]):
         if not isinstance(scenario, dict):
@@ -727,7 +775,17 @@ def _run_coverage_rollouts(
             dynamic_validation_rows.extend(episode.get("dynamic_validation_rows", []))
             paired_decision_rows.extend(episode.get("paired_decision_rows", []))
             candidate_metric_rows.extend(episode.get("candidate_metric_rows", []))
-    return episodes, steps, inference_rows, dynamic_proposals, dynamic_validation_rows, paired_decision_rows, candidate_metric_rows
+            on_policy_teacher_label_rows.extend(episode.get("on_policy_teacher_label_rows", []))
+    return (
+        episodes,
+        steps,
+        inference_rows,
+        dynamic_proposals,
+        dynamic_validation_rows,
+        paired_decision_rows,
+        candidate_metric_rows,
+        on_policy_teacher_label_rows,
+    )
 
 
 def _run_policy_episode(
@@ -787,6 +845,7 @@ def _run_policy_episode(
     dynamic_validation_rows: list[dict[str, Any]] = []
     paired_decision_rows: list[dict[str, Any]] = []
     candidate_metric_rows: list[dict[str, Any]] = []
+    on_policy_teacher_label_rows: list[dict[str, Any]] = []
 
     for step_index in range(config["rollout_steps"]):
         cell_before = current_cell
@@ -1051,6 +1110,28 @@ def _run_policy_episode(
         if selected_cost is not None and path_cost_total + float(selected_cost) > float(config["path_budget_m"]):
             step_reasons.append("path_budget_exhausted")
 
+        teacher_label_row = _on_policy_oracle_teacher_label_row(
+            scenario_id=scenario_id,
+            roi_group=roi_group,
+            split=split,
+            policy_name=policy_name,
+            step_index=step_index,
+            current_cell=cell_before,
+            covered_cells=covered_cells,
+            covered_cells_hash_value=covered_hash,
+            candidate_set_id=candidate_set_id,
+            candidate_set_hash_value=candidate_set_hash_value,
+            candidates=candidates,
+            xunce_selected_index=selected_index,
+            true_model_inference_executed=true_model_inference_executed,
+            model_inference_failure=model_inference_failure,
+            detail_payload=detail_payload,
+            coverage_denominator=float(denominator),
+            config=config,
+        )
+        if teacher_label_row is not None:
+            on_policy_teacher_label_rows.append(teacher_label_row)
+
         policy_execution_ready = oracle_rollout_executed if is_oracle_policy else true_model_inference_executed
         executed = (
             policy_execution_ready
@@ -1308,6 +1389,7 @@ def _run_policy_episode(
         "dynamic_validation_rows": dynamic_validation_rows,
         "paired_decision_rows": paired_decision_rows,
         "candidate_metric_rows": candidate_metric_rows,
+        "on_policy_teacher_label_rows": on_policy_teacher_label_rows,
     }
 
 
@@ -1527,6 +1609,7 @@ def _coverage_comparison_audit(
     dynamic_validation_rows: list[dict[str, Any]],
     paired_decision_rows: list[dict[str, Any]],
     candidate_metric_rows: list[dict[str, Any]],
+    on_policy_teacher_label_rows: list[dict[str, Any]],
     source: dict[str, Any],
     config: dict[str, Any],
     repo_root: Path,
@@ -1734,6 +1817,9 @@ def _coverage_comparison_audit(
         "candidate_set_hash_mismatch_count": _candidate_set_hash_mismatch_count(steps),
         "paired_decision_audit_row_count": len(paired_decision_rows),
         "candidate_metric_audit_row_count": len(candidate_metric_rows) if config["emit_candidate_metric_audit"] else 0,
+        "on_policy_oracle_teacher_label_row_count": len(on_policy_teacher_label_rows)
+        if config["emit_on_policy_oracle_teacher_labels"]
+        else 0,
         "candidate_generation_effect_scope": (
             "dynamic_generator_plus_policy_closed_loop"
             if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process"
@@ -2488,6 +2574,16 @@ def _summary(
         "canonical_reward_rerank_profile_id": config["canonical_reward_rerank_profile_id"],
         "canonical_reward_rerank_profile_version": config["canonical_reward_rerank_profile_version"],
         "canonical_reward_rerank_profile_hash": config["canonical_reward_rerank_profile_hash"],
+        "emit_on_policy_oracle_teacher_labels": config["emit_on_policy_oracle_teacher_labels"],
+        "on_policy_oracle_teacher_label_audit": str(paths["on_policy_oracle_teacher_labels"])
+        if config["emit_on_policy_oracle_teacher_labels"]
+        else None,
+        "on_policy_oracle_teacher_label_row_count": comparison["on_policy_oracle_teacher_label_row_count"],
+        "on_policy_oracle_teacher_baseline_policy": config["on_policy_oracle_teacher_baseline_policy"],
+        "on_policy_oracle_teacher_profile": config["on_policy_oracle_teacher_profile"],
+        "on_policy_oracle_teacher_profile_id": config["on_policy_oracle_teacher_profile_id"],
+        "on_policy_oracle_teacher_profile_version": config["on_policy_oracle_teacher_profile_version"],
+        "on_policy_oracle_teacher_profile_hash": config["on_policy_oracle_teacher_profile_hash"],
         "canonical_guard_thresholds": config["canonical_guard_thresholds"],
         "comparison_utility_profiles_diagnostic_only": config["comparison_utility_profiles_diagnostic_only"],
         "stage19_readiness_source": config["stage19_readiness_source"],
@@ -2979,6 +3075,174 @@ def _selected_candidate_metrics(candidates: list[dict[str, Any]], selected_index
         "selected_risk": _finite_or_none(candidate.get("risk")),
         "selected_expected_new_coverage_cell_count": _finite_or_none(candidate.get("expected_new_coverage_cell_count")),
         "selected_roi_weighted_coverage_delta": _finite_or_none(candidate.get("roi_weighted_coverage_delta")),
+    }
+
+
+def _teacher_label_candidate_metrics(
+    candidate: dict[str, Any] | None,
+    *,
+    candidate_index: Any,
+    current_cell: tuple[int, int],
+    covered_cells: set[tuple[int, int]],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    if candidate is None:
+        return {}
+    cell = _cell_tuple(_candidate_cell(candidate))
+    coverage_count = 0
+    if cell is not None:
+        coverage_count = len(
+            _coverage_cells(
+                start=current_cell,
+                end=cell,
+                radius=int(config["coverage_radius_cells"]),
+                mode=str(config["coverage_metric_mode"]),
+            )
+            - covered_cells
+        )
+    path_cost = _candidate_cost(candidate)
+    risk = _finite_or_none(candidate.get("risk"))
+    risk_cost_weighted = None
+    if path_cost is not None and risk is not None:
+        risk_cost_weighted = float(path_cost) * float(risk)
+    return {
+        "candidate_index": _int_value(candidate_index),
+        "candidate_cell": list(cell) if cell is not None else None,
+        "new_covered_cell_count": int(coverage_count),
+        "expected_new_coverage_cell_count": int(coverage_count),
+        "roi_weighted_coverage_delta": _finite_or_none(candidate.get("roi_weighted_coverage_delta")),
+        "path_cost": path_cost,
+        "risk": risk,
+        "risk_proxy": risk,
+        "risk_cost_weighted": risk_cost_weighted,
+        "soft_risk_exposure": _candidate_soft_risk_exposure(candidate),
+        "path_risk_exposure": _candidate_soft_risk_exposure(candidate),
+        "path_risk_peak": _finite_or_none(candidate.get("path_risk_peak")),
+        "path_allowed_by_risk": candidate.get("path_allowed_by_risk"),
+        "hard_risk_flags": list(candidate.get("hard_risk_flags") or []),
+        "hard_risk_violation": _candidate_hard_risk_violation(candidate),
+        "risk_source": str(candidate.get("risk_source") or candidate.get("risk_proxy_source") or "offline_proxy"),
+    }
+
+
+def _on_policy_oracle_teacher_label_row(
+    *,
+    scenario_id: str,
+    roi_group: str,
+    split: Any,
+    policy_name: str,
+    step_index: int,
+    current_cell: tuple[int, int],
+    covered_cells: set[tuple[int, int]],
+    covered_cells_hash_value: str,
+    candidate_set_id: str,
+    candidate_set_hash_value: str,
+    candidates: list[dict[str, Any]],
+    xunce_selected_index: Any,
+    true_model_inference_executed: bool,
+    model_inference_failure: bool,
+    detail_payload: dict[str, Any],
+    coverage_denominator: float,
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not config.get("emit_on_policy_oracle_teacher_labels"):
+        return None
+    if policy_name != str(config.get("on_policy_oracle_teacher_baseline_policy", "xunce")):
+        return None
+    if policy_name != "xunce":
+        return None
+    if not true_model_inference_executed or model_inference_failure or not bool(detail_payload.get("finite_outputs")):
+        return None
+    teacher_config = dict(config)
+    teacher_config["canonical_reward_rerank_profile"] = config["on_policy_oracle_teacher_profile"]
+    teacher_detail = _oracle_policy_detail(
+        CANONICAL_REWARD_RERANK_ORACLE,
+        candidates,
+        current_cell=current_cell,
+        covered_cells=covered_cells,
+        coverage_denominator=coverage_denominator,
+        config=teacher_config,
+    )
+    teacher_index = teacher_detail.get("selected_action_index")
+    xunce_candidate = _candidate_at(candidates, xunce_selected_index)
+    teacher_candidate = _candidate_at(candidates, teacher_index)
+    xunce_metrics = _teacher_label_candidate_metrics(
+        xunce_candidate,
+        candidate_index=xunce_selected_index,
+        current_cell=current_cell,
+        covered_cells=covered_cells,
+        config=config,
+    )
+    teacher_metrics = _teacher_label_candidate_metrics(
+        teacher_candidate,
+        candidate_index=teacher_index,
+        current_cell=current_cell,
+        covered_cells=covered_cells,
+        config=config,
+    )
+    xunce_coverage = _float_default(xunce_metrics.get("new_covered_cell_count"))
+    teacher_coverage = _float_default(teacher_metrics.get("new_covered_cell_count"))
+    xunce_cost = _finite_or_none(xunce_metrics.get("path_cost"))
+    teacher_cost = _finite_or_none(teacher_metrics.get("path_cost"))
+    teacher_higher_coverage = teacher_coverage > xunce_coverage + TOLERANCE
+    equal_coverage = abs(teacher_coverage - xunce_coverage) <= TOLERANCE
+    teacher_lower_cost = (
+        teacher_cost is not None
+        and xunce_cost is not None
+        and teacher_cost < xunce_cost - TOLERANCE
+    )
+    teacher_acceptable_cost = (
+        teacher_cost is not None
+        and xunce_cost is not None
+        and teacher_cost <= max(xunce_cost, TOLERANCE) * 1.25 + TOLERANCE
+    )
+    if teacher_higher_coverage and teacher_acceptable_cost:
+        sample_weight = 1.0
+    elif equal_coverage and teacher_lower_cost:
+        sample_weight = 0.5
+    else:
+        sample_weight = 0.0
+    hard_risk_clean_pair = bool(
+        xunce_candidate is not None
+        and teacher_candidate is not None
+        and not _candidate_hard_risk_violation(xunce_candidate)
+        and not _candidate_hard_risk_violation(teacher_candidate)
+    )
+    return {
+        "schema_version": "xunce-on-policy-oracle-teacher-label/v1",
+        "scenario_id": scenario_id,
+        "roi_group": roi_group,
+        "split": split,
+        "step_index": int(step_index),
+        "baseline_policy": "xunce",
+        "teacher_policy": CANONICAL_REWARD_RERANK_ORACLE,
+        "same_candidate_set": True,
+        "candidate_set_id": candidate_set_id,
+        "candidate_set_hash": candidate_set_hash_value,
+        "current_cell": list(current_cell),
+        "covered_cells_hash": covered_cells_hash_value,
+        "teacher_action_index": _int_value(teacher_index),
+        "xunce_action_index": _int_value(xunce_selected_index),
+        "teacher_profile_id": config["on_policy_oracle_teacher_profile_id"],
+        "teacher_profile_version": config["on_policy_oracle_teacher_profile_version"],
+        "teacher_profile_hash": config["on_policy_oracle_teacher_profile_hash"],
+        "teacher_reward_components": teacher_detail.get("reward_components"),
+        "teacher_reward": teacher_detail.get("reward"),
+        "xunce_candidate_metrics": xunce_metrics,
+        "teacher_candidate_metrics": teacher_metrics,
+        "oracle_new_covered_cell_count": teacher_metrics.get("new_covered_cell_count"),
+        "xunce_new_covered_cell_count": xunce_metrics.get("new_covered_cell_count"),
+        "oracle_path_cost": teacher_metrics.get("path_cost"),
+        "xunce_path_cost": xunce_metrics.get("path_cost"),
+        "oracle_soft_risk_exposure": teacher_metrics.get("soft_risk_exposure"),
+        "xunce_soft_risk_exposure": xunce_metrics.get("soft_risk_exposure"),
+        "hard_risk_clean_pair": hard_risk_clean_pair,
+        "teacher_selected_higher_coverage": bool(teacher_higher_coverage),
+        "teacher_selected_lower_or_acceptable_cost": bool(teacher_lower_cost or teacher_acceptable_cost),
+        "sample_weight": sample_weight,
+        "training_signal_type": "teacher_imitation_label",
+        "counterfactual_type": "xunce_on_policy_same_candidate_set_teacher_label",
+        "does_not_change_xunce_action": True,
     }
 
 

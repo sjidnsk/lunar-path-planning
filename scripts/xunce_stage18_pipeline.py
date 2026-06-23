@@ -28,6 +28,10 @@ STAGE18_11_PATH_COST_WEIGHT_SCHEMA_VERSION = "xunce-stage18-11-path-cost-weight-
 STAGE18_11_ROUTING_SCHEMA_VERSION = "xunce-stage18-11-next-stage-routing/v1"
 STAGE19_EVALUATOR_CRITIC_SCHEMA_VERSION = "xunce-stage19-evaluator-critic-preflight-summary/v1"
 STAGE19_ROUTING_SCHEMA_VERSION = "xunce-stage19-next-stage-routing/v1"
+STAGE20_ORACLE_IMITATION_SCHEMA_VERSION = "xunce-stage20-oracle-imitation-summary/v1"
+STAGE20_ROUTING_SCHEMA_VERSION = "xunce-stage20-next-stage-routing/v1"
+STAGE20_1_SAME_CANDIDATE_ORACLE_SCHEMA_VERSION = "xunce-stage20-1-same-candidate-oracle-imitation-summary/v1"
+STAGE20_1_ROUTING_SCHEMA_VERSION = "xunce-stage20-1-next-stage-routing/v1"
 
 ROI_EXPANSION_SUMMARY_FILE = "xunce-high-fidelity-real-map-roi-expansion-summary.json"
 STAGE18I_SUMMARY_FILES = (
@@ -54,6 +58,8 @@ STAGE18_7_CANDIDATE_COUNT_SCALING_SUMMARY_FILE = "xunce-stage18-7-candidate-coun
 STAGE18_9_TRAJECTORY_RISK_REWARD_SUMMARY_FILE = "xunce-stage18-9-trajectory-risk-reward-summary.json"
 STAGE18_11_PATH_COST_WEIGHT_SUMMARY_FILE = "xunce-stage18-11-path-cost-weight-calibration-summary.json"
 STAGE19_EVALUATOR_CRITIC_SUMMARY_FILE = "xunce-stage19-evaluator-critic-preflight-summary.json"
+STAGE20_ORACLE_IMITATION_SUMMARY_FILE = "xunce-stage20-oracle-imitation-summary.json"
+STAGE20_1_SAME_CANDIDATE_ORACLE_SUMMARY_FILE = "xunce-stage20-1-same-candidate-oracle-imitation-summary.json"
 STAGE18_5_ALLOWED_ROUTES = {
     "rerun_xunce_stage18_4e_coverage_comparison_with_required_artifacts",
     "resolve_stage18_5_evidence_review_boundary_rejections",
@@ -105,6 +111,18 @@ STAGE19_ALLOWED_ROUTES = {
     "collect_more_reward_rerank_preference_evidence",
     "stage20_reward_rerank_oracle_preference_dataset_preparation",
 }
+STAGE20_ALLOWED_ROUTES = {
+    "resolve_stage20_oracle_imitation_boundary_rejections",
+    "rerun_stage19_evaluator_critic_preflight",
+    "collect_more_reward_rerank_same_candidate_preference_evidence",
+    "stage20_1_supervised_oracle_imitation_checkpoint_preflight",
+}
+STAGE20_1_ALLOWED_ROUTES = {
+    "run_stage20_1_on_policy_teacher_label_rollout",
+    "rerun_stage20_1_required_inputs",
+    "rerun_stage20_oracle_imitation_dataset_with_expanded_labels",
+    "stage20_1_supervised_oracle_imitation_checkpoint_preflight",
+}
 
 BOUNDARY_FIELDS = tuple(global_99_boundary_defaults()) + (
     "default_policy_replacement_approved",
@@ -144,6 +162,8 @@ class Stage18RootSet:
     trajectory_risk_reward_root: Path | None = None
     path_cost_weight_calibration_root: Path | None = None
     evaluator_critic_preflight_root: Path | None = None
+    oracle_imitation_dataset_root: Path | None = None
+    same_candidate_oracle_imitation_root: Path | None = None
 
 
 MODULE_SPECS: tuple[Stage18ModuleSpec, ...] = (
@@ -272,6 +292,18 @@ def load_stage18_config(
         if not isinstance(evaluator_critic_preflight_root, str) or not evaluator_critic_preflight_root:
             raise ConfigError("stage19_evaluator_critic_preflight_root must be a non-empty path string")
         config["stage19_evaluator_critic_preflight_root"] = str(resolve_path(Path(evaluator_critic_preflight_root), repo_root).resolve())
+    oracle_imitation_dataset_root = merged.get("stage20_oracle_imitation_dataset_root")
+    if oracle_imitation_dataset_root is not None:
+        if not isinstance(oracle_imitation_dataset_root, str) or not oracle_imitation_dataset_root:
+            raise ConfigError("stage20_oracle_imitation_dataset_root must be a non-empty path string")
+        config["stage20_oracle_imitation_dataset_root"] = str(resolve_path(Path(oracle_imitation_dataset_root), repo_root).resolve())
+    same_candidate_oracle_imitation_root = merged.get("stage20_1_same_candidate_oracle_imitation_root")
+    if same_candidate_oracle_imitation_root is not None:
+        if not isinstance(same_candidate_oracle_imitation_root, str) or not same_candidate_oracle_imitation_root:
+            raise ConfigError("stage20_1_same_candidate_oracle_imitation_root must be a non-empty path string")
+        config["stage20_1_same_candidate_oracle_imitation_root"] = str(
+            resolve_path(Path(same_candidate_oracle_imitation_root), repo_root).resolve()
+        )
     return config
 
 
@@ -290,6 +322,8 @@ def root_set_from_config(config: dict[str, Any]) -> Stage18RootSet:
         trajectory_risk_reward_root=Path(config["stage18_9_trajectory_risk_reward_root"]) if config.get("stage18_9_trajectory_risk_reward_root") else None,
         path_cost_weight_calibration_root=Path(config["stage18_11_path_cost_weight_calibration_root"]) if config.get("stage18_11_path_cost_weight_calibration_root") else None,
         evaluator_critic_preflight_root=Path(config["stage19_evaluator_critic_preflight_root"]) if config.get("stage19_evaluator_critic_preflight_root") else None,
+        oracle_imitation_dataset_root=Path(config["stage20_oracle_imitation_dataset_root"]) if config.get("stage20_oracle_imitation_dataset_root") else None,
+        same_candidate_oracle_imitation_root=Path(config["stage20_1_same_candidate_oracle_imitation_root"]) if config.get("stage20_1_same_candidate_oracle_imitation_root") else None,
     )
 
 
@@ -358,6 +392,20 @@ def build_stage18_pipeline_summary(
         "stage19_oracle_target_feasible": diagnostics["stage19_oracle_target_feasible"],
         "stage19_xunce_checkpoint_advantage_established": diagnostics["stage19_xunce_checkpoint_advantage_established"],
         "stage19_training_authorized": diagnostics["stage19_training_authorized"],
+        "stage20_oracle_imitation_dataset_summary": diagnostics["stage20_oracle_imitation_dataset_summary"],
+        "stage20_oracle_imitation_dataset_verdict": diagnostics["stage20_oracle_imitation_dataset_verdict"],
+        "stage20_primary_next_required_change": diagnostics["stage20_primary_next_required_change"],
+        "stage20_trainable_pair_count": diagnostics["stage20_trainable_pair_count"],
+        "stage20_dry_run_executed": diagnostics["stage20_dry_run_executed"],
+        "stage20_dry_run_passed": diagnostics["stage20_dry_run_passed"],
+        "stage20_checkpoint_training_ready": diagnostics["stage20_checkpoint_training_ready"],
+        "stage20_training_authorized": diagnostics["stage20_training_authorized"],
+        "stage20_1_same_candidate_oracle_imitation_summary": diagnostics["stage20_1_same_candidate_oracle_imitation_summary"],
+        "stage20_1_same_candidate_oracle_imitation_verdict": diagnostics["stage20_1_same_candidate_oracle_imitation_verdict"],
+        "stage20_1_primary_next_required_change": diagnostics["stage20_1_primary_next_required_change"],
+        "stage20_1_trainable_label_count": diagnostics["stage20_1_trainable_label_count"],
+        "stage20_1_checkpoint_preflight_ready": diagnostics["stage20_1_checkpoint_preflight_ready"],
+        "stage20_1_training_authorized": diagnostics["stage20_1_training_authorized"],
         "comparison_metric_summary": diagnostics["comparison_metric_summary"],
         "coverage_delta_distribution": diagnostics["coverage_delta_distribution"],
         "cost_delta_distribution": diagnostics["cost_delta_distribution"],
@@ -395,6 +443,8 @@ def load_stage18_evidence(roots: Stage18RootSet) -> dict[str, Any]:
     trajectory_risk_reward, stage18_9_blocking = _read_stage18_9_trajectory_risk_reward(roots)
     path_cost_weight_calibration, stage18_11_blocking = _read_stage18_11_path_cost_weight_calibration(roots)
     evaluator_critic_preflight, stage19_blocking = _read_stage19_evaluator_critic_preflight(roots)
+    oracle_imitation_dataset, stage20_blocking = _read_stage20_oracle_imitation_dataset(roots)
+    same_candidate_oracle_imitation, stage20_1_blocking = _read_stage20_1_same_candidate_oracle_imitation(roots)
     return {
         "stage18_1": stage18_1,
         "stage18_2": stage18_2,
@@ -416,6 +466,10 @@ def load_stage18_evidence(roots: Stage18RootSet) -> dict[str, Any]:
         "stage18_11_blocking_reason_codes": stage18_11_blocking,
         "stage19_evaluator_critic_preflight": evaluator_critic_preflight,
         "stage19_blocking_reason_codes": stage19_blocking,
+        "stage20_oracle_imitation_dataset": oracle_imitation_dataset,
+        "stage20_blocking_reason_codes": stage20_blocking,
+        "stage20_1_same_candidate_oracle_imitation": same_candidate_oracle_imitation,
+        "stage20_1_blocking_reason_codes": stage20_1_blocking,
         "missing_reason_codes": unique_sorted(missing),
     }
 
@@ -439,6 +493,8 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
     trajectory_risk_reward = evidence["stage18_9_trajectory_risk_reward"]
     path_cost_weight_calibration = evidence["stage18_11_path_cost_weight_calibration"]
     evaluator_critic_preflight = evidence["stage19_evaluator_critic_preflight"]
+    oracle_imitation_dataset = evidence["stage20_oracle_imitation_dataset"]
+    same_candidate_oracle_imitation = evidence["stage20_1_same_candidate_oracle_imitation"]
 
     if _boundary_violation(*(payload for payload in evidence.values() if isinstance(payload, dict))):
         blocking.append("boundary_violation")
@@ -448,6 +504,8 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
     blocking.extend(evidence.get("stage18_9_blocking_reason_codes", []))
     blocking.extend(evidence.get("stage18_11_blocking_reason_codes", []))
     blocking.extend(evidence.get("stage19_blocking_reason_codes", []))
+    blocking.extend(evidence.get("stage20_blocking_reason_codes", []))
+    blocking.extend(evidence.get("stage20_1_blocking_reason_codes", []))
     if model and model.get("true_model_inference_executed") is not True:
         blocking.append("true_model_inference_not_executed")
     if model and model.get("proxy_selection_used") is True:
@@ -513,6 +571,8 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
     stage18_9_summary = _stage18_9_trajectory_risk_reward_summary(trajectory_risk_reward)
     stage18_11_summary = _stage18_11_path_cost_weight_calibration_summary(path_cost_weight_calibration)
     stage19_summary = _stage19_evaluator_critic_preflight_summary(evaluator_critic_preflight)
+    stage20_summary = _stage20_oracle_imitation_dataset_summary(oracle_imitation_dataset)
+    stage20_1_summary = _stage20_1_same_candidate_oracle_imitation_summary(same_candidate_oracle_imitation)
     comparison_verdict = _comparison_verdict(
         evidence_status=evidence_status,
         model=model,
@@ -531,6 +591,8 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
     stage18_9_route = stage18_9_summary["primary_next_required_change"]
     stage18_11_route = stage18_11_summary["primary_next_required_change"]
     stage19_route = stage19_summary["primary_next_required_change"]
+    stage20_route = stage20_summary["primary_next_required_change"]
+    stage20_1_route = stage20_1_summary["primary_next_required_change"]
     return {
         "status": "failed" if blocking else "partial" if missing else "passed",
         "evidence_status": evidence_status,
@@ -547,6 +609,8 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
             stage18_9_route=stage18_9_route,
             stage18_11_route=stage18_11_route,
             stage19_route=stage19_route,
+            stage20_route=stage20_route,
+            stage20_1_route=stage20_1_route,
         ),
         "reason_codes": unique_sorted([*missing, *blocking]),
         "missing_reason_codes": unique_sorted(missing),
@@ -580,6 +644,20 @@ def evaluate_stage18_evidence(*, evidence: dict[str, Any], roots: Stage18RootSet
         "stage19_oracle_target_feasible": stage19_summary["oracle_target_feasible"],
         "stage19_xunce_checkpoint_advantage_established": stage19_summary["xunce_checkpoint_advantage_established"],
         "stage19_training_authorized": stage19_summary["training_authorized"],
+        "stage20_oracle_imitation_dataset_summary": stage20_summary["summary"],
+        "stage20_oracle_imitation_dataset_verdict": stage20_summary["guard_verdict"],
+        "stage20_primary_next_required_change": stage20_route,
+        "stage20_trainable_pair_count": stage20_summary["trainable_pair_count"],
+        "stage20_dry_run_executed": stage20_summary["dry_run_executed"],
+        "stage20_dry_run_passed": stage20_summary["dry_run_passed"],
+        "stage20_checkpoint_training_ready": stage20_summary["checkpoint_training_ready"],
+        "stage20_training_authorized": stage20_summary["training_authorized"],
+        "stage20_1_same_candidate_oracle_imitation_summary": stage20_1_summary["summary"],
+        "stage20_1_same_candidate_oracle_imitation_verdict": stage20_1_summary["guard_verdict"],
+        "stage20_1_primary_next_required_change": stage20_1_route,
+        "stage20_1_trainable_label_count": stage20_1_summary["trainable_label_count"],
+        "stage20_1_checkpoint_preflight_ready": stage20_1_summary["checkpoint_preflight_ready"],
+        "stage20_1_training_authorized": stage20_1_summary["training_authorized"],
         "comparison_metric_summary": _comparison_metric_summary(coverage, coverage_aggregate),
         "coverage_delta_distribution": _distribution_summary(coverage_aggregate, "coverage_delta_cells"),
         "cost_delta_distribution": _distribution_summary(coverage_aggregate, "path_cost_delta_m"),
@@ -794,6 +872,66 @@ def build_stage18_command_plan(*, repo_root: Path, roots: Stage18RootSet) -> lis
                 stage19_args,
             )
         )
+    if roots.oracle_imitation_dataset_root is not None:
+        stage20_args = [
+            "--output-root",
+            str(roots.oracle_imitation_dataset_root),
+        ]
+        if roots.evaluator_critic_preflight_root is not None:
+            stage20_args.extend(
+                [
+                    "--extra-arg",
+                    "--stage19-evaluator-critic-preflight-root",
+                    "--extra-arg",
+                    str(roots.evaluator_critic_preflight_root),
+                ]
+            )
+        if roots.same_candidate_oracle_imitation_root is not None:
+            stage20_args.extend(
+                [
+                    "--extra-arg",
+                    "--stage20-1-same-candidate-oracle-imitation-root",
+                    "--extra-arg",
+                    str(roots.same_candidate_oracle_imitation_root),
+                ]
+            )
+        commands.append(
+            (
+                "20",
+                "xunce-stage20-reward-rerank-oracle-imitation-dataset",
+                stage20_args,
+            )
+        )
+    if roots.same_candidate_oracle_imitation_root is not None:
+        stage20_1_args = [
+            "--output-root",
+            str(roots.same_candidate_oracle_imitation_root),
+        ]
+        if roots.evaluator_critic_preflight_root is not None:
+            stage20_1_args.extend(
+                [
+                    "--extra-arg",
+                    "--stage19-evaluator-critic-preflight-root",
+                    "--extra-arg",
+                    str(roots.evaluator_critic_preflight_root),
+                ]
+            )
+        if roots.oracle_imitation_dataset_root is not None:
+            stage20_1_args.extend(
+                [
+                    "--extra-arg",
+                    "--stage20-oracle-imitation-dataset-root",
+                    "--extra-arg",
+                    str(roots.oracle_imitation_dataset_root),
+                ]
+            )
+        commands.append(
+            (
+                "20.1",
+                "xunce-stage20-1-same-candidate-oracle-imitation-evidence",
+                stage20_1_args,
+            )
+        )
     plan: list[dict[str, Any]] = []
     for module, stage_id, args in commands:
         argv = python_script_command(run_stage, "--stage", stage_id, *args)
@@ -823,6 +961,8 @@ def resolved_roots_payload(roots: Stage18RootSet) -> dict[str, str]:
         "stage18_9_trajectory_risk_reward_root": str(roots.trajectory_risk_reward_root) if roots.trajectory_risk_reward_root is not None else None,
         "stage18_11_path_cost_weight_calibration_root": str(roots.path_cost_weight_calibration_root) if roots.path_cost_weight_calibration_root is not None else None,
         "stage19_evaluator_critic_preflight_root": str(roots.evaluator_critic_preflight_root) if roots.evaluator_critic_preflight_root is not None else None,
+        "stage20_oracle_imitation_dataset_root": str(roots.oracle_imitation_dataset_root) if roots.oracle_imitation_dataset_root is not None else None,
+        "stage20_1_same_candidate_oracle_imitation_root": str(roots.same_candidate_oracle_imitation_root) if roots.same_candidate_oracle_imitation_root is not None else None,
     }
 
 
@@ -865,6 +1005,13 @@ def render_stage18_report(summary: dict[str, Any]) -> str:
             f"- stage19_oracle_target_feasible: `{summary['stage19_oracle_target_feasible']}`",
             f"- stage19_xunce_checkpoint_advantage_established: `{summary['stage19_xunce_checkpoint_advantage_established']}`",
             f"- stage19_training_authorized: `{summary['stage19_training_authorized']}`",
+            f"- stage20_oracle_imitation_dataset_verdict: `{summary['stage20_oracle_imitation_dataset_verdict']}`",
+            f"- stage20_primary_next_required_change: `{summary['stage20_primary_next_required_change']}`",
+            f"- stage20_trainable_pair_count: `{summary['stage20_trainable_pair_count']}`",
+            f"- stage20_dry_run_executed: `{summary['stage20_dry_run_executed']}`",
+            f"- stage20_dry_run_passed: `{summary['stage20_dry_run_passed']}`",
+            f"- stage20_checkpoint_training_ready: `{summary['stage20_checkpoint_training_ready']}`",
+            f"- stage20_training_authorized: `{summary['stage20_training_authorized']}`",
             "",
             "## Quantitative Comparison",
             "",
@@ -1154,6 +1301,94 @@ def _read_stage19_evaluator_critic_preflight(roots: Stage18RootSet) -> tuple[dic
     return payload, []
 
 
+def _read_stage20_oracle_imitation_dataset(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.oracle_imitation_dataset_root is None:
+        return {}, []
+    path = roots.oracle_imitation_dataset_root / STAGE20_ORACLE_IMITATION_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage20_oracle_imitation_dataset_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage20_oracle_imitation_dataset_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage20_oracle_imitation_dataset_summary"]
+    if payload.get("schema_version") != STAGE20_ORACLE_IMITATION_SCHEMA_VERSION:
+        return {}, ["invalid_stage20_oracle_imitation_dataset_summary_schema"]
+    if roots.evaluator_critic_preflight_root is not None and payload.get("stage19_evaluator_critic_preflight_root") is not None:
+        if not _same_path(payload.get("stage19_evaluator_critic_preflight_root"), roots.evaluator_critic_preflight_root):
+            return {}, ["stale_stage20_oracle_imitation_dataset_root"]
+    routing = payload.get("next_stage_routing")
+    if not isinstance(routing, dict) or routing.get("schema_version") != STAGE20_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage20_oracle_imitation_dataset_routing_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or route not in STAGE20_ALLOWED_ROUTES:
+        return {}, ["invalid_stage20_oracle_imitation_dataset_route"]
+    if routing.get("stage20_authorized") is not False or payload.get("stage20_authorized") is not False:
+        return {}, ["stage20_authorized_not_false"]
+    if payload.get("training_or_release_authorized") is not False:
+        return {}, ["stage20_training_authorized_not_false"]
+    for field in (
+        "runs_new_ppo_update",
+        "publishes_checkpoint",
+        "replaces_default_policy",
+        "connects_real_executor",
+        "starts_online_canary",
+    ):
+        if payload.get(field) is not False or routing.get(field) is not False:
+            return {}, [f"stage20_{field}_not_false"]
+    if float(payload.get("canary_traffic_fraction", 0.0) or 0.0) != 0.0 or float(routing.get("canary_traffic_fraction", 0.0) or 0.0) != 0.0:
+        return {}, ["stage20_canary_traffic_fraction_not_zero"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    if route == "stage20_1_supervised_oracle_imitation_checkpoint_preflight" and not _stage20_preflight_semantics_are_clean(payload):
+        return {}, ["invalid_stage20_oracle_imitation_preflight_semantics"]
+    return payload, []
+
+
+def _read_stage20_1_same_candidate_oracle_imitation(roots: Stage18RootSet) -> tuple[dict[str, Any], list[str]]:
+    if roots.same_candidate_oracle_imitation_root is None:
+        return {}, []
+    path = roots.same_candidate_oracle_imitation_root / STAGE20_1_SAME_CANDIDATE_ORACLE_SUMMARY_FILE
+    if not path.is_file():
+        return {}, ["missing_stage20_1_same_candidate_oracle_imitation_summary"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, ["invalid_stage20_1_same_candidate_oracle_imitation_summary"]
+    if not isinstance(payload, dict):
+        return {}, ["invalid_stage20_1_same_candidate_oracle_imitation_summary"]
+    if payload.get("schema_version") != STAGE20_1_SAME_CANDIDATE_ORACLE_SCHEMA_VERSION:
+        return {}, ["invalid_stage20_1_same_candidate_oracle_imitation_summary_schema"]
+    routing = payload.get("next_stage_routing")
+    if not isinstance(routing, dict) or routing.get("schema_version") != STAGE20_1_ROUTING_SCHEMA_VERSION:
+        return {}, ["invalid_stage20_1_same_candidate_oracle_imitation_routing_schema"]
+    route = routing.get("primary_route")
+    if not isinstance(route, str) or route not in STAGE20_1_ALLOWED_ROUTES:
+        return {}, ["invalid_stage20_1_same_candidate_oracle_imitation_route"]
+    if routing.get("stage20_authorized") is not False or payload.get("stage20_authorized") is not False:
+        return {}, ["stage20_1_stage20_authorized_not_false"]
+    if payload.get("training_or_release_authorized") is not False:
+        return {}, ["stage20_1_training_authorized_not_false"]
+    for field in (
+        "runs_new_ppo_update",
+        "publishes_checkpoint",
+        "replaces_default_policy",
+        "connects_real_executor",
+        "starts_online_canary",
+    ):
+        if payload.get(field) is not False or routing.get(field) is not False:
+            return {}, [f"stage20_1_{field}_not_false"]
+    if float(payload.get("canary_traffic_fraction", 0.0) or 0.0) != 0.0 or float(routing.get("canary_traffic_fraction", 0.0) or 0.0) != 0.0:
+        return {}, ["stage20_1_canary_traffic_fraction_not_zero"]
+    if roots.oracle_imitation_dataset_root is not None and payload.get("stage20_oracle_imitation_dataset_root") is not None:
+        if not _same_path(payload.get("stage20_oracle_imitation_dataset_root"), roots.oracle_imitation_dataset_root):
+            return {}, ["stale_stage20_1_same_candidate_oracle_imitation_root"]
+    if _boundary_violation(payload):
+        return {}, ["boundary_violation"]
+    return payload, []
+
+
 def _read_json_if_present(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -1281,6 +1516,29 @@ def _stage19_preflight_semantics_are_clean(payload: dict[str, Any]) -> bool:
         and target.get("primary_budget_passed") is True
         and isinstance(critic, dict)
         and critic.get("critic_target_ready") is True
+    )
+
+
+def _stage20_preflight_semantics_are_clean(payload: dict[str, Any]) -> bool:
+    dry_run = payload.get("dry_run_summary")
+    dataset = payload.get("dataset_stats")
+    routing = payload.get("next_stage_routing")
+    return (
+        payload.get("status") == "passed"
+        and payload.get("next_required_change") == "stage20_1_supervised_oracle_imitation_checkpoint_preflight"
+        and int(payload.get("trainable_pair_count", 0) or 0) >= 200
+        and payload.get("stage20_authorized") is False
+        and payload.get("training_or_release_authorized") is False
+        and isinstance(dry_run, dict)
+        and dry_run.get("dry_run_executed") is True
+        and dry_run.get("dry_run_passed") is True
+        and dry_run.get("runs_new_ppo_update") is False
+        and dry_run.get("publishes_checkpoint") is False
+        and isinstance(dataset, dict)
+        and int(dataset.get("trainable_pair_count", 0) or 0) >= 200
+        and isinstance(routing, dict)
+        and routing.get("stage20_authorized") is False
+        and routing.get("training_or_release_authorized") is False
     )
 
 
@@ -1449,11 +1707,17 @@ def _next_required_change(
     stage18_9_route: str | None = None,
     stage18_11_route: str | None = None,
     stage19_route: str | None = None,
+    stage20_route: str | None = None,
+    stage20_1_route: str | None = None,
 ) -> str:
     if "boundary_violation" in blocking:
         return BOUNDARY_REPAIR_NEXT_REQUIRED_CHANGE
     if "stale_or_mixed_stage18_roots" in blocking:
         return ROOT_REPAIR_NEXT_REQUIRED_CHANGE
+    if stage20_1_route:
+        return stage20_1_route
+    if stage20_route:
+        return stage20_route
     if stage19_route:
         return stage19_route
     if stage18_11_route:
@@ -1658,6 +1922,84 @@ def _stage19_evaluator_critic_preflight_summary(evaluator_critic_preflight: dict
         "oracle_target_feasible": evaluator_critic_preflight.get("oracle_target_feasible"),
         "xunce_checkpoint_advantage_established": evaluator_critic_preflight.get("xunce_checkpoint_advantage_established"),
         "training_authorized": bool(evaluator_critic_preflight.get("training_or_release_authorized") is True),
+    }
+
+
+def _stage20_oracle_imitation_dataset_summary(oracle_imitation_dataset: dict[str, Any]) -> dict[str, Any]:
+    if not oracle_imitation_dataset:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+            "trainable_pair_count": None,
+            "dry_run_executed": None,
+            "dry_run_passed": None,
+            "checkpoint_training_ready": None,
+            "training_authorized": None,
+        }
+    routing = oracle_imitation_dataset.get("next_stage_routing", {})
+    dry_run = oracle_imitation_dataset.get("dry_run_summary", {})
+    route = routing.get("primary_route", oracle_imitation_dataset.get("next_required_change"))
+    checkpoint_ready = route == "stage20_1_supervised_oracle_imitation_checkpoint_preflight" and _stage20_preflight_semantics_are_clean(
+        oracle_imitation_dataset
+    )
+    return {
+        "summary": {
+            "status": oracle_imitation_dataset.get("status"),
+            "trainable_pair_count": oracle_imitation_dataset.get("trainable_pair_count"),
+            "excluded_pair_count": oracle_imitation_dataset.get("excluded_pair_count"),
+            "dry_run_executed": dry_run.get("dry_run_executed") if isinstance(dry_run, dict) else None,
+            "dry_run_passed": dry_run.get("dry_run_passed") if isinstance(dry_run, dict) else None,
+            "teacher_imitation_loss": dry_run.get("teacher_imitation_loss") if isinstance(dry_run, dict) else None,
+            "teacher_action_accuracy": dry_run.get("teacher_action_accuracy") if isinstance(dry_run, dict) else None,
+            "primary_next_required_change": route,
+            "stage20_authorized": bool(
+                routing.get("stage20_authorized") is True or oracle_imitation_dataset.get("stage20_authorized") is True
+            ),
+        },
+        "guard_verdict": "passed" if oracle_imitation_dataset.get("status") == "passed" else "failed",
+        "primary_next_required_change": route,
+        "trainable_pair_count": oracle_imitation_dataset.get("trainable_pair_count"),
+        "dry_run_executed": dry_run.get("dry_run_executed") if isinstance(dry_run, dict) else None,
+        "dry_run_passed": dry_run.get("dry_run_passed") if isinstance(dry_run, dict) else None,
+        "checkpoint_training_ready": bool(checkpoint_ready),
+        "training_authorized": bool(oracle_imitation_dataset.get("training_or_release_authorized") is True),
+    }
+
+
+def _stage20_1_same_candidate_oracle_imitation_summary(same_candidate_oracle_imitation: dict[str, Any]) -> dict[str, Any]:
+    if not same_candidate_oracle_imitation:
+        return {
+            "summary": None,
+            "guard_verdict": None,
+            "primary_next_required_change": None,
+            "trainable_label_count": None,
+            "checkpoint_preflight_ready": None,
+            "training_authorized": None,
+        }
+    routing = same_candidate_oracle_imitation.get("next_stage_routing", {})
+    route = routing.get("primary_route", same_candidate_oracle_imitation.get("next_required_change"))
+    checkpoint_ready = (
+        route == "stage20_1_supervised_oracle_imitation_checkpoint_preflight"
+        and same_candidate_oracle_imitation.get("stage20_authorized") is False
+        and same_candidate_oracle_imitation.get("training_or_release_authorized") is False
+        and int(same_candidate_oracle_imitation.get("trainable_label_count", 0) or 0) >= 200
+    )
+    return {
+        "summary": {
+            "status": same_candidate_oracle_imitation.get("status"),
+            "trainable_label_count": same_candidate_oracle_imitation.get("trainable_label_count"),
+            "excluded_label_count": same_candidate_oracle_imitation.get("excluded_label_count"),
+            "primary_next_required_change": route,
+            "stage20_authorized": bool(
+                routing.get("stage20_authorized") is True or same_candidate_oracle_imitation.get("stage20_authorized") is True
+            ),
+        },
+        "guard_verdict": "passed" if same_candidate_oracle_imitation.get("status") == "passed" else "failed",
+        "primary_next_required_change": route,
+        "trainable_label_count": same_candidate_oracle_imitation.get("trainable_label_count"),
+        "checkpoint_preflight_ready": bool(checkpoint_ready),
+        "training_authorized": bool(same_candidate_oracle_imitation.get("training_or_release_authorized") is True),
     }
 
 

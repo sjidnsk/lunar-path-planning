@@ -1,0 +1,15 @@
+{
+  "schema_version": "xunce-stage20-oracle-imitation-config/v1",
+  "min_trainable_pair_count_for_dry_run": 24,
+  "min_trainable_pair_count_for_checkpoint_training": 200,
+  "require_same_candidate_set": true,
+  "require_hard_risk_clean_pair": true,
+  "stage20_authorized": false,
+  "runs_new_ppo_update": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "training_or_release_authorized": false,
+  "canary_traffic_fraction": 0.0
+}

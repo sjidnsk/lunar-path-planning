@@ -1,0 +1,19 @@
+{
+  "schema_version": "xunce-stage21-0-pure-ppo-readiness-audit-config/v1",
+  "stage_id": "xunce-stage21-0-pure-ppo-readiness-audit",
+  "stage_name": "Stage 21.0 Pure PPO Readiness Audit",
+  "stage21_output_base": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first",
+  "canonical_reward_profile": "configs/xunce_canonical_reward_guard_profile_v3.json",
+  "stage18_11_path_cost_weight_calibration_root": "D:/CodexDownloads/lunar-path-planning/stage18_11_path_cost_weight_calibration/outputs/path_feedback_batch_xunce_stage18_11_path_cost_weight_calibration_v1",
+  "stage19_evaluator_critic_preflight_root": "D:/CodexDownloads/lunar-path-planning/stage19_evaluator_critic_preflight/outputs/path_feedback_batch_xunce_stage19_evaluator_critic_preflight_v1",
+  "stage20_oracle_imitation_dataset_root": "D:/CodexDownloads/lunar-path-planning/stage20_reward_rerank_oracle_imitation_dataset/outputs/path_feedback_batch_xunce_stage20_reward_rerank_oracle_imitation_dataset_with_stage20_1_v1",
+  "stage20_1_same_candidate_oracle_imitation_root": "D:/CodexDownloads/lunar-path-planning/stage20_1_same_candidate_oracle_imitation_evidence/outputs/path_feedback_batch_xunce_stage20_1_same_candidate_oracle_imitation_evidence_v1",
+  "min_required_existing_capability_count": 6,
+  "stage21_0_authorized": false,
+  "runs_new_ppo_update": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

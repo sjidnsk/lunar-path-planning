@@ -40,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage18-9-trajectory-risk-reward-root")
     parser.add_argument("--stage18-11-path-cost-weight-calibration-root")
     parser.add_argument("--stage19-evaluator-critic-preflight-root")
+    parser.add_argument("--stage20-oracle-imitation-dataset-root")
+    parser.add_argument("--stage20-1-same-candidate-oracle-imitation-root")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else Path(__file__).resolve().parents[1]
@@ -57,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
         "stage18_9_trajectory_risk_reward_root": args.stage18_9_trajectory_risk_reward_root,
         "stage18_11_path_cost_weight_calibration_root": args.stage18_11_path_cost_weight_calibration_root,
         "stage19_evaluator_critic_preflight_root": args.stage19_evaluator_critic_preflight_root,
+        "stage20_oracle_imitation_dataset_root": args.stage20_oracle_imitation_dataset_root,
+        "stage20_1_same_candidate_oracle_imitation_root": args.stage20_1_same_candidate_oracle_imitation_root,
     }
     try:
         summary = build_stage18_pipeline_summary(

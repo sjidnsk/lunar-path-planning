@@ -246,6 +246,96 @@
       "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage19_evaluator_critic_preflight/outputs/path_feedback_batch_xunce_stage19_evaluator_critic_preflight_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage20-reward-rerank-oracle-imitation-dataset": {
+      "script": "scripts/run_xunce_stage20_reward_rerank_oracle_imitation_dataset.py",
+      "default_config": "configs/xunce_stage20_reward_rerank_oracle_imitation_dataset_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage20_reward_rerank_oracle_imitation_dataset/outputs/path_feedback_batch_xunce_stage20_reward_rerank_oracle_imitation_dataset_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage20-1-same-candidate-oracle-imitation-evidence": {
+      "script": "scripts/run_xunce_stage20_1_same_candidate_oracle_imitation_evidence.py",
+      "default_config": "configs/xunce_stage20_1_same_candidate_oracle_imitation_evidence_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage20_1_same_candidate_oracle_imitation_evidence/outputs/path_feedback_batch_xunce_stage20_1_same_candidate_oracle_imitation_evidence_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-0-pure-ppo-readiness-audit": {
+      "script": "scripts/run_xunce_stage21_0_pure_ppo_readiness_audit.py",
+      "default_config": "configs/xunce_stage21_0_pure_ppo_readiness_audit_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_0_pure_ppo_readiness_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-1-on-policy-ppo-rollout-collector": {
+      "script": "scripts/run_xunce_stage21_1_on_policy_ppo_rollout_collector.py",
+      "default_config": "configs/xunce_stage21_1_on_policy_ppo_rollout_collector_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_1_on_policy_ppo_rollout_collector_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-2-coverage-first-ppo-reward-contract": {
+      "script": "scripts/run_xunce_stage21_2_coverage_first_ppo_reward_contract.py",
+      "default_config": "configs/xunce_stage21_2_coverage_first_ppo_reward_contract_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_2_coverage_first_ppo_reward_contract_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-3-ppo-batch-validation": {
+      "script": "scripts/run_xunce_stage21_3_ppo_batch_validation.py",
+      "default_config": "configs/xunce_stage21_3_ppo_batch_validation_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_3_ppo_batch_validation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-4-tiny-ppo-update-smoke": {
+      "script": "scripts/run_xunce_stage21_4_tiny_ppo_update_smoke.py",
+      "default_config": "configs/xunce_stage21_4_tiny_ppo_update_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_4_tiny_ppo_update_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-5-post-update-offline-trajectory-evaluation": {
+      "script": "scripts/run_xunce_stage21_5_post_update_offline_trajectory_evaluation.py",
+      "default_config": "configs/xunce_stage21_5_post_update_offline_trajectory_evaluation_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_5_post_update_offline_trajectory_evaluation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-6-multi-seed-ppo-pilot": {
+      "script": "scripts/run_xunce_stage21_6_multi_seed_ppo_pilot.py",
+      "default_config": "configs/xunce_stage21_6_multi_seed_ppo_pilot_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_6_multi_seed_ppo_pilot_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-7-reward-collector-advantage-horizon-repair": {
+      "script": "scripts/run_xunce_stage21_7_reward_collector_advantage_horizon_repair.py",
+      "default_config": "configs/xunce_stage21_7_reward_collector_advantage_horizon_repair_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_7_reward_collector_advantage_horizon_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-8-ppo-update-strength-calibration": {
+      "script": "scripts/run_xunce_stage21_8_ppo_update_strength_calibration.py",
+      "default_config": "configs/xunce_stage21_8_ppo_update_strength_calibration_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_8_ppo_update_strength_calibration_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-9-gradient-normalization-loss-scaling-repair": {
+      "script": "scripts/run_xunce_stage21_9_gradient_normalization_loss_scaling_repair.py",
+      "default_config": "configs/xunce_stage21_9_gradient_normalization_loss_scaling_repair_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_9_gradient_normalization_loss_scaling_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-10-stage21-9-repaired-multi-seed-ppo-pilot": {
+      "script": "scripts/run_xunce_stage21_10_stage21_9_repaired_multi_seed_ppo_pilot.py",
+      "default_config": "configs/xunce_stage21_10_stage21_9_repaired_multi_seed_ppo_pilot_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_10_stage21_9_repaired_multi_seed_ppo_pilot_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-11-coverage-constrained-path-cost-objective-audit": {
+      "script": "scripts/run_xunce_stage21_11_coverage_constrained_path_cost_objective_audit.py",
+      "default_config": "configs/xunce_stage21_11_coverage_constrained_path_cost_objective_audit_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_11_coverage_constrained_path_cost_objective_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage21-12-coverage-constrained-reward-profile-repair": {
+      "script": "scripts/run_xunce_stage21_12_coverage_constrained_reward_profile_repair.py",
+      "default_config": "configs/xunce_stage21_12_coverage_constrained_reward_profile_repair_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_12_coverage_constrained_reward_profile_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18-research-evidence-pipeline": {
       "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
       "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",

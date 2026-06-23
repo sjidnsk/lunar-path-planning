@@ -224,6 +224,49 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertTrue(paired_rows)
         self.assertFalse(any(row["executing_policy"] == "canonical_reward_rerank_oracle" for row in paired_rows))
 
+    def test_on_policy_oracle_teacher_labels_do_not_change_xunce_rollout(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        teacher_profile = self.repo_root / "configs" / "xunce_canonical_reward_guard_profile_v3_path_cost_w010.json"
+        self._update_config(
+            canonical_reward_profile=str(self.repo_root / "configs" / "xunce_canonical_reward_guard_profile_v3.json"),
+            on_policy_oracle_teacher_profile=str(teacher_profile),
+            emit_on_policy_oracle_teacher_labels=True,
+            on_policy_oracle_teacher_baseline_policy="xunce",
+            required_scenario_count=2,
+            rollout_steps=1,
+            include_roi_weighted_coverage=True,
+            emit_candidate_metric_audit=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        audit_path = self.output_root / "xunce-exploration-coverage-on-policy-oracle-teacher-labels.jsonl"
+        self.assertEqual(summary["on_policy_oracle_teacher_label_audit"], str(audit_path))
+        self.assertGreater(summary["on_policy_oracle_teacher_label_row_count"], 0)
+        self.assertEqual(summary["on_policy_oracle_teacher_profile_id"], "xunce-coverage-cost-risk-boundary-v3-path-cost-w010")
+        labels = self._read_jsonl(audit_path)
+        steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-steps.jsonl")
+        xunce_steps = [row for row in steps if row["policy"] == "xunce"]
+        self.assertEqual(len(labels), len(xunce_steps))
+        for label, step in zip(labels, xunce_steps):
+            self.assertEqual(label["schema_version"], "xunce-on-policy-oracle-teacher-label/v1")
+            self.assertEqual(label["baseline_policy"], "xunce")
+            self.assertEqual(label["teacher_policy"], "canonical_reward_rerank_oracle")
+            self.assertTrue(label["same_candidate_set"])
+            self.assertEqual(label["candidate_set_hash"], step["candidate_set_hash"])
+            self.assertEqual(label["covered_cells_hash"], step["covered_cells_hash"])
+            self.assertEqual(label["xunce_action_index"], step["selected_action_index"])
+            self.assertEqual(label["teacher_profile_hash"], summary["on_policy_oracle_teacher_profile_hash"])
+            self.assertEqual(label["training_signal_type"], "teacher_imitation_label")
+        self.assertFalse(any(row["policy"] == "canonical_reward_rerank_oracle" for row in steps))
+
     def test_masked_unreachable_candidate_is_not_selected(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,
