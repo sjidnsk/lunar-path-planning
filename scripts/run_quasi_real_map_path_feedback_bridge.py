@@ -5,14 +5,16 @@ import hashlib
 import json
 import sys
 from datetime import datetime, timezone
-from math import isfinite
+from math import atan, degrees, isfinite, sqrt
 from pathlib import Path
 from typing import Any
 
 from git_provenance import git_snapshot as _git_snapshot
+from xunce_platform_contract import apply_stage23_platform_defaults
 
 
 SCHEMA_VERSION = "quasi-real-map-path-feedback-bridge-summary/v1"
+DEFAULT_MAX_TRAVERSABLE_SLOPE_DEG = 30.0
 
 
 def run_quasi_real_map_path_feedback_bridge(
@@ -32,9 +34,11 @@ def run_quasi_real_map_path_feedback_bridge(
     from model_explorer.data.manifest import load_data_manifest, validate_data_manifest
     from model_explorer.data.raster import read_raster_window
 
-    cfg = dict(config or {})
+    cfg = apply_stage23_platform_defaults(dict(config or {}), repo_root=repo)
     top_k = int(cfg.get("top_k", 3))
     max_slices = int(cfg.get("max_slices", 10_000))
+    max_traversable_slope_deg = float(cfg.get("max_traversable_slope_deg", DEFAULT_MAX_TRAVERSABLE_SLOPE_DEG))
+    platform_lineage = dict(cfg.get("platform_lineage") or {})
     output = Path(output_root).resolve()
     output.mkdir(parents=True, exist_ok=True)
     matrix = load_quasi_real_evaluation_manifest(matrix_manifest_path)
@@ -133,6 +137,8 @@ def run_quasi_real_map_path_feedback_bridge(
             data_manifest=data_manifest,
             roi=roi,
             resolution=resolution,
+            max_traversable_slope_deg=max_traversable_slope_deg,
+            platform_contract_lineage=platform_lineage,
         )
         sidecar_path = scenario_root / f"{scenario_id}.path-planner-sidecar.json"
         sidecar_path.write_text(json.dumps(sidecar, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -231,6 +237,10 @@ def run_quasi_real_map_path_feedback_bridge(
         "context_id_missing_count": context_id_missing_count,
         "legacy_identity_fallback_count": 0,
         "git_provenance": {"current": _git_snapshot(repo), "current_matches_sources": True},
+        "platform_contract_id": platform_lineage.get("platform_contract_id"),
+        "platform_contract_hash": platform_lineage.get("platform_contract_hash"),
+        "platform_max_climb_deg": platform_lineage.get("platform_max_climb_deg"),
+        "max_traversable_slope_deg": max_traversable_slope_deg,
     }
     summary_path = output / "quasi-real-map-path-feedback-bridge-summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -247,6 +257,10 @@ def _sidecar_from_roi(
     data_manifest: dict[str, Any],
     roi: Any,
     resolution: float,
+    max_traversable_slope_deg: float = DEFAULT_MAX_TRAVERSABLE_SLOPE_DEG,
+    slope_deg_values: list[list[float]] | tuple[tuple[float, ...], ...] | None = None,
+    slope_source: str = "derived_from_dem",
+    platform_contract_lineage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     dem = [[_finite(value) for value in row] for row in dem_values]
     counts = [[_finite(value) for value in row] for row in count_values]
@@ -254,6 +268,12 @@ def _sidecar_from_roi(
     width = len(dem[0])
     max_count = max((value for row in counts for value in row), default=1.0) or 1.0
     slope = _slope_grid(dem)
+    if slope_deg_values is None:
+        slope_deg = _slope_deg_grid(dem, resolution_m=float(resolution))
+        slope_source_value = "derived_from_dem"
+    else:
+        slope_deg = _coerce_slope_deg_grid(slope_deg_values, width=width, height=height)
+        slope_source_value = str(slope_source or "provided_slope_map")
     max_slope = max((value for row in slope for value in row), default=1.0) or 1.0
     risk_grid: list[list[float]] = []
     confidence_grid: list[list[float]] = []
@@ -280,14 +300,33 @@ def _sidecar_from_roi(
         passable_mask.append(mask_row)
     passable_count = sum(1 for row in passable_mask for value in row if value)
     total_count = max(width * height, 1)
+    blocked_cells = _blocked_cells_from_passable_mask(passable_mask)
+    slope_blocked_cells = _slope_blocked_cells_from_grid(
+        slope_deg,
+        max_traversable_slope_deg=max_traversable_slope_deg,
+    )
+    platform = dict(platform_contract_lineage or {})
+    platform_id = str(platform.get("platform_contract_id") or "agilex_scout_mini_piper")
     return {
         "schema_version": "path-planner-sidecar/v1",
         "cost": cost_grid,
         "passable_mask": passable_mask,
+        "blocked_cells": blocked_cells,
+        "blocked_source_kind": "passable_mask_false",
+        "slope_source": slope_source_value,
+        "slope_blocked_cells": slope_blocked_cells,
+        "slope_blocked_source_kind": "slope_gt_max_traversable_deg",
+        "slope_blocked_obstacle_source_kind": "slope_blocked_as_obstacle_proxy",
+        "platform_contract_id": platform.get("platform_contract_id"),
+        "platform_contract_hash": platform.get("platform_contract_hash"),
+        "platform_max_climb_deg": platform.get("platform_max_climb_deg"),
+        "max_traversable_slope_deg": float(max_traversable_slope_deg),
+        "slope_blocked_cell_count": len(slope_blocked_cells),
         "terrain_layers": {
             "risk": risk_grid,
             "confidence": confidence_grid,
             "dem": dem,
+            "slope_deg": slope_deg,
             "observation_count": counts,
         },
         "metadata": {
@@ -302,11 +341,75 @@ def _sidecar_from_roi(
                 "roi": roi.bounds,
                 "resolution_m": float(resolution),
             },
-            "platform": "yutu2",
+            "platform": platform_id,
+            "platform_contract_id": platform.get("platform_contract_id"),
+            "platform_contract_hash": platform.get("platform_contract_hash"),
+            "platform_max_climb_deg": platform.get("platform_max_climb_deg"),
             "blocked_count": total_count - passable_count,
             "passable_ratio": passable_count / total_count,
+            "slope_source": slope_source_value,
+            "slope_blocked_cell_count": len(slope_blocked_cells),
+            "max_traversable_slope_deg": float(max_traversable_slope_deg),
         },
     }
+
+
+def _coerce_slope_deg_grid(
+    values: list[list[float]] | tuple[tuple[float, ...], ...],
+    *,
+    width: int,
+    height: int,
+) -> list[list[float]]:
+    rows = [[_finite(value) for value in row] for row in values]
+    if len(rows) != height or any(len(row) != width for row in rows):
+        raise ValueError("slope_deg_values shape must match dem_values")
+    return rows
+
+
+def _blocked_cells_from_passable_mask(passable_mask: list[list[bool]]) -> list[list[int]]:
+    cells: list[list[int]] = []
+    for y, row in enumerate(passable_mask):
+        for x, value in enumerate(row):
+            if value is False:
+                cells.append([int(x), int(y)])
+    return cells
+
+
+def _slope_blocked_cells_from_grid(
+    slope_deg: list[list[float]],
+    *,
+    max_traversable_slope_deg: float,
+) -> list[list[int]]:
+    cells: list[list[int]] = []
+    for y, row in enumerate(slope_deg):
+        for x, value in enumerate(row):
+            if value > max_traversable_slope_deg:
+                cells.append([int(x), int(y)])
+    return cells
+
+
+def _slope_deg_grid(values: list[list[float]], *, resolution_m: float) -> list[list[float]]:
+    resolution = float(resolution_m) if isfinite(float(resolution_m)) and float(resolution_m) > 0 else 1.0
+    rows: list[list[float]] = []
+    for y, row in enumerate(values):
+        out: list[float] = []
+        for x, value in enumerate(row):
+            max_angle = 0.0
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    yy = y + dy
+                    xx = x + dx
+                    if 0 <= yy < len(values) and 0 <= xx < len(values[yy]):
+                        distance = resolution * sqrt(float(dx * dx + dy * dy))
+                        if distance <= 0:
+                            continue
+                        grade = abs(float(value) - float(values[yy][xx])) / distance
+                        max_angle = max(max_angle, degrees(atan(grade)))
+            out.append(float(max_angle))
+        rows.append(out)
+    return rows
 
 
 def _slope_grid(values: list[list[float]]) -> list[list[float]]:

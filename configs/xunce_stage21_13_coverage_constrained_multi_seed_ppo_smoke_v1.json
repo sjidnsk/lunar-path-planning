@@ -1,0 +1,21 @@
+{
+  "schema_version": "xunce-stage21-13-coverage-constrained-multi-seed-ppo-smoke-config/v1",
+  "stage_id": "xunce-stage21-13-coverage-constrained-multi-seed-ppo-smoke",
+  "stage_name": "Stage 21.13 Coverage-Constrained Multi-Seed PPO Smoke",
+  "stage21_12_root": "D:/CodexDownloads/lunar-path-planning/stage21_pure_ppo_coverage_first/outputs/path_feedback_batch_xunce_stage21_12_coverage_constrained_reward_profile_repair_v1",
+  "execute_stage21_6": true,
+  "reuse_existing_stage21_6_result": true,
+  "stage21_6_output_subdir": "s6",
+  "stage21_4_clip_grad_norm_limit": 1.0,
+  "stage21_6_pre_clip_grad_norm_gate": 25.0,
+  "max_abs_approx_kl": 0.5,
+  "min_entropy": 0.0,
+  "min_parameter_delta_l2": 1e-12,
+  "stage21_13_authorized": false,
+  "training_or_release_authorized": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

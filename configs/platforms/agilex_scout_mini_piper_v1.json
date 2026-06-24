@@ -1,0 +1,70 @@
+{
+  "schema_version": "xunce-platform-contract/v1",
+  "platform_id": "agilex_scout_mini_piper",
+  "platform_name": "AgileX Scout Mini + PiPER",
+  "source": {
+    "document_title": "SCOUT MINI + PiPER 用户开发指导手册",
+    "source_url": "https://agilexsupport.yuque.com/staff-hso6mo/uvrydi/kxgnsa8bueub7vhh",
+    "parameter_basis": "user-provided page extraction"
+  },
+  "base": {
+    "body_length_m": 0.612,
+    "body_width_m": 0.58,
+    "body_height_m": 0.245,
+    "wheelbase_m": 0.451,
+    "front_track_width_m": 0.49,
+    "rear_track_width_m": 0.49,
+    "track_width_m": 0.49,
+    "curb_weight_kg": 23.0,
+    "ground_clearance_m": 0.115,
+    "max_speed_mps": 3.0,
+    "min_turning_radius_m": 0.0,
+    "max_runtime_h": 8.0,
+    "max_range_km": 10.0,
+    "charge_time_h": 2.0,
+    "battery_voltage_v": 24.0,
+    "battery_capacity_ah": 15.0,
+    "drive_type": "four_wheel_independent_drive",
+    "steering_type": "differential_skid_steer",
+    "suspension_type": "trailing_arm_independent_suspension",
+    "platform_max_climb_deg": 30.0
+  },
+  "terrain_policy": {
+    "max_traversable_slope_deg": 30.0,
+    "slope_sensitivity_thresholds_deg": [
+      20.0,
+      30.0
+    ],
+    "slope_blocked_source_kind": "slope_gt_max_traversable_deg",
+    "slope_blocked_obstacle_source_kind": "slope_blocked_as_obstacle_proxy"
+  },
+  "sensors": {
+    "livox_mid360": {
+      "sensor_id": "livox_mid360",
+      "sensor_type": "lidar",
+      "horizontal_fov_deg": 360.0,
+      "vertical_fov_deg": 59.0,
+      "min_range_m": 0.1,
+      "range_m_at_10pct_reflectivity": 40.0,
+      "point_rate_per_s": 200000,
+      "weight_kg": 0.265,
+      "body_length_m": 0.065,
+      "body_width_m": 0.065,
+      "body_height_m": 0.06
+    },
+    "orbbec_dabai_camera": {
+      "sensor_id": "orbbec_dabai_camera",
+      "sensor_type": "rgbd_camera",
+      "calibration_required": true,
+      "fov_source": "not_provided_in_platform_page",
+      "range_source": "not_provided_in_platform_page"
+    }
+  },
+  "boundary": {
+    "publishes_checkpoint": false,
+    "replaces_default_policy": false,
+    "connects_real_executor": false,
+    "starts_online_canary": false,
+    "canary_traffic_fraction": 0.0
+  }
+}

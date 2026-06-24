@@ -24,6 +24,7 @@ from model_explorer.policy.canonical_reward import compute_canonical_reward_comp
 
 import run_xunce_high_fidelity_exploration_coverage_comparison as hf
 import run_xunce_high_fidelity_real_map_comparison as real_map
+from xunce_theta_viewpoint_candidates import candidate_observation_cells, theta_metadata
 
 
 CONFIG_SCHEMA_VERSION = "xunce-stage21-1-on-policy-ppo-rollout-collector-config/v1"
@@ -359,6 +360,8 @@ def _collect_episode(
         )
         observation_payload = _observation_to_dict(adapter["incumbent_observation"])
         xunce_batch_payload = _xunce_batch_to_dict(adapter["xunce_batch"])
+        observation_payload["candidate_cells"] = candidate_observation_cells(candidates)
+        observation_payload.update(theta_metadata(candidates))
         action_mask = tuple(bool(value) for value in adapter["action_mask"])
         hard_risk_clean_mask = _hard_risk_clean_mask(
             candidates,
@@ -440,11 +443,11 @@ def _collect_episode(
             )
             break
 
-        footprint = hf._coverage_cells(
+        footprint = hf._candidate_coverage_cells(
             start=cell_before,
             end=selected_cell,
-            radius=radius,
-            mode=str(hf_config["coverage_metric_mode"]),
+            candidate=selected_candidate,
+            config=hf_config,
         )
         new_cells = footprint - covered_cells
         revisited_cells = footprint & covered_cells
@@ -491,7 +494,11 @@ def _collect_episode(
                 "step_index": step_index,
                 "current_cell_before": list(cell_before),
                 "selected_cell": list(selected_cell),
-                "candidate_cells": [hf._candidate_cell(candidate) for candidate in candidates],
+                "selected_viewpoint": selected_candidate.get("candidate_viewpoint"),
+                "selected_theta_deg": selected_candidate.get("candidate_theta_deg"),
+                "selected_base_candidate_index": selected_candidate.get("base_candidate_index"),
+                "candidate_cells": candidate_observation_cells(candidates),
+                **theta_metadata(candidates),
                 "candidate_set_id": candidate_set_id,
                 "candidate_set_hash": candidate_set_hash_value,
                 "covered_cells_hash": covered_hash,
@@ -874,6 +881,15 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     )
     config["sampling_seed"] = _nonnegative_int(config.get("sampling_seed", 2101), "sampling_seed")
     config["sampling_temperature"] = _positive_float(config.get("sampling_temperature", 1.0), "sampling_temperature")
+    config["theta_aware_candidate_viewpoints_enabled"] = bool(config.get("theta_aware_candidate_viewpoints_enabled", False))
+    config["theta_bin_count"] = _positive_int(config.get("theta_bin_count", 8), "theta_bin_count")
+    config["theta_step_deg"] = _positive_int(config.get("theta_step_deg", 45), "theta_step_deg")
+    config["sensor_model_id"] = str(config.get("sensor_model_id") or "theta-fov-90-range-radius/v1")
+    config["sensor_fov_deg"] = _positive_float(config.get("sensor_fov_deg", 90.0), "sensor_fov_deg")
+    if config.get("sensor_range_cells") is None:
+        config.pop("sensor_range_cells", None)
+    else:
+        config["sensor_range_cells"] = _nonnegative_int(config.get("sensor_range_cells"), "sensor_range_cells")
     config["max_log_prob_recompute_abs_error"] = _positive_float(
         config.get("max_log_prob_recompute_abs_error", 1.0e-6),
         "max_log_prob_recompute_abs_error",
@@ -897,6 +913,16 @@ def _load_high_fidelity_config(config: dict[str, Any], *, repo_root: Path) -> di
         "emit_on_policy_oracle_teacher_labels": False,
         "emit_candidate_metric_audit": False,
     }
+    for key in (
+        "theta_aware_candidate_viewpoints_enabled",
+        "theta_bin_count",
+        "theta_step_deg",
+        "sensor_model_id",
+        "sensor_fov_deg",
+        "sensor_range_cells",
+    ):
+        if key in config:
+            overrides[key] = config[key]
     return hf._load_config(Path(config["high_fidelity_config"]), repo_root, config_overrides=overrides)
 
 

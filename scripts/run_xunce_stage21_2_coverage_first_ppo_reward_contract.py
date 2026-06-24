@@ -43,6 +43,7 @@ ROUTE_INPUTS = "rerun_stage21_2_required_inputs"
 ROUTE_REPAIR = "repair_stage21_2_coverage_first_reward_contract"
 ROUTE_HORIZON = "stage21_12_rollout_horizon_or_mission_budget_scaling_for_99pct_coverage"
 ROUTE_STAGE21_3 = "implement_stage21_3_ppo_batch_validation"
+THETA_COVERAGE_SOURCE = "theta_aware_sensor_footprint/v1"
 
 BOUNDARY_FIELDS = (
     "stage21_2_authorized",
@@ -113,7 +114,7 @@ def run_xunce_stage21_2_coverage_first_ppo_reward_contract(
         stage21_1_summary = _read_json(stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json")
         transitions = _read_jsonl(stage21_1_root / "xunce-stage21-1-ppo-trainable-batch.jsonl")
         episodes = _read_jsonl(stage21_1_root / "xunce-stage21-1-ppo-rollout-episodes.jsonl")
-        rows = _evaluate_transitions(transitions, profile=profile)
+        rows = _evaluate_transitions(transitions, profile=profile, config=config)
 
     profile_audit = _profile_audit(profile, rows)
     blocking = list(boundary_reasons + input_reasons)
@@ -149,12 +150,27 @@ def run_xunce_stage21_2_coverage_first_ppo_reward_contract(
     )
 
 
-def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any) -> list[dict[str, Any]]:
+def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    config = config or {}
+    require_theta_reward = bool(config.get("require_theta_aware_reward_contract", False))
+    theta_denominator = _positive_or_default(config.get("theta_coverage_denominator_cells"), 1.0)
     rows: list[dict[str, Any]] = []
     for row in transitions:
         info = row.get("info") if isinstance(row.get("info"), dict) else {}
+        theta_reward = _theta_reward_provenance(row, theta_denominator=theta_denominator)
+        if require_theta_reward and theta_reward["theta_aware_reward_contract"]:
+            coverage_rate_delta = theta_reward["coverage_rate_delta"]
+            coverage_per_cost = theta_reward["theta_coverage_gain_per_path_cost"]
+            coverage_source = THETA_COVERAGE_SOURCE
+            point_only_fallback_used = False
+        else:
+            coverage_rate_delta = info.get("coverage_rate_delta")
+            coverage_per_cost = info.get("coverage_per_cost")
+            coverage_source = info.get("coverage_source") or "point_or_path_line_coverage_legacy"
+            point_only_fallback_used = bool(require_theta_reward)
         metrics = {
-            "coverage_rate_delta": info.get("coverage_rate_delta"),
+            "coverage_rate_delta": coverage_rate_delta,
+            "coverage_per_cost": coverage_per_cost,
             "coverage_progress_rate": info.get("final_coverage_rate_after_step"),
             "final_coverage_rate": info.get("final_coverage_rate_after_step"),
             "path_cost_m": info.get("path_cost"),
@@ -177,6 +193,15 @@ def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any) ->
                 "components": result.components,
                 "trainable": result.trainable and bool(row.get("trainable", False)),
                 "reason_codes": result.reason_codes,
+                "theta_aware_reward_contract": bool(require_theta_reward and theta_reward["theta_aware_reward_contract"]),
+                "coverage_source": coverage_source,
+                "candidate_viewpoint": theta_reward["candidate_viewpoint"],
+                "candidate_theta_deg": theta_reward["candidate_theta_deg"],
+                "theta_new_visible_cell_count": theta_reward["theta_new_visible_cell_count"],
+                "theta_coverage_hash": theta_reward["theta_coverage_hash"],
+                "theta_coverage_gain_per_path_cost": theta_reward["theta_coverage_gain_per_path_cost"],
+                "theta_coverage_denominator_cells": theta_denominator,
+                "point_only_reward_fallback_used": point_only_fallback_used,
                 "risk_deduplication_applied": result.risk_deduplication_applied,
                 "profile_id": result.profile_id,
                 "profile_version": result.profile_version,
@@ -207,6 +232,9 @@ def _profile_audit(profile: Any, rows: list[dict[str, Any]]) -> dict[str, Any]:
             if "hard_risk_rejected" in (row.get("reason_codes") or []) and _finite(row.get("reward")) is not None and float(row["reward"]) > 0.0
         ),
         "soft_risk_deduplication_applied_count": sum(1 for row in rows if row.get("risk_deduplication_applied") is True),
+        "theta_aware_reward_contract_count": sum(1 for row in rows if row.get("theta_aware_reward_contract") is True),
+        "theta_reward_contract_missing_count": _theta_reward_contract_missing_count(rows),
+        "point_only_reward_fallback_used_count": sum(1 for row in rows if row.get("point_only_reward_fallback_used") is True),
     }
 
 
@@ -224,6 +252,8 @@ def _contract_rejections(rows: list[dict[str, Any]], profile_audit: dict[str, An
         reasons.append("coverage_first_profile_hash_mismatch")
     if profile_audit["hard_risk_positive_reward_count"] > 0:
         reasons.append("hard_risk_positive_reward_detected")
+    if profile_audit.get("point_only_reward_fallback_used_count", 0) > 0:
+        reasons.append("theta_aware_reward_contract_missing")
     return reasons
 
 
@@ -275,6 +305,10 @@ def _write_outputs(
         "all_profile_hashes_match": profile_audit["all_profile_hashes_match"],
         "hard_risk_positive_reward_count": profile_audit["hard_risk_positive_reward_count"],
         "soft_risk_deduplication_applied_count": profile_audit["soft_risk_deduplication_applied_count"],
+        "theta_aware_reward_contract_required": bool(config.get("require_theta_aware_reward_contract", False)),
+        "theta_aware_reward_contract_count": profile_audit["theta_aware_reward_contract_count"],
+        "theta_reward_contract_missing_count": profile_audit["theta_reward_contract_missing_count"],
+        "point_only_reward_fallback_used_count": profile_audit["point_only_reward_fallback_used_count"],
         "blocking_reason_codes": _unique(blocking_reason_codes),
         "reason_codes": _unique(blocking_reason_codes),
         "stage21_2_authorized": False,
@@ -324,6 +358,8 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
             raise ConfigError(f"{key} must be a non-empty path string")
         config[key] = str(_resolve_path(Path(config[key]), repo_root))
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
+    config["require_theta_aware_reward_contract"] = bool(config.get("require_theta_aware_reward_contract", False))
+    config["theta_coverage_denominator_cells"] = _positive_or_default(config.get("theta_coverage_denominator_cells"), 1.0)
     for field in BOUNDARY_FIELDS:
         config.setdefault(field, False)
     return config
@@ -386,10 +422,93 @@ def _render_report(summary: dict[str, Any]) -> str:
             f"- target_final_coverage_rate: `{summary['target_final_coverage_rate']}`",
             f"- best_final_coverage_rate: `{summary['best_final_coverage_rate']}`",
             f"- hard_risk_positive_reward_count: `{summary['hard_risk_positive_reward_count']}`",
+            f"- theta_aware_reward_contract_required: `{summary.get('theta_aware_reward_contract_required', False)}`",
+            f"- theta_reward_contract_missing_count: `{summary.get('theta_reward_contract_missing_count', 0)}`",
             "",
             "Stage 21.2 validates the reward contract only. It does not run PPO, publish checkpoints, replace default policy, connect a real executor, or start canary traffic.",
         ]
     ) + "\n"
+
+
+def _theta_reward_contract_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if row.get("theta_aware_reward_contract") is not True)
+
+
+def _theta_reward_provenance(row: dict[str, Any], *, theta_denominator: float) -> dict[str, Any]:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    action_index = _int_or_none(row.get("action_index"))
+    viewpoint = _selected_value(info, "candidate_viewpoint", "candidate_viewpoints", action_index)
+    theta_deg = _selected_value(info, "candidate_theta_deg", "candidate_theta_degs", action_index)
+    theta_new = _selected_value(
+        info,
+        "theta_new_visible_cell_count",
+        "theta_new_visible_cell_counts",
+        action_index,
+    )
+    theta_hash = _selected_value(info, "theta_coverage_hash", "theta_coverage_hashes", action_index)
+    theta_cpc = _selected_value(
+        info,
+        "theta_coverage_gain_per_path_cost",
+        "theta_coverage_gain_per_path_costs",
+        action_index,
+    )
+    if viewpoint is None:
+        viewpoint = row.get("candidate_viewpoint")
+    if theta_deg is None:
+        theta_deg = row.get("candidate_theta_deg")
+    if theta_new is None:
+        theta_new = row.get("theta_new_visible_cell_count")
+    if theta_hash is None:
+        theta_hash = row.get("theta_coverage_hash")
+    if theta_cpc is None:
+        theta_cpc = row.get("theta_coverage_gain_per_path_cost")
+    theta_count = _finite(theta_new)
+    if theta_deg is None and isinstance(viewpoint, list) and len(viewpoint) >= 3:
+        theta_deg = viewpoint[2]
+    contract = (
+        _present_viewpoint(viewpoint)
+        and _finite(theta_deg) is not None
+        and theta_count is not None
+        and isinstance(theta_hash, str)
+        and bool(theta_hash.strip())
+    )
+    return {
+        "theta_aware_reward_contract": bool(contract),
+        "candidate_viewpoint": viewpoint,
+        "candidate_theta_deg": int(float(theta_deg)) if _finite(theta_deg) is not None else None,
+        "theta_new_visible_cell_count": int(theta_count) if theta_count is not None else None,
+        "theta_coverage_hash": theta_hash,
+        "theta_coverage_gain_per_path_cost": _finite(theta_cpc),
+        "coverage_rate_delta": (float(theta_count) / theta_denominator) if theta_count is not None else None,
+    }
+
+
+def _selected_value(info: dict[str, Any], singular_key: str, plural_key: str, action_index: int | None) -> Any:
+    if singular_key in info:
+        value = info.get(singular_key)
+        if action_index is not None and isinstance(value, list):
+            if singular_key == "candidate_viewpoint":
+                if value and isinstance(value[0], list) and 0 <= action_index < len(value):
+                    return value[action_index]
+                return value
+            if 0 <= action_index < len(value):
+                return value[action_index]
+        return value
+    values = info.get(plural_key)
+    if action_index is not None and isinstance(values, list) and 0 <= action_index < len(values):
+        return values[action_index]
+    return None
+
+
+def _present_viewpoint(value: Any) -> bool:
+    return isinstance(value, list) and len(value) >= 3
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -452,6 +571,15 @@ def _nonnegative_float(value: Any, field: str) -> float:
     if parsed is None or parsed < 0.0:
         raise ConfigError(f"{field} must be finite and >= 0")
     return parsed
+
+
+def _positive_or_default(value: Any, default: float) -> float:
+    parsed = _finite(value)
+    if parsed is None:
+        return float(default)
+    if parsed <= 0.0:
+        raise ConfigError("theta_coverage_denominator_cells must be finite and > 0")
+    return float(parsed)
 
 
 def _unique(values: list[str]) -> list[str]:

@@ -71,6 +71,55 @@ def test_stage21_2_boundary_flag_hard_fails(tmp_path: Path) -> None:
     assert "runs_new_ppo_update" in summary["blocking_reason_codes"]
 
 
+def test_stage21_2_uses_theta_aware_reward_contract_when_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(tmp_path, theta_reward_contract=True)
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        theta_coverage_denominator_cells=100.0,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-2-reward-contract-evaluation.jsonl")
+    assert summary["status"] == "passed"
+    assert summary["theta_aware_reward_contract_required"] is True
+    assert summary["theta_reward_contract_missing_count"] == 0
+    assert rows[0]["theta_aware_reward_contract"] is True
+    assert rows[0]["coverage_source"] == "theta_aware_sensor_footprint/v1"
+    assert rows[0]["metrics"]["coverage_rate_delta"] == 0.06
+    assert rows[0]["candidate_viewpoint"] == [1, 0, 90]
+    assert rows[0]["point_only_reward_fallback_used"] is False
+
+
+def test_stage21_2_rejects_missing_theta_reward_contract_when_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(tmp_path)
+    config = _write_config(tmp_path, collector_root, require_theta_aware_reward_contract=True)
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage21_2_coverage_first_reward_contract"
+    assert "theta_aware_reward_contract_missing" in summary["blocking_reason_codes"]
+
+
 def test_stage21_2_requires_stage21_1_passed(tmp_path: Path) -> None:
     from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
         run_xunce_stage21_2_coverage_first_ppo_reward_contract,
@@ -96,6 +145,7 @@ def _write_stage21_1_root(
     final_coverage: float = 0.995,
     rollout_steps: int = 4,
     status: str = "passed",
+    theta_reward_contract: bool = False,
 ) -> Path:
     root = tmp_path / "stage21_1"
     root.mkdir()
@@ -117,6 +167,7 @@ def _write_stage21_1_root(
         "scenario_id": "s1",
         "step_index": 0,
         "done": True,
+        "action_index": 0,
         "trainable": True,
         "reward": 0.1,
         "info": {
@@ -127,6 +178,17 @@ def _write_stage21_1_root(
             "hard_risk_violation": False,
         },
     }
+    if theta_reward_contract:
+        transition["info"].update(
+            {
+                "candidate_viewpoints": [[1, 0, 90]],
+                "candidate_theta_deg": [90],
+                "theta_new_visible_cell_counts": [6],
+                "theta_coverage_hashes": ["theta-hash"],
+                "theta_coverage_gain_per_path_costs": [0.6],
+                "coverage_source": "theta_aware_sensor_footprint/v1",
+            }
+        )
     (root / "xunce-stage21-1-ppo-trainable-batch.jsonl").write_text(
         json.dumps(transition, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -142,6 +204,10 @@ def _write_stage21_1_root(
         encoding="utf-8",
     )
     return root
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _write_config(tmp_path: Path, collector_root: Path, **overrides) -> Path:

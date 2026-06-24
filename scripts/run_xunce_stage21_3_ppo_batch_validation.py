@@ -16,6 +16,7 @@ if str(MODEL_EXPLORER_SRC) not in sys.path:
     sys.path.insert(0, str(MODEL_EXPLORER_SRC))
 
 from model_explorer.policy.training import compute_returns_and_advantages
+from xunce_theta_viewpoint_candidates import row_has_theta_viewpoint_contract
 
 
 CONFIG_SCHEMA_VERSION = "xunce-stage21-3-ppo-batch-validation-config/v1"
@@ -290,6 +291,16 @@ def _build_batch(
                 "reward_profile_version": reward_row.get("profile_version"),
                 "reward_profile_hash": reward_row.get("profile_hash"),
                 "reward_components": reward_row.get("components"),
+                "theta_aware_reward_contract": reward_row.get("theta_aware_reward_contract"),
+                "coverage_source": reward_row.get("coverage_source"),
+                "candidate_viewpoint": reward_row.get("candidate_viewpoint"),
+                "candidate_theta_deg": reward_row.get("candidate_theta_deg"),
+                "theta_new_visible_cell_count": reward_row.get("theta_new_visible_cell_count"),
+                "theta_coverage_hash": reward_row.get("theta_coverage_hash"),
+                "theta_coverage_gain_per_path_cost": reward_row.get("theta_coverage_gain_per_path_cost"),
+                "theta_coverage_denominator_cells": reward_row.get("theta_coverage_denominator_cells"),
+                "reward_metrics": reward_row.get("metrics"),
+                "point_only_reward_fallback_used": reward_row.get("point_only_reward_fallback_used"),
                 "old_log_prob_recompute_abs_error": info.get("old_log_prob_recompute_abs_error"),
             }
         )
@@ -464,6 +475,10 @@ def _contract_rejections(rows: list[dict[str, Any]], audit_rows: list[dict[str, 
         reasons.append("non_finite_advantage")
     if _invalid_action_count(rows) > 0:
         reasons.append("invalid_action_detected")
+    if bool(config.get("require_theta_aware_viewpoint_contract")) and _theta_viewpoint_contract_missing_count(rows) > 0:
+        reasons.append("theta_viewpoint_contract_missing")
+    if bool(config.get("require_theta_aware_reward_contract")) and _theta_reward_contract_missing_count(rows) > 0:
+        reasons.append("theta_reward_contract_missing")
     if _hard_risk_count(rows) > 0:
         reasons.append("hard_risk_violation_detected")
     if _old_log_prob_recompute_violation_count(rows, float(config["max_old_log_prob_recompute_abs_error"])) > 0:
@@ -590,6 +605,11 @@ def _write_outputs(
         "stage21_2_status": stage21_2_summary.get("status"),
         "reward_profile_hash": stage21_2_summary.get("profile_hash"),
         "trainable_transition_count": len(batch_rows),
+        "theta_aware_viewpoint_contract_required": bool(config.get("require_theta_aware_viewpoint_contract")),
+        "theta_aware_viewpoint_contract_missing_count": _theta_viewpoint_contract_missing_count(batch_rows),
+        "theta_aware_reward_contract_required": bool(config.get("require_theta_aware_reward_contract")),
+        "theta_aware_reward_contract_missing_count": _theta_reward_contract_missing_count(batch_rows),
+        "point_only_reward_fallback_used_count": _point_only_reward_fallback_used_count(batch_rows),
         "return_finite_count": sum(1 for row in batch_rows if _finite(row.get("return")) is not None),
         "advantage_finite_count": sum(1 for row in batch_rows if _finite(row.get("advantage")) is not None),
         "invalid_action_count": _invalid_action_count(batch_rows),
@@ -689,6 +709,8 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         "max_old_log_prob_recompute_abs_error",
     )
     config["require_validation_split"] = bool(config.get("require_validation_split", False))
+    config["require_theta_aware_viewpoint_contract"] = bool(config.get("require_theta_aware_viewpoint_contract", False))
+    config["require_theta_aware_reward_contract"] = bool(config.get("require_theta_aware_reward_contract", False))
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     for field in BOUNDARY_FIELDS:
         config.setdefault(field, False)
@@ -748,6 +770,98 @@ def _invalid_action_count(rows: list[dict[str, Any]]) -> int:
         ):
             count += 1
     return count
+
+
+def _theta_viewpoint_contract_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if not _row_has_transition_theta_viewpoint_contract(row))
+
+
+def _theta_reward_contract_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if not _row_has_theta_reward_contract(row))
+
+
+def _point_only_reward_fallback_used_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if row.get("point_only_reward_fallback_used") is True)
+
+
+def _row_has_theta_reward_contract(row: dict[str, Any]) -> bool:
+    if not (
+        row.get("theta_aware_reward_contract") is True
+        and row.get("coverage_source") == "theta_aware_sensor_footprint/v1"
+        and _present_viewpoint(row.get("candidate_viewpoint"))
+        and _finite(row.get("candidate_theta_deg")) is not None
+        and _finite(row.get("theta_new_visible_cell_count")) is not None
+        and _finite(row.get("theta_coverage_gain_per_path_cost")) is not None
+        and _finite(row.get("theta_coverage_denominator_cells")) is not None
+        and isinstance(row.get("theta_coverage_hash"), str)
+        and bool(str(row.get("theta_coverage_hash")).strip())
+        and row.get("point_only_reward_fallback_used") is False
+    ):
+        return False
+    if not _theta_reward_matches_selected_action(row):
+        return False
+    if not _theta_reward_metrics_consistent(row):
+        return False
+    return True
+
+
+def _present_viewpoint(value: Any) -> bool:
+    return isinstance(value, list) and len(value) >= 3
+
+
+def _theta_reward_matches_selected_action(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    action_index = _int_or_none(row.get("action_index"))
+    selected_viewpoint = _selected_value(info, "candidate_viewpoint", "candidate_viewpoints", action_index)
+    if selected_viewpoint is None:
+        selected_viewpoint = info.get("selected_viewpoint")
+    if not _present_viewpoint(selected_viewpoint):
+        return False
+    selected_theta = _selected_value(info, "candidate_theta_deg", "candidate_theta_degs", action_index)
+    if selected_theta is None:
+        selected_theta = info.get("selected_theta_deg")
+    if selected_theta is None and _present_viewpoint(selected_viewpoint):
+        selected_theta = selected_viewpoint[2]
+    if _present_viewpoint(selected_viewpoint) and list(selected_viewpoint) != list(row.get("candidate_viewpoint")):
+        return False
+    selected_theta_value = _finite(selected_theta)
+    reward_theta_value = _finite(row.get("candidate_theta_deg"))
+    if selected_theta_value is not None and reward_theta_value is not None and int(selected_theta_value) != int(reward_theta_value):
+        return False
+    return True
+
+
+def _theta_reward_metrics_consistent(row: dict[str, Any]) -> bool:
+    metrics = row.get("reward_metrics") if isinstance(row.get("reward_metrics"), dict) else {}
+    coverage_rate_delta = _finite(metrics.get("coverage_rate_delta"))
+    denominator = _finite(row.get("theta_coverage_denominator_cells"))
+    theta_new = _finite(row.get("theta_new_visible_cell_count"))
+    if coverage_rate_delta is None or denominator is None or denominator <= 0.0 or theta_new is None:
+        return False
+    return abs(coverage_rate_delta - (theta_new / denominator)) <= 1.0e-9
+
+
+def _row_has_transition_theta_viewpoint_contract(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    observation = row.get("observation") if isinstance(row.get("observation"), dict) else {}
+    return row_has_theta_viewpoint_contract({"info": info, "observation": observation})
+
+
+def _selected_value(info: dict[str, Any], singular_key: str, plural_key: str, action_index: int | None) -> Any:
+    if singular_key in info:
+        value = info.get(singular_key)
+        if action_index is not None and isinstance(value, list):
+            if singular_key == "candidate_viewpoint":
+                if value and isinstance(value[0], list) and 0 <= action_index < len(value):
+                    return value[action_index]
+                return value
+            if 0 <= action_index < len(value):
+                return value[action_index]
+        return value
+    values = info.get(plural_key)
+    if action_index is not None and isinstance(values, list) and 0 <= action_index < len(values):
+        return values[action_index]
+    return None
 
 
 def _hard_risk_count(rows: list[dict[str, Any]]) -> int:

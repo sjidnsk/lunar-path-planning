@@ -1,0 +1,14 @@
+{
+  "schema_version": "xunce-stage23-0b-map-obstacle-source-export-config/v1",
+  "stage_id": "xunce-stage23-0b-map-obstacle-source-export",
+  "run_stage23_0a": true,
+  "stage23_0a_config": "configs/xunce_stage23_0a_materialize_obstacle_sources_for_theta_los_v1.json",
+  "stage23_0a_output_subdir": "s23_0a",
+  "stage23_0b_authorized": false,
+  "runs_new_ppo_update": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

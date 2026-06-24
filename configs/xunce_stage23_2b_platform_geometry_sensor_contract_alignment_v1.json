@@ -1,0 +1,18 @@
+{
+  "schema_version": "xunce-stage23-2b-platform-geometry-sensor-contract-alignment-config/v1",
+  "platform_contract": "configs/platforms/agilex_scout_mini_piper_v1.json",
+  "stage23_2a_config": "configs/xunce_stage23_2a_high_resolution_terrain_data_ingestion_v1.json",
+  "stage23_1_config": "configs/xunce_stage23_1_slope_derived_obstacle_source_for_endpoint_theta_los_v1.json",
+  "run_stage23_2a_smoke": true,
+  "run_stage23_1_smoke": true,
+  "default_threshold_deg": 30.0,
+  "sensitivity_threshold_deg": 20.0,
+  "slope_sensitivity_thresholds_deg": [20.0, 30.0],
+  "stage23_2b_authorized": false,
+  "runs_new_ppo_update": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

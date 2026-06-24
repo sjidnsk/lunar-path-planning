@@ -185,6 +185,7 @@ def run_xunce_stage21_4_tiny_ppo_update_smoke(
                     optimizer=optimizer,
                     epochs=int(config["epochs"]),
                     clip_ratio=float(config["clip_ratio"]),
+                    policy_loss_coefficient=float(config["policy_loss_coefficient"]),
                     value_loss_coefficient=float(config["value_loss_coefficient"]),
                     entropy_coefficient=float(config["entropy_coefficient"]),
                     advantage_clip_abs=float(config["advantage_clip_abs"]),
@@ -262,6 +263,7 @@ def _run_tiny_ppo_update(
     optimizer: torch.optim.Optimizer,
     epochs: int,
     clip_ratio: float,
+    policy_loss_coefficient: float,
     value_loss_coefficient: float,
     entropy_coefficient: float,
     advantage_clip_abs: float,
@@ -320,7 +322,7 @@ def _run_tiny_ppo_update(
         policy_loss = torch.stack(policy_losses).mean()
         value_loss = torch.stack(value_losses).mean()
         entropy = torch.stack(entropies).mean()
-        policy_loss_component = loss_scale * policy_loss
+        policy_loss_component = loss_scale * policy_loss_coefficient * policy_loss
         value_loss_component = loss_scale * value_loss_coefficient * value_loss
         entropy_loss_component = loss_scale * (-entropy_coefficient * entropy)
         total_loss = policy_loss_component + value_loss_component + entropy_loss_component
@@ -341,6 +343,7 @@ def _run_tiny_ppo_update(
         gradient_audit = _gradient_audit(model)
         gradient_audit["component_grad_norms"] = component_grad_norms
         gradient_audit["loss_scale"] = float(loss_scale)
+        gradient_audit["policy_loss_coefficient"] = float(policy_loss_coefficient)
         gradient_audit["advantage_clip_abs"] = float(advantage_clip_abs)
         gradient_audit["normalize_minibatch_advantages"] = bool(normalize_minibatch_advantages)
         if max_grad_norm > 0:
@@ -364,7 +367,9 @@ def _run_tiny_ppo_update(
                 "epoch_index": epoch_index,
                 "transition_count": len(rows),
                 "total_loss": float(total_loss.detach()),
-                "unscaled_total_loss": float((policy_loss + value_loss_coefficient * value_loss - entropy_coefficient * entropy).detach()),
+                "unscaled_total_loss": float(
+                    (policy_loss_coefficient * policy_loss + value_loss_coefficient * value_loss - entropy_coefficient * entropy).detach()
+                ),
                 "policy_loss": float(policy_loss.detach()),
                 "value_loss": float(value_loss.detach()),
                 "entropy": float(entropy.detach()),
@@ -372,6 +377,7 @@ def _run_tiny_ppo_update(
                 "value_loss_component": float(value_loss_component.detach()),
                 "entropy_loss_component": float(entropy_loss_component.detach()),
                 "loss_scale": float(loss_scale),
+                "policy_loss_coefficient": float(policy_loss_coefficient),
                 "value_loss_coefficient": float(value_loss_coefficient),
                 "entropy_coefficient": float(entropy_coefficient),
                 "advantage_clip_abs": float(advantage_clip_abs),
@@ -700,6 +706,7 @@ def _write_outputs(
         "epochs": int(config["epochs"]),
         "learning_rate": float(config["learning_rate"]),
         "clip_ratio": float(config["clip_ratio"]),
+        "policy_loss_coefficient": float(config["policy_loss_coefficient"]),
         "value_loss_coefficient": float(config["value_loss_coefficient"]),
         "entropy_coefficient": float(config["entropy_coefficient"]),
         "advantage_clip_abs": float(config["advantage_clip_abs"]),
@@ -886,6 +893,7 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     )
     config["learning_rate"] = _positive_float(config.get("learning_rate", 1.0e-5), "learning_rate")
     config["clip_ratio"] = _positive_float(config.get("clip_ratio", 0.2), "clip_ratio")
+    config["policy_loss_coefficient"] = _nonnegative_float(config.get("policy_loss_coefficient", 1.0), "policy_loss_coefficient")
     config["value_loss_coefficient"] = _nonnegative_float(config.get("value_loss_coefficient", 0.5), "value_loss_coefficient")
     config["entropy_coefficient"] = _nonnegative_float(config.get("entropy_coefficient", 0.01), "entropy_coefficient")
     config["advantage_clip_abs"] = _nonnegative_float(config.get("advantage_clip_abs", 0.0), "advantage_clip_abs")

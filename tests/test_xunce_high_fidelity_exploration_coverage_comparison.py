@@ -82,6 +82,34 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         for filename in expected_files:
             self.assertTrue((self.output_root / filename).is_file(), filename)
 
+        inference_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-model-inference.jsonl")
+        self.assertTrue(inference_rows)
+        first_inference = inference_rows[0]
+        for field in (
+            "scenario_id",
+            "step_index",
+            "current_cell",
+            "covered_cells_hash",
+            "candidate_set_hash",
+            "selected_action_index",
+            "selected_rank",
+            "action_probs",
+            "logits",
+            "masked_logits",
+            "value",
+            "finite_outputs",
+            "latency_ms",
+        ):
+            self.assertIn(field, first_inference)
+        self.assertEqual(first_inference["current_cell"], first_inference["current_cell_before"])
+        self.assertEqual(first_inference["selected_rank"], first_inference["detail"]["selected_rank"])
+        self.assertEqual(first_inference["action_probs"], first_inference["detail"]["action_probs"])
+        self.assertEqual(first_inference["logits"], first_inference["detail"]["logits"])
+        self.assertEqual(first_inference["masked_logits"], first_inference["detail"]["masked_logits"])
+        self.assertEqual(first_inference["value"], first_inference["detail"]["value"])
+        self.assertEqual(first_inference["finite_outputs"], first_inference["detail"]["finite_outputs"])
+        self.assertEqual(first_inference["latency_ms"], first_inference["detail"]["latency_ms"])
+
         step_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-steps.jsonl")
         self.assertEqual(len(step_rows), 24 * 10 * 2)
         self.assertTrue(all(row["true_model_inference_executed"] for row in step_rows))
@@ -596,6 +624,7 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             dynamic_validation_work_root=str(self.temp_dir / "_xunce_dynamic_validation_work"),
             dynamic_validation_max_path_length=1000,
             emit_candidate_metric_audit=True,
+            obstacle_occlusion_enabled=True,
         )
 
         summary = run_xunce_high_fidelity_exploration_coverage_comparison(
@@ -649,9 +678,14 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             "profile_id",
             "profile_version",
             "profile_hash",
+            "obstacle_occlusion_enabled",
+            "obstacle_source",
+            "obstacle_source_missing",
         }
         self.assertTrue(rows)
         self.assertTrue(all(required <= row.keys() for row in rows))
+        self.assertTrue(all(row["obstacle_occlusion_enabled"] is True for row in rows))
+        self.assertTrue(all(row["obstacle_source_missing"] is True for row in rows))
         self.assertTrue(all(row["profile_hash"] == summary["profile_hash"] for row in rows))
         paired_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-paired-decision-audit.jsonl")
         paired_keys = {
@@ -667,6 +701,235 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         manifest = self._read_json(self.output_root / "xunce-exploration-coverage-comparison-manifest.json")
         self.assertEqual(manifest["candidate_metric_audit_row_count"], len(rows))
         self.assertEqual(manifest["normalized_config"]["dynamic_max_candidates_per_step"], 3)
+
+    def test_obstacle_source_artifact_links_candidate_audit_rows(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence(blocked_rectangles=[[1, 0, 1, 2]])
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            theta_bin_count=8,
+            theta_step_deg=45,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=3,
+            emit_candidate_metric_audit=True,
+            emit_obstacle_source_audit=True,
+            obstacle_occlusion_enabled=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        source_path = self.output_root / "xunce-exploration-coverage-obstacle-sources.json"
+        audit_path = self.output_root / "xunce-exploration-coverage-candidate-metric-audit.jsonl"
+        self.assertEqual(summary["status"], "passed")
+        self.assertTrue(source_path.is_file())
+        sources = self._read_json(source_path)
+        self.assertEqual(sources["source_count"], 1)
+        self.assertEqual(sources["sources"][0]["obstacle_source_kind"], "blocked_as_obstacle_proxy")
+        self.assertTrue(sources["sources"][0]["obstacle_source_hash"])
+        rows = self._read_jsonl(audit_path)
+        self.assertTrue(rows)
+        self.assertTrue(all(row["obstacle_source_missing"] is False for row in rows))
+        self.assertTrue(all(row["obstacle_source_id"] == sources["sources"][0]["obstacle_source_id"] for row in rows))
+        self.assertTrue(all(row["obstacle_source_hash"] == sources["sources"][0]["obstacle_source_hash"] for row in rows))
+        self.assertTrue(all(row["obstacle_source_kind"] == "blocked_as_obstacle_proxy" for row in rows))
+        manifest = self._read_json(self.output_root / "xunce-exploration-coverage-comparison-manifest.json")
+        self.assertEqual(manifest["obstacle_source_audit"], str(source_path))
+        self.assertEqual(manifest["obstacle_source_count"], 1)
+
+    def test_sidecar_passable_mask_false_materializes_blocked_proxy_source(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence(blocked_mask_cells={(1, 0)})
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=3,
+            emit_candidate_metric_audit=True,
+            emit_obstacle_source_audit=True,
+            obstacle_occlusion_enabled=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        sources = self._read_json(self.output_root / "xunce-exploration-coverage-obstacle-sources.json")
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(sources["source_count"], 1)
+        self.assertEqual(sources["sources"][0]["obstacle_source_payload"], "sidecar")
+        self.assertEqual(sources["sources"][0]["obstacle_source_field"], "passable_mask_false")
+        self.assertEqual(sources["sources"][0]["obstacle_source_kind"], "blocked_as_obstacle_proxy")
+        self.assertIn([1, 0], sources["sources"][0]["obstacle_cells"])
+        rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-candidate-metric-audit.jsonl")
+        self.assertTrue(all(row["obstacle_source_missing"] is False for row in rows))
+
+    def test_sidecar_blocked_cells_materializes_blocked_proxy_source(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence()
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        sidecar = self._read_json(sidecar_path)
+        sidecar["blocked_cells"] = [[2, 0]]
+        sidecar["blocked_source_kind"] = "passable_mask_false"
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=3,
+            emit_candidate_metric_audit=True,
+            emit_obstacle_source_audit=True,
+            obstacle_occlusion_enabled=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        sources = self._read_json(self.output_root / "xunce-exploration-coverage-obstacle-sources.json")
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(sources["source_count"], 1)
+        self.assertEqual(sources["sources"][0]["obstacle_source_payload"], "sidecar")
+        self.assertEqual(sources["sources"][0]["obstacle_source_field"], "blocked_cells")
+        self.assertEqual(sources["sources"][0]["obstacle_source_kind"], "blocked_as_obstacle_proxy")
+        self.assertIn([2, 0], sources["sources"][0]["obstacle_cells"])
+
+    def test_sidecar_slope_blocked_cells_materializes_slope_proxy_source(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence()
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        sidecar = self._read_json(sidecar_path)
+        sidecar["slope_blocked_cells"] = [[2, 0]]
+        sidecar["slope_blocked_source_kind"] = "slope_gt_max_traversable_deg"
+        sidecar["max_traversable_slope_deg"] = 20.0
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=3,
+            emit_candidate_metric_audit=True,
+            emit_obstacle_source_audit=True,
+            obstacle_occlusion_enabled=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        sources = self._read_json(self.output_root / "xunce-exploration-coverage-obstacle-sources.json")
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(sources["source_count"], 1)
+        self.assertEqual(sources["sources"][0]["obstacle_source_payload"], "sidecar")
+        self.assertEqual(sources["sources"][0]["obstacle_source_field"], "slope_blocked_cells")
+        self.assertEqual(sources["sources"][0]["obstacle_source_kind"], "slope_blocked_as_obstacle_proxy")
+        self.assertTrue(sources["sources"][0]["obstacle_source_is_proxy"])
+        self.assertIn([2, 0], sources["sources"][0]["obstacle_cells"])
+        rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-candidate-metric-audit.jsonl")
+        self.assertTrue(all(row["obstacle_source_kind"] == "slope_blocked_as_obstacle_proxy" for row in rows))
+
+    def test_obstacle_source_precedence_prefers_physical_then_slope_then_blocked(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence()
+        scenario_path = self.expansion_root / "xunce-high-fidelity-path-feedback-audit.json"
+        audit = self._read_json(scenario_path)
+        audit["scenarios"][0]["obstacle_cells"] = [[1, 0]]
+        scenario_path.write_text(json.dumps(audit), encoding="utf-8")
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        sidecar = self._read_json(sidecar_path)
+        sidecar["slope_blocked_cells"] = [[2, 0]]
+        sidecar["blocked_cells"] = [[3, 0]]
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=3,
+            emit_candidate_metric_audit=True,
+            emit_obstacle_source_audit=True,
+            obstacle_occlusion_enabled=True,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        sources = self._read_json(self.output_root / "xunce-exploration-coverage-obstacle-sources.json")
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(sources["sources"][0]["obstacle_source_kind"], "physical_obstacle_cells")
+        self.assertEqual(sources["sources"][0]["obstacle_source_field"], "obstacle_cells")
+        self.assertIn([1, 0], sources["sources"][0]["obstacle_cells"])
+
+    def test_sidecar_dem_can_derive_slope_blocked_proxy_source_for_legacy_sidecars(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence()
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        sidecar = self._read_json(sidecar_path)
+        sidecar["terrain_layers"] = {"dem": [[0.0, 10.0], [0.0, 0.0]]}
+        sidecar["blocked_cells"] = [[1, 1]]
+        sidecar["metadata"] = {"map_source": {"resolution_m": 20.0}}
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=3,
+            emit_candidate_metric_audit=True,
+            emit_obstacle_source_audit=True,
+            obstacle_occlusion_enabled=True,
+            derive_slope_blocked_cells_from_sidecar_dem=True,
+            max_traversable_slope_deg=20.0,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        sources = self._read_json(self.output_root / "xunce-exploration-coverage-obstacle-sources.json")
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(sources["source_count"], 1)
+        self.assertEqual(sources["sources"][0]["obstacle_source_payload"], "sidecar")
+        self.assertEqual(sources["sources"][0]["obstacle_source_field"], "sidecar_dem_slope_gt_max_traversable_deg")
+        self.assertEqual(sources["sources"][0]["obstacle_source_kind"], "slope_blocked_as_obstacle_proxy")
+        self.assertTrue(sources["sources"][0]["obstacle_cells"])
 
     def test_dynamic_frontier_nbv_adapter_sample_audit_compares_batch_astar_rows(self) -> None:
         from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
@@ -1136,6 +1399,8 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         mask_first_candidate: bool = False,
         dynamic_validated_candidates: bool | str = False,
         metadata_only_roi_indices: set[int] | None = None,
+        blocked_rectangles: list[list[int]] | None = None,
+        blocked_mask_cells: set[tuple[int, int]] | None = None,
     ) -> None:
         self.expansion_root.mkdir(parents=True, exist_ok=True)
         metadata_only_roi_indices = metadata_only_roi_indices or set()
@@ -1206,6 +1471,8 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
                     "tracking_safety_violation_count": 0,
                     "path_feedback": {"candidates": candidates},
                 }
+            if blocked_rectangles is not None:
+                scenario_row["blocked_rectangles"] = blocked_rectangles
             slice_row = {
                     "schema_version": "quasi-real-map-slice/v1",
                     "scenario_id": scenario_id,
@@ -1232,6 +1499,7 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
                 self.expansion_root / f"{scenario_id}.sidecar.json",
                 width=128,
                 height=128,
+                blocked_mask_cells=blocked_mask_cells or set(),
             )
         (self.expansion_root / "xunce-high-fidelity-real-map-slices.jsonl").write_text(
             "\n".join(json.dumps(row, ensure_ascii=False) for row in slices) + "\n",
@@ -1281,7 +1549,15 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @staticmethod
-    def _write_tiny_contract_and_sidecar(contract_path: Path, sidecar_path: Path, *, width: int, height: int) -> None:
+    def _write_tiny_contract_and_sidecar(
+        contract_path: Path,
+        sidecar_path: Path,
+        *,
+        width: int,
+        height: int,
+        blocked_mask_cells: set[tuple[int, int]] | None = None,
+    ) -> None:
+        blocked_mask_cells = blocked_mask_cells or set()
         contract = {
             "schema_version": "model-explorer-contract/v1",
             "grid": {
@@ -1300,7 +1576,10 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         sidecar = {
             "schema_version": "path-planner-sidecar/v1",
             "cost": [[1.0 for _ in range(width)] for _ in range(height)],
-            "passable_mask": [[True for _ in range(width)] for _ in range(height)],
+            "passable_mask": [
+                [False if (x, y) in blocked_mask_cells else True for x in range(width)]
+                for y in range(height)
+            ],
             "metadata": {"fixture": "coverage-comparison"},
         }
         contract_path.write_text(json.dumps(contract), encoding="utf-8")

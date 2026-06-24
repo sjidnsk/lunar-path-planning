@@ -94,6 +94,7 @@ def test_stage21_4_writes_loss_scaling_and_component_gradient_audit(tmp_path: Pa
         normalize_minibatch_advantages=True,
         loss_scale=0.25,
         value_loss_coefficient=0.1,
+        policy_loss_coefficient=2.0,
     )
 
     summary = run_xunce_stage21_4_tiny_ppo_update_smoke(
@@ -106,6 +107,7 @@ def test_stage21_4_writes_loss_scaling_and_component_gradient_audit(tmp_path: Pa
     assert summary["advantage_clip_abs"] == 0.5
     assert summary["normalize_minibatch_advantages"] is True
     assert summary["loss_scale"] == 0.25
+    assert summary["policy_loss_coefficient"] == 2.0
     assert math.isfinite(summary["policy_loss_grad_norm"])
     assert math.isfinite(summary["value_loss_grad_norm"])
     assert math.isfinite(summary["entropy_loss_grad_norm"])
@@ -113,11 +115,13 @@ def test_stage21_4_writes_loss_scaling_and_component_gradient_audit(tmp_path: Pa
     loss_row = _read_jsonl(Path(summary["loss_audit"]))[0]
     assert loss_row["loss_scale"] == 0.25
     assert loss_row["value_loss_coefficient"] == 0.1
+    assert loss_row["policy_loss_coefficient"] == 2.0
     assert "effective_advantage_std" in loss_row
     assert "total_loss_grad_norm" in loss_row
     assert "policy_loss_grad_norm" in loss_row
     gradient = json.loads(Path(summary["gradient_audit"]).read_text(encoding="utf-8"))
     assert gradient["loss_scale"] == 0.25
+    assert gradient["policy_loss_coefficient"] == 2.0
     assert gradient["advantage_clip_abs"] == 0.5
     assert "total_loss_grad_norm" in gradient["component_grad_norms"]
 

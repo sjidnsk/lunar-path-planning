@@ -1,0 +1,29 @@
+{
+  "schema_version": "xunce-stage23-1-slope-derived-obstacle-source-for-endpoint-theta-los-config/v1",
+  "stage_id": "xunce-stage23-1-slope-derived-obstacle-source-for-endpoint-theta-los",
+  "run_stage23_0a": true,
+  "stage23_0a_config": "configs/xunce_stage23_0a_materialize_obstacle_sources_for_theta_los_v1.json",
+  "stage23_0a_output_subdir": "a",
+  "derive_slope_blocked_cells_from_sidecar_dem": true,
+  "platform_contract": "configs/platforms/agilex_scout_mini_piper_v1.json",
+  "max_traversable_slope_deg": 30.0,
+  "slope_sensitivity_thresholds_deg": [
+    20.0,
+    30.0
+  ],
+  "required_scenario_count": 2,
+  "rollout_steps": 4,
+  "dynamic_max_candidates_per_step": 10,
+  "dynamic_proposal_pool_limit_per_step": 80,
+  "theta_bin_count": 8,
+  "theta_step_deg": 45,
+  "sensor_fov_deg": 90.0,
+  "sensor_range_cells": 3,
+  "stage23_1_authorized": false,
+  "runs_new_ppo_update": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

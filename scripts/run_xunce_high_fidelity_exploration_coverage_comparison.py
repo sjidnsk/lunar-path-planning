@@ -31,6 +31,19 @@ try:
     )
     from xunce_frontier_nbv_validation import IN_PROCESS_VALIDATION_MODE, validate_candidate_cells
     from xunce_stage18_guard_thresholds import stage18_guard_thresholds
+    from xunce_theta_viewpoint_candidates import (
+        candidate_observation_cells,
+        expand_theta_aware_candidates,
+        theta_metadata,
+        theta_viewpoints_enabled,
+    )
+    from xunce_obstacle_aware_theta_sensor_coverage import (
+        extract_obstacle_cells,
+        stable_obstacle_source_hash,
+        visible_cells_for_viewpoint_with_obstacles,
+    )
+    from xunce_platform_contract import apply_stage23_platform_defaults
+    from xunce_theta_sensor_coverage import visible_cells_for_viewpoint
     from run_xunce_high_fidelity_real_map_comparison import (
         _boundary_audit as _stage18b_boundary_audit,
         _candidate_at,
@@ -64,6 +77,19 @@ except ModuleNotFoundError:  # pragma: no cover
     )
     from scripts.xunce_frontier_nbv_validation import IN_PROCESS_VALIDATION_MODE, validate_candidate_cells
     from scripts.xunce_stage18_guard_thresholds import stage18_guard_thresholds
+    from scripts.xunce_theta_viewpoint_candidates import (
+        candidate_observation_cells,
+        expand_theta_aware_candidates,
+        theta_metadata,
+        theta_viewpoints_enabled,
+    )
+    from scripts.xunce_obstacle_aware_theta_sensor_coverage import (
+        extract_obstacle_cells,
+        stable_obstacle_source_hash,
+        visible_cells_for_viewpoint_with_obstacles,
+    )
+    from scripts.xunce_platform_contract import apply_stage23_platform_defaults
+    from scripts.xunce_theta_sensor_coverage import visible_cells_for_viewpoint
     from scripts.run_xunce_high_fidelity_real_map_comparison import (
         _boundary_audit as _stage18b_boundary_audit,
         _candidate_at,
@@ -102,6 +128,7 @@ DYNAMIC_VALIDATION_RESULTS_FILE = "xunce-exploration-coverage-dynamic-validation
 DYNAMIC_VALIDATION_AUDIT_FILE = "xunce-exploration-coverage-dynamic-validation-audit.json"
 PAIRED_DECISION_AUDIT_FILE = "xunce-exploration-coverage-paired-decision-audit.jsonl"
 CANDIDATE_METRIC_AUDIT_FILE = "xunce-exploration-coverage-candidate-metric-audit.jsonl"
+OBSTACLE_SOURCES_FILE = "xunce-exploration-coverage-obstacle-sources.json"
 ON_POLICY_ORACLE_TEACHER_LABELS_FILE = "xunce-exploration-coverage-on-policy-oracle-teacher-labels.jsonl"
 MODEL_INFERENCE_FILE = "xunce-exploration-coverage-model-inference.jsonl"
 ROI_BREAKDOWN_FILE = "xunce-exploration-coverage-roi-breakdown.json"
@@ -259,6 +286,8 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     paths = _artifact_paths(output_root)
 
     source = _load_source(config, repo_root)
+    obstacle_source_audit = _obstacle_source_audit(source, config, repo_root=repo_root)
+    source["obstacle_source_count"] = obstacle_source_audit["source_count"]
     boundary = _boundary_audit(config, source)
     model_bundle = _load_model_bundle(config, source, repo_root)
     source_match = _source_match_audit(config, source)
@@ -275,6 +304,7 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
         config,
         source,
         model_bundle,
+        obstacle_source_audit=obstacle_source_audit,
         repo_root=repo_root,
         output_root=output_root,
     )
@@ -333,6 +363,10 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
         "artifacts": {key: str(value) for key, value in paths.items()},
         "candidate_metric_audit": str(paths["candidate_metric_audit"]) if config["emit_candidate_metric_audit"] else None,
         "candidate_metric_audit_row_count": len(candidate_metric_rows) if config["emit_candidate_metric_audit"] else 0,
+        "obstacle_source_audit": str(paths["obstacle_sources"]),
+        "obstacle_source_count": obstacle_source_audit["source_count"],
+        "obstacle_source_missing_scenario_count": obstacle_source_audit["missing_source_scenario_count"],
+        "obstacle_source_proxy_count": obstacle_source_audit["proxy_source_count"],
         "on_policy_oracle_teacher_label_audit": str(paths["on_policy_oracle_teacher_labels"])
         if config["emit_on_policy_oracle_teacher_labels"]
         else None,
@@ -351,6 +385,7 @@ def run_xunce_high_fidelity_exploration_coverage_comparison(
     write_jsonl(paths["dynamic_validation_results"], dynamic_validation_rows)
     write_json(paths["dynamic_validation_audit"], comparison["dynamic_validation_audit"])
     write_jsonl(paths["paired_decision_audit"], paired_decision_rows)
+    write_json(paths["obstacle_sources"], obstacle_source_audit)
     if config["emit_candidate_metric_audit"]:
         write_jsonl(paths["candidate_metric_audit"], candidate_metric_rows)
     if config["emit_on_policy_oracle_teacher_labels"]:
@@ -383,6 +418,7 @@ def _load_config(
         raise ConfigError(f"schema_version must be {CONFIG_SCHEMA_VERSION!r}")
     if config_overrides:
         payload = {**payload, **config_overrides}
+    payload = apply_stage23_platform_defaults(payload, repo_root=repo_root)
     normalized = dict(payload)
     for key in ("source_roi_expansion_root", "xunce_candidate_checkpoint", "incumbent_policy_checkpoint"):
         if not isinstance(payload.get(key), str) or not payload[key].strip():
@@ -417,6 +453,33 @@ def _load_config(
     normalized["include_oracle_baselines"] = _require_bool(payload.get("include_oracle_baselines", False), "include_oracle_baselines")
     normalized["include_roi_weighted_coverage"] = _require_bool(payload.get("include_roi_weighted_coverage", False), "include_roi_weighted_coverage")
     normalized["emit_candidate_metric_audit"] = _require_bool(payload.get("emit_candidate_metric_audit", False), "emit_candidate_metric_audit")
+    normalized["emit_obstacle_source_audit"] = _require_bool(
+        payload.get("emit_obstacle_source_audit", True),
+        "emit_obstacle_source_audit",
+    )
+    normalized["obstacle_occlusion_enabled"] = _require_bool(
+        payload.get("obstacle_occlusion_enabled", False),
+        "obstacle_occlusion_enabled",
+    )
+    normalized["no_go_blocks_los"] = _require_bool(
+        payload.get("no_go_blocks_los", False),
+        "no_go_blocks_los",
+    )
+    normalized["theta_aware_candidate_viewpoints_enabled"] = _require_bool(
+        payload.get("theta_aware_candidate_viewpoints_enabled", False),
+        "theta_aware_candidate_viewpoints_enabled",
+    )
+    normalized["theta_bin_count"] = _positive_int(payload.get("theta_bin_count", 8), "theta_bin_count")
+    normalized["theta_step_deg"] = _positive_int(payload.get("theta_step_deg", 45), "theta_step_deg")
+    normalized["sensor_model_id"] = _require_string(
+        payload.get("sensor_model_id", "theta-fov-90-range-radius/v1"),
+        "sensor_model_id",
+    )
+    normalized["sensor_fov_deg"] = _positive_float(payload.get("sensor_fov_deg", 90.0), "sensor_fov_deg")
+    normalized["sensor_range_cells"] = _nonnegative_int(
+        payload.get("sensor_range_cells", normalized["coverage_radius_cells"]),
+        "sensor_range_cells",
+    )
     canonical_profile_path = resolve_path(
         Path(str(payload.get("canonical_reward_profile", DEFAULT_CANONICAL_PROFILE))),
         repo_root,
@@ -588,6 +651,7 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
         "dynamic_validation_audit": output_root / DYNAMIC_VALIDATION_AUDIT_FILE,
         "paired_decision_audit": output_root / PAIRED_DECISION_AUDIT_FILE,
         "candidate_metric_audit": output_root / CANDIDATE_METRIC_AUDIT_FILE,
+        "obstacle_sources": output_root / OBSTACLE_SOURCES_FILE,
         "on_policy_oracle_teacher_labels": output_root / ON_POLICY_ORACLE_TEACHER_LABELS_FILE,
         "model_inference": output_root / MODEL_INFERENCE_FILE,
         "roi_breakdown": output_root / ROI_BREAKDOWN_FILE,
@@ -598,6 +662,292 @@ def _artifact_paths(output_root: Path) -> dict[str, Path]:
         "v2_episodes": output_root / V2_EPISODES_FILE,
         "v2_steps": output_root / V2_STEPS_FILE,
     }
+
+
+def _obstacle_source_audit(source: dict[str, Any], config: dict[str, Any], *, repo_root: Path) -> dict[str, Any]:
+    scenarios = source.get("path_feedback", {}).get("scenarios", [])
+    if not isinstance(scenarios, list):
+        scenarios = []
+    slice_by_id = {str(row.get("scenario_id")): row for row in source.get("slices", []) if isinstance(row, dict)}
+    sources: list[dict[str, Any]] = []
+    source_by_scenario: dict[str, dict[str, Any]] = {}
+    missing_scenarios: list[str] = []
+    proxy_count = 0
+    physical_count = 0
+    for index, scenario in enumerate(scenarios[: int(config.get("required_scenario_count", len(scenarios)))]):
+        if not isinstance(scenario, dict):
+            continue
+        scenario_id = str(scenario.get("scenario_id", f"scenario-{index:04d}"))
+        selected = _select_obstacle_source_for_scenario(
+            scenario_id=scenario_id,
+            scenario=scenario,
+            slice_row=slice_by_id.get(scenario_id, {}),
+            config=config,
+            repo_root=repo_root,
+        )
+        if selected is None:
+            missing_scenarios.append(scenario_id)
+            continue
+        if selected["obstacle_source_is_proxy"]:
+            proxy_count += 1
+        else:
+            physical_count += 1
+        sources.append(selected)
+        source_by_scenario[scenario_id] = selected
+    return {
+        "schema_version": "xunce-exploration-coverage-obstacle-sources/v1",
+        "source_count": len(sources),
+        "missing_source_scenario_count": len(missing_scenarios),
+        "missing_source_scenario_ids": missing_scenarios,
+        "proxy_source_count": proxy_count,
+        "physical_source_count": physical_count,
+        "no_go_blocks_los": bool(config.get("no_go_blocks_los", False)),
+        "platform_contract_id": config.get("platform_contract_id"),
+        "platform_contract_hash": config.get("platform_contract_hash"),
+        "platform_max_climb_deg": config.get("platform_max_climb_deg"),
+        "max_traversable_slope_deg": config.get("max_traversable_slope_deg"),
+        "sources": sources,
+        "source_by_scenario": source_by_scenario,
+    }
+
+
+def _select_obstacle_source_for_scenario(
+    *,
+    scenario_id: str,
+    scenario: dict[str, Any],
+    slice_row: dict[str, Any],
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    payloads = (
+        ("scenario", scenario),
+        ("slice", slice_row),
+        ("config", config),
+    )
+    include_no_go = bool(config.get("no_go_blocks_los", False))
+    source_fields: list[tuple[str, str, bool]] = [
+        ("obstacle_cells", "physical_obstacle_cells", False),
+        ("obstacle_rectangles", "physical_obstacle_cells", False),
+        ("slope_blocked_cells", "slope_blocked_as_obstacle_proxy", True),
+        ("blocked_cells", "blocked_as_obstacle_proxy", True),
+        ("blocked_rectangles", "blocked_as_obstacle_proxy", True),
+    ]
+    if include_no_go:
+        source_fields.extend(
+            [
+                ("no_go_cells", "no_go_as_obstacle_proxy", True),
+                ("no_go_rectangles", "no_go_as_obstacle_proxy", True),
+            ]
+        )
+    for field, source_kind, is_proxy in source_fields:
+        for payload_name, payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            cells, source_field = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
+            if not cells:
+                continue
+            sorted_cells = [list(cell) for cell in sorted(cells)]
+            source_hash = stable_obstacle_source_hash(
+                source_kind=source_kind,
+                obstacle_cells=sorted_cells,
+                no_go_blocks_los=include_no_go,
+            )
+            source_id = f"scenario:{scenario_id}:{source_kind}"
+            return {
+                "schema_version": "xunce-exploration-coverage-obstacle-source/v1",
+                "scenario_id": scenario_id,
+                "obstacle_source_id": source_id,
+                "obstacle_source_hash": source_hash,
+                "obstacle_source_kind": source_kind,
+                "obstacle_source_field": source_field or field,
+                "obstacle_source_payload": payload_name,
+                "obstacle_source_is_proxy": bool(is_proxy),
+                "platform_contract_id": config.get("platform_contract_id"),
+                "platform_contract_hash": config.get("platform_contract_hash"),
+                "platform_max_climb_deg": config.get("platform_max_climb_deg"),
+                "max_traversable_slope_deg": config.get("max_traversable_slope_deg"),
+                "obstacle_cell_count": len(sorted_cells),
+                "obstacle_cells": sorted_cells,
+                "no_go_blocks_los": include_no_go,
+            }
+    sidecar_source = _obstacle_source_from_sidecar(
+        slice_row,
+        repo_root,
+        include_no_go=include_no_go,
+        derive_slope_blocked=bool(config.get("derive_slope_blocked_cells_from_sidecar_dem", False)),
+        max_traversable_slope_deg=float(config.get("max_traversable_slope_deg", 30.0)),
+    )
+    if sidecar_source is not None:
+        sidecar_cells, source_kind, source_field, is_proxy = sidecar_source
+        sorted_cells = [list(cell) for cell in sorted(sidecar_cells)]
+        source_hash = stable_obstacle_source_hash(
+            source_kind=source_kind,
+            obstacle_cells=sorted_cells,
+            no_go_blocks_los=include_no_go,
+        )
+        return {
+            "schema_version": "xunce-exploration-coverage-obstacle-source/v1",
+            "scenario_id": scenario_id,
+            "obstacle_source_id": f"scenario:{scenario_id}:{source_kind}",
+            "obstacle_source_hash": source_hash,
+            "obstacle_source_kind": source_kind,
+            "obstacle_source_field": source_field,
+            "obstacle_source_payload": "sidecar",
+            "obstacle_source_is_proxy": bool(is_proxy),
+            "platform_contract_id": config.get("platform_contract_id"),
+            "platform_contract_hash": config.get("platform_contract_hash"),
+            "platform_max_climb_deg": config.get("platform_max_climb_deg"),
+            "max_traversable_slope_deg": config.get("max_traversable_slope_deg"),
+            "obstacle_cell_count": len(sorted_cells),
+            "obstacle_cells": sorted_cells,
+            "no_go_blocks_los": include_no_go,
+        }
+    return None
+
+
+def _obstacle_source_from_sidecar(
+    slice_row: dict[str, Any],
+    repo_root: Path,
+    *,
+    include_no_go: bool,
+    derive_slope_blocked: bool = False,
+    max_traversable_slope_deg: float = 30.0,
+) -> tuple[set[tuple[int, int]], str, str, bool] | None:
+    sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
+    if sidecar_path is None:
+        return None
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    physical_fields: list[tuple[str, str, bool]] = [
+        ("obstacle_cells", "physical_obstacle_cells", False),
+        ("obstacle_rectangles", "physical_obstacle_cells", False),
+    ]
+    for field, source_kind, is_proxy in physical_fields:
+        cells, source_field = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
+        if cells:
+            return cells, source_kind, source_field or field, is_proxy
+    slope_fields: list[tuple[str, str, bool]] = [
+        ("slope_blocked_cells", "slope_blocked_as_obstacle_proxy", True),
+    ]
+    for field, source_kind, is_proxy in slope_fields:
+        cells, source_field = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
+        if cells:
+            return cells, source_kind, source_field or field, is_proxy
+    if derive_slope_blocked:
+        cells = _slope_blocked_cells_from_sidecar_dem_payload(
+            payload,
+            max_traversable_slope_deg=max_traversable_slope_deg,
+        )
+        if cells:
+            return cells, "slope_blocked_as_obstacle_proxy", "sidecar_dem_slope_gt_max_traversable_deg", True
+    blocked_fields: list[tuple[str, str, bool]] = [
+        ("blocked_cells", "blocked_as_obstacle_proxy", True),
+        ("blocked_rectangles", "blocked_as_obstacle_proxy", True),
+    ]
+    for field, source_kind, is_proxy in blocked_fields:
+        cells, source_field = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
+        if cells:
+            return cells, source_kind, source_field or field, is_proxy
+    cells = _blocked_cells_from_sidecar_passable_mask_payload(payload)
+    if cells:
+        return cells, "blocked_as_obstacle_proxy", "passable_mask_false", True
+    if include_no_go:
+        no_go_fields: list[tuple[str, str, bool]] = [
+            ("no_go_cells", "no_go_as_obstacle_proxy", True),
+            ("no_go_rectangles", "no_go_as_obstacle_proxy", True),
+        ]
+        for field, source_kind, is_proxy in no_go_fields:
+            cells, source_field = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
+            if cells:
+                return cells, source_kind, source_field or field, is_proxy
+    return None
+
+
+def _blocked_cells_from_sidecar_passable_mask(slice_row: dict[str, Any], repo_root: Path) -> set[tuple[int, int]]:
+    sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
+    if sidecar_path is None:
+        return set()
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return _blocked_cells_from_sidecar_passable_mask_payload(payload)
+
+
+def _blocked_cells_from_sidecar_passable_mask_payload(payload: dict[str, Any]) -> set[tuple[int, int]]:
+    mask = _find_nested_key(payload, "passable_mask")
+    if not isinstance(mask, list):
+        return set()
+    cells: set[tuple[int, int]] = set()
+    for y, row in enumerate(mask):
+        if not isinstance(row, list):
+            continue
+        for x, value in enumerate(row):
+            if value is False:
+                cells.add((int(x), int(y)))
+    return cells
+
+
+def _slope_blocked_cells_from_sidecar_dem_payload(
+    payload: dict[str, Any],
+    *,
+    max_traversable_slope_deg: float,
+) -> set[tuple[int, int]]:
+    dem = _find_nested_key(payload, "dem")
+    if not _is_rectangular_number_grid(dem):
+        return set()
+    resolution = _sidecar_resolution_m(payload)
+    cells: set[tuple[int, int]] = set()
+    for y, row in enumerate(dem):
+        for x, value in enumerate(row):
+            if _max_neighbor_slope_deg(dem, x=x, y=y, resolution_m=resolution) > max_traversable_slope_deg:
+                cells.add((int(x), int(y)))
+    return cells
+
+
+def _is_rectangular_number_grid(value: Any) -> bool:
+    if not isinstance(value, list) or not value or not isinstance(value[0], list) or not value[0]:
+        return False
+    width = len(value[0])
+    for row in value:
+        if not isinstance(row, list) or len(row) != width:
+            return False
+        for item in row:
+            if not isinstance(item, (int, float)) or not math.isfinite(float(item)):
+                return False
+    return True
+
+
+def _sidecar_resolution_m(payload: dict[str, Any]) -> float:
+    for key in ("resolution_m",):
+        value = _find_nested_key(payload, key)
+        if isinstance(value, (int, float)) and math.isfinite(float(value)) and float(value) > 0:
+            return float(value)
+    return 1.0
+
+
+def _max_neighbor_slope_deg(dem: list[list[float]], *, x: int, y: int, resolution_m: float) -> float:
+    max_angle = 0.0
+    center = float(dem[y][x])
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            yy = y + dy
+            xx = x + dx
+            if 0 <= yy < len(dem) and 0 <= xx < len(dem[yy]):
+                distance = resolution_m * math.sqrt(float(dx * dx + dy * dy))
+                if distance <= 0:
+                    continue
+                grade = abs(center - float(dem[yy][xx])) / distance
+                max_angle = max(max_angle, math.degrees(math.atan(grade)))
+    return max_angle
+
+
+def _extract_specific_obstacle_field(payload: dict[str, Any], field: str, *, include_no_go: bool) -> tuple[set[tuple[int, int]], str | None]:
+    return extract_obstacle_cells({field: payload.get(field)}, include_no_go=include_no_go)
 
 
 def _v2_enabled(config: dict[str, Any]) -> bool:
@@ -719,6 +1069,7 @@ def _run_coverage_rollouts(
     source: dict[str, Any],
     model_bundle: dict[str, Any],
     *,
+    obstacle_source_audit: dict[str, Any],
     repo_root: Path,
     output_root: Path,
 ) -> tuple[
@@ -735,6 +1086,7 @@ def _run_coverage_rollouts(
     if not isinstance(scenarios, list):
         scenarios = []
     slice_by_id = {str(row.get("scenario_id")): row for row in source["slices"] if isinstance(row, dict)}
+    obstacle_source_by_scenario = obstacle_source_audit.get("source_by_scenario", {})
     episodes: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
     inference_rows: list[dict[str, Any]] = []
@@ -749,6 +1101,7 @@ def _run_coverage_rollouts(
             continue
         scenario_id = str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))
         slice_row = slice_by_id.get(scenario_id, {})
+        obstacle_source_linkage = obstacle_source_by_scenario.get(scenario_id)
         roi_group = resolve_roi_group(scenario, slice_row)
         policy_names = POLICIES + (ORACLE_POLICIES if config["include_oracle_baselines"] else ())
         if config["include_canonical_reward_rerank_oracle"]:
@@ -764,6 +1117,7 @@ def _run_coverage_rollouts(
                 config=config,
                 model_bundle=model_bundle,
                 slice_row=slice_row,
+                obstacle_source_linkage=obstacle_source_linkage,
                 repo_root=repo_root,
                 output_root=output_root,
                 validation_cache=validation_cache,
@@ -799,6 +1153,7 @@ def _run_policy_episode(
     config: dict[str, Any],
     model_bundle: dict[str, Any],
     slice_row: dict[str, Any],
+    obstacle_source_linkage: dict[str, Any] | None,
     repo_root: Path,
     output_root: Path,
     validation_cache: dict[str, list[dict[str, Any]]],
@@ -996,6 +1351,7 @@ def _run_policy_episode(
                     candidate_set_hash_value=candidate_set_hash_value,
                     action_mask=adapter["action_mask"],
                     config=config,
+                    obstacle_source_linkage=obstacle_source_linkage,
                 )
             )
         step_reasons: list[str] = []
@@ -1148,11 +1504,12 @@ def _run_policy_episode(
         revisited_cells: set[tuple[int, int]] = set()
         coverage_delta = 0.0
         if executed and selected_cell is not None and selected_cost is not None:
-            footprint = _coverage_cells(
+            footprint = _candidate_coverage_cells(
                 start=cell_before,
                 end=selected_cell,
-                radius=radius,
-                mode=str(config["coverage_metric_mode"]),
+                candidate=selected_candidate or {},
+                config=config,
+                obstacle_source_linkage=obstacle_source_linkage,
             )
             new_cells = footprint - covered_cells
             revisited_cells = footprint & covered_cells
@@ -1196,7 +1553,8 @@ def _run_policy_episode(
             "remaining_budget_m": remaining_budget,
             "selected_action_index": selected_index,
             "selected_cell": list(selected_cell) if selected_cell is not None else None,
-            "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
+            "candidate_cells": candidate_observation_cells(candidates),
+            **theta_metadata(candidates),
             "candidate_generation_source": candidate_batch["candidate_generation_source"],
             "candidate_set_id": candidate_set_id,
             "candidate_set_hash": candidate_set_hash_value,
@@ -1260,6 +1618,7 @@ def _run_policy_episode(
             "reason_codes": unique_sorted(step_reasons),
         }
         steps.append(step_row)
+        selected_candidate = candidates[selected_index] if isinstance(selected_index, int) and 0 <= selected_index < len(candidates) else {}
         if not is_oracle_policy:
             inference_rows.append(
                 {
@@ -1269,11 +1628,27 @@ def _run_policy_episode(
                     "roi_group": roi_group,
                     "policy": policy_name,
                     "step_index": step_index,
-                    "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
+                    "current_cell": list(cell_before),
+                    "current_cell_before": list(cell_before),
+                    "covered_cells_hash": covered_hash,
+                    "candidate_cells": candidate_observation_cells(candidates),
+                    **theta_metadata(candidates),
                     "candidate_set_id": candidate_set_id,
                     "candidate_set_hash": candidate_set_hash_value,
                     "action_mask": list(adapter["action_mask"]),
                     "selected_action_index": selected_index,
+                    "candidate_viewpoint": selected_candidate.get("candidate_viewpoint"),
+                    "candidate_theta_deg": selected_candidate.get("candidate_theta_deg"),
+                    "selected_viewpoint": selected_candidate.get("candidate_viewpoint"),
+                    "selected_theta_deg": selected_candidate.get("candidate_theta_deg"),
+                    "selected_rank": detail_payload.get("selected_rank"),
+                    "selected_probability": detail_payload.get("selected_probability"),
+                    "action_probs": list(detail_payload.get("action_probs") or []),
+                    "logits": list(detail_payload.get("logits") or []),
+                    "masked_logits": list(detail_payload.get("masked_logits") or []),
+                    "value": detail_payload.get("value"),
+                    "finite_outputs": detail_payload.get("finite_outputs"),
+                    "latency_ms": detail_payload.get("latency_ms"),
                     "policy_inference_kind": policy_inference_kind,
                     "oracle_rollout_executed": oracle_rollout_executed,
                     "true_model_inference_executed": true_model_inference_executed,
@@ -2706,6 +3081,8 @@ def _summary(
         "paired_decision_audit": str(paths["paired_decision_audit"]),
         "candidate_metric_audit": str(paths["candidate_metric_audit"]) if config["emit_candidate_metric_audit"] else None,
         "candidate_metric_audit_row_count": comparison["candidate_metric_audit_row_count"],
+        "obstacle_source_audit": str(paths["obstacle_sources"]),
+        "obstacle_source_count": source.get("obstacle_source_count"),
         "model_inference": str(paths["model_inference"]),
         "roi_breakdown": str(paths["roi_breakdown"]),
         "decision_audit": str(paths["decision_audit"]),
@@ -2803,6 +3180,36 @@ def _candidate_rows_for_step(
     output_root: Path,
     validation_cache: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
+    def with_theta(batch: dict[str, Any]) -> dict[str, Any]:
+        if not theta_viewpoints_enabled(config):
+            return batch
+        base_candidates = [dict(candidate) for candidate in batch["candidates"]]
+        base_hash = str(batch["candidate_set_hash"])
+        expansion = expand_theta_aware_candidates(
+            base_candidates,
+            current_cell=current_cell,
+            covered_cells=covered_cells,
+            config=config,
+            base_candidate_set_hash=base_hash,
+        )
+        viewpoint_candidates = expansion["candidates"]
+        batch = dict(batch)
+        batch["base_candidates"] = base_candidates
+        batch["base_candidate_set_hash"] = base_hash
+        batch["candidates"] = viewpoint_candidates
+        batch["candidate_set_hash"] = expansion["candidate_set_hash"]
+        batch["candidate_set_id"] = f"{scenario_id}:step-{step_index}:theta:{expansion['candidate_set_hash'][:16]}"
+        batch["candidate_generation_source"] = f"{batch['candidate_generation_source']}+theta_viewpoint"
+        batch["theta_aware_candidate_viewpoints_enabled"] = True
+        batch["theta_values"] = expansion["theta_values"]
+        batch["theta_value_count"] = expansion["theta_value_count"]
+        batch["base_candidate_count"] = expansion["base_candidate_count"]
+        batch["viewpoint_candidate_count"] = expansion["viewpoint_candidate_count"]
+        batch["sensor_model_id"] = expansion["sensor_model_id"]
+        batch["sensor_fov_deg"] = expansion["sensor_fov_deg"]
+        batch["sensor_range_cells"] = expansion["sensor_range_cells"]
+        return batch
+
     candidates = [dict(candidate) for candidate in _candidate_rows(scenario)]
     if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
         formal_candidates, proposal_rows, validation_rows = build_dynamic_frontier_nbv_candidates(
@@ -2817,7 +3224,7 @@ def _candidate_rows_for_step(
             validation_cache=validation_cache,
         )
         batch_hash = candidate_set_hash(formal_candidates)
-        return {
+        return with_theta({
             "candidates": formal_candidates,
             "dynamic_proposals": proposal_rows,
             "dynamic_validation_rows": validation_rows,
@@ -2830,10 +3237,10 @@ def _candidate_rows_for_step(
             "dynamic_validation_cache_hit": bool(validation_rows and all(row.get("dynamic_validation_cache_hit") is True for row in validation_rows)),
             "path_feedback_validation_source_counts": _count_by_field(validation_rows, "path_feedback_validation_source"),
             "frontier_candidate_source_counts": _count_by_field(formal_candidates, "frontier_candidate_source"),
-        }
+        })
     if config["candidate_refresh_mode"] != "dynamic_validated_only":
         batch_hash = candidate_set_hash(candidates)
-        return {
+        return with_theta({
             "candidates": candidates,
             "dynamic_proposals": [],
             "dynamic_validation_rows": [],
@@ -2846,7 +3253,7 @@ def _candidate_rows_for_step(
             "dynamic_validation_cache_hit": False,
             "path_feedback_validation_source_counts": {},
             "frontier_candidate_source_counts": _count_by_field(candidates, "frontier_candidate_source"),
-        }
+        })
     refreshed: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate = dict(candidate)
@@ -2883,7 +3290,7 @@ def _candidate_rows_for_step(
             candidate["coverage_overlap_ratio"] = _safe_ratio(len(candidate_cells & covered_cells), len(candidate_cells)) or 0.0
         refreshed.append(candidate)
     batch_hash = candidate_set_hash(refreshed)
-    return {
+    return with_theta({
         "candidates": refreshed,
         "dynamic_proposals": [],
         "dynamic_validation_rows": [],
@@ -2896,7 +3303,7 @@ def _candidate_rows_for_step(
         "dynamic_validation_cache_hit": False,
         "path_feedback_validation_source_counts": {},
         "frontier_candidate_source_counts": _count_by_field(refreshed, "frontier_candidate_source"),
-    }
+    })
 
 
 def _validated_dynamic_candidate_for_step(candidate: dict[str, Any], step_index: int) -> dict[str, Any] | None:
@@ -2980,17 +3387,19 @@ def _candidate_metric_audit_rows(
     candidate_set_hash_value: str,
     action_mask: list[bool],
     config: dict[str, Any],
+    obstacle_source_linkage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for candidate_index, candidate in enumerate(candidates):
         cell = _cell_tuple(_candidate_cell(candidate))
         coverage_count = _finite_or_none(candidate.get("expected_new_coverage_cell_count"))
         if coverage_count is None and cell is not None:
-            footprint = _coverage_cells(
+            footprint = _candidate_coverage_cells(
                 start=current_cell,
                 end=cell,
-                radius=int(config["coverage_radius_cells"]),
-                mode=str(config["coverage_metric_mode"]),
+                candidate=candidate,
+                config=config,
+                obstacle_source_linkage=obstacle_source_linkage,
             )
             coverage_count = float(len(footprint - covered_cells))
         path_cost = _candidate_cost(candidate)
@@ -3006,6 +3415,12 @@ def _candidate_metric_audit_rows(
             soft_risk_exposure = _finite_or_none(candidate.get("path_risk_exposure"))
         if soft_risk_exposure is None:
             soft_risk_exposure = risk_cost_weighted
+        obstacle_audit = _candidate_obstacle_audit(
+            candidate=candidate,
+            config=config,
+            cell=cell,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
         rows.append(
             {
                 "schema_version": "xunce-exploration-coverage-candidate-metric-audit-row/v1",
@@ -3021,6 +3436,33 @@ def _candidate_metric_audit_rows(
                 "candidate_set_hash": candidate_set_hash_value,
                 "candidate_index": candidate_index,
                 "candidate_cell": list(cell) if cell is not None else None,
+                "candidate_theta_deg": candidate.get("candidate_theta_deg"),
+                "candidate_viewpoint": candidate.get("candidate_viewpoint"),
+                "base_candidate_index": candidate.get("base_candidate_index"),
+                "viewpoint_index": candidate.get("viewpoint_index"),
+                "base_candidate_set_hash": candidate.get("base_candidate_set_hash"),
+                "sensor_model_id": candidate.get("sensor_model_id"),
+                "sensor_fov_deg": candidate.get("sensor_fov_deg"),
+                "sensor_range_cells": candidate.get("sensor_range_cells"),
+                "theta_visible_cell_count": candidate.get("theta_visible_cell_count"),
+                "theta_new_visible_cell_count": candidate.get("theta_new_visible_cell_count"),
+                "theta_coverage_hash": candidate.get("theta_coverage_hash"),
+                "theta_coverage_gain_per_path_cost": candidate.get("theta_coverage_gain_per_path_cost"),
+                "obstacle_occlusion_enabled": obstacle_audit["obstacle_occlusion_enabled"],
+                "obstacle_source": obstacle_audit["obstacle_source"],
+                "obstacle_source_id": obstacle_audit["obstacle_source_id"],
+                "obstacle_source_hash": obstacle_audit["obstacle_source_hash"],
+                "obstacle_source_kind": obstacle_audit["obstacle_source_kind"],
+                "obstacle_source_is_proxy": obstacle_audit["obstacle_source_is_proxy"],
+                "obstacle_source_missing": obstacle_audit["obstacle_source_missing"],
+                "obstacle_cell_count": obstacle_audit["obstacle_cell_count"],
+                "obstacle_occluded_cell_count": obstacle_audit["obstacle_occluded_cell_count"],
+                "obstacle_blocked_cell_count": obstacle_audit["obstacle_blocked_cell_count"],
+                "obstacle_aware_theta_coverage_hash": obstacle_audit["obstacle_aware_theta_coverage_hash"],
+                "theta_feature_available": bool(candidate.get("theta_feature_available", False)),
+                "sin_theta": candidate.get("sin_theta"),
+                "cos_theta": candidate.get("cos_theta"),
+                "theta_deg_norm": candidate.get("theta_deg_norm"),
                 "action_mask_valid": bool(action_mask[candidate_index]) if candidate_index < len(action_mask) else False,
                 "expected_new_coverage_cell_count": coverage_count,
                 "roi_weighted_coverage_delta": roi_gain,
@@ -3071,6 +3513,9 @@ def _selected_candidate_metrics(candidates: list[dict[str, Any]], selected_index
         return {}
     return {
         "selected_cell": _candidate_cell(candidate),
+        "selected_viewpoint": candidate.get("candidate_viewpoint"),
+        "selected_theta_deg": candidate.get("candidate_theta_deg"),
+        "selected_base_candidate_index": candidate.get("base_candidate_index"),
         "selected_path_cost": _candidate_cost(candidate),
         "selected_risk": _finite_or_none(candidate.get("risk")),
         "selected_expected_new_coverage_cell_count": _finite_or_none(candidate.get("expected_new_coverage_cell_count")),
@@ -3092,11 +3537,11 @@ def _teacher_label_candidate_metrics(
     coverage_count = 0
     if cell is not None:
         coverage_count = len(
-            _coverage_cells(
+            _candidate_coverage_cells(
                 start=current_cell,
                 end=cell,
-                radius=int(config["coverage_radius_cells"]),
-                mode=str(config["coverage_metric_mode"]),
+                candidate=candidate,
+                config=config,
             )
             - covered_cells
         )
@@ -3320,7 +3765,8 @@ def _paired_decision_audit_row(
         "candidate_set_id": candidate_set_id,
         "candidate_set_hash": candidate_set_hash_value,
         "covered_cells_hash": covered_cells_hash_value,
-        "candidate_cells": [_candidate_cell(candidate) for candidate in candidates],
+        "candidate_cells": candidate_observation_cells(candidates),
+        **theta_metadata(candidates),
         "action_mask": list(adapter["action_mask"]),
         "same_state_same_candidate_set": True,
         "xunce_checkpoint_loaded": bool(model_bundle.get("xunce_checkpoint_loaded")),
@@ -3386,11 +3832,11 @@ def _oracle_policy_detail(
         cell = _cell_tuple(_candidate_cell(candidate))
         if cell is None:
             continue
-        coverage_cells = _coverage_cells(
+        coverage_cells = _candidate_coverage_cells(
             start=current_cell,
             end=cell,
-            radius=int(config["coverage_radius_cells"]),
-            mode=str(config["coverage_metric_mode"]),
+            candidate=candidate,
+            config=config,
         )
         new_count = len(coverage_cells - covered_cells)
         path_cost = _candidate_cost(candidate) or 0.0
@@ -3463,6 +3909,153 @@ def _coverage_cells(
         for cell in _line_cells(start, end):
             cells.update(_footprint(cell, radius=radius))
     return cells
+
+
+def _candidate_coverage_cells(
+    *,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    candidate: dict[str, Any],
+    config: dict[str, Any],
+    obstacle_source_linkage: dict[str, Any] | None = None,
+) -> set[tuple[int, int]]:
+    if theta_viewpoints_enabled(config) and candidate.get("candidate_theta_deg") is not None:
+        if bool(config.get("obstacle_occlusion_enabled", False)):
+            obstacles = _candidate_obstacles(candidate, config, obstacle_source_linkage=obstacle_source_linkage)[0]
+            return visible_cells_for_viewpoint_with_obstacles(
+                end,
+                theta_deg=float(candidate["candidate_theta_deg"]),
+                sensor_range_cells=int(config.get("sensor_range_cells", config.get("coverage_radius_cells", 1))),
+                sensor_fov_deg=float(config.get("sensor_fov_deg", 90.0)),
+                obstacle_cells=obstacles,
+            ).visible_cells
+        return visible_cells_for_viewpoint(
+            end,
+            theta_deg=float(candidate["candidate_theta_deg"]),
+            sensor_range_cells=int(config.get("sensor_range_cells", config.get("coverage_radius_cells", 1))),
+            sensor_fov_deg=float(config.get("sensor_fov_deg", 90.0)),
+        )
+    return _coverage_cells(
+        start=start,
+        end=end,
+        radius=int(config["coverage_radius_cells"]),
+        mode=str(config["coverage_metric_mode"]),
+    )
+
+
+def _candidate_obstacle_audit(
+    *,
+    candidate: dict[str, Any],
+    config: dict[str, Any],
+    cell: tuple[int, int] | None,
+    obstacle_source_linkage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    obstacles, source, source_id, source_hash, source_kind, source_is_proxy = _candidate_obstacles(
+        candidate,
+        config,
+        obstacle_source_linkage=obstacle_source_linkage,
+    )
+    if not bool(config.get("obstacle_occlusion_enabled", False)) or cell is None or candidate.get("candidate_theta_deg") is None:
+        return {
+            "obstacle_occlusion_enabled": bool(config.get("obstacle_occlusion_enabled", False)),
+            "obstacle_source": source,
+            "obstacle_source_id": source_id,
+            "obstacle_source_hash": source_hash,
+            "obstacle_source_kind": source_kind,
+            "obstacle_source_is_proxy": source_is_proxy,
+            "obstacle_source_missing": False if source else bool(config.get("obstacle_occlusion_enabled", False)),
+            "obstacle_cell_count": len(obstacles),
+            "obstacle_occluded_cell_count": None,
+            "obstacle_blocked_cell_count": None,
+            "obstacle_aware_theta_coverage_hash": None,
+        }
+    if not source:
+        return {
+            "obstacle_occlusion_enabled": True,
+            "obstacle_source": None,
+            "obstacle_source_id": None,
+            "obstacle_source_hash": None,
+            "obstacle_source_kind": None,
+            "obstacle_source_is_proxy": False,
+            "obstacle_source_missing": True,
+            "obstacle_cell_count": 0,
+            "obstacle_occluded_cell_count": None,
+            "obstacle_blocked_cell_count": None,
+            "obstacle_aware_theta_coverage_hash": None,
+        }
+    result = visible_cells_for_viewpoint_with_obstacles(
+        cell,
+        theta_deg=float(candidate["candidate_theta_deg"]),
+        sensor_range_cells=int(config.get("sensor_range_cells", config.get("coverage_radius_cells", 1))),
+        sensor_fov_deg=float(config.get("sensor_fov_deg", 90.0)),
+        obstacle_cells=obstacles,
+    )
+    return {
+        "obstacle_occlusion_enabled": True,
+        "obstacle_source": source,
+        "obstacle_source_id": source_id,
+        "obstacle_source_hash": source_hash,
+        "obstacle_source_kind": source_kind,
+        "obstacle_source_is_proxy": source_is_proxy,
+        "obstacle_source_missing": False,
+        "obstacle_cell_count": len(obstacles),
+        "obstacle_occluded_cell_count": result.occluded_cell_count,
+        "obstacle_blocked_cell_count": result.blocked_by_obstacle_count,
+        "obstacle_aware_theta_coverage_hash": result.obstacle_aware_theta_coverage_hash,
+    }
+
+
+def _candidate_obstacles(
+    candidate: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    obstacle_source_linkage: dict[str, Any] | None = None,
+) -> tuple[set[tuple[int, int]], str | None, str | None, str | None, str | None, bool]:
+    include_no_go = bool(config.get("no_go_blocks_los", False))
+    obstacles, source = extract_obstacle_cells(candidate, include_no_go=include_no_go)
+    if obstacles:
+        source_kind, source_is_proxy = _obstacle_kind_for_source_field(source)
+        source_hash = stable_obstacle_source_hash(
+            source_kind=source_kind or str(source),
+            obstacle_cells=obstacles,
+            no_go_blocks_los=include_no_go,
+        )
+        return obstacles, source, None, source_hash, source_kind, source_is_proxy
+    config_obstacles, config_source = extract_obstacle_cells(config, include_no_go=include_no_go)
+    if config_obstacles:
+        source_kind, source_is_proxy = _obstacle_kind_for_source_field(config_source)
+        source_hash = stable_obstacle_source_hash(
+            source_kind=source_kind or str(config_source),
+            obstacle_cells=config_obstacles,
+            no_go_blocks_los=include_no_go,
+        )
+        return config_obstacles, config_source, None, source_hash, source_kind, source_is_proxy
+    if isinstance(obstacle_source_linkage, dict) and obstacle_source_linkage.get("obstacle_cells"):
+        cells = {_cell_tuple(cell) for cell in obstacle_source_linkage.get("obstacle_cells", [])}
+        cells = {cell for cell in cells if cell is not None}
+        return (
+            cells,
+            str(obstacle_source_linkage.get("obstacle_source_field") or obstacle_source_linkage.get("obstacle_source_kind") or "obstacle_source_artifact"),
+            str(obstacle_source_linkage.get("obstacle_source_id") or ""),
+            str(obstacle_source_linkage.get("obstacle_source_hash") or ""),
+            str(obstacle_source_linkage.get("obstacle_source_kind") or ""),
+            bool(obstacle_source_linkage.get("obstacle_source_is_proxy", False)),
+        )
+    return set(), None, None, None, None, False
+
+
+def _obstacle_kind_for_source_field(source: str | None) -> tuple[str | None, bool]:
+    if not source:
+        return None, False
+    if str(source).startswith("obstacle"):
+        return "physical_obstacle_cells", False
+    if str(source).startswith("slope_blocked") or str(source).startswith("sidecar_dem_slope"):
+        return "slope_blocked_as_obstacle_proxy", True
+    if str(source).startswith("blocked"):
+        return "blocked_as_obstacle_proxy", True
+    if str(source).startswith("no_go"):
+        return "no_go_as_obstacle_proxy", True
+    return str(source), True
 
 
 def _line_cells(start: tuple[int, int], end: tuple[int, int]) -> list[tuple[int, int]]:

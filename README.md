@@ -90,6 +90,177 @@ constraint, not as a replacement success metric. Stage21.11 is audit-only: it
 does not run PPO, publish checkpoints, replace the default policy, connect an
 executor, or start canary traffic.
 
+Stage 22.0 starts the theta-aware sensor/action-space line. The current Stage21
+PPO action is still an index over candidate points `(x,y)`, and current coverage
+is mostly computed as a circular endpoint/path footprint. Stage22.0 introduces a
+read-only contract for candidate viewpoints `(x,y,theta_deg)` with 8 headings,
+45 degree spacing, 90 degree FOV, and audit-only occlusion. The path planner is
+unchanged and still plans to `(x,y)`; theta only changes the observation
+coverage after arrival. If the audit finds that different theta values at the
+same point materially change coverage or the best action ranking, old point-only
+Stage21 PPO evidence is not theta-aware readiness and the next route is
+`implement_stage22_1_theta_aware_candidate_viewpoint_generation`.
+The current Stage22.0 audit reviewed 720 Stage21 transitions and found theta
+material to coverage and action preference, so the active next step is that
+Stage22.1 candidate/viewpoint generation work.
+
+Stage 22.1 implements the first theta-aware action-space contract smoke. Each
+base candidate point `(x,y)` is expanded into 8 viewpoint actions
+`(x,y,theta_deg)`, the viewpoint-level candidate-set hash includes theta and
+sensor-model fields, and Stage21.1 / Stage21.3 can carry and validate
+viewpoint-level masks and batch metadata. The path planner is still unchanged
+and plans only to `(x,y)`; theta affects the observation coverage after arrival.
+The current Stage22.1 run audited 720 transitions, expanded them to 177672
+viewpoint candidates, found no hash or mask contract mismatch, and routes to
+`run_stage22_2_theta_aware_coverage_reward_contract`. Stage22.1 is still a
+contract and smoke stage: it does not run PPO, publish checkpoints, replace the
+default policy, connect an executor, or start canary traffic.
+
+Stage 22.2 closes the theta-aware reward contract. Stage21.2 can now run with
+`require_theta_aware_reward_contract=true`; in that mode coverage gain is read
+from `theta_new_visible_cell_count / theta_coverage_denominator_cells`, the
+reward row records `coverage_source=theta_aware_sensor_footprint/v1`, and
+point-only fallback is rejected. Stage21.3 can also require theta-aware reward
+provenance and rejects batches where the reward viewpoint does not match the
+selected viewpoint action. The current Stage22.2 run replayed 5000 Stage22.1
+viewpoint rows, found 625 same-point groups where theta changed coverage, and
+all 625 had discriminating reward values. It passed with route
+`run_stage22_3_theta_aware_ppo_collector_smoke`. This remains a contract stage:
+no PPO run, checkpoint publication, default-policy replacement, executor
+connection, canary, network change, continuous-theta policy, or default A*
+change is authorized.
+
+Stage 22.3 validates the real theta-aware PPO data path. It runs bounded
+Stage21.1 collector output with `theta_aware_candidate_viewpoints_enabled=true`,
+then runs Stage21.2 with `require_theta_aware_reward_contract=true` and
+Stage21.3 with both theta viewpoint and theta reward gates enabled. The audit
+checks that transition `info` carries viewpoint-level candidates, theta coverage
+counts/hashes, selected viewpoint binding, and viewpoint-level masks; it also
+checks that reward and batch rows preserve theta-aware provenance and never fall
+back to point-only coverage. Passing Stage22.3 only routes to
+`run_stage22_4_theta_aware_ppo_update_smoke`; it still does not execute a PPO
+update, publish a checkpoint, replace policy, connect an executor, start canary
+traffic, introduce continuous theta, or change default A*.
+
+Stage 22.4 validates the first theta-aware PPO update path. It wraps the
+existing Stage21.4 tiny PPO update and points it at the Stage22.3 `s21_3` batch,
+then audits that `xunce_batch` tensors use the viewpoint-level action dimension,
+that the selected action is still bound to `(x,y,theta)`, and that Stage21.4
+loss, gradient, and experimental checkpoint reload evidence are finite and
+isolated. Passing Stage22.4 only routes to
+`run_stage22_5_theta_aware_post_update_trajectory_eval_smoke`; it does not run
+trajectory evaluation, publish a checkpoint, replace policy, connect an
+executor, start canary traffic, introduce continuous theta, or change default
+A*.
+The current real Stage22.4 smoke passed on 8 theta-aware trainable rows with no
+theta batch/action/mask blocker and a reloadable experimental checkpoint. It
+also showed a large value-loss-dominated pre-clip gradient, so the result should
+be read as update-chain readiness, not as trajectory performance evidence.
+
+Stage 22.5 is the first theta-aware post-update trajectory evaluation smoke. It
+wraps Stage21.5, uses the Stage22.4 experimental-only checkpoint as the post
+checkpoint, keeps the source checkpoint as the pre baseline, and runs the same
+bounded theta-aware high-fidelity evaluation on both. The wrapper then strong
+joins pre/post model-inference rows by
+`scenario_id + step_index + current_cell + covered_cells_hash + candidate_set_hash`
+and reports selected viewpoint changes, selected theta changes, probability
+deltas, final coverage/AUC deltas, path-cost delta, and safety regressions.
+Passing Stage22.5 can only route to `run_stage22_6_theta_aware_multi_seed_ppo_pilot`.
+It remains a low-sample smoke and does not publish checkpoints, replace the
+default policy, connect an executor, start canary traffic, introduce continuous
+theta, or claim production performance.
+
+Stage 23.0 introduces an endpoint obstacle-aware theta sensor coverage contract.
+It keeps the Stage22 viewpoint action `(x,y,theta)` and the path planner target
+`(x,y)`, but changes the sensor audit from “range + FOV sees through everything”
+to “arrive at `(x,y)`, look along `theta`, and remove cells hidden behind 2D
+obstacles.” The implementation uses line-of-sight over grid cells: obstacle
+target cells are not counted as covered, and non-obstacle cells behind an
+obstacle are excluded from visible coverage. The stage is read-only and writes
+LOS/coverage-delta/compatibility artifacts under
+`D:\CodexDownloads\lunar-path-planning\stage23_endpoint_obstacle_aware_theta_sensor_coverage\`.
+If existing Stage22 artifacts do not carry `obstacle_cells`, `blocked_cells`,
+`no_go_cells`, or obstacle rectangles, Stage23.0 must route to
+`rerun_stage23_0_required_obstacle_sources` instead of treating zero blocked
+counts as proof that occlusion is irrelevant. If obstacle occlusion materially
+changes theta coverage while Stage22 reward remains unobstructed, the next step
+is `implement_stage23_1_obstacle_aware_theta_reward_contract`. Stage23.0 does
+not run PPO, publish checkpoints, replace policy, connect an executor, start
+canary traffic, introduce continuous theta, model slope/height occlusion, or
+change default A*.
+
+Stage 23.0A materializes the obstacle sources required by the Stage23.0 LOS
+audit. It writes one stable
+`xunce-exploration-coverage-obstacle-sources.json` artifact per high-fidelity
+root and lets candidate audit rows reference it by `obstacle_source_id`,
+`obstacle_source_hash`, and `obstacle_source_kind` instead of duplicating full
+obstacle cell lists. Physical `obstacle_cells` remain the preferred source; if
+those are absent, `passable_mask == false` from the sidecar may be exported as
+`blocked_as_obstacle_proxy`. Summary-only fields such as `blocked_count=0` or
+`passable_ratio=1.0` are not obstacle maps. Stage23.0A reruns Stage23.0 and then
+routes to Stage23.1, proxy semantics review, or map obstacle-source repair. It
+does not train, publish checkpoints, replace policy, connect an executor, start
+canary traffic, introduce continuous theta, or change default A*.
+
+Stage 23.0B repairs the map/sidecar export side of that blocker. The quasi-real
+bridge now materializes `blocked_cells` directly from `passable_mask == false`
+and marks the source as `blocked_source_kind=passable_mask_false`. These cells
+are a conservative line-of-sight proxy, not physical obstacle evidence; real
+`obstacle_cells` must come from an explicit physical source and are never
+fabricated from risk, slope, or summary-only values. The Stage23.0B runner
+reruns Stage23.0A/23.0 and then routes either to Stage23.1 for physical obstacle
+materiality, to blocked-proxy semantics review, or back to map source export
+repair if no usable source exists. It remains audit-only and does not train or
+publish anything.
+
+Stage 23.1 adds the simplified terrain source chosen for the current 20m DEM
+maps. Instead of doing full DEM ray-height visibility, the bridge computes
+physical `slope_deg` from DEM height differences and `resolution_m`; cells whose
+slope exceeds `max_traversable_slope_deg` become `slope_blocked_cells`. These
+cells are written as `slope_blocked_as_obstacle_proxy` and can block endpoint
+theta LOS exactly like other grid obstacles. They are not physical rock/crack
+labels. After Stage23.2B, the default hard gate is the Scout Mini platform
+maximum climb angle, `30.0` degrees; `20.0` degrees is retained only as a
+sensitivity/audit baseline. High-fidelity source priority is explicit physical obstacle, then
+slope-blocked proxy, then blocked/passable-mask proxy, then optional no-go
+proxy. The Stage23.1 runner reruns Stage23.0A/23.0 with slope derivation enabled
+and routes material occlusion to
+`implement_stage23_2_slope_obstacle_aware_theta_reward_contract`; it still does
+not train, publish, replace policy, connect executor, start canary, introduce
+continuous theta, or change default A*.
+
+Stage 23.2A moves the Stage23 sample-map source from the old 20m LOLA
+quasi-real data to higher-resolution terrain products. The primary default
+source is the USGS Moon LRO South Pole DEM + Slope Map at 4m/pixel, represented
+by `model-explorer/data/manifests/lunar_south_pole_usgs_lro_dem_slope_4m.json`.
+LROC NAC DTM 2-5m products are tracked separately in
+`model-explorer/data/manifests/lunar_lroc_nac_dtm_roi_2m_5m.json` as
+ROI-specific enhancement candidates, not automatic replacements.
+
+The Stage23.2A runner
+`scripts/run_xunce_stage23_2a_high_resolution_terrain_data_prepare.py` downloads
+raw products to `D:\CodexDownloads`, computes runtime hashes, reads bounded
+GeoTIFF windows, and writes a high-fidelity compatible ROI expansion root. When
+a slope map is present, it is preferred over DEM-derived slope; otherwise the
+existing physical slope formula is used. The output sidecars continue to label
+too-steep cells as `slope_blocked_as_obstacle_proxy`, meaning "not traversable
+and treated as an endpoint LOS blocker" rather than physical rock, crack, or
+wall truth. Stage23.2A does not train, publish, replace policy, connect
+executor, start canary, introduce continuous theta, model 3D LOS, or change
+default A*.
+
+Stage 23.2B adds the platform contract
+`configs/platforms/agilex_scout_mini_piper_v1.json` for the SCOUT MINI + PiPER
+platform. It records Scout Mini geometry, drive/steering, `platform_max_climb_deg
+= 30.0`, Livox Mid360 `360 x 59` degree FOV and 40m 10% reflectivity range, and
+marks Dabai camera FOV/range as calibration-required because the platform page
+does not provide those values. Stage23.1/23.2A outputs now include
+`platform_contract_id`, `platform_contract_hash`, `platform_max_climb_deg`, and
+`max_traversable_slope_deg`, so slope-blocked LOS sources are traceable to the
+platform contract. Stage23.2B compares the platform default 30 degree threshold
+against the old 20 degree sensitivity threshold and routes material 30 degree
+occlusion to `implement_stage23_2_slope_obstacle_aware_theta_reward_contract`.
+
 Near-term integration focuses on the `dev-platform-constraints -> model-explorer
 -> path-planner` JSON loop: generate `model-explorer-contract/v1`, select Top-K
 goals, emit `path-planner-request/v1`, consume `path-planner-route/v1`, then feed
@@ -6377,3 +6548,210 @@ passed. The v2 reward best-action match with coverage-per-cost improved from
 `0.318183174323286`, and no hard-risk transition became trainable. The next
 route is
 `run_stage21_13_coverage_constrained_multi_seed_ppo_smoke`.
+
+### Stage 21.13 Coverage-Constrained Multi-Seed PPO Smoke
+
+Stage 21.13 executes the Stage21.12 recommended Stage21.6 config with the
+coverage-constrained reward v2 profile. The runner is
+`scripts/run_xunce_stage21_13_coverage_constrained_multi_seed_ppo_smoke.py`,
+with config
+`configs/xunce_stage21_13_coverage_constrained_multi_seed_ppo_smoke_v1.json`.
+It writes a wrapper summary, routing, report, manifest, and the copied
+Stage21.6 config under
+`D:\CodexDownloads\lunar-path-planning\stage21_pure_ppo_coverage_first\outputs\path_feedback_batch_xunce_stage21_13_coverage_constrained_multi_seed_ppo_smoke_v1`.
+The nested Stage21.6 execution root is `s6` to keep Windows paths short.
+
+Stage21.13 only accepts Stage21.12 when `status=passed`, route is
+`run_stage21_13_coverage_constrained_multi_seed_ppo_smoke`, and the recommended
+Stage21.6 config still points to
+`configs/xunce_stage21_coverage_constrained_ppo_reward_profile_v2.json` with
+three seeds, 8 scenarios, 10 rollout steps, 36 candidates, and proposal pool
+288. The route only advances to
+`scale_stage21_ppo_pilot_scenarios_and_horizon` if raw and capped final
+coverage / coverage-AUC deltas are all strictly positive and the worst seed
+does not regress. Flat coverage or AUC routes to
+`repair_stage21_return_advantage_credit_assignment`; zero parameter delta routes
+to `calibrate_stage21_policy_update_signal_strength`.
+
+This stage may execute local offline PPO updates through Stage21.6, but it is
+still a smoke test. It must not publish checkpoints, replace the default policy,
+connect an executor, start canary traffic, or change the network, action space,
+or default A*.
+
+The current Stage21.13 run completed three seeds and 240 trainable transitions
+under the nested `s6` root. Lineage passed, hard risk / mask / path-planning /
+open-grid boundary counts stayed at zero, `pre_clip_grad_norm_max` was
+`3.6654789447784424`, post-clip grad stayed near `1.0`, KL was finite, and
+parameter delta was observable. However raw final coverage delta, raw coverage
+AUC delta, capped final coverage delta, and capped coverage AUC delta were all
+`0.0`. The current route is
+`repair_stage21_return_advantage_credit_assignment`.
+
+### Stage 21.14 Multi-Epoch PPO Update Depth Calibration
+
+Stage 21.14 directly tests whether the Stage21.13 failure is simply because the
+PPO update was too shallow for a discrete candidate-action policy. It keeps the
+Stage21.12 coverage-constrained reward v2 profile and the Stage21.9 loss-scale
+repair, then reuses Stage21.6 with deeper update settings such as 2, 4, and 8
+epochs at `learning_rate=2e-6`.
+
+The runner is
+`scripts/run_xunce_stage21_14_multi_epoch_ppo_update_depth_calibration.py`,
+with config
+`configs/xunce_stage21_14_multi_epoch_ppo_update_depth_calibration_v1.json`.
+It writes sweep rows, an action-rank shift audit, a recommended Stage21.6
+config, routing, report, and manifest under
+`D:\CodexDownloads\lunar-path-planning\stage21_pure_ppo_coverage_first\outputs\path_feedback_batch_xunce_stage21_14_multi_epoch_ppo_update_depth_calibration_v1`.
+Large sweep working directories stay on D drive under
+`D:\CodexDownloads\lunar-path-planning\stage21_pure_ppo_coverage_first\stage21_14_sweep_runs_v1`.
+The default config treats the first three combinations (`e2/e4/e8` at
+`learning_rate=2e-6`) as the required core sweep; optional higher-step
+combinations require an explicit config change before execution.
+
+Stage21.14 does not change the reward target, network, action space, candidate
+generation, or default A*. Its main audit joins pre/post model inference by
+`scenario_id`, `step_index`, `current_cell`, `covered_cells_hash`, and
+`candidate_set_hash` when those fields are available, then reports probability,
+rank, argmax, and selected-action movement. Missing strong join fields are
+diagnostic only; real raw and capped coverage/AUC improvement can still route to
+`scale_stage21_ppo_pilot_scenarios_and_horizon`.
+
+Routing remains bounded. If all stable combinations still show almost no
+probability/rank movement, the route is
+`calibrate_stage21_policy_update_signal_strength`. If probability/rank movement
+appears but trajectory coverage/AUC remains flat, the route is
+`repair_stage21_return_advantage_credit_assignment`. Only when raw and capped
+coverage/AUC are positive with no worst-seed regression does the route advance
+to `scale_stage21_ppo_pilot_scenarios_and_horizon`. This remains offline smoke
+evidence only and must not publish checkpoints, replace the default policy,
+connect an executor, start canary traffic, or claim real deployment readiness.
+
+### Stage 21.15 Policy Update Signal Strength Calibration
+
+Stage21.15 fixes the main blocker exposed by Stage21.14: the old pre/post
+model-inference artifacts did not contain enough state identity fields to prove
+whether PPO changed action probabilities, ranks, or argmax on the same state and
+candidate set. Stage21.15 therefore upgrades the high-fidelity model inference
+row contract to include top-level `current_cell`, `current_cell_before`,
+`covered_cells_hash`, `candidate_set_hash`, `selected_action_index`,
+`selected_rank`, `selected_probability`, `action_probs`, `logits`,
+`masked_logits`, `value`, `finite_outputs`, and `latency_ms`.
+
+The runner is
+`scripts/run_xunce_stage21_15_policy_update_signal_strength_calibration.py`,
+with config
+`configs/xunce_stage21_15_policy_update_signal_strength_calibration_v1.json`.
+It reuses Stage21.6 rather than reimplementing PPO. The default bounded sweep
+starts from Stage21.14's strongest stable depth (`e8_lr2e-6_c0p2`) and can then
+try `e8_lr5e-6_c0p2` and `e8_lr1e-5_c0p2`. Large sweep outputs stay on D drive
+under `D:\CodexDownloads\lunar-path-planning\stage21_pure_ppo_coverage_first`.
+
+The action-signal audit only accepts a strong join on
+`scenario_id + step_index + current_cell + covered_cells_hash + candidate_set_hash`.
+Missing fields, duplicate strong keys, or missing post counterparts route to
+`repair_stage21_5_inference_binding_contract`; weak joins are not allowed to
+claim policy movement. If probabilities remain tiny, the route is
+`increase_stage21_policy_update_signal_strength`. If probabilities move but
+rank/argmax do not, the route is
+`calibrate_stage21_discrete_action_margin_crossing`. If rank/argmax move but
+coverage/AUC do not, the route is
+`repair_stage21_return_advantage_credit_assignment`. This remains an offline
+calibration stage: no checkpoint publication, default-policy replacement,
+executor connection, canary traffic, action-space change, candidate-generation
+change, or default A* change is authorized.
+
+### Stage 21.16 Policy Signal Margin And Credit Attribution
+
+Stage21.16 follows the Stage21.15 result: strong pre/post inference binding is
+now available, but PPO still changed probabilities by only a very small amount
+and did not change rank, argmax, selected action, final coverage, or coverage
+AUC. The new runner is
+`scripts/run_xunce_stage21_16_policy_signal_margin_credit_attribution.py`, with
+config `configs/xunce_stage21_16_policy_signal_margin_credit_attribution_v1.json`.
+
+This stage separates four explanations that Stage21.15 could not fully
+distinguish: update strength is still too small, reward/advantage signal does
+not separate high coverage-per-cost actions, the discrete action margin is too
+large for the observed probability shift, or value/entropy loss gradients are
+dominating policy loss. It outputs update-strength, reward/advantage separation,
+discrete action margin, and loss-gradient attribution artifacts.
+
+Stage21.16 still uses only strong joins on
+`scenario_id + step_index + current_cell + covered_cells_hash + candidate_set_hash`.
+Weak joins cannot be used to claim policy movement. The stage may run one
+bounded offline Stage21.6 combo by default, but it remains calibration evidence:
+no checkpoint publication, default-policy replacement, executor connection,
+canary traffic, reward-target change, network change, action-space change,
+candidate-generation change, or default A* change is authorized.
+
+### Stage 21.18 Iterative PPO Learning Curve Audit
+
+Stage21.18 tests whether the Stage21.17 result is simply a learning-curve issue:
+one PPO update can be numerically stable and still too small to cross the
+discrete candidate-selection boundary. The runner is
+`scripts/run_xunce_stage21_18_iterative_ppo_learning_curve_audit.py`, with config
+`configs/xunce_stage21_18_iterative_ppo_learning_curve_audit_v1.json`.
+
+The stage chains experimental-only checkpoints across iterative rounds. This
+chain is per seed: round `N` for seed `2101` can only feed round `N+1` for the
+same seed, and cannot be replaced by a checkpoint from another seed. For every
+round the Stage21.1 high-fidelity config and Stage21.4 update config must point
+to the same source checkpoint, and the audit records source sha, experimental
+checkpoint sha, reload status, and `experimental_only=true`.
+
+Stage21.18 records probability delta, best coverage-per-cost probability delta,
+rank/argmax/action changes, KL, entropy, gradients, parameter delta, final
+coverage, and coverage AUC for each round. It can recommend a new Stage21.6
+config if the learning curve is promising. Because Stage21.6 accepts one source
+checkpoint rather than a per-seed checkpoint map, that recommendation is marked
+as a representative checkpoint and also records the final per-seed checkpoint
+set for audit. It remains offline smoke/audit evidence only: no checkpoint
+publication, default-policy replacement, executor connection, canary traffic,
+reward-target change, network change, action-space change, candidate-generation
+change, or default A* change is authorized.
+
+### Stage 21.19 Policy Update Signal Source Repair
+
+Stage21.19 checks whether the Stage21.18 policy updates actually reach the
+candidate-action layer. It audits action/log-prob binding, `sampling_mask` /
+`action_mask` / hard-risk mask consistency, PPO ratio and advantage direction,
+policy/value/entropy gradient components, checkpoint parameter deltas by module,
+and strong-state pre/post inference movement.
+
+The runner is
+`scripts/run_xunce_stage21_19_policy_update_signal_source_repair.py`, with config
+`configs/xunce_stage21_19_policy_update_signal_source_repair_v1.json`. The
+default output root is
+`D:\CodexDownloads\lunar-path-planning\stage21_pure_ppo_coverage_first\outputs\path_feedback_batch_xunce_stage21_19_policy_update_signal_source_repair_v1`.
+
+The current Stage21.19 evidence says the basic PPO binding is valid:
+`old_log_prob` recomputes within about `5.17e-7`, policy-head and candidate
+encoder parameters both move, and xunce-only strong-state inference has no
+duplicate keys or vector contract violations. However, only 3 selected actions
+change under the strict `policy=xunce` join, and final coverage / coverage AUC
+still do not improve. The current route is therefore
+`repair_stage21_return_advantage_credit_assignment`, not another policy-head
+path repair. Stage21.19 remains offline diagnostic evidence only and authorizes
+no checkpoint publication, default-policy replacement, executor connection,
+canary traffic, reward-target change, network change, action-space change,
+candidate-generation change, or default A* change.
+
+### Stage 21.17 Policy Signal Amplification Value Balance
+
+Stage21.17 follows the Stage21.16 finding that strong-state binding is available
+and reward/advantage point in the right direction, but value loss dominates the
+gradient and action-probability movement is still too small to cross discrete
+candidate-selection boundaries. The runner is
+`scripts/run_xunce_stage21_17_policy_signal_amplification_value_balance.py`, with
+config `configs/xunce_stage21_17_policy_signal_amplification_value_balance_v1.json`.
+
+The stage adds a backward-compatible Stage21.4 knob,
+`policy_loss_coefficient`, defaulting to `1.0`. Stage21.17 first lowers
+`value_loss_coefficient`, then optionally raises `policy_loss_coefficient`, and
+audits policy/value/entropy gradient ratios, KL, entropy, parameter delta,
+probability delta, rank/argmax/action changes, and raw/capped coverage/AUC
+deltas. It may execute one bounded offline Stage21.6 combo at a time and writes
+a recommended Stage21.6 config, but it remains calibration evidence only: no
+checkpoint publication, default-policy replacement, executor connection, canary
+traffic, reward-target change, network change, action-space change,
+candidate-generation change, or default A* change is authorized.
