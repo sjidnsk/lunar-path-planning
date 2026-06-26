@@ -85,8 +85,9 @@ def run_xunce_stage23_2b_platform_geometry_sensor_contract_alignment(
     default_threshold = float(config.get("default_threshold_deg", lineage["max_traversable_slope_deg"]))
     sensitivity_threshold = float(config.get("sensitivity_threshold_deg", 20.0))
 
-    default_root = output_root / "s23_2a_platform_30"
+    default_root = output_root / str(config.get("stage23_2a_default_output_subdir", "s23_2a_platform_30"))
     sensitivity_root = output_root / "s23_2a_sensitivity_20"
+    sensitivity_root = output_root / str(config.get("stage23_2a_sensitivity_output_subdir", "s23_2a_sensitivity_20"))
     default_2a, default_1 = _stage23_2a_pair(
         config,
         output_root=default_root,

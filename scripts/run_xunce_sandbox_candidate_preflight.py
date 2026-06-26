@@ -19,13 +19,13 @@ try:
     from global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json
     from global_99_governance_common import global_99_boundary_defaults
     from run_xunce_controlled_training_candidate import _synthetic_batch
-    from xunce_full_network_common import XunceFullNetworkV1
+    from xunce_full_network_common import XunceFullNetworkV1, load_xunce_full_network_state_dict_compatible
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json
     from scripts.global_99_governance_common import global_99_boundary_defaults
     from scripts.run_xunce_controlled_training_candidate import _synthetic_batch
-    from scripts.xunce_full_network_common import XunceFullNetworkV1
+    from scripts.xunce_full_network_common import XunceFullNetworkV1, load_xunce_full_network_state_dict_compatible
 
 
 CONFIG_SCHEMA_VERSION = "xunce-sandbox-candidate-preflight-config/v1"
@@ -224,12 +224,19 @@ def _load_sandbox_checkpoint(config: dict[str, Any], checkpoint_path: Path) -> d
         reason_codes.append("checkpoint_state_dict_missing")
     if not reason_codes and isinstance(state_dict, dict):
         try:
-            model.load_state_dict(state_dict, strict=True)
-            model.eval()
-            with torch.no_grad():
-                output = model(**_synthetic_batch(config))
-            if not (torch.isfinite(output.logits).all() and torch.isfinite(output.value).all()):
-                reason_codes.append("sandbox_forward_non_finite")
+            loaded, _missing, disallowed_missing, unexpected = load_xunce_full_network_state_dict_compatible(model, state_dict)
+            if not loaded:
+                reason_codes.append("sandbox_checkpoint_state_keys_incompatible")
+                if disallowed_missing:
+                    reason_codes.append("sandbox_checkpoint_missing_non_theta_keys")
+                if unexpected:
+                    reason_codes.append("sandbox_checkpoint_unexpected_keys")
+            else:
+                model.eval()
+                with torch.no_grad():
+                    output = model(**_synthetic_batch(config))
+                if not (torch.isfinite(output.logits).all() and torch.isfinite(output.value).all()):
+                    reason_codes.append("sandbox_forward_non_finite")
         except Exception:
             reason_codes.append("sandbox_checkpoint_load_failed")
     verified = not reason_codes

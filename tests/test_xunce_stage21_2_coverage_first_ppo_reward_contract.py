@@ -120,6 +120,218 @@ def test_stage21_2_rejects_missing_theta_reward_contract_when_required(tmp_path:
     assert "theta_aware_reward_contract_missing" in summary["blocking_reason_codes"]
 
 
+def test_stage21_2_uses_slope_obstacle_theta_reward_contract_when_enabled(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(tmp_path, theta_reward_contract=True, slope_reward_contract=True)
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        slope_obstacle_aware_theta_reward_enabled=True,
+        theta_coverage_denominator_cells=100.0,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-2-reward-contract-evaluation.jsonl")
+    assert summary["status"] == "passed"
+    assert summary["slope_obstacle_aware_theta_reward_enabled"] is True
+    assert summary["slope_obstacle_reward_contract_missing_count"] == 0
+    assert rows[0]["slope_obstacle_aware_theta_reward_contract"] is True
+    assert rows[0]["coverage_source"] == "endpoint_theta_slope_obstacle_los/v1"
+    assert rows[0]["metrics"]["coverage_rate_delta"] == 0.04
+    assert rows[0]["obstacle_aware_new_visible_cell_count"] == 4
+    assert rows[0]["slope_obstacle_source_hash"] == "slope-source-hash"
+    assert rows[0]["platform_contract_hash"] == "platform-hash"
+    assert rows[0]["max_traversable_slope_deg"] == 30.0
+    assert rows[0]["slope_blocked_source_kind"] == "slope_blocked_as_obstacle_proxy"
+    assert rows[0]["unobstructed_theta_reward_fallback_used"] is False
+
+
+def test_stage21_2_rejects_unobstructed_theta_when_slope_contract_enabled(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(tmp_path, theta_reward_contract=True)
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        slope_obstacle_aware_theta_reward_enabled=True,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage21_2_coverage_first_reward_contract"
+    assert "slope_obstacle_aware_theta_reward_contract_missing" in summary["blocking_reason_codes"]
+    assert "unobstructed_theta_reward_fallback_used" in summary["blocking_reason_codes"]
+
+
+def test_stage21_2_does_not_treat_obstacle_total_visible_as_new_coverage(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(
+        tmp_path,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+        slope_reward_total_visible_only=True,
+    )
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        slope_obstacle_aware_theta_reward_enabled=True,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert "slope_obstacle_aware_theta_reward_contract_missing" in summary["blocking_reason_codes"]
+
+
+def test_stage21_2_rejects_20deg_sensitivity_as_default_slope_reward_contract(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(
+        tmp_path,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+        slope_max_traversable_slope_deg=20.0,
+    )
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        slope_obstacle_aware_theta_reward_enabled=True,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert "slope_obstacle_aware_theta_reward_contract_missing" in summary["blocking_reason_codes"]
+
+
+def test_stage21_2_uses_hybrid_astar_path_cost_contract_when_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(
+        tmp_path,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+        hybrid_path_cost_contract=True,
+    )
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        slope_obstacle_aware_theta_reward_enabled=True,
+        require_hybrid_astar_path_cost_contract=True,
+        theta_coverage_denominator_cells=100.0,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-2-reward-contract-evaluation.jsonl")
+    assert summary["status"] == "passed"
+    assert summary["hybrid_astar_path_cost_reward_contract_required"] is True
+    assert summary["hybrid_astar_path_cost_contract_missing_count"] == 0
+    assert rows[0]["hybrid_astar_path_cost_reward_contract"] is True
+    assert rows[0]["path_cost_source"] == "hybrid_astar_pose_path/v1"
+    assert rows[0]["metrics"]["path_cost_m"] == 2.5
+    assert rows[0]["metrics"]["coverage_per_cost"] == 1.6
+    assert rows[0]["legacy_grid_astar_path_cost"] == 10.0
+    assert rows[0]["hybrid_vs_grid_path_cost_delta"] == -7.5
+    assert rows[0]["point_grid_path_cost_fallback_used"] is False
+    assert rows[0]["default_astar_replaced"] is False
+    assert rows[0]["hybrid_astar_ackermann_feasible_claimed"] is False
+
+
+def test_stage21_2_rejects_grid_only_path_cost_when_hybrid_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(tmp_path, theta_reward_contract=True, slope_reward_contract=True)
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        slope_obstacle_aware_theta_reward_enabled=True,
+        require_hybrid_astar_path_cost_contract=True,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert "hybrid_astar_path_cost_contract_missing" in summary["blocking_reason_codes"]
+    assert summary["point_grid_path_cost_fallback_used_count"] == 1
+
+
+def test_stage21_2_rejects_hybrid_ackermann_claim_when_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(
+        tmp_path,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+        hybrid_path_cost_contract=True,
+        hybrid_ackermann_feasible_claimed=True,
+    )
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        require_theta_aware_reward_contract=True,
+        slope_obstacle_aware_theta_reward_enabled=True,
+        require_hybrid_astar_path_cost_contract=True,
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert "hybrid_astar_path_cost_contract_missing" in summary["blocking_reason_codes"]
+
+
 def test_stage21_2_requires_stage21_1_passed(tmp_path: Path) -> None:
     from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
         run_xunce_stage21_2_coverage_first_ppo_reward_contract,
@@ -146,6 +358,12 @@ def _write_stage21_1_root(
     rollout_steps: int = 4,
     status: str = "passed",
     theta_reward_contract: bool = False,
+    slope_reward_contract: bool = False,
+    slope_reward_total_visible_only: bool = False,
+    slope_max_traversable_slope_deg: float = 30.0,
+    hybrid_path_cost_contract: bool = False,
+    hybrid_astar_path_cost: float = 2.5,
+    hybrid_ackermann_feasible_claimed: bool = False,
 ) -> Path:
     root = tmp_path / "stage21_1"
     root.mkdir()
@@ -187,6 +405,34 @@ def _write_stage21_1_root(
                 "theta_coverage_hashes": ["theta-hash"],
                 "theta_coverage_gain_per_path_costs": [0.6],
                 "coverage_source": "theta_aware_sensor_footprint/v1",
+            }
+        )
+    if slope_reward_contract:
+        slope_fields = {
+            "obstacle_aware_theta_coverage_hashes": ["slope-los-hash"],
+            "obstacle_aware_theta_coverage_gain_per_path_costs": [0.4],
+            "slope_obstacle_source_hash": "slope-source-hash",
+            "platform_contract_hash": "platform-hash",
+            "max_traversable_slope_deg": slope_max_traversable_slope_deg,
+            "slope_blocked_source_kind": "slope_blocked_as_obstacle_proxy",
+            "coverage_source": "endpoint_theta_slope_obstacle_los/v1",
+        }
+        if slope_reward_total_visible_only:
+            slope_fields["obstacle_aware_visible_cell_counts"] = [4]
+        else:
+            slope_fields["obstacle_aware_new_visible_cell_counts"] = [4]
+        transition["info"].update(slope_fields)
+    if hybrid_path_cost_contract:
+        transition["info"].update(
+            {
+                "path_cost_source": "hybrid_astar_pose_path/v1",
+                "hybrid_astar_path_cost": hybrid_astar_path_cost,
+                "hybrid_astar_pose_path_hash": "hybrid-pose-path-hash",
+                "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+                "legacy_grid_astar_path_cost": 10.0,
+                "hybrid_vs_grid_path_cost_delta": hybrid_astar_path_cost - 10.0,
+                "default_astar_replaced": False,
+                "hybrid_astar_ackermann_feasible_claimed": hybrid_ackermann_feasible_claimed,
             }
         )
     (root / "xunce-stage21-1-ppo-trainable-batch.jsonl").write_text(

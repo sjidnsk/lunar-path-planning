@@ -23,6 +23,10 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from run_xunce_high_fidelity_real_map_comparison import _load_xunce_checkpoint  # noqa: E402
 from xunce_full_network_common import XunceFullNetworkV1, parameter_count  # noqa: E402
+from xunce_continuous_theta_action import (
+    CONTINUOUS_THETA_ACTION_SPACE,
+    continuous_theta_torch_log_prob,
+)
 
 
 CONFIG_SCHEMA_VERSION = "xunce-stage21-4-tiny-ppo-update-smoke-config/v1"
@@ -164,6 +168,10 @@ def run_xunce_stage21_4_tiny_ppo_update_smoke(
         route = ROUTE_BATCH
     else:
         high_fidelity_config = _read_json(Path(config["high_fidelity_config"]))
+        if any(_row_uses_continuous_theta(row) for row in train_rows):
+            init_seed = config.get("continuous_theta_head_init_seed", stage21_1_summary.get("sampling_seed"))
+            if init_seed is not None:
+                high_fidelity_config["continuous_theta_head_init_seed"] = int(init_seed)
         model_audit, model, xunce_config = _load_xunce_checkpoint(
             Path(config["xunce_candidate_checkpoint"]),
             config=high_fidelity_config,
@@ -300,9 +308,21 @@ def _run_tiny_ppo_update(
             output = model(**tensors)
             logits = output.masked_logits[0] / float(sampling_temperature)
             logits = logits.masked_fill(~sampling_mask, -1.0e9)
-            distribution = torch.distributions.Categorical(logits=logits)
-            action = torch.tensor(action_index, dtype=torch.long)
-            new_log_prob = distribution.log_prob(action)
+            if _row_uses_continuous_theta(row):
+                theta_detail = continuous_theta_torch_log_prob(
+                    point_logits=logits,
+                    theta_mu_rad=output.theta_mu_rad[0],
+                    theta_kappa=output.theta_kappa[0],
+                    action_index=action_index,
+                    theta_rad=_required_float(row.get("selected_theta_rad"), "selected_theta_rad"),
+                )
+                new_log_prob = theta_detail["total_log_prob"]
+                entropy_value = theta_detail["total_entropy"]
+            else:
+                distribution = torch.distributions.Categorical(logits=logits)
+                action = torch.tensor(action_index, dtype=torch.long)
+                new_log_prob = distribution.log_prob(action)
+                entropy_value = distribution.entropy()
             old_log_prob_tensor = torch.tensor(old_log_prob, dtype=torch.float32)
             advantage_tensor = torch.tensor(advantage, dtype=torch.float32)
             return_tensor = torch.tensor(ret, dtype=torch.float32)
@@ -311,7 +331,7 @@ def _run_tiny_ppo_update(
             clipped = torch.clamp(ratio, 1.0 - clip_ratio, 1.0 + clip_ratio) * advantage_tensor
             policy_losses.append(-torch.min(unclipped, clipped))
             value_losses.append(F.mse_loss(output.value[0], return_tensor))
-            entropies.append(distribution.entropy())
+            entropies.append(entropy_value)
             old_log_probs.append(old_log_prob_tensor)
             new_log_probs.append(new_log_prob)
             ratios.append(ratio)
@@ -478,8 +498,18 @@ def _evaluate_rows(
             output = model(**tensors)
             logits = output.masked_logits[0] / float(sampling_temperature)
             logits = logits.masked_fill(~sampling_mask, -1.0e9)
-            distribution = torch.distributions.Categorical(logits=logits)
-            new_log_prob = float(distribution.log_prob(torch.tensor(action_index, dtype=torch.long)))
+            if _row_uses_continuous_theta(row):
+                theta_detail = continuous_theta_torch_log_prob(
+                    point_logits=logits,
+                    theta_mu_rad=output.theta_mu_rad[0],
+                    theta_kappa=output.theta_kappa[0],
+                    action_index=action_index,
+                    theta_rad=_required_float(row.get("selected_theta_rad"), "selected_theta_rad"),
+                )
+                new_log_prob = float(theta_detail["total_log_prob"])
+            else:
+                distribution = torch.distributions.Categorical(logits=logits)
+                new_log_prob = float(distribution.log_prob(torch.tensor(action_index, dtype=torch.long)))
             old_log_prob = _required_float(row.get("old_log_prob"), "old_log_prob")
             old_values.append(old_log_prob)
             new_values.append(new_log_prob)
@@ -491,6 +521,11 @@ def _evaluate_rows(
         "approx_kl": float(sum(old - new for old, new in zip(old_values, new_values)) / len(rows)),
         "clip_fraction": float(sum(1 for ratio in ratios if abs(ratio - 1.0) > clip_ratio) / len(ratios)),
     }
+
+
+def _row_uses_continuous_theta(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    return (row.get("action_space_type") or info.get("action_space_type")) == CONTINUOUS_THETA_ACTION_SPACE
 
 
 def _deserialize_xunce_batch(payload: Any) -> dict[str, torch.Tensor]:
@@ -806,6 +841,23 @@ def _batch_rejections(
             reasons.append("non_trainable_row_selected")
         if _finite(row.get("old_log_prob")) is None:
             reasons.append("non_finite_old_log_prob")
+        if _row_uses_continuous_theta(row):
+            if _finite(row.get("selected_theta_rad")) is None:
+                reasons.append("continuous_theta_selected_theta_rad_missing")
+            if _finite(row.get("old_point_log_prob")) is None:
+                reasons.append("continuous_theta_old_point_log_prob_missing")
+            if _finite(row.get("old_theta_log_prob")) is None:
+                reasons.append("continuous_theta_old_theta_log_prob_missing")
+            old_total = _finite(row.get("old_log_prob"))
+            old_point = _finite(row.get("old_point_log_prob"))
+            old_theta = _finite(row.get("old_theta_log_prob"))
+            if (
+                old_total is not None
+                and old_point is not None
+                and old_theta is not None
+                and abs(old_total - (old_point + old_theta)) > 1.0e-5
+            ):
+                reasons.append("continuous_theta_old_log_prob_decomposition_mismatch")
         if _finite(row.get("return")) is None:
             reasons.append("non_finite_return")
         if _finite(row.get("advantage")) is None:

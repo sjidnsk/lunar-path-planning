@@ -44,6 +44,9 @@ ROUTE_REPAIR = "repair_stage21_2_coverage_first_reward_contract"
 ROUTE_HORIZON = "stage21_12_rollout_horizon_or_mission_budget_scaling_for_99pct_coverage"
 ROUTE_STAGE21_3 = "implement_stage21_3_ppo_batch_validation"
 THETA_COVERAGE_SOURCE = "theta_aware_sensor_footprint/v1"
+SLOPE_OBSTACLE_COVERAGE_SOURCE = "endpoint_theta_slope_obstacle_los/v1"
+HYBRID_ASTAR_PATH_COST_SOURCE = "hybrid_astar_pose_path/v1"
+SLOPE_OBSTACLE_MAX_TRAVERSABLE_SLOPE_DEG = 30.0
 
 BOUNDARY_FIELDS = (
     "stage21_2_authorized",
@@ -153,27 +156,55 @@ def run_xunce_stage21_2_coverage_first_ppo_reward_contract(
 def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     config = config or {}
     require_theta_reward = bool(config.get("require_theta_aware_reward_contract", False))
+    slope_obstacle_reward_enabled = bool(config.get("slope_obstacle_aware_theta_reward_enabled", False))
+    require_hybrid_path_cost = bool(config.get("require_hybrid_astar_path_cost_contract", False))
     theta_denominator = _positive_or_default(config.get("theta_coverage_denominator_cells"), 1.0)
     rows: list[dict[str, Any]] = []
     for row in transitions:
         info = row.get("info") if isinstance(row.get("info"), dict) else {}
         theta_reward = _theta_reward_provenance(row, theta_denominator=theta_denominator)
-        if require_theta_reward and theta_reward["theta_aware_reward_contract"]:
+        slope_reward = _slope_obstacle_reward_provenance(row, theta_denominator=theta_denominator)
+        hybrid_path = _hybrid_astar_path_cost_provenance(row)
+        path_cost_m = info.get("path_cost")
+        point_grid_path_cost_fallback_used = False
+        if require_hybrid_path_cost and hybrid_path["hybrid_astar_path_cost_reward_contract"]:
+            path_cost_m = hybrid_path["hybrid_astar_path_cost"]
+        elif require_hybrid_path_cost:
+            point_grid_path_cost_fallback_used = True
+        unobstructed_theta_reward_fallback_used = False
+        if slope_obstacle_reward_enabled and slope_reward["slope_obstacle_aware_theta_reward_contract"]:
+            coverage_rate_delta = slope_reward["coverage_rate_delta"]
+            coverage_per_cost = _count_per_path_cost(
+                slope_reward["obstacle_aware_new_visible_cell_count"],
+                path_cost_m,
+                fallback=slope_reward["obstacle_aware_theta_coverage_gain_per_path_cost"],
+            )
+            coverage_source = SLOPE_OBSTACLE_COVERAGE_SOURCE
+            point_only_fallback_used = False
+            theta_contract_active = True
+        elif require_theta_reward and theta_reward["theta_aware_reward_contract"]:
             coverage_rate_delta = theta_reward["coverage_rate_delta"]
-            coverage_per_cost = theta_reward["theta_coverage_gain_per_path_cost"]
+            coverage_per_cost = _count_per_path_cost(
+                theta_reward["theta_new_visible_cell_count"],
+                path_cost_m,
+                fallback=theta_reward["theta_coverage_gain_per_path_cost"],
+            )
             coverage_source = THETA_COVERAGE_SOURCE
             point_only_fallback_used = False
+            theta_contract_active = True
+            unobstructed_theta_reward_fallback_used = bool(slope_obstacle_reward_enabled)
         else:
             coverage_rate_delta = info.get("coverage_rate_delta")
             coverage_per_cost = info.get("coverage_per_cost")
             coverage_source = info.get("coverage_source") or "point_or_path_line_coverage_legacy"
-            point_only_fallback_used = bool(require_theta_reward)
+            point_only_fallback_used = bool(require_theta_reward or slope_obstacle_reward_enabled)
+            theta_contract_active = False
         metrics = {
             "coverage_rate_delta": coverage_rate_delta,
             "coverage_per_cost": coverage_per_cost,
             "coverage_progress_rate": info.get("final_coverage_rate_after_step"),
             "final_coverage_rate": info.get("final_coverage_rate_after_step"),
-            "path_cost_m": info.get("path_cost"),
+            "path_cost_m": path_cost_m,
             "soft_risk_exposure": info.get("soft_risk_exposure"),
             "done": row.get("done"),
             "hard_risk_flags": [] if not info.get("hard_risk_violation") else ["hard_risk_violation"],
@@ -193,15 +224,49 @@ def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, co
                 "components": result.components,
                 "trainable": result.trainable and bool(row.get("trainable", False)),
                 "reason_codes": result.reason_codes,
-                "theta_aware_reward_contract": bool(require_theta_reward and theta_reward["theta_aware_reward_contract"]),
+                "theta_aware_reward_contract": bool(theta_contract_active),
+                "slope_obstacle_aware_theta_reward_contract_required": bool(slope_obstacle_reward_enabled),
+                "slope_obstacle_aware_theta_reward_contract": bool(
+                    slope_obstacle_reward_enabled and slope_reward["slope_obstacle_aware_theta_reward_contract"]
+                ),
                 "coverage_source": coverage_source,
-                "candidate_viewpoint": theta_reward["candidate_viewpoint"],
-                "candidate_theta_deg": theta_reward["candidate_theta_deg"],
+                "candidate_viewpoint": slope_reward["candidate_viewpoint"]
+                if slope_reward["candidate_viewpoint"] is not None
+                else theta_reward["candidate_viewpoint"],
+                "candidate_theta_deg": slope_reward["candidate_theta_deg"]
+                if slope_reward["candidate_theta_deg"] is not None
+                else theta_reward["candidate_theta_deg"],
                 "theta_new_visible_cell_count": theta_reward["theta_new_visible_cell_count"],
                 "theta_coverage_hash": theta_reward["theta_coverage_hash"],
                 "theta_coverage_gain_per_path_cost": theta_reward["theta_coverage_gain_per_path_cost"],
                 "theta_coverage_denominator_cells": theta_denominator,
+                "obstacle_aware_new_visible_cell_count": slope_reward["obstacle_aware_new_visible_cell_count"],
+                "obstacle_aware_theta_coverage_hash": slope_reward["obstacle_aware_theta_coverage_hash"],
+                "obstacle_aware_theta_coverage_gain_per_path_cost": slope_reward[
+                    "obstacle_aware_theta_coverage_gain_per_path_cost"
+                ],
+                "obstacle_aware_theta_coverage_denominator_cells": theta_denominator,
+                "slope_obstacle_source_hash": slope_reward["slope_obstacle_source_hash"],
+                "platform_contract_hash": slope_reward["platform_contract_hash"],
+                "max_traversable_slope_deg": slope_reward["max_traversable_slope_deg"],
+                "slope_blocked_source_kind": slope_reward["slope_blocked_source_kind"],
+                "hybrid_astar_path_cost_reward_contract_required": bool(require_hybrid_path_cost),
+                "hybrid_astar_path_cost_reward_contract": bool(
+                    require_hybrid_path_cost and hybrid_path["hybrid_astar_path_cost_reward_contract"]
+                ),
+                "path_cost_source": hybrid_path["path_cost_source"]
+                if hybrid_path["hybrid_astar_path_cost_reward_contract"]
+                else info.get("path_cost_source", "legacy_grid_astar_path/v1"),
+                "hybrid_astar_path_cost": hybrid_path["hybrid_astar_path_cost"],
+                "hybrid_astar_pose_path_hash": hybrid_path["hybrid_astar_pose_path_hash"],
+                "hybrid_astar_trajectory_kind": hybrid_path["hybrid_astar_trajectory_kind"],
+                "legacy_grid_astar_path_cost": hybrid_path["legacy_grid_astar_path_cost"],
+                "hybrid_vs_grid_path_cost_delta": hybrid_path["hybrid_vs_grid_path_cost_delta"],
+                "default_astar_replaced": hybrid_path["default_astar_replaced"],
+                "hybrid_astar_ackermann_feasible_claimed": hybrid_path["hybrid_astar_ackermann_feasible_claimed"],
+                "point_grid_path_cost_fallback_used": point_grid_path_cost_fallback_used,
                 "point_only_reward_fallback_used": point_only_fallback_used,
+                "unobstructed_theta_reward_fallback_used": unobstructed_theta_reward_fallback_used,
                 "risk_deduplication_applied": result.risk_deduplication_applied,
                 "profile_id": result.profile_id,
                 "profile_version": result.profile_version,
@@ -234,7 +299,21 @@ def _profile_audit(profile: Any, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "soft_risk_deduplication_applied_count": sum(1 for row in rows if row.get("risk_deduplication_applied") is True),
         "theta_aware_reward_contract_count": sum(1 for row in rows if row.get("theta_aware_reward_contract") is True),
         "theta_reward_contract_missing_count": _theta_reward_contract_missing_count(rows),
+        "slope_obstacle_aware_theta_reward_contract_count": sum(
+            1 for row in rows if row.get("slope_obstacle_aware_theta_reward_contract") is True
+        ),
+        "slope_obstacle_reward_contract_missing_count": _slope_obstacle_reward_contract_missing_count(rows),
         "point_only_reward_fallback_used_count": sum(1 for row in rows if row.get("point_only_reward_fallback_used") is True),
+        "unobstructed_theta_reward_fallback_used_count": sum(
+            1 for row in rows if row.get("unobstructed_theta_reward_fallback_used") is True
+        ),
+        "hybrid_astar_path_cost_reward_contract_count": sum(
+            1 for row in rows if row.get("hybrid_astar_path_cost_reward_contract") is True
+        ),
+        "hybrid_astar_path_cost_contract_missing_count": _hybrid_astar_path_cost_contract_missing_count(rows),
+        "point_grid_path_cost_fallback_used_count": sum(
+            1 for row in rows if row.get("point_grid_path_cost_fallback_used") is True
+        ),
     }
 
 
@@ -254,6 +333,14 @@ def _contract_rejections(rows: list[dict[str, Any]], profile_audit: dict[str, An
         reasons.append("hard_risk_positive_reward_detected")
     if profile_audit.get("point_only_reward_fallback_used_count", 0) > 0:
         reasons.append("theta_aware_reward_contract_missing")
+    if profile_audit.get("slope_obstacle_reward_contract_missing_count", 0) > 0:
+        reasons.append("slope_obstacle_aware_theta_reward_contract_missing")
+    if profile_audit.get("unobstructed_theta_reward_fallback_used_count", 0) > 0:
+        reasons.append("unobstructed_theta_reward_fallback_used")
+    if profile_audit.get("hybrid_astar_path_cost_contract_missing_count", 0) > 0:
+        reasons.append("hybrid_astar_path_cost_contract_missing")
+    if profile_audit.get("point_grid_path_cost_fallback_used_count", 0) > 0:
+        reasons.append("point_grid_path_cost_fallback_used")
     return reasons
 
 
@@ -308,7 +395,23 @@ def _write_outputs(
         "theta_aware_reward_contract_required": bool(config.get("require_theta_aware_reward_contract", False)),
         "theta_aware_reward_contract_count": profile_audit["theta_aware_reward_contract_count"],
         "theta_reward_contract_missing_count": profile_audit["theta_reward_contract_missing_count"],
+        "slope_obstacle_aware_theta_reward_enabled": bool(config.get("slope_obstacle_aware_theta_reward_enabled", False)),
+        "slope_obstacle_aware_theta_reward_contract_count": profile_audit[
+            "slope_obstacle_aware_theta_reward_contract_count"
+        ],
+        "slope_obstacle_reward_contract_missing_count": profile_audit["slope_obstacle_reward_contract_missing_count"],
         "point_only_reward_fallback_used_count": profile_audit["point_only_reward_fallback_used_count"],
+        "unobstructed_theta_reward_fallback_used_count": profile_audit["unobstructed_theta_reward_fallback_used_count"],
+        "hybrid_astar_path_cost_reward_contract_required": bool(
+            config.get("require_hybrid_astar_path_cost_contract", False)
+        ),
+        "hybrid_astar_path_cost_reward_contract_count": profile_audit[
+            "hybrid_astar_path_cost_reward_contract_count"
+        ],
+        "hybrid_astar_path_cost_contract_missing_count": profile_audit[
+            "hybrid_astar_path_cost_contract_missing_count"
+        ],
+        "point_grid_path_cost_fallback_used_count": profile_audit["point_grid_path_cost_fallback_used_count"],
         "blocking_reason_codes": _unique(blocking_reason_codes),
         "reason_codes": _unique(blocking_reason_codes),
         "stage21_2_authorized": False,
@@ -359,6 +462,12 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         config[key] = str(_resolve_path(Path(config[key]), repo_root))
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     config["require_theta_aware_reward_contract"] = bool(config.get("require_theta_aware_reward_contract", False))
+    config["slope_obstacle_aware_theta_reward_enabled"] = bool(
+        config.get("slope_obstacle_aware_theta_reward_enabled", False)
+    )
+    config["require_hybrid_astar_path_cost_contract"] = bool(
+        config.get("require_hybrid_astar_path_cost_contract", False)
+    )
     config["theta_coverage_denominator_cells"] = _positive_or_default(config.get("theta_coverage_denominator_cells"), 1.0)
     for field in BOUNDARY_FIELDS:
         config.setdefault(field, False)
@@ -424,6 +533,13 @@ def _render_report(summary: dict[str, Any]) -> str:
             f"- hard_risk_positive_reward_count: `{summary['hard_risk_positive_reward_count']}`",
             f"- theta_aware_reward_contract_required: `{summary.get('theta_aware_reward_contract_required', False)}`",
             f"- theta_reward_contract_missing_count: `{summary.get('theta_reward_contract_missing_count', 0)}`",
+            f"- slope_obstacle_aware_theta_reward_enabled: `{summary.get('slope_obstacle_aware_theta_reward_enabled', False)}`",
+            "- slope_obstacle_reward_contract_missing_count: "
+            f"`{summary.get('slope_obstacle_reward_contract_missing_count', 0)}`",
+            "- hybrid_astar_path_cost_reward_contract_required: "
+            f"`{summary.get('hybrid_astar_path_cost_reward_contract_required', False)}`",
+            "- hybrid_astar_path_cost_contract_missing_count: "
+            f"`{summary.get('hybrid_astar_path_cost_contract_missing_count', 0)}`",
             "",
             "Stage 21.2 validates the reward contract only. It does not run PPO, publish checkpoints, replace default policy, connect a real executor, or start canary traffic.",
         ]
@@ -432,6 +548,24 @@ def _render_report(summary: dict[str, Any]) -> str:
 
 def _theta_reward_contract_missing_count(rows: list[dict[str, Any]]) -> int:
     return sum(1 for row in rows if row.get("theta_aware_reward_contract") is not True)
+
+
+def _slope_obstacle_reward_contract_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if row.get("slope_obstacle_aware_theta_reward_contract_required") is True
+        and row.get("slope_obstacle_aware_theta_reward_contract") is not True
+    )
+
+
+def _hybrid_astar_path_cost_contract_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if row.get("hybrid_astar_path_cost_reward_contract_required") is True
+        and row.get("hybrid_astar_path_cost_reward_contract") is not True
+    )
 
 
 def _theta_reward_provenance(row: dict[str, Any], *, theta_denominator: float) -> dict[str, Any]:
@@ -475,12 +609,184 @@ def _theta_reward_provenance(row: dict[str, Any], *, theta_denominator: float) -
     return {
         "theta_aware_reward_contract": bool(contract),
         "candidate_viewpoint": viewpoint,
-        "candidate_theta_deg": int(float(theta_deg)) if _finite(theta_deg) is not None else None,
+        "candidate_theta_deg": float(theta_deg) if _finite(theta_deg) is not None else None,
         "theta_new_visible_cell_count": int(theta_count) if theta_count is not None else None,
         "theta_coverage_hash": theta_hash,
         "theta_coverage_gain_per_path_cost": _finite(theta_cpc),
         "coverage_rate_delta": (float(theta_count) / theta_denominator) if theta_count is not None else None,
     }
+
+
+def _slope_obstacle_reward_provenance(row: dict[str, Any], *, theta_denominator: float) -> dict[str, Any]:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    action_index = _int_or_none(row.get("action_index"))
+    theta = _theta_reward_provenance(row, theta_denominator=theta_denominator)
+    obstacle_new = _selected_any(
+        row,
+        info,
+        action_index,
+        ("obstacle_aware_new_visible_cell_count", "obstacle_aware_new_visible_cell_counts"),
+    )
+    obstacle_hash = _selected_any(
+        row,
+        info,
+        action_index,
+        ("obstacle_aware_theta_coverage_hash", "obstacle_aware_theta_coverage_hashes"),
+    )
+    obstacle_cpc = _selected_any(
+        row,
+        info,
+        action_index,
+        ("obstacle_aware_theta_coverage_gain_per_path_cost", "obstacle_aware_theta_coverage_gain_per_path_costs"),
+    )
+    slope_hash = _selected_any(
+        row,
+        info,
+        action_index,
+        ("slope_obstacle_source_hash", "slope_obstacle_source_hashes", "obstacle_source_hash", "obstacle_source_hashes"),
+    )
+    platform_hash = _selected_any(row, info, action_index, ("platform_contract_hash", "platform_contract_hashes"))
+    max_slope = _selected_any(row, info, action_index, ("max_traversable_slope_deg", "max_traversable_slope_degs"))
+    source_kind = _selected_any(
+        row,
+        info,
+        action_index,
+        ("slope_blocked_source_kind", "slope_blocked_source_kinds", "obstacle_source_kind", "obstacle_source_kinds"),
+    )
+    obstacle_count = _finite(obstacle_new)
+    obstacle_cpc_value = _finite(obstacle_cpc)
+    if obstacle_cpc_value is None and obstacle_count is not None:
+        path_cost = _finite(info.get("path_cost") or row.get("path_cost"))
+        if path_cost is not None and path_cost > 0.0:
+            obstacle_cpc_value = float(obstacle_count) / path_cost
+    max_slope_value = _finite(max_slope)
+    contract = (
+        _present_viewpoint(theta["candidate_viewpoint"])
+        and _finite(theta["candidate_theta_deg"]) is not None
+        and obstacle_count is not None
+        and isinstance(obstacle_hash, str)
+        and bool(obstacle_hash.strip())
+        and isinstance(slope_hash, str)
+        and bool(slope_hash.strip())
+        and isinstance(platform_hash, str)
+        and bool(platform_hash.strip())
+        and max_slope_value is not None
+        and abs(max_slope_value - SLOPE_OBSTACLE_MAX_TRAVERSABLE_SLOPE_DEG) <= 1.0e-9
+        and str(source_kind or "") == "slope_blocked_as_obstacle_proxy"
+    )
+    return {
+        "slope_obstacle_aware_theta_reward_contract": bool(contract),
+        "candidate_viewpoint": theta["candidate_viewpoint"],
+        "candidate_theta_deg": theta["candidate_theta_deg"],
+        "obstacle_aware_new_visible_cell_count": int(obstacle_count) if obstacle_count is not None else None,
+        "obstacle_aware_theta_coverage_hash": obstacle_hash,
+        "obstacle_aware_theta_coverage_gain_per_path_cost": obstacle_cpc_value,
+        "slope_obstacle_source_hash": slope_hash,
+        "platform_contract_hash": platform_hash,
+        "max_traversable_slope_deg": max_slope_value,
+        "slope_blocked_source_kind": source_kind,
+        "coverage_rate_delta": (float(obstacle_count) / theta_denominator) if obstacle_count is not None else None,
+    }
+
+
+def _hybrid_astar_path_cost_provenance(row: dict[str, Any]) -> dict[str, Any]:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    action_index = _int_or_none(row.get("action_index"))
+    path_cost_source = _selected_any(
+        row,
+        info,
+        action_index,
+        ("path_cost_source", "path_cost_sources"),
+    )
+    hybrid_cost = _selected_any(
+        row,
+        info,
+        action_index,
+        ("hybrid_astar_path_cost", "hybrid_astar_path_costs"),
+    )
+    path_hash = _selected_any(
+        row,
+        info,
+        action_index,
+        ("hybrid_astar_pose_path_hash", "hybrid_astar_pose_path_hashes"),
+    )
+    trajectory_kind = _selected_any(
+        row,
+        info,
+        action_index,
+        ("hybrid_astar_trajectory_kind", "hybrid_astar_trajectory_kinds"),
+    )
+    legacy_grid_cost = _selected_any(
+        row,
+        info,
+        action_index,
+        ("legacy_grid_astar_path_cost", "legacy_grid_astar_path_costs", "path_cost", "path_costs"),
+    )
+    cost_delta = _selected_any(
+        row,
+        info,
+        action_index,
+        ("hybrid_vs_grid_path_cost_delta", "hybrid_vs_grid_path_cost_deltas"),
+    )
+    default_astar_replaced = _selected_any(
+        row,
+        info,
+        action_index,
+        ("default_astar_replaced", "default_astar_replaced_flags"),
+    )
+    ackermann_claimed = _selected_any(
+        row,
+        info,
+        action_index,
+        ("hybrid_astar_ackermann_feasible_claimed", "hybrid_astar_ackermann_feasible_claimed_flags"),
+    )
+    hybrid_cost_value = _finite(hybrid_cost)
+    legacy_grid_value = _finite(legacy_grid_cost)
+    cost_delta_value = _finite(cost_delta)
+    contract = (
+        path_cost_source == HYBRID_ASTAR_PATH_COST_SOURCE
+        and hybrid_cost_value is not None
+        and hybrid_cost_value > 0.0
+        and isinstance(path_hash, str)
+        and bool(path_hash.strip())
+        and trajectory_kind == "hybrid_astar_pose_path"
+        and legacy_grid_value is not None
+        and legacy_grid_value > 0.0
+        and cost_delta_value is not None
+        and default_astar_replaced is False
+        and ackermann_claimed is False
+    )
+    return {
+        "hybrid_astar_path_cost_reward_contract": bool(contract),
+        "path_cost_source": path_cost_source,
+        "hybrid_astar_path_cost": hybrid_cost_value,
+        "hybrid_astar_pose_path_hash": path_hash,
+        "hybrid_astar_trajectory_kind": trajectory_kind,
+        "legacy_grid_astar_path_cost": legacy_grid_value,
+        "hybrid_vs_grid_path_cost_delta": cost_delta_value,
+        "default_astar_replaced": default_astar_replaced,
+        "hybrid_astar_ackermann_feasible_claimed": ackermann_claimed,
+    }
+
+
+def _count_per_path_cost(count: Any, path_cost: Any, *, fallback: Any) -> float | None:
+    count_value = _finite(count)
+    path_cost_value = _finite(path_cost)
+    if count_value is not None and path_cost_value is not None and path_cost_value > 0.0:
+        return float(count_value) / float(path_cost_value)
+    return _finite(fallback)
+
+
+def _selected_any(row: dict[str, Any], info: dict[str, Any], action_index: int | None, keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in info:
+            value = info.get(key)
+            if action_index is not None and isinstance(value, list) and 0 <= action_index < len(value):
+                return value[action_index]
+            return value
+        if key in row:
+            return row.get(key)
+    return None
 
 
 def _selected_value(info: dict[str, Any], singular_key: str, plural_key: str, action_index: int | None) -> Any:

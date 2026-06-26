@@ -24,6 +24,91 @@ The three subprojects now form a staged research prototype:
 | `path-planner` | Path execution evaluation | Rebuilt from scratch through Phase 8: platform-aware A*, postprocess corridors, smoothing, curvature checks, trackable path, tracking simulation, fixed-corridor optimization, execution-aware metrics, and optional Drake IRIS/region graph diagnostics. |
 | `visual-workbench` | Evidence visualization | Fourth Git submodule providing a React + FastAPI artifact workbench. It indexes allowlisted `outputs/` roots, renders evidence browser / map-route / path-feedback / experiment views, and only permits dry-run/validate commands. |
 
+Stage24.0 adds an opt-in Hybrid A* pose planner foundation for Scout Mini style
+differential/skid-steer motion. It plans in `(x_m, y_m, theta_rad)` using
+motion primitives, rectangular footprint collision checks, and platform-aligned
+30 degree slope hard obstacles. It does not replace the default grid A* path,
+run PPO, publish checkpoints, connect executors, or claim final performance.
+
+Stage24.1 adds an opt-in candidate path-cost audit that evaluates real
+`(x,y,theta)` viewpoint candidates with the Stage24.0 Hybrid A* pose planner.
+It writes Hybrid A* pose path costs, cost breakdowns, and grid-vs-hybrid deltas
+so later reward stages can decide whether `hybrid_astar_pose_path/v1` should be
+used as the path-cost source. The default grid A* remains unchanged, and this
+stage does not run PPO, publish checkpoints, connect executors, or claim
+performance.
+
+Stage24.2 connects that recommendation to the reward and batch contract. When
+`require_hybrid_astar_path_cost_contract=true`, Stage21.2 must use
+`hybrid_astar_path_cost` from `hybrid_astar_pose_path/v1` as `path_cost_m`, keep
+the slope-obstacle-aware coverage source, and write grid-vs-hybrid provenance.
+Stage21.3 can now reject grid-only path-cost batches, Ackermann feasibility
+claims, and default-A* replacement claims. This remains contract evidence only:
+it does not replace default grid A*, run PPO, publish checkpoints, connect
+executors, or claim performance.
+
+Stage24.3 moves that contract from replay into the real PPO data chain. The
+Stage21.1 collector can now opt in to `hybrid_astar_pose_path_cost_enabled=true`
+and write candidate-level Hybrid A* pose path costs, pose path hashes, legacy
+grid costs, and grid-vs-hybrid deltas for each `(x,y,theta)` viewpoint. The
+Stage24.3 wrapper then runs Stage21.1 -> Stage21.2 -> Stage21.3 and audits that
+reward rows and PPO batch rows use `path_cost_source=hybrid_astar_pose_path/v1`.
+When inherited high-resolution ROI starts are blocked by the platform-aligned
+30 degree slope hard gate, Stage24.3 prepares a local safe source root with
+repaired start-cell provenance. In Hybrid path-cost mode, Stage21.1 also gates
+sampling by Hybrid A* reachability so trainable actions have real pose-path
+cost provenance.
+It still does not run PPO update, replace the default A*, publish checkpoints,
+connect executors, or claim performance.
+
+Stage24.4 consumes the Stage24.3 `s21_3` PPO batch with Stage21.4 tiny PPO
+update. The wrapper first audits that selected actions still bind to
+`hybrid_astar_pose_path/v1` provenance, then runs one offline experimental-only
+update and checks finite loss, gradient components, checkpoint reload, and
+boundary metadata. It does not run trajectory evaluation, publish checkpoints,
+replace default policy, connect executors, start canary traffic, replace default
+A*, or claim performance.
+
+Stage24.5 takes the Stage24.4 experimental checkpoint back into Stage21.5
+offline pre/post trajectory evaluation. It forces the same slope-obstacle-aware
+theta coverage source and `hybrid_astar_pose_path/v1` path-cost source, strong
+joins pre/post inference rows, and audits action probability, selected
+`(x,y,theta)`, Hybrid path-cost provenance, coverage/AUC, path cost, and safety
+deltas. It remains a bounded smoke: no multi-seed PPO, no checkpoint release,
+no default policy replacement, no executor/canary, and no performance claim.
+
+Stage24.5A repairs the Stage24.5 inference-binding gap. The high-fidelity
+trajectory evaluator now computes Hybrid A* pose path cost for viewpoint
+candidates when `hybrid_astar_pose_path_cost_enabled=true`, tracks current pose
+from the current cell center plus the previous executed selected theta, and
+writes the selected-candidate Hybrid path-cost provenance into pre/post
+inference rows. It reruns Stage24.5 under a new output root and preserves the
+repaired Stage24.5 route; it does not tune PPO, publish checkpoints, replace
+default policy, connect executors, start canaries, or claim performance.
+
+Stage25.0 introduces the continuous-theta hybrid action-space foundation. The
+policy still chooses a discrete base candidate cell `(x,y)`, but the observation
+heading is now a sampled continuous `theta` from a per-candidate Von Mises
+distribution instead of a discrete theta-bin action index. The joint PPO action
+log-probability is `point_log_prob + theta_log_prob`; Stage21.3 gates that the
+stored radians/degrees, old logits, theta distribution parameters, and total
+log-probability are self-consistent. Coverage remains
+`endpoint_theta_slope_obstacle_los/v1`, path cost remains
+`hybrid_astar_pose_path/v1`, and Hybrid A* plans to the sampled pose
+`(x,y,theta)`. This stage keeps `x/y` discrete, does not replace default A*,
+does not publish checkpoints or replace policies, and is still a bounded smoke
+foundation rather than a performance claim.
+
+Stage26.0 adds a synthetic rock/pit terrain augmentation contract for the
+current sample and high-resolution ROI maps. It creates deterministic proxy
+terrain features under `synthetic_rock_pit_terrain/v1`, labels all generated
+obstacles as `synthetic_terrain_obstacle_proxy/v1`, and keeps them separate from
+`physical_obstacle_cells`. The stage audits start clearance, blocked fraction,
+connectivity, endpoint theta LOS impact, and Hybrid A* path-cost impact so later
+collector/reward stages can train on more cluttered terrain. It does not modify
+the original DEM/slope data, run PPO, publish checkpoints, replace policies,
+connect executors, start canaries, or claim performance.
+
 ## Windows and Ubuntu Support
 
 The supported cross-platform execution layer is Python-first. Use
@@ -260,6 +345,84 @@ does not provide those values. Stage23.1/23.2A outputs now include
 platform contract. Stage23.2B compares the platform default 30 degree threshold
 against the old 20 degree sensitivity threshold and routes material 30 degree
 occlusion to `implement_stage23_2_slope_obstacle_aware_theta_reward_contract`.
+
+Stage 23.2 turns that platform-aligned slope LOS audit into the reward and batch
+contract. The required reward coverage source is
+`endpoint_theta_slope_obstacle_los/v1`: arrive at `(x,y)`, look along `theta`,
+remove cells hidden by 30 degree `slope_blocked_as_obstacle_proxy` LOS blockers,
+and compute reward from `obstacle_aware_new_visible_cell_count`. Stage21.2 can
+enable this with `slope_obstacle_aware_theta_reward_enabled=true`, while
+Stage21.3 can require `require_slope_obstacle_aware_theta_reward_contract=true`
+and reject point-only reward, old unobstructed `theta_aware_sensor_footprint/v1`
+reward, missing slope/platform lineage, or selected-viewpoint mismatch. Stage23.2
+still does not run PPO or prove the real collector emits these fields; that is
+the next Stage23.3 smoke. When Stage23.2 replays existing Stage23.0 LOS audit
+rows that only contain total visible counts, it labels that input as a replay
+proxy and does not claim collector-level `obstacle_aware_new_visible_cell_count`
+provenance.
+
+Stage 23.3 closes that collector provenance gap. It runs a bounded
+Stage21.1 -> Stage21.2 -> Stage21.3 smoke on the Stage23.2B high-resolution ROI
+root and requires real transition `info` to carry viewpoint-level
+`obstacle_aware_new_visible_cell_counts`, obstacle-aware hashes/gains,
+`slope_obstacle_source_hash`, `platform_contract_hash`,
+`max_traversable_slope_deg=30.0`, and
+`slope_blocked_source_kind=slope_blocked_as_obstacle_proxy`. Stage21.2 must then
+emit `coverage_source=endpoint_theta_slope_obstacle_los/v1`, and Stage21.3 must
+reject old point-only or unobstructed theta reward batches. The smoke also
+checks that Stage21.1 actually loaded the Stage23.2B high-resolution ROI root and
+that transition/reward/batch `transition_id` sets close without orphan rows.
+Passing Stage23.3
+only routes to `run_stage23_4_slope_obstacle_aware_theta_ppo_update_smoke`; it
+does not run PPO update, publish checkpoints, replace policy, connect executor,
+start canary traffic, introduce continuous theta, model 3D LOS, change network
+architecture, or change default A*.
+
+Stage 23.4 is the first offline PPO update smoke for the same
+slope-obstacle-aware theta batch. It rechecks the Stage23.3 batch provenance
+before calling Stage21.4: `coverage_source=endpoint_theta_slope_obstacle_los/v1`,
+30 degree max traversable slope, `slope_blocked_as_obstacle_proxy`, slope and
+platform hashes, selected viewpoint binding, and viewpoint-level `xunce_batch`
+action dimensions. The Stage21.4 result must have finite loss/gradient/component
+gradient norms and an `experimental_only` checkpoint that reloads. Passing
+Stage23.4 still does not publish, replace policy, connect executor, start
+canary traffic, or claim trajectory performance.
+
+Stage 23.5 runs the matching offline trajectory evaluation smoke. It wraps
+Stage21.5 to compare the Stage23.4 source checkpoint and experimental-only
+checkpoint under the same 30 degree slope-obstacle-aware theta high-fidelity
+configuration. The audit strong-joins pre/post model inference rows by
+`scenario_id + step_index + current_cell + covered_cells_hash + candidate_set_hash`
+and reports viewpoint/theta/action probability changes, coverage/AUC delta,
+path-cost delta, and safety regressions. Passing Stage23.5 only allows a larger
+Stage23.6 multi-seed pilot; it still does not publish, replace policy, connect
+executor, start canary traffic, or claim final performance.
+
+Stage 23.5A repairs the current Stage23.5 input blocker. Stage23.5 failed because
+the high-resolution ROI expansion produced only one slice while the pre/post
+trajectory smoke required two scenarios, so its action-probability audit was only
+a partial diagnostic. Stage23.5A first confirms that the prior route is
+`rerun_stage23_5_required_inputs` with scenario/episode-short reason codes, then
+prechecks candidate USGS 4m GeoTIFF windows and writes at least two valid windows
+into a repaired Stage23.2A config. If fewer than two windows are valid, it routes
+to `expand_or_relocate_stage23_high_res_roi_windows`; otherwise it reruns the
+existing Stage23.2B -> Stage23.2 -> Stage23.3 -> Stage23.4 -> Stage23.5 chain
+under its own D-drive output root. It is a wrapper only: no PPO/reward/network/A*
+logic is rewritten and no checkpoint publication, default-policy replacement,
+executor connection, or canary is authorized.
+
+Stage 23.6 repairs the policy-signal blocker exposed after Stage23.5A made the
+pre/post evaluation complete. The current evidence has valid high-res scenarios
+and strong pre/post joins, but the Stage23.4 update barely changes action
+probabilities and never changes selected `(x,y,theta)`. Stage23.6 keeps the
+30 degree platform-aligned `endpoint_theta_slope_obstacle_los/v1` contract,
+reuses Stage23.3/23.4/23.5, and runs bounded independent update combos to
+separate sample-count shortage, value-loss dominance, update strength, discrete
+viewpoint/theta margin, and credit assignment. It outputs recommended Stage23.4
+and Stage23.5 configs but remains offline smoke/repair evidence only: no
+checkpoint publication, policy replacement, executor connection, canary,
+network/default A*/candidate-generation change, or final performance claim is
+authorized.
 
 Near-term integration focuses on the `dev-platform-constraints -> model-explorer
 -> path-planner` JSON loop: generate `model-explorer-contract/v1`, select Top-K

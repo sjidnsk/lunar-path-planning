@@ -194,9 +194,11 @@ def test_stage23_2a_runner_generates_high_res_root_from_local_fixture(tmp_path: 
         json.dumps(
                 {
                     "schema_version": "xunce-stage23-2a-high-resolution-terrain-data-ingestion-config/v1",
-                    "primary_manifest": str(manifest),
-                    "raw_data_root": str(tmp_path / "downloaded_raw"),
-                    "download_missing": True,
+                "primary_manifest": str(manifest),
+                "raw_data_root": str(tmp_path / "downloaded_raw"),
+                "download_missing": True,
+                "high_res_output_subdir": "hr",
+                "path_planner_sidecar_subdir": "ps",
                 "run_stage23_1_smoke": False,
                 "roi_windows": [
                     {"roi_name": "fixture", "split": "train", "x": 0, "y": 0, "width": 4, "height": 4}
@@ -232,7 +234,7 @@ def test_stage23_2a_runner_generates_high_res_root_from_local_fixture(tmp_path: 
     assert summary["stage23_1_smoke_executed"] is False
     assert (tmp_path / "out" / SUMMARY_FILE).is_file()
     sidecar = json.loads(
-        (tmp_path / "out" / "high_res_roi_expansion" / "path_planner_sidecars" / "fixture_usgs_4m_fixture_train_000.path-planner-sidecar.json").read_text(
+        (tmp_path / "out" / "hr" / "ps" / "fixture_usgs_4m_fixture_train_000.path-planner-sidecar.json").read_text(
             encoding="utf-8"
         )
     )

@@ -23,12 +23,12 @@ try:
     from git_provenance import git_snapshot
     from global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json, write_jsonl
     from global_99_governance_common import global_99_boundary_defaults
-    from xunce_full_network_common import XunceFullNetworkV1, parameter_count
+    from xunce_full_network_common import XunceFullNetworkV1, load_xunce_full_network_state_dict_compatible, parameter_count
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json, write_jsonl
     from scripts.global_99_governance_common import global_99_boundary_defaults
-    from scripts.xunce_full_network_common import XunceFullNetworkV1, parameter_count
+    from scripts.xunce_full_network_common import XunceFullNetworkV1, load_xunce_full_network_state_dict_compatible, parameter_count
 
 import torch
 from model_explorer.policy.features import CANDIDATE_FEATURE_NAMES, GLOBAL_FEATURE_NAMES, MISSING_INDICATOR_NAMES, PolicyObservation
@@ -307,18 +307,30 @@ def _load_xunce_checkpoint(
     model: XunceFullNetworkV1 | None = None
     if not reasons and isinstance(state_dict, dict):
         try:
-            model = XunceFullNetworkV1(
-                candidate_feature_count=xunce_config["candidate_feature_count"],
-                edge_feature_count=xunce_config["edge_feature_count"],
-                memory_feature_count=xunce_config["memory_feature_count"],
-                context_feature_count=xunce_config["context_feature_count"],
-                missing_indicator_count=xunce_config["missing_indicator_count"],
-                hidden_dim=xunce_config["hidden_dim"],
-                message_passing_layers=xunce_config["message_passing_layers"],
-                dropout=0.0,
+            init_seed = _nonnegative_int_or_none(
+                config.get("continuous_theta_head_init_seed", config.get("sampling_seed"))
             )
-            model.load_state_dict(state_dict, strict=True)
-            model.eval()
+            if init_seed is None:
+                model = _new_xunce_full_network(xunce_config)
+            else:
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(int(init_seed))
+                    model = _new_xunce_full_network(xunce_config)
+            loaded, missing_keys, disallowed_missing, unexpected_keys = load_xunce_full_network_state_dict_compatible(
+                model,
+                state_dict,
+            )
+            if not loaded:
+                reasons.append("invalid_xunce_candidate_checkpoint_state_keys")
+                model = None
+            elif missing_keys:
+                payload.setdefault("metadata", {})
+                if isinstance(payload["metadata"], dict):
+                    payload["metadata"]["continuous_theta_head_initialized_from_default"] = True
+                    payload["metadata"]["checkpoint_missing_compatible_theta_head_keys"] = list(missing_keys)
+                    payload["metadata"]["checkpoint_unexpected_keys"] = list(unexpected_keys)
+            if model is not None:
+                model.eval()
         except Exception:
             reasons.append("invalid_xunce_candidate_checkpoint")
             model = None
@@ -332,6 +344,19 @@ def _load_xunce_checkpoint(
         metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
     )
     return audit, model if loaded else None, xunce_config
+
+
+def _new_xunce_full_network(xunce_config: dict[str, int]) -> XunceFullNetworkV1:
+    return XunceFullNetworkV1(
+        candidate_feature_count=xunce_config["candidate_feature_count"],
+        edge_feature_count=xunce_config["edge_feature_count"],
+        memory_feature_count=xunce_config["memory_feature_count"],
+        context_feature_count=xunce_config["context_feature_count"],
+        missing_indicator_count=xunce_config["missing_indicator_count"],
+        hidden_dim=xunce_config["hidden_dim"],
+        message_passing_layers=xunce_config["message_passing_layers"],
+        dropout=0.0,
+    )
 
 
 def _load_incumbent_checkpoint(checkpoint_path: Path) -> tuple[dict[str, Any], Any | None]:
@@ -505,6 +530,8 @@ def _network_output_detail(output: Any, *, latency_ms: float) -> dict[str, Any]:
     masked_logits = output.masked_logits[0].detach().cpu()
     action_probs = output.action_probs[0].detach().cpu()
     value = output.value[0].detach().cpu()
+    theta_mu_rad = output.theta_mu_rad[0].detach().cpu() if hasattr(output, "theta_mu_rad") else None
+    theta_kappa = output.theta_kappa[0].detach().cpu() if hasattr(output, "theta_kappa") else None
     selected_index = int(torch.argmax(action_probs).item())
     sorted_indices = torch.argsort(action_probs, descending=True)
     rank_matches = (sorted_indices == selected_index).nonzero(as_tuple=False)
@@ -523,6 +550,10 @@ def _network_output_detail(output: Any, *, latency_ms: float) -> dict[str, Any]:
         "selected_action_index": selected_index,
         "selected_probability": float(action_probs[selected_index]),
         "selected_rank": selected_rank,
+        "theta_mu_rad": [float(item) for item in theta_mu_rad] if theta_mu_rad is not None else [],
+        "theta_kappa": [float(item) for item in theta_kappa] if theta_kappa is not None else [],
+        "selected_theta_rad": float(theta_mu_rad[selected_index]) if theta_mu_rad is not None else None,
+        "selected_theta_deg": math.degrees(float(theta_mu_rad[selected_index])) if theta_mu_rad is not None else None,
         "finite_outputs": finite_outputs,
         "latency_ms": float(latency_ms),
     }

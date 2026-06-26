@@ -309,6 +309,190 @@ def test_stage21_3_rejects_theta_reward_without_denominator(tmp_path: Path) -> N
     assert "theta_reward_contract_missing" in summary["blocking_reason_codes"]
 
 
+def test_stage21_3_accepts_slope_obstacle_theta_reward_contract_when_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+
+    stage21_1, stage21_2 = _write_roots(
+        tmp_path,
+        theta_viewpoint_contract=True,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+    )
+    config = _write_config(
+        tmp_path,
+        stage21_1,
+        stage21_2,
+        require_theta_aware_viewpoint_contract=True,
+        require_theta_aware_reward_contract=True,
+        require_slope_obstacle_aware_theta_reward_contract=True,
+    )
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-3-ppo-trainable-batch.jsonl")
+    assert summary["status"] == "passed"
+    assert summary["slope_obstacle_aware_theta_reward_contract_required"] is True
+    assert summary["slope_obstacle_aware_theta_reward_contract_missing_count"] == 0
+    assert rows[0]["coverage_source"] == "endpoint_theta_slope_obstacle_los/v1"
+    assert rows[0]["slope_obstacle_source_hash"] == "slope-source-hash"
+    assert rows[0]["platform_contract_hash"] == "platform-hash"
+    assert rows[0]["max_traversable_slope_deg"] == 30.0
+
+
+def test_stage21_3_rejects_unobstructed_theta_reward_when_slope_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+
+    stage21_1, stage21_2 = _write_roots(tmp_path, theta_viewpoint_contract=True, theta_reward_contract=True)
+    config = _write_config(
+        tmp_path,
+        stage21_1,
+        stage21_2,
+        require_theta_aware_viewpoint_contract=True,
+        require_theta_aware_reward_contract=True,
+        require_slope_obstacle_aware_theta_reward_contract=True,
+    )
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage21_3_ppo_batch_contract"
+    assert "slope_obstacle_aware_theta_reward_contract_missing" in summary["blocking_reason_codes"]
+
+
+def test_stage21_3_rejects_20deg_sensitivity_reward_when_slope_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+
+    stage21_1, stage21_2 = _write_roots(
+        tmp_path,
+        theta_viewpoint_contract=True,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+        slope_max_traversable_slope_deg=20.0,
+    )
+    config = _write_config(
+        tmp_path,
+        stage21_1,
+        stage21_2,
+        require_theta_aware_viewpoint_contract=True,
+        require_theta_aware_reward_contract=True,
+        require_slope_obstacle_aware_theta_reward_contract=True,
+    )
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert "slope_obstacle_aware_theta_reward_contract_missing" in summary["blocking_reason_codes"]
+
+
+def test_stage21_3_accepts_hybrid_astar_path_cost_contract_when_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+
+    stage21_1, stage21_2 = _write_roots(
+        tmp_path,
+        theta_viewpoint_contract=True,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+        hybrid_path_cost_contract=True,
+    )
+    config = _write_config(
+        tmp_path,
+        stage21_1,
+        stage21_2,
+        require_theta_aware_viewpoint_contract=True,
+        require_theta_aware_reward_contract=True,
+        require_slope_obstacle_aware_theta_reward_contract=True,
+        require_hybrid_astar_path_cost_contract=True,
+    )
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-3-ppo-trainable-batch.jsonl")
+    assert summary["status"] == "passed"
+    assert summary["hybrid_astar_path_cost_contract_required"] is True
+    assert summary["hybrid_astar_path_cost_contract_missing_count"] == 0
+    assert rows[0]["path_cost_source"] == "hybrid_astar_pose_path/v1"
+    assert rows[0]["hybrid_astar_path_cost"] == 2.5
+    assert rows[0]["legacy_grid_astar_path_cost"] == 10.0
+    assert rows[0]["point_grid_path_cost_fallback_used"] is False
+
+
+def test_stage21_3_rejects_grid_only_path_cost_when_hybrid_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+
+    stage21_1, stage21_2 = _write_roots(
+        tmp_path,
+        theta_viewpoint_contract=True,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+    )
+    config = _write_config(
+        tmp_path,
+        stage21_1,
+        stage21_2,
+        require_theta_aware_viewpoint_contract=True,
+        require_theta_aware_reward_contract=True,
+        require_slope_obstacle_aware_theta_reward_contract=True,
+        require_hybrid_astar_path_cost_contract=True,
+    )
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage21_3_ppo_batch_contract"
+    assert "hybrid_astar_path_cost_contract_missing" in summary["blocking_reason_codes"]
+
+
+def test_stage21_3_rejects_hybrid_ackermann_claim_when_hybrid_required(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+
+    stage21_1, stage21_2 = _write_roots(
+        tmp_path,
+        theta_viewpoint_contract=True,
+        theta_reward_contract=True,
+        slope_reward_contract=True,
+        hybrid_path_cost_contract=True,
+        hybrid_ackermann_feasible_claimed=True,
+    )
+    config = _write_config(
+        tmp_path,
+        stage21_1,
+        stage21_2,
+        require_theta_aware_viewpoint_contract=True,
+        require_theta_aware_reward_contract=True,
+        require_slope_obstacle_aware_theta_reward_contract=True,
+        require_hybrid_astar_path_cost_contract=True,
+    )
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert "hybrid_astar_path_cost_contract_missing" in summary["blocking_reason_codes"]
+
+
 def _write_roots(
     tmp_path: Path,
     *,
@@ -320,8 +504,12 @@ def _write_roots(
     old_log_error: float = 0.0,
     theta_viewpoint_contract: bool = False,
     theta_reward_contract: bool = False,
+    slope_reward_contract: bool = False,
+    slope_max_traversable_slope_deg: float = 30.0,
     theta_reward_viewpoint: list[int] | None = None,
     theta_reward_omit_denominator: bool = False,
+    hybrid_path_cost_contract: bool = False,
+    hybrid_ackermann_feasible_claimed: bool = False,
 ) -> tuple[Path, Path]:
     stage21_1 = tmp_path / "stage21_1"
     stage21_2 = tmp_path / "stage21_2"
@@ -379,8 +567,12 @@ def _write_roots(
             reward=1.0,
             trainable=reward_trainable,
             theta_reward_contract=theta_reward_contract,
+            slope_reward_contract=slope_reward_contract,
+            slope_max_traversable_slope_deg=slope_max_traversable_slope_deg,
             theta_reward_viewpoint=theta_reward_viewpoint,
             theta_reward_omit_denominator=theta_reward_omit_denominator,
+            hybrid_path_cost_contract=hybrid_path_cost_contract,
+            hybrid_ackermann_feasible_claimed=hybrid_ackermann_feasible_claimed,
         )
     ]
     if not omit_second_reward:
@@ -392,8 +584,12 @@ def _write_roots(
                 reward=2.0,
                 trainable=reward_trainable,
                 theta_reward_contract=theta_reward_contract,
+                slope_reward_contract=slope_reward_contract,
+                slope_max_traversable_slope_deg=slope_max_traversable_slope_deg,
                 theta_reward_viewpoint=theta_reward_viewpoint,
                 theta_reward_omit_denominator=theta_reward_omit_denominator,
+                hybrid_path_cost_contract=hybrid_path_cost_contract,
+                hybrid_ackermann_feasible_claimed=hybrid_ackermann_feasible_claimed,
             )
         )
     _write_jsonl(stage21_2 / "xunce-stage21-2-reward-contract-evaluation.jsonl", rewards)
@@ -451,8 +647,12 @@ def _reward(
     reward: float,
     trainable: bool,
     theta_reward_contract: bool = False,
+    slope_reward_contract: bool = False,
+    slope_max_traversable_slope_deg: float = 30.0,
     theta_reward_viewpoint: list[int] | None = None,
     theta_reward_omit_denominator: bool = False,
+    hybrid_path_cost_contract: bool = False,
+    hybrid_ackermann_feasible_claimed: bool = False,
 ) -> dict:
     row = {
         "schema_version": "xunce-stage21-2-reward-contract-evaluation/v1",
@@ -470,10 +670,11 @@ def _reward(
     }
     if theta_reward_contract:
         viewpoint = theta_reward_viewpoint or [1, 0, 0]
+        coverage_source = "endpoint_theta_slope_obstacle_los/v1" if slope_reward_contract else "theta_aware_sensor_footprint/v1"
         row.update(
             {
                 "theta_aware_reward_contract": True,
-                "coverage_source": "theta_aware_sensor_footprint/v1",
+                "coverage_source": coverage_source,
                 "candidate_viewpoint": viewpoint,
                 "candidate_theta_deg": viewpoint[2],
                 "theta_new_visible_cell_count": 3,
@@ -483,6 +684,40 @@ def _reward(
                 "point_only_reward_fallback_used": False,
             }
         )
+        if slope_reward_contract:
+            row.update(
+                {
+                    "slope_obstacle_aware_theta_reward_contract": True,
+                    "obstacle_aware_new_visible_cell_count": 3,
+                    "obstacle_aware_theta_coverage_hash": "slope-los-hash",
+                    "obstacle_aware_theta_coverage_gain_per_path_cost": 0.3,
+                    "obstacle_aware_theta_coverage_denominator_cells": 100.0,
+                    "slope_obstacle_source_hash": "slope-source-hash",
+                    "platform_contract_hash": "platform-hash",
+                    "max_traversable_slope_deg": slope_max_traversable_slope_deg,
+                    "slope_blocked_source_kind": "slope_blocked_as_obstacle_proxy",
+                    "unobstructed_theta_reward_fallback_used": False,
+                }
+            )
+        if hybrid_path_cost_contract:
+            metrics = dict(row.get("metrics") or {})
+            metrics["path_cost_m"] = 2.5
+            metrics["coverage_per_cost"] = 1.2
+            row.update(
+                {
+                    "hybrid_astar_path_cost_reward_contract": True,
+                    "path_cost_source": "hybrid_astar_pose_path/v1",
+                    "hybrid_astar_path_cost": 2.5,
+                    "hybrid_astar_pose_path_hash": "hybrid-pose-path-hash",
+                    "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+                    "legacy_grid_astar_path_cost": 10.0,
+                    "hybrid_vs_grid_path_cost_delta": -7.5,
+                    "default_astar_replaced": False,
+                    "hybrid_astar_ackermann_feasible_claimed": hybrid_ackermann_feasible_claimed,
+                    "point_grid_path_cost_fallback_used": False,
+                    "metrics": metrics,
+                }
+            )
         if not theta_reward_omit_denominator:
             row["theta_coverage_denominator_cells"] = 100.0
     return row

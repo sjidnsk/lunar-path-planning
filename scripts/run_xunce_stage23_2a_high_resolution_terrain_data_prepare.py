@@ -129,7 +129,7 @@ def run_xunce_stage23_2a_high_resolution_terrain_data_prepare(
         except (OSError, ValueError, GeoTiffDecodeUnavailable) as exc:
             decode_issue = str(exc)
 
-    high_res_root = output_root / "high_res_roi_expansion"
+    high_res_root = output_root / str(config.get("high_res_output_subdir", "high_res_roi_expansion"))
     roi_result: dict[str, Any] = {
         "high_res_root": str(high_res_root),
         "slice_count": 0,
@@ -379,7 +379,7 @@ def _build_high_res_roi_expansion(
     repo_root: Path,
 ) -> dict[str, Any]:
     output_root.mkdir(parents=True, exist_ok=True)
-    scenario_root = output_root / "path_planner_sidecars"
+    scenario_root = output_root / str(config.get("path_planner_sidecar_subdir", "path_planner_sidecars"))
     scenario_root.mkdir(parents=True, exist_ok=True)
     dataset_id = str(manifest.get("dataset_id", "high_res"))
     dem_product = products["dem"]
@@ -645,6 +645,7 @@ def _run_stage23_1_smoke(
             "rollout_steps": int(config.get("stage23_1_rollout_steps", 2)),
             "dynamic_max_candidates_per_step": int(config.get("dynamic_max_candidates_per_step", 8)),
             "dynamic_proposal_pool_limit_per_step": int(config.get("dynamic_proposal_pool_limit_per_step", 32)),
+            "high_fidelity_output_subdir": str(config.get("stage23_0a_high_fidelity_output_subdir", "hf")),
             "stage23_0a_authorized": False,
             "runs_new_ppo_update": False,
             "publishes_checkpoint": False,
@@ -660,7 +661,7 @@ def _run_stage23_1_smoke(
         "schema_version": "xunce-stage23-1-slope-derived-obstacle-source-for-endpoint-theta-los-config/v1",
         "run_stage23_0a": True,
         "stage23_0a_config": str(stage23_0a_config_path),
-        "stage23_0a_output_subdir": "s23_1_a",
+        "stage23_0a_output_subdir": str(config.get("stage23_0a_output_subdir", "s23_1_a")),
         "platform_contract": config.get("platform_contract"),
         "platform_contract_id": config.get("platform_contract_id"),
         "platform_contract_hash": config.get("platform_contract_hash"),
@@ -679,7 +680,7 @@ def _run_stage23_1_smoke(
     _write_json(stage23_1_config_path, stage23_1_config)
     return run_xunce_stage23_1_slope_derived_obstacle_source_for_endpoint_theta_los(
         config_path=stage23_1_config_path,
-        output_root=output_root / "s23_1",
+        output_root=output_root / str(config.get("stage23_1_output_subdir", "s23_1")),
         repo_root=repo_root,
     )
 
@@ -719,6 +720,11 @@ def _load_config(config_path: Path, repo_root: Path) -> dict[str, Any]:
     payload.setdefault("raw_data_root", "D:/CodexDownloads/lunar-path-planning/data/raw/high_resolution_lunar_terrain")
     payload.setdefault("download_missing", True)
     payload.setdefault("run_stage23_1_smoke", False)
+    payload.setdefault("high_res_output_subdir", "high_res_roi_expansion")
+    payload.setdefault("path_planner_sidecar_subdir", "path_planner_sidecars")
+    payload.setdefault("stage23_1_output_subdir", "s23_1")
+    payload.setdefault("stage23_0a_output_subdir", "s23_1_a")
+    payload.setdefault("stage23_0a_high_fidelity_output_subdir", "hf")
     payload.setdefault("stage23_0a_config", "configs/xunce_stage23_0a_materialize_obstacle_sources_for_theta_los_v1.json")
     payload.setdefault("candidate_count", 8)
     payload.setdefault("top_k", 3)

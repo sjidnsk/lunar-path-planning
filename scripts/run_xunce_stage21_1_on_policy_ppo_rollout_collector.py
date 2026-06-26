@@ -24,6 +24,20 @@ from model_explorer.policy.canonical_reward import compute_canonical_reward_comp
 
 import run_xunce_high_fidelity_exploration_coverage_comparison as hf
 import run_xunce_high_fidelity_real_map_comparison as real_map
+from xunce_obstacle_aware_theta_sensor_coverage import obstacle_aware_theta_coverage_hash
+from xunce_hybrid_astar_candidate_path_cost import (
+    PATH_COST_SOURCE as HYBRID_ASTAR_PATH_COST_SOURCE,
+    Cell as HYBRID_CELL,
+    WorldPoint as HYBRID_WORLD_POINT,
+    build_cost_grid_from_sidecar,
+    evaluate_hybrid_astar_candidate_path_cost,
+)
+from xunce_continuous_theta_action import (
+    CONTINUOUS_THETA_ACTION_SPACE,
+    action_sample_hash,
+    continuous_theta_enabled,
+    sample_continuous_theta_action,
+)
 from xunce_theta_viewpoint_candidates import candidate_observation_cells, theta_metadata
 
 
@@ -153,7 +167,10 @@ def run_xunce_stage21_1_on_policy_ppo_rollout_collector(
         output_root=output_root,
     )
     counts = _contract_counts(collection)
-    blocking = list(collection.reason_codes)
+    non_blocking_reason_codes = set()
+    if continuous_theta_enabled(config):
+        non_blocking_reason_codes.add("selected_continuous_theta_hybrid_astar_unreachable")
+    blocking = [reason for reason in collection.reason_codes if reason not in non_blocking_reason_codes]
     if counts["trainable_transition_count"] < int(config["min_trainable_transition_count"]):
         blocking.append("trainable_transition_count_below_minimum")
     if counts["mask_violation_count"] > 0:
@@ -193,7 +210,10 @@ def _collect_rollouts(
     output_root: Path,
 ) -> CollectionResult:
     torch.manual_seed(int(config["sampling_seed"]))
+    hf_config.setdefault("continuous_theta_head_init_seed", int(config["sampling_seed"]))
     source = hf._load_source(hf_config, repo_root)
+    obstacle_source_audit = hf._obstacle_source_audit(source, hf_config, repo_root=repo_root)
+    obstacle_source_by_scenario = obstacle_source_audit.get("source_by_scenario", {})
     checkpoint_audit, model, xunce_config = real_map._load_xunce_checkpoint(
         Path(source["xunce_checkpoint"]),
         config=hf_config,
@@ -234,6 +254,7 @@ def _collect_rollouts(
             scenario_index=scenario_index,
             source=source,
             slice_by_id=slice_by_id,
+            obstacle_source_linkage=obstacle_source_by_scenario.get(str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))),
             hf_config=hf_config,
             config=config,
             profile=profile,
@@ -275,6 +296,7 @@ def _collect_episode(
     scenario_index: int,
     source: dict[str, Any],
     slice_by_id: dict[str, dict[str, Any]],
+    obstacle_source_linkage: dict[str, Any] | None,
     hf_config: dict[str, Any],
     config: dict[str, Any],
     profile: Any,
@@ -293,6 +315,7 @@ def _collect_episode(
     start_cell = hf._cell_tuple(scenario.get("start_cell")) or (0, 0)
     covered_cells = set(hf._footprint(start_cell, radius=radius))
     current_cell = start_cell
+    current_theta_deg = float(config.get("initial_theta_deg", 0.0))
     coverage_rates = [len(covered_cells) / denominator]
     path_cost_total = 0.0
     soft_risk_exposure_total = 0.0
@@ -313,6 +336,7 @@ def _collect_episode(
         candidate_batch = hf._candidate_rows_for_step(
             scenario,
             current_cell=current_cell,
+            current_theta_deg=current_theta_deg,
             covered_cells=covered_cells,
             step_index=step_index,
             config=hf_config,
@@ -362,12 +386,55 @@ def _collect_episode(
         xunce_batch_payload = _xunce_batch_to_dict(adapter["xunce_batch"])
         observation_payload["candidate_cells"] = candidate_observation_cells(candidates)
         observation_payload.update(theta_metadata(candidates))
+        slope_theta_metadata = _slope_obstacle_theta_metadata(
+            candidates,
+            current_cell=cell_before,
+            covered_cells=covered_cells,
+            config=hf_config,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
+        observation_payload.update(slope_theta_metadata)
+        hybrid_path_metadata = (
+            {}
+            if continuous_theta_enabled(config)
+            else _hybrid_astar_path_cost_metadata(
+                candidates,
+                current_cell=cell_before,
+                current_theta_deg=current_theta_deg,
+                candidate_set_hash_value=candidate_set_hash_value,
+                config=hf_config,
+                slice_row=slice_row,
+                platform_contract_hash=slope_theta_metadata.get("platform_contract_hash"),
+            )
+        )
+        continuous_hybrid_probe_metadata = (
+            _continuous_theta_reachability_probe_metadata(
+                candidates,
+                current_cell=cell_before,
+                current_theta_deg=current_theta_deg,
+                candidate_set_hash_value=candidate_set_hash_value,
+                config=hf_config,
+                slice_row=slice_row,
+                platform_contract_hash=slope_theta_metadata.get("platform_contract_hash"),
+            )
+            if continuous_theta_enabled(config)
+            else {}
+        )
+        observation_payload.update(hybrid_path_metadata)
         action_mask = tuple(bool(value) for value in adapter["action_mask"])
         hard_risk_clean_mask = _hard_risk_clean_mask(
             candidates,
             allow_open_grid_fallback=bool(hf_config["allow_open_grid_fallback"]),
         )
-        sampling_mask = tuple(bool(valid) and bool(clean) for valid, clean in zip(action_mask, hard_risk_clean_mask))
+        hybrid_reachable_mask = (
+            _hybrid_astar_reachable_mask(continuous_hybrid_probe_metadata, candidate_count=len(candidates))
+            if continuous_theta_enabled(config)
+            else _hybrid_astar_reachable_mask(hybrid_path_metadata, candidate_count=len(candidates))
+        )
+        sampling_mask = tuple(
+            bool(valid) and bool(clean) and bool(hybrid_reachable)
+            for valid, clean, hybrid_reachable in zip(action_mask, hard_risk_clean_mask, hybrid_reachable_mask)
+        )
 
         if pending is not None:
             _finalize_pending(
@@ -403,6 +470,7 @@ def _collect_episode(
                 adapter["xunce_batch"],
                 sampling_mask=sampling_mask,
                 temperature=float(config["sampling_temperature"]),
+                continuous_theta_action_space_enabled=continuous_theta_enabled(config),
             )
         except Exception as exc:  # pragma: no cover
             terminal_reason = f"model_sampling_failure:{type(exc).__name__}"
@@ -420,14 +488,69 @@ def _collect_episode(
 
         selected_index = detail["action_index"]
         selected_candidate = hf._candidate_at(candidates, selected_index)
+        if selected_candidate is not None and continuous_theta_enabled(config):
+            selected_candidate = _selected_continuous_theta_candidate(
+                selected_candidate,
+                selected_index=selected_index,
+                detail=detail,
+                candidate_set_hash_value=candidate_set_hash_value,
+                sampling_seed=int(config["sampling_seed"]),
+            )
+            candidates[selected_index] = selected_candidate
+            slope_theta_metadata = _slope_obstacle_theta_metadata(
+                candidates,
+                current_cell=cell_before,
+                covered_cells=covered_cells,
+                config=hf_config,
+                obstacle_source_linkage=obstacle_source_linkage,
+            )
+            observation_payload.update(slope_theta_metadata)
+            hybrid_path_metadata = _hybrid_astar_path_cost_metadata(
+                candidates,
+                current_cell=cell_before,
+                current_theta_deg=current_theta_deg,
+                candidate_set_hash_value=candidate_set_hash_value,
+                config=hf_config,
+                slice_row=slice_row,
+                platform_contract_hash=slope_theta_metadata.get("platform_contract_hash"),
+            )
+            observation_payload.update(hybrid_path_metadata)
+            selected_candidate = _apply_selected_hybrid_path_cost(selected_candidate, selected_index, hybrid_path_metadata)
+            candidates[selected_index] = selected_candidate
+        selected_hybrid_unreachable = (
+            continuous_theta_enabled(config)
+            and bool(hf_config.get("hybrid_astar_pose_path_cost_enabled", False))
+            and (
+                selected_candidate is None
+                or selected_candidate.get("path_cost_source") != HYBRID_ASTAR_PATH_COST_SOURCE
+                or selected_candidate.get("hybrid_astar_reachable") is not True
+                or _finite(selected_candidate.get("hybrid_astar_path_cost")) is None
+                or not selected_candidate.get("hybrid_astar_pose_path_hash")
+            )
+        )
         selected_cell = hf._cell_tuple(hf._candidate_cell(selected_candidate)) if selected_candidate is not None else None
         selected_cost = hf._candidate_cost(selected_candidate) if selected_candidate is not None else None
         selected_hard_risk_violation = bool(selected_candidate is not None and _candidate_hard_risk_violation(selected_candidate, allow_open_grid_fallback=bool(hf_config["allow_open_grid_fallback"])))
         mask_violation = hf._mask_violation(action_mask, selected_index)
         if selected_hard_risk_violation:
             hard_risk_violation_count += 1
-        if mask_violation or selected_hard_risk_violation or selected_candidate is None or selected_cell is None or selected_cost is None:
+        if (
+            mask_violation
+            or selected_hard_risk_violation
+            or selected_hybrid_unreachable
+            or selected_candidate is None
+            or selected_cell is None
+            or selected_cost is None
+        ):
             terminal_reason = "selected_action_not_trainable"
+            if selected_hybrid_unreachable:
+                terminal_reason = "selected_continuous_theta_hybrid_astar_unreachable"
+                _mark_latest_transition_terminal(
+                    transitions,
+                    trainable_batch,
+                    scenario_id=scenario_id,
+                    terminal_reason=terminal_reason,
+                )
             reason_codes.append(terminal_reason)
             rejections.append(
                 _rejection_row(
@@ -439,6 +562,11 @@ def _collect_episode(
                     action_index=selected_index,
                     mask_violation=mask_violation,
                     selected_hard_risk_violation=selected_hard_risk_violation,
+                    selected_hybrid_astar_failure_reason=(
+                        selected_candidate.get("hybrid_astar_failure_reason")
+                        if isinstance(selected_candidate, dict)
+                        else None
+                    ),
                 )
             )
             break
@@ -448,11 +576,15 @@ def _collect_episode(
             end=selected_cell,
             candidate=selected_candidate,
             config=hf_config,
+            obstacle_source_linkage=obstacle_source_linkage,
         )
         new_cells = footprint - covered_cells
         revisited_cells = footprint & covered_cells
         covered_cells.update(footprint)
         current_cell = selected_cell
+        selected_theta = hf._finite_or_none(selected_candidate.get("candidate_theta_deg"))
+        if selected_theta is not None:
+            current_theta_deg = float(selected_theta)
         path_cost_total += float(selected_cost)
         soft_risk_exposure = hf._candidate_soft_risk_exposure(selected_candidate)
         soft_risk_exposure_total += soft_risk_exposure
@@ -466,7 +598,13 @@ def _collect_episode(
             soft_risk_exposure=soft_risk_exposure,
             profile=profile,
         )
-        log_prob_error = abs(_recompute_log_prob(detail["old_sampling_logits"], selected_index) - float(detail["old_log_prob"]))
+        if continuous_theta_enabled(config):
+            log_prob_error = abs(
+                float(detail["old_log_prob"])
+                - (float(detail.get("old_point_log_prob", 0.0)) + float(detail.get("old_theta_log_prob", 0.0)))
+            )
+        else:
+            log_prob_error = abs(_recompute_log_prob(detail["old_sampling_logits"], selected_index) - float(detail["old_log_prob"]))
         transition_id = f"{scenario_id}:step-{step_index}:sample-{selected_index}"
         transition = {
             "schema_version": "xunce-stage21-1-ppo-transition/v1",
@@ -478,6 +616,14 @@ def _collect_episode(
             "observation": observation_payload,
             "xunce_batch": xunce_batch_payload,
             "action_index": int(selected_index),
+            "action_space_type": detail.get("action_space_type"),
+            "selected_base_candidate_index": detail.get("selected_base_candidate_index"),
+            "selected_theta_rad": detail.get("selected_theta_rad"),
+            "selected_theta_deg": detail.get("selected_theta_deg"),
+            "old_point_log_prob": detail.get("old_point_log_prob"),
+            "old_theta_log_prob": detail.get("old_theta_log_prob"),
+            "base_candidate_set_hash": candidate_set_hash_value,
+            "action_sample_hash": selected_candidate.get("action_sample_hash"),
             "old_log_prob": float(detail["old_log_prob"]),
             "old_value": float(detail["old_value"]),
             "reward": float(reward_result["reward"]),
@@ -495,10 +641,20 @@ def _collect_episode(
                 "current_cell_before": list(cell_before),
                 "selected_cell": list(selected_cell),
                 "selected_viewpoint": selected_candidate.get("candidate_viewpoint"),
+                "action_space_type": detail.get("action_space_type"),
+                "selected_base_candidate_index": detail.get("selected_base_candidate_index"),
+                "selected_theta_rad": detail.get("selected_theta_rad"),
                 "selected_theta_deg": selected_candidate.get("candidate_theta_deg"),
-                "selected_base_candidate_index": selected_candidate.get("base_candidate_index"),
+                "base_candidate_set_hash": candidate_set_hash_value,
+                "action_sample_hash": selected_candidate.get("action_sample_hash"),
+                "old_point_log_prob": detail.get("old_point_log_prob"),
+                "old_theta_log_prob": detail.get("old_theta_log_prob"),
+                "theta_mu_rad": detail.get("theta_mu_rad"),
+                "theta_kappa": detail.get("theta_kappa"),
                 "candidate_cells": candidate_observation_cells(candidates),
                 **theta_metadata(candidates),
+                **slope_theta_metadata,
+                **hybrid_path_metadata,
                 "candidate_set_id": candidate_set_id,
                 "candidate_set_hash": candidate_set_hash_value,
                 "covered_cells_hash": covered_hash,
@@ -554,12 +710,23 @@ def _collect_episode(
                 "argmax_action_index": detail["argmax_action_index"],
                 "sampled_action_equals_argmax": int(selected_index) == int(detail["argmax_action_index"]),
                 "old_log_prob": detail["old_log_prob"],
+                "old_point_log_prob": detail.get("old_point_log_prob"),
+                "old_theta_log_prob": detail.get("old_theta_log_prob"),
+                "selected_theta_rad": detail.get("selected_theta_rad"),
+                "selected_theta_deg": detail.get("selected_theta_deg"),
+                "action_space_type": detail.get("action_space_type"),
+                "theta_mu_rad": detail.get("theta_mu_rad"),
+                "theta_kappa": detail.get("theta_kappa"),
                 "old_value": detail["old_value"],
                 "old_log_prob_recompute_abs_error": log_prob_error,
                 "action_mask": list(action_mask),
                 "hard_risk_clean_mask": list(hard_risk_clean_mask),
                 "sampling_mask": list(sampling_mask),
-                "sampled_from": "torch.distributions.Categorical(logits=old_sampling_logits)",
+                "sampled_from": (
+                    "Categorical(point_logits)+VonMises(theta)"
+                    if continuous_theta_enabled(config)
+                    else "torch.distributions.Categorical(logits=old_sampling_logits)"
+                ),
             }
         )
 
@@ -610,6 +777,7 @@ def _sample_xunce_action(
     *,
     sampling_mask: tuple[bool, ...],
     temperature: float,
+    continuous_theta_action_space_enabled: bool = False,
 ) -> dict[str, Any]:
     if temperature <= 0.0 or not math.isfinite(temperature):
         raise ValueError("sampling_temperature must be finite and > 0")
@@ -623,17 +791,41 @@ def _sample_xunce_action(
     sampling_logits = masked_logits / float(temperature)
     mask_tensor = torch.tensor(list(sampling_mask), dtype=torch.bool)
     sampling_logits = sampling_logits.masked_fill(~mask_tensor, -1.0e9)
-    distribution = torch.distributions.Categorical(logits=sampling_logits)
-    action = distribution.sample()
-    action_index = int(action.item())
-    probs = torch.softmax(sampling_logits, dim=-1)
-    argmax_action_index = int(torch.argmax(probs).item())
     finite_outputs = bool(
         torch.isfinite(logits).all()
         and torch.isfinite(masked_logits).all()
         and torch.isfinite(sampling_logits).all()
         and torch.isfinite(value)
     )
+    if continuous_theta_action_space_enabled:
+        detail = sample_continuous_theta_action(
+            point_logits=masked_logits,
+            theta_mu_rad=output.theta_mu_rad[0].detach().cpu(),
+            theta_kappa=output.theta_kappa[0].detach().cpu(),
+            sampling_mask=mask_tensor,
+            temperature=temperature,
+        )
+        detail.update(
+            {
+                "old_logits": _float_list(logits),
+                "old_masked_logits": _float_list(masked_logits),
+                "old_value": float(value),
+                "theta_mu_rad": _float_list(output.theta_mu_rad[0].detach().cpu()),
+                "theta_kappa": _float_list(output.theta_kappa[0].detach().cpu()),
+                "finite_outputs": bool(
+                    finite_outputs
+                    and torch.isfinite(output.theta_mu_rad[0]).all()
+                    and torch.isfinite(output.theta_kappa[0]).all()
+                ),
+                "latency_ms": float(latency_ms),
+            }
+        )
+        return detail
+    distribution = torch.distributions.Categorical(logits=sampling_logits)
+    action = distribution.sample()
+    action_index = int(action.item())
+    probs = torch.softmax(sampling_logits, dim=-1)
+    argmax_action_index = int(torch.argmax(probs).item())
     return {
         "old_logits": _float_list(logits),
         "old_masked_logits": _float_list(masked_logits),
@@ -647,6 +839,318 @@ def _sample_xunce_action(
         "action_entropy": float(distribution.entropy().item()),
         "finite_outputs": finite_outputs,
         "latency_ms": float(latency_ms),
+    }
+
+
+def _slope_obstacle_theta_metadata(
+    candidates: list[dict[str, Any]],
+    *,
+    current_cell: tuple[int, int],
+    covered_cells: set[tuple[int, int]],
+    config: dict[str, Any],
+    obstacle_source_linkage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not (
+        bool(config.get("slope_obstacle_aware_theta_reward_enabled", False))
+        and bool(config.get("obstacle_occlusion_enabled", False))
+    ):
+        return {}
+    has_theta = any(candidate.get("candidate_theta_deg") is not None for candidate in candidates)
+    if not has_theta:
+        return {}
+
+    counts: list[int | None] = []
+    hashes: list[str | None] = []
+    gains: list[float | None] = []
+    strict_count = 0
+    for candidate in candidates:
+        cell = hf._cell_tuple(hf._candidate_cell(candidate))
+        if cell is None or candidate.get("candidate_theta_deg") is None:
+            counts.append(None)
+            hashes.append(None)
+            gains.append(None)
+            continue
+        footprint = hf._candidate_coverage_cells(
+            start=current_cell,
+            end=cell,
+            candidate=candidate,
+            config=config,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
+        new_count = len(footprint - covered_cells)
+        counts.append(int(new_count))
+        hashes.append(obstacle_aware_theta_coverage_hash(footprint))
+        path_cost = hf._candidate_cost(candidate)
+        gains.append((float(new_count) / float(path_cost)) if path_cost not in (None, 0) else None)
+        strict_count += 1
+
+    source_hash = None
+    source_kind = None
+    if isinstance(obstacle_source_linkage, dict):
+        source_hash = obstacle_source_linkage.get("obstacle_source_hash")
+        source_kind = obstacle_source_linkage.get("obstacle_source_kind")
+    return {
+        "obstacle_aware_new_visible_cell_counts": counts,
+        "obstacle_aware_theta_coverage_hashes": hashes,
+        "obstacle_aware_theta_coverage_gain_per_path_costs": gains,
+        "slope_obstacle_source_hash": source_hash,
+        "slope_obstacle_source_hashes": [source_hash for _ in candidates],
+        "platform_contract_hash": config.get("platform_contract_hash"),
+        "platform_contract_hashes": [config.get("platform_contract_hash") for _ in candidates],
+        "platform_contract_id": config.get("platform_contract_id"),
+        "max_traversable_slope_deg": float(config.get("max_traversable_slope_deg", 30.0)),
+        "slope_blocked_source_kind": source_kind,
+        "strict_obstacle_aware_new_visible_cell_count": strict_count == len(candidates) and strict_count > 0,
+        "slope_obstacle_aware_coverage_source": "endpoint_theta_slope_obstacle_los/v1",
+    }
+
+
+def _selected_continuous_theta_candidate(
+    candidate: dict[str, Any],
+    *,
+    selected_index: int,
+    detail: dict[str, Any],
+    candidate_set_hash_value: str,
+    sampling_seed: int,
+) -> dict[str, Any]:
+    updated = dict(candidate)
+    cell = hf._cell_tuple(hf._candidate_cell(updated))
+    theta_rad = float(detail["selected_theta_rad"])
+    theta_deg = float(detail["selected_theta_deg"])
+    updated["candidate_theta_deg"] = theta_deg
+    updated["candidate_theta_rad"] = theta_rad
+    updated["selected_theta_rad"] = theta_rad
+    updated["candidate_viewpoint"] = [cell[0], cell[1], theta_deg] if cell is not None else None
+    updated["base_candidate_index"] = int(selected_index)
+    updated["selected_base_candidate_index"] = int(selected_index)
+    updated["base_candidate_set_hash"] = str(candidate_set_hash_value)
+    updated["action_sample_hash"] = action_sample_hash(
+        base_candidate_set_hash=str(candidate_set_hash_value),
+        action_index=int(selected_index),
+        theta_rad=theta_rad,
+        sampling_seed=int(sampling_seed),
+    )
+    updated["action_space_type"] = CONTINUOUS_THETA_ACTION_SPACE
+    return updated
+
+
+def _apply_selected_hybrid_path_cost(
+    candidate: dict[str, Any],
+    selected_index: int,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    updated = dict(candidate)
+    if not metadata:
+        return updated
+    index = int(selected_index)
+    for target, source in (
+        ("path_cost_source", "path_cost_sources"),
+        ("hybrid_astar_path_cost", "hybrid_astar_path_costs"),
+        ("hybrid_astar_pose_path_hash", "hybrid_astar_pose_path_hashes"),
+        ("hybrid_astar_trajectory_kind", "hybrid_astar_trajectory_kinds"),
+        ("hybrid_astar_reachable", "hybrid_astar_reachable_flags"),
+        ("hybrid_astar_failure_reason", "hybrid_astar_failure_reasons"),
+        ("legacy_grid_astar_path_cost", "legacy_grid_astar_path_costs"),
+        ("hybrid_vs_grid_path_cost_delta", "hybrid_vs_grid_path_cost_deltas"),
+        ("default_astar_replaced", "default_astar_replaced_flags"),
+        ("hybrid_astar_ackermann_feasible_claimed", "hybrid_astar_ackermann_feasible_claimed_flags"),
+    ):
+        values = metadata.get(source)
+        if isinstance(values, list) and 0 <= index < len(values):
+            updated[target] = values[index]
+    if updated.get("path_cost_source") == HYBRID_ASTAR_PATH_COST_SOURCE and updated.get("hybrid_astar_path_cost") is not None:
+        updated["path_cost"] = updated["hybrid_astar_path_cost"]
+    if metadata.get("hybrid_astar_current_pose") is not None:
+        updated["hybrid_astar_current_pose"] = metadata.get("hybrid_astar_current_pose")
+    if metadata.get("hybrid_astar_current_pose_provenance") is not None:
+        updated["hybrid_astar_current_pose_provenance"] = metadata.get("hybrid_astar_current_pose_provenance")
+    return updated
+
+
+def _continuous_theta_reachability_probe_metadata(
+    candidates: list[dict[str, Any]],
+    *,
+    current_cell: tuple[int, int],
+    current_theta_deg: float,
+    candidate_set_hash_value: str,
+    config: dict[str, Any],
+    slice_row: dict[str, Any],
+    platform_contract_hash: str | None,
+) -> dict[str, Any]:
+    if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
+        return {}
+    probe_candidates: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
+        probe = dict(candidate)
+        cell = hf._cell_tuple(hf._candidate_cell(probe))
+        if cell is not None:
+            probe["candidate_theta_deg"] = float(current_theta_deg)
+            probe["candidate_viewpoint"] = [int(cell[0]), int(cell[1]), float(current_theta_deg)]
+        probe["candidate_index"] = int(index)
+        probe["candidate_set_hash"] = candidate_set_hash_value
+        probe_candidates.append(probe)
+    metadata = _hybrid_astar_path_cost_metadata(
+        probe_candidates,
+        current_cell=current_cell,
+        current_theta_deg=current_theta_deg,
+        candidate_set_hash_value=candidate_set_hash_value,
+        config=config,
+        slice_row=slice_row,
+        platform_contract_hash=platform_contract_hash,
+    )
+    metadata["hybrid_astar_reachability_probe_theta_deg"] = float(current_theta_deg)
+    metadata["hybrid_astar_reachability_probe_provenance"] = (
+        "continuous_theta_base_candidate_current_heading_probe/v1"
+    )
+    return metadata
+
+
+def _hybrid_astar_path_cost_metadata(
+    candidates: list[dict[str, Any]],
+    *,
+    current_cell: tuple[int, int],
+    current_theta_deg: float,
+    candidate_set_hash_value: str,
+    config: dict[str, Any],
+    slice_row: dict[str, Any],
+    platform_contract_hash: str | None,
+) -> dict[str, Any]:
+    if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
+        return {}
+    if not candidates:
+        return {}
+    sidecar_path = _resolved_file(slice_row.get("sidecar"))
+    if sidecar_path is None or not sidecar_path.is_file():
+        return _hybrid_path_unavailable_metadata(
+            candidates,
+            reason="sidecar_missing",
+            platform_contract_hash=platform_contract_hash,
+            max_traversable_slope_deg=config.get("max_traversable_slope_deg", 30.0),
+        )
+    try:
+        sidecar = _read_json(sidecar_path)
+        grid = build_cost_grid_from_sidecar(sidecar)
+        current_world = _hybrid_cell_center_world(grid.spec, HYBRID_CELL(int(current_cell[0]), int(current_cell[1])))
+    except Exception:
+        return _hybrid_path_unavailable_metadata(
+            candidates,
+            reason="sidecar_decode_or_grid_build_failed",
+            platform_contract_hash=platform_contract_hash,
+            max_traversable_slope_deg=config.get("max_traversable_slope_deg", 30.0),
+        )
+    current_pose = [float(current_world.x), float(current_world.y), math.radians(float(current_theta_deg))]
+    platform_hash = str(platform_contract_hash or config.get("platform_contract_hash") or sidecar.get("platform_contract_hash") or "")
+    max_slope = float(sidecar.get("max_traversable_slope_deg") or config.get("max_traversable_slope_deg") or 30.0)
+    rows: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
+        payload = dict(candidate)
+        payload.setdefault("candidate_index", index)
+        payload.setdefault("candidate_set_hash", candidate_set_hash_value)
+        try:
+            row = evaluate_hybrid_astar_candidate_path_cost(
+                grid=grid,
+                current_pose=current_pose,
+                candidate=payload,
+                platform_contract_hash=platform_hash,
+                max_traversable_slope_deg=max_slope,
+                theta_bin_count=int(config.get("hybrid_astar_theta_bin_count", 72)),
+                goal_position_tolerance_m=(
+                    float(config["hybrid_astar_goal_position_tolerance_m"])
+                    if config.get("hybrid_astar_goal_position_tolerance_m") is not None
+                    else None
+                ),
+                goal_theta_tolerance_deg=float(config.get("hybrid_astar_goal_theta_tolerance_deg", 5.0)),
+                max_iterations=int(config.get("hybrid_astar_max_iterations", 100_000)),
+                primitive_duration_s=float(config.get("hybrid_astar_primitive_duration_s", 1.0)),
+                integration_dt_s=float(config.get("hybrid_astar_integration_dt_s", 0.25)),
+                max_speed_mps=float(config.get("hybrid_astar_max_speed_mps", 1.0)),
+                max_angular_speed_degps=float(config.get("hybrid_astar_max_angular_speed_degps", 45.0)),
+                rotation_cost_weight=float(config.get("hybrid_astar_rotation_cost_weight", 0.2)),
+                reverse_penalty_weight=float(config.get("hybrid_astar_reverse_penalty_weight", 0.5)),
+                turn_penalty_weight=float(config.get("hybrid_astar_turn_penalty_weight", 0.05)),
+            )
+        except Exception:
+            row = {
+                "path_cost_source_recommendation": HYBRID_ASTAR_PATH_COST_SOURCE,
+                "hybrid_astar_reachable": False,
+                "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+                "hybrid_astar_path_cost": None,
+                "hybrid_astar_pose_path_hash": None,
+                "hybrid_astar_failure_reason": "hybrid_astar_evaluation_failed",
+                "legacy_grid_astar_path_cost": hf._candidate_cost(candidate),
+                "hybrid_vs_grid_path_cost_delta": None,
+                "default_astar_replaced": False,
+                "hybrid_astar_ackermann_feasible_claimed": False,
+            }
+        rows.append(row)
+    path_sources = [
+        HYBRID_ASTAR_PATH_COST_SOURCE if row.get("path_cost_source_recommendation") == HYBRID_ASTAR_PATH_COST_SOURCE else None
+        for row in rows
+    ]
+    return {
+        "path_cost_source": HYBRID_ASTAR_PATH_COST_SOURCE,
+        "path_cost_sources": path_sources,
+        "hybrid_astar_path_costs": [row.get("hybrid_astar_path_cost") for row in rows],
+        "hybrid_astar_pose_path_hashes": [row.get("hybrid_astar_pose_path_hash") for row in rows],
+        "hybrid_astar_trajectory_kinds": [row.get("hybrid_astar_trajectory_kind") for row in rows],
+        "hybrid_astar_reachable_flags": [row.get("hybrid_astar_reachable") is True for row in rows],
+        "hybrid_astar_failure_reasons": [row.get("hybrid_astar_failure_reason") for row in rows],
+        "legacy_grid_astar_path_costs": [row.get("legacy_grid_astar_path_cost") for row in rows],
+        "hybrid_vs_grid_path_cost_deltas": [row.get("hybrid_vs_grid_path_cost_delta") for row in rows],
+        "default_astar_replaced": False,
+        "default_astar_replaced_flags": [row.get("default_astar_replaced") is True for row in rows],
+        "hybrid_astar_ackermann_feasible_claimed": False,
+        "hybrid_astar_ackermann_feasible_claimed_flags": [
+            row.get("hybrid_astar_ackermann_feasible_claimed") is True for row in rows
+        ],
+        "hybrid_astar_current_pose": current_pose,
+        "hybrid_astar_current_pose_provenance": "stage21_1_current_cell_plus_previous_selected_theta/v1",
+        "hybrid_astar_path_cost_source": HYBRID_ASTAR_PATH_COST_SOURCE,
+    }
+
+
+def _hybrid_astar_reachable_mask(metadata: dict[str, Any], *, candidate_count: int) -> tuple[bool, ...]:
+    flags = metadata.get("hybrid_astar_reachable_flags")
+    if not isinstance(flags, list) or len(flags) != candidate_count:
+        return tuple(True for _ in range(candidate_count))
+    return tuple(value is True for value in flags)
+
+
+def _hybrid_cell_center_world(spec: Any, cell: HYBRID_CELL) -> HYBRID_WORLD_POINT:
+    return HYBRID_WORLD_POINT(
+        float(spec.origin[0]) + (float(cell.x) + 0.5) * float(spec.resolution),
+        float(spec.origin[1]) + (float(cell.y) + 0.5) * float(spec.resolution),
+    )
+
+
+def _hybrid_path_unavailable_metadata(
+    candidates: list[dict[str, Any]],
+    *,
+    reason: str,
+    platform_contract_hash: str | None,
+    max_traversable_slope_deg: Any,
+) -> dict[str, Any]:
+    count = len(candidates)
+    legacy = [hf._candidate_cost(candidate) for candidate in candidates]
+    return {
+        "path_cost_source": HYBRID_ASTAR_PATH_COST_SOURCE,
+        "path_cost_sources": [None for _ in candidates],
+        "hybrid_astar_path_costs": [None for _ in candidates],
+        "hybrid_astar_pose_path_hashes": [None for _ in candidates],
+        "hybrid_astar_trajectory_kinds": ["hybrid_astar_pose_path" for _ in candidates],
+        "hybrid_astar_reachable_flags": [False for _ in candidates],
+        "hybrid_astar_failure_reasons": [reason for _ in candidates],
+        "legacy_grid_astar_path_costs": legacy,
+        "hybrid_vs_grid_path_cost_deltas": [None for _ in candidates],
+        "default_astar_replaced": False,
+        "default_astar_replaced_flags": [False for _ in candidates],
+        "hybrid_astar_ackermann_feasible_claimed": False,
+        "hybrid_astar_ackermann_feasible_claimed_flags": [False for _ in candidates],
+        "platform_contract_hash": platform_contract_hash,
+        "platform_contract_hashes": [platform_contract_hash for _ in candidates],
+        "max_traversable_slope_deg": max_traversable_slope_deg,
+        "hybrid_astar_unavailable_reason": reason,
+        "hybrid_astar_unavailable_candidate_count": count,
     }
 
 
@@ -725,6 +1229,29 @@ def _finalize_pending(
     transitions.append(pending)
     if pending.get("trainable") is True:
         trainable_batch.append(pending)
+
+
+def _mark_latest_transition_terminal(
+    transitions: list[dict[str, Any]],
+    trainable_batch: list[dict[str, Any]],
+    *,
+    scenario_id: str,
+    terminal_reason: str,
+) -> None:
+    for row in reversed(transitions):
+        if row.get("scenario_id") == scenario_id:
+            row["done"] = True
+            info = row.get("info")
+            if isinstance(info, dict):
+                info["terminal_reason"] = terminal_reason
+            break
+    for row in reversed(trainable_batch):
+        if row.get("scenario_id") == scenario_id:
+            row["done"] = True
+            info = row.get("info")
+            if isinstance(info, dict):
+                info["terminal_reason"] = terminal_reason
+            break
 
 
 def _contract_counts(collection: CollectionResult) -> dict[str, Any]:
@@ -865,6 +1392,10 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
             config[key] = str(_resolve_path(Path(config[key]), repo_root))
         else:
             config[key] = str(_resolve_path(Path(config[key]), repo_root))
+    if config.get("source_roi_expansion_root") is not None:
+        if not isinstance(config.get("source_roi_expansion_root"), str) or not str(config["source_roi_expansion_root"]).strip():
+            raise ConfigError("source_roi_expansion_root must be a non-empty path string when provided")
+        config["source_roi_expansion_root"] = str(_resolve_path(Path(config["source_roi_expansion_root"]), repo_root))
     config["required_scenario_count"] = _positive_int(config.get("required_scenario_count", 2), "required_scenario_count")
     config["rollout_steps"] = _positive_int(config.get("rollout_steps", 4), "rollout_steps")
     config["dynamic_max_candidates_per_step"] = _positive_int(
@@ -882,6 +1413,10 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["sampling_seed"] = _nonnegative_int(config.get("sampling_seed", 2101), "sampling_seed")
     config["sampling_temperature"] = _positive_float(config.get("sampling_temperature", 1.0), "sampling_temperature")
     config["theta_aware_candidate_viewpoints_enabled"] = bool(config.get("theta_aware_candidate_viewpoints_enabled", False))
+    config["continuous_theta_action_space_enabled"] = continuous_theta_enabled(config)
+    if config["continuous_theta_action_space_enabled"]:
+        config["theta_aware_candidate_viewpoints_enabled"] = False
+        config["action_space_type"] = CONTINUOUS_THETA_ACTION_SPACE
     config["theta_bin_count"] = _positive_int(config.get("theta_bin_count", 8), "theta_bin_count")
     config["theta_step_deg"] = _positive_int(config.get("theta_step_deg", 45), "theta_step_deg")
     config["sensor_model_id"] = str(config.get("sensor_model_id") or "theta-fov-90-range-radius/v1")
@@ -890,6 +1425,42 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         config.pop("sensor_range_cells", None)
     else:
         config["sensor_range_cells"] = _nonnegative_int(config.get("sensor_range_cells"), "sensor_range_cells")
+    config["slope_obstacle_aware_theta_reward_enabled"] = bool(
+        config.get("slope_obstacle_aware_theta_reward_enabled", False)
+    )
+    config["hybrid_astar_pose_path_cost_enabled"] = bool(
+        config.get("hybrid_astar_pose_path_cost_enabled", False)
+    )
+    config["initial_theta_deg"] = float(config.get("initial_theta_deg", 0.0))
+    config["hybrid_astar_theta_bin_count"] = _positive_int(
+        config.get("hybrid_astar_theta_bin_count", 72),
+        "hybrid_astar_theta_bin_count",
+    )
+    config["hybrid_astar_goal_theta_tolerance_deg"] = _positive_float(
+        config.get("hybrid_astar_goal_theta_tolerance_deg", 5.0),
+        "hybrid_astar_goal_theta_tolerance_deg",
+    )
+    if config.get("hybrid_astar_goal_position_tolerance_m") is not None:
+        config["hybrid_astar_goal_position_tolerance_m"] = _positive_float(
+            config.get("hybrid_astar_goal_position_tolerance_m"),
+            "hybrid_astar_goal_position_tolerance_m",
+        )
+    config["hybrid_astar_max_iterations"] = _positive_int(
+        config.get("hybrid_astar_max_iterations", 100000),
+        "hybrid_astar_max_iterations",
+    )
+    config["obstacle_occlusion_enabled"] = bool(config.get("obstacle_occlusion_enabled", False))
+    config["derive_slope_blocked_cells_from_sidecar_dem"] = bool(
+        config.get("derive_slope_blocked_cells_from_sidecar_dem", False)
+    )
+    config["no_go_blocks_los"] = bool(config.get("no_go_blocks_los", False))
+    if config.get("max_traversable_slope_deg") is not None:
+        config["max_traversable_slope_deg"] = _positive_float(
+            config.get("max_traversable_slope_deg"),
+            "max_traversable_slope_deg",
+        )
+    if config.get("platform_max_climb_deg") is not None:
+        config["platform_max_climb_deg"] = _positive_float(config.get("platform_max_climb_deg"), "platform_max_climb_deg")
     config["max_log_prob_recompute_abs_error"] = _positive_float(
         config.get("max_log_prob_recompute_abs_error", 1.0e-6),
         "max_log_prob_recompute_abs_error",
@@ -915,11 +1486,36 @@ def _load_high_fidelity_config(config: dict[str, Any], *, repo_root: Path) -> di
     }
     for key in (
         "theta_aware_candidate_viewpoints_enabled",
+        "continuous_theta_action_space_enabled",
+        "action_space_type",
+        "source_roi_expansion_root",
         "theta_bin_count",
         "theta_step_deg",
         "sensor_model_id",
         "sensor_fov_deg",
         "sensor_range_cells",
+        "slope_obstacle_aware_theta_reward_enabled",
+        "hybrid_astar_pose_path_cost_enabled",
+        "initial_theta_deg",
+        "hybrid_astar_theta_bin_count",
+        "hybrid_astar_goal_position_tolerance_m",
+        "hybrid_astar_goal_theta_tolerance_deg",
+        "hybrid_astar_max_iterations",
+        "hybrid_astar_primitive_duration_s",
+        "hybrid_astar_integration_dt_s",
+        "hybrid_astar_max_speed_mps",
+        "hybrid_astar_max_angular_speed_degps",
+        "hybrid_astar_rotation_cost_weight",
+        "hybrid_astar_reverse_penalty_weight",
+        "hybrid_astar_turn_penalty_weight",
+        "obstacle_occlusion_enabled",
+        "derive_slope_blocked_cells_from_sidecar_dem",
+        "no_go_blocks_los",
+        "platform_contract_id",
+        "platform_contract_hash",
+        "platform_max_climb_deg",
+        "max_traversable_slope_deg",
+        "slope_sensitivity_thresholds_deg",
     ):
         if key in config:
             overrides[key] = config[key]
@@ -1072,6 +1668,13 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:
     return path if path.is_absolute() else (repo_root / path).resolve()
+
+
+def _resolved_file(value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else path.resolve()
 
 
 def _positive_int(value: Any, field: str) -> int:

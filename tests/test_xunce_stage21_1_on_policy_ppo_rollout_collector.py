@@ -143,6 +143,105 @@ def test_log_prob_recompute_matches_categorical_distribution() -> None:
     assert abs(_recompute_log_prob(logits, 1) - expected) < 1.0e-8
 
 
+def test_slope_obstacle_theta_metadata_records_strict_new_visible_counts(monkeypatch) -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    candidates = [
+        {"cell": [1, 1], "candidate_theta_deg": 0, "path_cost": 2.0},
+        {"cell": [2, 1], "candidate_theta_deg": 45, "path_cost": 4.0},
+    ]
+    covered = {(0, 0)}
+
+    def fake_coverage(*, end, **_kwargs):
+        return {(int(end[0]), int(end[1])), (0, 0)}
+
+    monkeypatch.setattr(runner.hf, "_candidate_coverage_cells", fake_coverage)
+    metadata = runner._slope_obstacle_theta_metadata(
+        candidates,
+        current_cell=(0, 0),
+        covered_cells=covered,
+        config={
+            "slope_obstacle_aware_theta_reward_enabled": True,
+            "obstacle_occlusion_enabled": True,
+            "platform_contract_hash": "platform-hash",
+            "platform_contract_id": "agilex_scout_mini_piper",
+            "max_traversable_slope_deg": 30.0,
+        },
+        obstacle_source_linkage={
+            "obstacle_source_hash": "slope-source-hash",
+            "obstacle_source_kind": "slope_blocked_as_obstacle_proxy",
+        },
+    )
+
+    assert metadata["obstacle_aware_new_visible_cell_counts"] == [1, 1]
+    assert metadata["obstacle_aware_theta_coverage_gain_per_path_costs"] == [0.5, 0.25]
+    assert metadata["slope_obstacle_source_hash"] == "slope-source-hash"
+    assert metadata["platform_contract_hash"] == "platform-hash"
+    assert metadata["max_traversable_slope_deg"] == 30.0
+    assert metadata["slope_blocked_source_kind"] == "slope_blocked_as_obstacle_proxy"
+    assert metadata["strict_obstacle_aware_new_visible_cell_count"] is True
+
+
+def test_hybrid_astar_path_cost_metadata_records_candidate_level_pose_costs(tmp_path: Path, monkeypatch) -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    sidecar = tmp_path / "scenario.path-planner-sidecar.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "cost": [[1.0, 1.0], [1.0, 1.0]],
+                "passable_mask": [[True, True], [True, True]],
+                "metadata": {"map_source": {"resolution_m": 1.0}},
+                "max_traversable_slope_deg": 30.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidates = [
+        {"candidate_viewpoint": [1, 0, 0], "candidate_theta_deg": 0, "path_cost": 1.0},
+        {"candidate_viewpoint": [1, 1, 45], "candidate_theta_deg": 45, "path_cost": 2.0},
+    ]
+
+    def fake_evaluate(**kwargs):
+        candidate = kwargs["candidate"]
+        index = int(candidate["candidate_index"])
+        assert candidate["candidate_set_hash"] == "candidate-set-hash"
+        assert len(kwargs["current_pose"]) == 3
+        return {
+            "path_cost_source_recommendation": "hybrid_astar_pose_path/v1",
+            "hybrid_astar_reachable": True,
+            "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+            "hybrid_astar_path_cost": 10.0 + index,
+            "hybrid_astar_pose_path_hash": f"pose-path-{index}",
+            "hybrid_astar_failure_reason": None,
+            "legacy_grid_astar_path_cost": float(candidate["path_cost"]),
+            "hybrid_vs_grid_path_cost_delta": 9.0,
+            "default_astar_replaced": False,
+            "hybrid_astar_ackermann_feasible_claimed": False,
+        }
+
+    monkeypatch.setattr(runner, "evaluate_hybrid_astar_candidate_path_cost", fake_evaluate)
+    metadata = runner._hybrid_astar_path_cost_metadata(
+        candidates,
+        current_cell=(0, 0),
+        current_theta_deg=45.0,
+        candidate_set_hash_value="candidate-set-hash",
+        config={"hybrid_astar_pose_path_cost_enabled": True, "max_traversable_slope_deg": 30.0},
+        slice_row={"sidecar": str(sidecar)},
+        platform_contract_hash="platform-hash",
+    )
+
+    assert metadata["path_cost_source"] == "hybrid_astar_pose_path/v1"
+    assert metadata["path_cost_sources"] == ["hybrid_astar_pose_path/v1", "hybrid_astar_pose_path/v1"]
+    assert metadata["hybrid_astar_path_costs"] == [10.0, 11.0]
+    assert metadata["hybrid_astar_pose_path_hashes"] == ["pose-path-0", "pose-path-1"]
+    assert metadata["hybrid_astar_trajectory_kinds"] == ["hybrid_astar_pose_path", "hybrid_astar_pose_path"]
+    assert metadata["legacy_grid_astar_path_costs"] == [1.0, 2.0]
+    assert metadata["default_astar_replaced"] is False
+    assert metadata["hybrid_astar_ackermann_feasible_claimed"] is False
+    assert metadata["hybrid_astar_current_pose_provenance"] == "stage21_1_current_cell_plus_previous_selected_theta/v1"
+
+
 def _write_config(tmp_path: Path, **overrides) -> Path:
     from model_explorer.policy.canonical_reward import load_canonical_reward_profile
 

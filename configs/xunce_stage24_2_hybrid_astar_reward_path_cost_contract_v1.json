@@ -1,0 +1,16 @@
+{
+  "schema_version": "xunce-stage24-2-hybrid-astar-reward-path-cost-contract-config/v1",
+  "stage24_1_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_1_hybrid_astar_candidate_path_cost_integration_v1",
+  "coverage_first_reward_profile": "configs/xunce_stage21_coverage_constrained_ppo_reward_profile_v2.json",
+  "coverage_denominator_cells": 100.0,
+  "replay_obstacle_aware_new_visible_cell_count": 4.0,
+  "slope_blocked_source_kind": "slope_blocked_as_obstacle_proxy",
+  "max_replay_rows": 5000,
+  "stage24_2_authorized": false,
+  "runs_new_ppo_update": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

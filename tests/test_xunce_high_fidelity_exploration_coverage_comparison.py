@@ -193,6 +193,56 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(manifest["profile_version"], summary["profile_version"])
         self.assertEqual(manifest["profile_hash"], summary["profile_hash"])
 
+    def test_hybrid_astar_path_cost_enabled_enriches_model_inference_rows(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            theta_bin_count=8,
+            theta_step_deg=45,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=2,
+            hybrid_astar_pose_path_cost_enabled=True,
+            path_cost_source="hybrid_astar_pose_path/v1",
+            initial_theta_deg=0.0,
+            hybrid_astar_theta_bin_count=72,
+            hybrid_astar_goal_theta_tolerance_deg=5.0,
+            hybrid_astar_max_iterations=100000,
+            hybrid_astar_primitive_duration_s=1.0,
+            hybrid_astar_integration_dt_s=0.25,
+            hybrid_astar_max_speed_mps=1.0,
+            hybrid_astar_max_angular_speed_degps=45.0,
+            hybrid_astar_rotation_cost_weight=0.2,
+            hybrid_astar_reverse_penalty_weight=0.5,
+            hybrid_astar_turn_penalty_weight=0.05,
+            platform_contract_hash="platform-hash",
+            max_traversable_slope_deg=30.0,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        inference_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-model-inference.jsonl")
+        self.assertTrue(inference_rows)
+        first = inference_rows[0]
+        self.assertEqual(first["path_cost_source"], "hybrid_astar_pose_path/v1")
+        self.assertEqual(first["hybrid_astar_trajectory_kind"], "hybrid_astar_pose_path")
+        self.assertIsNotNone(first["hybrid_astar_path_cost"])
+        self.assertTrue(first["hybrid_astar_pose_path_hash"])
+        self.assertIsNotNone(first["legacy_grid_astar_path_cost"])
+        self.assertIsNotNone(first["hybrid_vs_grid_path_cost_delta"])
+        self.assertFalse(first["default_astar_replaced"])
+        self.assertFalse(first["hybrid_astar_ackermann_feasible_claimed"])
+        self.assertEqual(first["platform_contract_hash"], "platform-hash")
+
     def test_strict_v3_profile_loads_without_v2_only_risk_guard_keys(self) -> None:
         from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
 

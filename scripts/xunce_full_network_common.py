@@ -6,6 +6,14 @@ from typing import Any
 import torch
 from torch import nn
 
+try:  # pragma: no cover
+    from xunce_continuous_theta_action import theta_distribution_parameters
+except ModuleNotFoundError:  # pragma: no cover
+    from scripts.xunce_continuous_theta_action import theta_distribution_parameters
+
+
+COMPATIBLE_MISSING_THETA_HEAD_PREFIXES = ("theta_mu_head.", "theta_kappa_head.")
+
 
 @dataclass(frozen=True)
 class XunceFullNetworkOutput:
@@ -13,6 +21,11 @@ class XunceFullNetworkOutput:
     masked_logits: torch.Tensor
     action_probs: torch.Tensor
     value: torch.Tensor
+    theta_mu_sin: torch.Tensor
+    theta_mu_cos: torch.Tensor
+    theta_kappa_raw: torch.Tensor
+    theta_mu_rad: torch.Tensor
+    theta_kappa: torch.Tensor
 
 
 class XunceFullNetworkV1(nn.Module):
@@ -91,6 +104,18 @@ class XunceFullNetworkV1(nn.Module):
             nn.Dropout(self.dropout),
             nn.Linear(self.hidden_dim, 1),
         )
+        self.theta_mu_head = nn.Sequential(
+            nn.Linear(self.hidden_dim * 3, self.hidden_dim),
+            nn.GELU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.hidden_dim, 2),
+        )
+        self.theta_kappa_head = nn.Sequential(
+            nn.Linear(self.hidden_dim * 3, self.hidden_dim),
+            nn.GELU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.hidden_dim, 1),
+        )
         self.value_head = nn.Sequential(
             nn.Linear(self.hidden_dim * 3, self.hidden_dim),
             nn.GELU(),
@@ -115,6 +140,8 @@ class XunceFullNetworkV1(nn.Module):
             "coverage_memory_token_used": True,
             "roi_budget_fusion_used": True,
             "masked_logits_head_used": True,
+            "continuous_theta_head_available": True,
+            "continuous_theta_distribution": "von_mises",
             "value_head_used": True,
             "production_registered": False,
         }
@@ -160,6 +187,11 @@ class XunceFullNetworkV1(nn.Module):
         expanded_memory = memory_embedding.unsqueeze(1).expand(-1, graph_embedding.shape[1], -1)
         fused = torch.cat((graph_embedding, context_embedding, expanded_memory), dim=-1)
         logits = self.policy_head(fused).squeeze(-1) + topology_node_bias.squeeze(-1)
+        theta_mu = self.theta_mu_head(fused)
+        theta_mu_sin = theta_mu[..., 0]
+        theta_mu_cos = theta_mu[..., 1]
+        theta_kappa_raw = self.theta_kappa_head(fused).squeeze(-1)
+        theta_mu_rad, theta_kappa = theta_distribution_parameters(theta_mu_sin, theta_mu_cos, theta_kappa_raw)
         mask = action_mask.bool()
         masked_logits = logits.masked_fill(~mask, -1.0e9)
         action_probs = torch.softmax(masked_logits, dim=-1)
@@ -172,6 +204,11 @@ class XunceFullNetworkV1(nn.Module):
             masked_logits=masked_logits,
             action_probs=action_probs,
             value=value,
+            theta_mu_sin=theta_mu_sin,
+            theta_mu_cos=theta_mu_cos,
+            theta_kappa_raw=theta_kappa_raw,
+            theta_mu_rad=theta_mu_rad,
+            theta_kappa=theta_kappa,
         )
 
     def _message_pass(
@@ -257,3 +294,17 @@ class XunceFullNetworkV1(nn.Module):
 
 def parameter_count(module: nn.Module) -> int:
     return sum(parameter.numel() for parameter in module.parameters())
+
+
+def load_xunce_full_network_state_dict_compatible(
+    model: XunceFullNetworkV1,
+    state_dict: dict[str, Any],
+) -> tuple[bool, list[str], list[str], list[str]]:
+    """Allow only newly-added continuous-theta heads to be missing from legacy checkpoints."""
+    result = model.load_state_dict(state_dict, strict=False)
+    missing = list(result.missing_keys)
+    unexpected = list(result.unexpected_keys)
+    disallowed_missing = [
+        key for key in missing if not key.startswith(COMPATIBLE_MISSING_THETA_HEAD_PREFIXES)
+    ]
+    return not disallowed_missing and not unexpected, missing, disallowed_missing, unexpected

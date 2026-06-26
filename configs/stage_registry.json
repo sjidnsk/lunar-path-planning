@@ -450,6 +450,96 @@
       "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage23_platform_alignment/outputs/path_feedback_batch_xunce_stage23_2b_platform_geometry_sensor_contract_alignment_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage23-2-slope-obstacle-aware-theta-reward-contract": {
+      "script": "scripts/run_xunce_stage23_2_slope_obstacle_aware_theta_reward_contract.py",
+      "default_config": "configs/xunce_stage23_2_slope_obstacle_aware_theta_reward_contract_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage23_slope_obstacle_aware_theta_reward/outputs/path_feedback_batch_xunce_stage23_2_slope_obstacle_aware_theta_reward_contract_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage23-3-slope-obstacle-aware-theta-ppo-collector-smoke": {
+      "script": "scripts/run_xunce_stage23_3_slope_obstacle_aware_theta_ppo_collector_smoke.py",
+      "default_config": "configs/xunce_stage23_3_slope_obstacle_aware_theta_ppo_collector_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage23_slope_obstacle_aware_theta_reward/outputs/path_feedback_batch_xunce_stage23_3_slope_obstacle_aware_theta_ppo_collector_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage23-4-slope-obstacle-aware-theta-ppo-update-smoke": {
+      "script": "scripts/run_xunce_stage23_4_slope_obstacle_aware_theta_ppo_update_smoke.py",
+      "default_config": "configs/xunce_stage23_4_slope_obstacle_aware_theta_ppo_update_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage23_slope_obstacle_aware_theta_reward/outputs/path_feedback_batch_xunce_stage23_4_slope_obstacle_aware_theta_ppo_update_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage23-5-slope-obstacle-aware-theta-post-update-trajectory-eval-smoke": {
+      "script": "scripts/run_xunce_stage23_5_slope_obstacle_aware_theta_post_update_trajectory_eval_smoke.py",
+      "default_config": "configs/xunce_stage23_5_slope_obstacle_aware_theta_post_update_trajectory_eval_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage23_slope_obstacle_aware_theta_reward/outputs/path_feedback_batch_xunce_stage23_5_slope_obstacle_aware_theta_post_update_trajectory_eval_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage23-5a-repair-required-inputs-high-res-roi-coverage": {
+      "script": "scripts/run_xunce_stage23_5a_repair_required_inputs_high_res_roi_coverage.py",
+      "default_config": "configs/xunce_stage23_5a_repair_required_inputs_high_res_roi_coverage_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage23_slope_obstacle_aware_theta_reward/outputs/path_feedback_batch_xunce_stage23_5a_repair_required_inputs_high_res_roi_coverage_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage23-6-slope-theta-policy-update-signal-strength-repair": {
+      "script": "scripts/run_xunce_stage23_6_slope_theta_policy_update_signal_strength_repair.py",
+      "default_config": "configs/xunce_stage23_6_slope_theta_policy_update_signal_strength_repair_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage23_slope_obstacle_aware_theta_reward/outputs/path_feedback_batch_xunce_stage23_6_slope_theta_policy_update_signal_strength_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage24-0-hybrid-astar-pose-path-planner-full-foundation": {
+      "script": "scripts/run_xunce_stage24_0_hybrid_astar_pose_path_planner_full_foundation.py",
+      "default_config": "configs/xunce_stage24_0_hybrid_astar_pose_path_planner_full_foundation_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_0_hybrid_astar_pose_path_planner_full_foundation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage24-1-hybrid-astar-candidate-path-cost-integration": {
+      "script": "scripts/run_xunce_stage24_1_hybrid_astar_candidate_path_cost_integration.py",
+      "default_config": "configs/xunce_stage24_1_hybrid_astar_candidate_path_cost_integration_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_1_hybrid_astar_candidate_path_cost_integration_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage24-2-hybrid-astar-reward-path-cost-contract": {
+      "script": "scripts/run_xunce_stage24_2_hybrid_astar_reward_path_cost_contract.py",
+      "default_config": "configs/xunce_stage24_2_hybrid_astar_reward_path_cost_contract_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_2_hybrid_astar_reward_path_cost_contract_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage24-3-hybrid-astar-path-cost-ppo-collector-smoke": {
+      "script": "scripts/run_xunce_stage24_3_hybrid_astar_path_cost_ppo_collector_smoke.py",
+      "default_config": "configs/xunce_stage24_3_hybrid_astar_path_cost_ppo_collector_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_3_hybrid_astar_path_cost_ppo_collector_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage24-4-hybrid-astar-path-cost-ppo-update-smoke": {
+      "script": "scripts/run_xunce_stage24_4_hybrid_astar_path_cost_ppo_update_smoke.py",
+      "default_config": "configs/xunce_stage24_4_hybrid_astar_path_cost_ppo_update_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_4_hybrid_astar_path_cost_ppo_update_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage24-5-hybrid-astar-path-cost-post-update-trajectory-eval-smoke": {
+      "script": "scripts/run_xunce_stage24_5_hybrid_astar_path_cost_post_update_trajectory_eval_smoke.py",
+      "default_config": "configs/xunce_stage24_5_hybrid_astar_path_cost_post_update_trajectory_eval_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_5_hybrid_astar_path_cost_post_update_trajectory_eval_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage24-5a-repair-hybrid-path-inference-binding": {
+      "script": "scripts/run_xunce_stage24_5a_repair_hybrid_path_inference_binding.py",
+      "default_config": "configs/xunce_stage24_5a_repair_hybrid_path_inference_binding_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage24_hybrid_astar_pose_planner/outputs/path_feedback_batch_xunce_stage24_5a_repair_hybrid_path_inference_binding_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage25-0-continuous-theta-hybrid-action-space-foundation": {
+      "script": "scripts/run_xunce_stage25_0_continuous_theta_hybrid_action_space_foundation.py",
+      "default_config": "configs/xunce_stage25_0_continuous_theta_hybrid_action_space_foundation_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage25_continuous_theta_action_space/outputs/path_feedback_batch_xunce_stage25_0_continuous_theta_hybrid_action_space_foundation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-0-synthetic-rock-pit-terrain-augmentation-contract": {
+      "script": "scripts/run_xunce_stage26_0_synthetic_rock_pit_terrain_augmentation_contract.py",
+      "default_config": "configs/xunce_stage26_0_synthetic_rock_pit_terrain_augmentation_contract_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_0_synthetic_rock_pit_terrain_augmentation_contract_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18-research-evidence-pipeline": {
       "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
       "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",

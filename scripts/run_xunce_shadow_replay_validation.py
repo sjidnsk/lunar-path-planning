@@ -19,13 +19,13 @@ try:
     from global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json
     from global_99_governance_common import global_99_boundary_defaults
     from run_xunce_controlled_training_candidate import _synthetic_batch
-    from xunce_full_network_common import XunceFullNetworkV1
+    from xunce_full_network_common import XunceFullNetworkV1, load_xunce_full_network_state_dict_compatible
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
     from scripts.global_99_coverage_contract import ConfigError, resolve_path, unique_sorted, utc_now, write_json
     from scripts.global_99_governance_common import global_99_boundary_defaults
     from scripts.run_xunce_controlled_training_candidate import _synthetic_batch
-    from scripts.xunce_full_network_common import XunceFullNetworkV1
+    from scripts.xunce_full_network_common import XunceFullNetworkV1, load_xunce_full_network_state_dict_compatible
 
 
 CONFIG_SCHEMA_VERSION = "xunce-shadow-replay-validation-config/v1"
@@ -247,7 +247,13 @@ def _load_checkpoint(checkpoint_path: Path, config: dict[str, Any]) -> tuple[dic
         reason_codes.append("checkpoint_state_dict_missing")
     if not reason_codes and isinstance(state_dict, dict):
         try:
-            model.load_state_dict(state_dict, strict=True)
+            loaded, _missing, disallowed_missing, unexpected = load_xunce_full_network_state_dict_compatible(model, state_dict)
+            if not loaded:
+                if disallowed_missing:
+                    reason_codes.append("checkpoint_missing_non_theta_keys")
+                if unexpected:
+                    reason_codes.append("checkpoint_unexpected_keys")
+                reason_codes.append("checkpoint_state_dict_incompatible")
         except Exception as exc:  # pragma: no cover
             reason_codes.append(f"checkpoint_state_dict_load_failed:{type(exc).__name__}")
     loaded = not reason_codes

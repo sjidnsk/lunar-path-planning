@@ -123,6 +123,14 @@ def extract_obstacle_cells(payload: dict[str, Any], *, include_no_go: bool = Fal
         rectangles = _cells_from_rectangles(payload.get(key))
         if rectangles:
             return rectangles, key
+    for key in ("synthetic_los_blocker_cells",):
+        cells = _cells_from_payload(payload.get(key))
+        if cells:
+            return cells, key
+    for key in ("synthetic_hard_obstacle_cells",):
+        cells = _cells_from_payload(payload.get(key))
+        if cells:
+            return cells, key
     if include_no_go:
         cells = _cells_from_payload(payload.get("no_go_cells"))
         if cells:
