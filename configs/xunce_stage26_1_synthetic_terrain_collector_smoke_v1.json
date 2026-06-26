@@ -25,6 +25,7 @@
   "hybrid_astar_max_speed_mps": 1.0,
   "hybrid_astar_max_angular_speed_degps": 45.0,
   "hybrid_astar_max_iterations": 200000,
+  "hybrid_astar_candidate_eval_workers": 1,
   "stage26_1_authorized": false,
   "runs_new_ppo_update": false,
   "publishes_checkpoint": false,

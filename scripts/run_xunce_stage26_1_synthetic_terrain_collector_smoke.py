@@ -236,6 +236,7 @@ def _run_stage21_1(
             "hybrid_astar_max_speed_mps": float(config["hybrid_astar_max_speed_mps"]),
             "hybrid_astar_max_angular_speed_degps": float(config["hybrid_astar_max_angular_speed_degps"]),
             "hybrid_astar_max_iterations": int(config["hybrid_astar_max_iterations"]),
+            "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
             "synthetic_terrain_contract_enabled": True,
             "synthetic_terrain_model_id": SYNTHETIC_MODEL_ID,
             "synthetic_terrain_hash": stage26_0_summary.get("synthetic_terrain_hash"),
@@ -694,6 +695,10 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     config["hybrid_astar_max_iterations"] = _positive_int(
         config.get("hybrid_astar_max_iterations", 200000),
         "hybrid_astar_max_iterations",
+    )
+    config["hybrid_astar_candidate_eval_workers"] = _positive_int(
+        config.get("hybrid_astar_candidate_eval_workers", 1),
+        "hybrid_astar_candidate_eval_workers",
     )
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     for field in BOUNDARY_FIELDS:

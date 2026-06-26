@@ -242,6 +242,175 @@ def test_hybrid_astar_path_cost_metadata_records_candidate_level_pose_costs(tmp_
     assert metadata["hybrid_astar_current_pose_provenance"] == "stage21_1_current_cell_plus_previous_selected_theta/v1"
 
 
+def test_hybrid_astar_path_cost_metadata_parallelizes_and_restores_candidate_order(tmp_path: Path, monkeypatch) -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    sidecar = tmp_path / "scenario.path-planner-sidecar.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "cost": [[1.0, 1.0], [1.0, 1.0]],
+                "passable_mask": [[True, True], [True, True]],
+                "metadata": {"map_source": {"resolution_m": 1.0}},
+                "max_traversable_slope_deg": 30.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidates = [
+        {"candidate_viewpoint": [1, 0, 0], "candidate_theta_deg": 0, "path_cost": 1.0},
+        {"candidate_viewpoint": [1, 1, 45], "candidate_theta_deg": 45, "path_cost": 2.0},
+    ]
+    submitted: list[int] = []
+
+    class FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class FakeExecutor:
+        def __init__(self, max_workers: int):
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, args):
+            submitted.append(int(args[0]))
+            return FakeFuture(fn(args))
+
+    def fake_evaluate(**kwargs):
+        candidate = kwargs["candidate"]
+        index = int(candidate["candidate_index"])
+        return {
+            "path_cost_source_recommendation": "hybrid_astar_pose_path/v1",
+            "hybrid_astar_reachable": True,
+            "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+            "hybrid_astar_path_cost": 20.0 + index,
+            "hybrid_astar_pose_path_hash": f"parallel-pose-path-{index}",
+            "hybrid_astar_failure_reason": None,
+            "legacy_grid_astar_path_cost": float(candidate["path_cost"]),
+            "hybrid_vs_grid_path_cost_delta": 19.0,
+            "default_astar_replaced": False,
+            "hybrid_astar_ackermann_feasible_claimed": False,
+        }
+
+    monkeypatch.setattr(runner, "ProcessPoolExecutor", FakeExecutor, raising=False)
+    monkeypatch.setattr(runner, "as_completed", lambda futures: list(reversed(list(futures))), raising=False)
+    monkeypatch.setattr(runner, "evaluate_hybrid_astar_candidate_path_cost", fake_evaluate)
+
+    metadata = runner._hybrid_astar_path_cost_metadata(
+        candidates,
+        current_cell=(0, 0),
+        current_theta_deg=45.0,
+        candidate_set_hash_value="candidate-set-hash",
+        config={
+            "hybrid_astar_pose_path_cost_enabled": True,
+            "hybrid_astar_candidate_eval_workers": 2,
+            "max_traversable_slope_deg": 30.0,
+        },
+        slice_row={"sidecar": str(sidecar)},
+        platform_contract_hash="platform-hash",
+    )
+
+    assert submitted == [0, 1]
+    assert metadata["hybrid_astar_path_costs"] == [20.0, 21.0]
+    assert metadata["hybrid_astar_pose_path_hashes"] == ["parallel-pose-path-0", "parallel-pose-path-1"]
+    assert metadata["hybrid_astar_candidate_eval_parallel_enabled"] is True
+    assert metadata["hybrid_astar_candidate_eval_workers_requested"] == 2
+    assert metadata["hybrid_astar_candidate_eval_workers_effective"] == 2
+    assert metadata["hybrid_astar_candidate_eval_submitted_count"] == 2
+    assert metadata["hybrid_astar_candidate_eval_failed_count"] == 0
+    assert metadata["hybrid_astar_candidate_eval_duration_s"] >= 0.0
+
+
+def test_hybrid_astar_path_cost_metadata_parallel_failure_is_per_candidate(tmp_path: Path, monkeypatch) -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    sidecar = tmp_path / "scenario.path-planner-sidecar.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "cost": [[1.0, 1.0], [1.0, 1.0]],
+                "passable_mask": [[True, True], [True, True]],
+                "metadata": {"map_source": {"resolution_m": 1.0}},
+                "max_traversable_slope_deg": 30.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidates = [
+        {"candidate_viewpoint": [1, 0, 0], "candidate_theta_deg": 0, "path_cost": 1.0},
+        {"candidate_viewpoint": [1, 1, 45], "candidate_theta_deg": 45, "path_cost": 2.0},
+    ]
+
+    class FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class FakeExecutor:
+        def __init__(self, max_workers: int):
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, args):
+            return FakeFuture(fn(args))
+
+    def fake_evaluate(**kwargs):
+        index = int(kwargs["candidate"]["candidate_index"])
+        if index == 1:
+            raise RuntimeError("boom")
+        return {
+            "path_cost_source_recommendation": "hybrid_astar_pose_path/v1",
+            "hybrid_astar_reachable": True,
+            "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+            "hybrid_astar_path_cost": 30.0,
+            "hybrid_astar_pose_path_hash": "parallel-pose-path-0",
+            "hybrid_astar_failure_reason": None,
+            "legacy_grid_astar_path_cost": 1.0,
+            "hybrid_vs_grid_path_cost_delta": 29.0,
+            "default_astar_replaced": False,
+            "hybrid_astar_ackermann_feasible_claimed": False,
+        }
+
+    monkeypatch.setattr(runner, "ProcessPoolExecutor", FakeExecutor, raising=False)
+    monkeypatch.setattr(runner, "as_completed", lambda futures: list(futures), raising=False)
+    monkeypatch.setattr(runner, "evaluate_hybrid_astar_candidate_path_cost", fake_evaluate)
+
+    metadata = runner._hybrid_astar_path_cost_metadata(
+        candidates,
+        current_cell=(0, 0),
+        current_theta_deg=45.0,
+        candidate_set_hash_value="candidate-set-hash",
+        config={
+            "hybrid_astar_pose_path_cost_enabled": True,
+            "hybrid_astar_candidate_eval_workers": 2,
+            "max_traversable_slope_deg": 30.0,
+        },
+        slice_row={"sidecar": str(sidecar)},
+        platform_contract_hash="platform-hash",
+    )
+
+    assert metadata["hybrid_astar_path_costs"] == [30.0, None]
+    assert metadata["hybrid_astar_pose_path_hashes"] == ["parallel-pose-path-0", None]
+    assert metadata["hybrid_astar_reachable_flags"] == [True, False]
+    assert metadata["hybrid_astar_failure_reasons"][1] == "hybrid_astar_evaluation_failed"
+    assert metadata["hybrid_astar_candidate_eval_failed_count"] == 1
+
+
 def _write_config(tmp_path: Path, **overrides) -> Path:
     from model_explorer.policy.canonical_reward import load_canonical_reward_profile
 

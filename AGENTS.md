@@ -43,6 +43,14 @@
 - Stage26.4 must preserve `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`, `physical_obstacle_cells_written=false`, `coverage_source=endpoint_theta_slope_obstacle_los/v1`, `path_cost_source=hybrid_astar_pose_path/v1`, and `max_traversable_slope_deg=30.0`.
 - Stage26.4 is offline diagnostic evidence. It must not regenerate synthetic terrain, publish checkpoints, replace default policy, connect executor, start canary, change reward targets, modify network/default A*/Hybrid A*/candidate generation, or claim final performance.
 
+## Stage 26.4A Parallel Stage21.1 Hybrid A* Candidate Costs
+
+- Stage26.4A validates candidate-level parallel Hybrid A* path-cost evaluation inside the Stage21.1 collector. It does not parallelize a single Hybrid A* search; it only distributes independent candidate evaluations.
+- Stage21.1 accepts `hybrid_astar_candidate_eval_workers`, defaulting to `1`. When `hybrid_astar_pose_path_cost_enabled=true`, workers > 1, and multiple candidates exist, candidate evaluations use a process pool and are restored by `candidate_index`.
+- The runner is `scripts/run_xunce_stage26_4a_parallelize_stage21_1_hybrid_astar_candidate_costs.py`, the config is `configs/xunce_stage26_4a_parallelize_stage21_1_hybrid_astar_candidate_costs_v1.json`, and the default output root is `D:\CodexDownloads\lunar-path-planning\stage26_synthetic_terrain_augmentation\outputs\path_feedback_batch_xunce_stage26_4a_parallelize_stage21_1_hybrid_astar_candidate_costs_v1`.
+- Stage26.4A runs Stage26.1 twice on the same synthetic terrain lineage, with worker `1` and worker `4`, and compares selected actions, candidate hashes, Hybrid A* costs, pose path hashes, reachability flags, and synthetic/platform lineage.
+- Stage26.4A does not run PPO, publish checkpoints, replace default policy, connect executor, start canary, change reward targets, modify network/default A*/Hybrid A* semantics/candidate generation, or claim performance.
+
 ## Stage 25.0 Continuous Theta Hybrid Action Space Foundation
 
 - Stage25.0 upgrades the action contract from discrete `(x,y,theta_bin)` viewpoints to `action_space_type=hybrid_discrete_xy_continuous_theta/v1`: first sample a discrete base candidate cell `(x,y)`, then sample a continuous observation heading `theta_rad` from that candidate's Von Mises distribution.

@@ -237,6 +237,7 @@ def _run_stage26_1(config: dict[str, Any], output_root: Path, repo_root: Path, s
             "sensor_model_id": str(config["sensor_model_id"]),
             "sensor_fov_deg": float(config["sensor_fov_deg"]),
             "sensor_range_cells": int(config["sensor_range_cells"]),
+            "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
             "max_traversable_slope_deg": 30.0,
             "stage26_1_authorized": False,
             "runs_new_ppo_update": False,

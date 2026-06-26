@@ -2103,3 +2103,24 @@ Stage26.4 keeps `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`,
 terrain, change PPO math, change reward targets, alter the network, replace
 Hybrid A* or default A*, publish checkpoints, replace policies, connect
 executors, start canaries, or claim final performance.
+
+## Stage 26.4A Parallel Stage21.1 Hybrid A* Candidate Costs
+
+Stage26.4A adds a bounded collector-side parallelization audit for Hybrid A*
+candidate path-cost evaluation. Stage21.1 keeps `hybrid_astar_candidate_eval_workers=1`
+as the default. When Hybrid A* path cost is enabled and workers are greater
+than one, independent candidate evaluations can run in a process pool; results
+must be restored by candidate index before any mask, selected-action, or
+path-cost binding is used.
+
+The Stage26.4A wrapper runs Stage26.1 twice with identical synthetic terrain,
+platform, slope, and candidate settings: once with worker `1` and once with
+worker `4`. It compares transition counts, selected action, candidate set hash,
+Hybrid A* path costs, pose path hashes, reachability flags, synthetic lineage,
+and platform lineage. Runtime is recorded as an optimization metric only; the
+core readiness signal is serial/parallel equivalence plus clean worker audit.
+
+This stage does not parallelize a single Hybrid A* search internally, does not
+run PPO, publish checkpoints, replace default policy, connect executors, start
+canaries, change reward targets, change networks, replace default A*, or claim
+performance.

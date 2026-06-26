@@ -5,6 +5,7 @@ import json
 import math
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -277,6 +278,7 @@ def _collect_rollouts(
         "xunce_config": dict(xunce_config),
         "source_roi_expansion_root": hf_config["source_roi_expansion_root"],
         "xunce_candidate_checkpoint": str(source["xunce_checkpoint"]),
+        "hybrid_astar_candidate_eval_workers": int(hf_config.get("hybrid_astar_candidate_eval_workers", 1)),
     }
     return CollectionResult(
         episodes=episodes,
@@ -1081,6 +1083,55 @@ def _continuous_theta_reachability_probe_metadata(
     return metadata
 
 
+def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> tuple[int, dict[str, Any] | None, str | None]:
+    (
+        index,
+        grid,
+        current_pose,
+        payload,
+        platform_hash,
+        max_slope,
+        planner_options,
+    ) = args
+    try:
+        row = evaluate_hybrid_astar_candidate_path_cost(
+            grid=grid,
+            current_pose=current_pose,
+            candidate=payload,
+            platform_contract_hash=platform_hash,
+            max_traversable_slope_deg=float(max_slope),
+            theta_bin_count=int(planner_options["theta_bin_count"]),
+            goal_position_tolerance_m=planner_options["goal_position_tolerance_m"],
+            goal_theta_tolerance_deg=float(planner_options["goal_theta_tolerance_deg"]),
+            max_iterations=int(planner_options["max_iterations"]),
+            primitive_duration_s=float(planner_options["primitive_duration_s"]),
+            integration_dt_s=float(planner_options["integration_dt_s"]),
+            max_speed_mps=float(planner_options["max_speed_mps"]),
+            max_angular_speed_degps=float(planner_options["max_angular_speed_degps"]),
+            rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
+            reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
+            turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+        )
+        return int(index), row, None
+    except Exception as exc:  # pragma: no cover - represented as per-candidate failure.
+        return int(index), None, f"{type(exc).__name__}:{exc}"
+
+
+def _hybrid_astar_failed_candidate_row(candidate: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        "path_cost_source_recommendation": HYBRID_ASTAR_PATH_COST_SOURCE,
+        "hybrid_astar_reachable": False,
+        "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+        "hybrid_astar_path_cost": None,
+        "hybrid_astar_pose_path_hash": None,
+        "hybrid_astar_failure_reason": reason,
+        "legacy_grid_astar_path_cost": hf._candidate_cost(candidate),
+        "hybrid_vs_grid_path_cost_delta": None,
+        "default_astar_replaced": False,
+        "hybrid_astar_ackermann_feasible_claimed": False,
+    }
+
+
 def _hybrid_astar_path_cost_metadata(
     candidates: list[dict[str, Any]],
     *,
@@ -1117,48 +1168,96 @@ def _hybrid_astar_path_cost_metadata(
     current_pose = [float(current_world.x), float(current_world.y), math.radians(float(current_theta_deg))]
     platform_hash = str(platform_contract_hash or config.get("platform_contract_hash") or sidecar.get("platform_contract_hash") or "")
     max_slope = float(config.get("max_traversable_slope_deg") or sidecar.get("max_traversable_slope_deg") or 30.0)
-    rows: list[dict[str, Any]] = []
-    for index, candidate in enumerate(candidates):
+    worker_requested = _positive_int(config.get("hybrid_astar_candidate_eval_workers", 1), "hybrid_astar_candidate_eval_workers")
+    worker_effective = worker_requested if worker_requested > 1 and len(candidates) > 1 else 1
+    parallel_enabled = worker_effective > 1
+    planner_options = {
+        "theta_bin_count": int(config.get("hybrid_astar_theta_bin_count", 72)),
+        "goal_position_tolerance_m": (
+            float(config["hybrid_astar_goal_position_tolerance_m"])
+            if config.get("hybrid_astar_goal_position_tolerance_m") is not None
+            else None
+        ),
+        "goal_theta_tolerance_deg": float(config.get("hybrid_astar_goal_theta_tolerance_deg", 5.0)),
+        "max_iterations": int(config.get("hybrid_astar_max_iterations", 100_000)),
+        "primitive_duration_s": float(config.get("hybrid_astar_primitive_duration_s", 1.0)),
+        "integration_dt_s": float(config.get("hybrid_astar_integration_dt_s", 0.25)),
+        "max_speed_mps": float(config.get("hybrid_astar_max_speed_mps", 1.0)),
+        "max_angular_speed_degps": float(config.get("hybrid_astar_max_angular_speed_degps", 45.0)),
+        "rotation_cost_weight": float(config.get("hybrid_astar_rotation_cost_weight", 0.2)),
+        "reverse_penalty_weight": float(config.get("hybrid_astar_reverse_penalty_weight", 0.5)),
+        "turn_penalty_weight": float(config.get("hybrid_astar_turn_penalty_weight", 0.05)),
+    }
+
+    def payload_for(index: int, candidate: dict[str, Any]) -> dict[str, Any]:
         payload = dict(candidate)
         payload.setdefault("candidate_index", index)
         payload.setdefault("candidate_set_hash", candidate_set_hash_value)
-        try:
-            row = evaluate_hybrid_astar_candidate_path_cost(
-                grid=grid,
-                current_pose=current_pose,
-                candidate=payload,
-                platform_contract_hash=platform_hash,
-                max_traversable_slope_deg=max_slope,
-                theta_bin_count=int(config.get("hybrid_astar_theta_bin_count", 72)),
-                goal_position_tolerance_m=(
-                    float(config["hybrid_astar_goal_position_tolerance_m"])
-                    if config.get("hybrid_astar_goal_position_tolerance_m") is not None
-                    else None
-                ),
-                goal_theta_tolerance_deg=float(config.get("hybrid_astar_goal_theta_tolerance_deg", 5.0)),
-                max_iterations=int(config.get("hybrid_astar_max_iterations", 100_000)),
-                primitive_duration_s=float(config.get("hybrid_astar_primitive_duration_s", 1.0)),
-                integration_dt_s=float(config.get("hybrid_astar_integration_dt_s", 0.25)),
-                max_speed_mps=float(config.get("hybrid_astar_max_speed_mps", 1.0)),
-                max_angular_speed_degps=float(config.get("hybrid_astar_max_angular_speed_degps", 45.0)),
-                rotation_cost_weight=float(config.get("hybrid_astar_rotation_cost_weight", 0.2)),
-                reverse_penalty_weight=float(config.get("hybrid_astar_reverse_penalty_weight", 0.5)),
-                turn_penalty_weight=float(config.get("hybrid_astar_turn_penalty_weight", 0.05)),
-            )
-        except Exception:
-            row = {
-                "path_cost_source_recommendation": HYBRID_ASTAR_PATH_COST_SOURCE,
-                "hybrid_astar_reachable": False,
-                "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
-                "hybrid_astar_path_cost": None,
-                "hybrid_astar_pose_path_hash": None,
-                "hybrid_astar_failure_reason": "hybrid_astar_evaluation_failed",
-                "legacy_grid_astar_path_cost": hf._candidate_cost(candidate),
-                "hybrid_vs_grid_path_cost_delta": None,
-                "default_astar_replaced": False,
-                "hybrid_astar_ackermann_feasible_claimed": False,
+        return payload
+
+    started = time.perf_counter()
+    rows_by_index: dict[int, dict[str, Any]] = {}
+    failed_indices: set[int] = set()
+    if parallel_enabled:
+        with ProcessPoolExecutor(max_workers=worker_effective) as executor:
+            futures = {
+                executor.submit(
+                    _evaluate_hybrid_astar_candidate_path_cost_worker,
+                    (
+                        index,
+                        grid,
+                        current_pose,
+                        payload_for(index, candidate),
+                        platform_hash,
+                        max_slope,
+                        planner_options,
+                    ),
+                ): index
+                for index, candidate in enumerate(candidates)
             }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    row_index, row, error = future.result()
+                except Exception:
+                    failed_indices.add(index)
+                    continue
+                if error is not None or row is None:
+                    failed_indices.add(int(row_index))
+                else:
+                    rows_by_index[int(row_index)] = row
+    else:
+        for index, candidate in enumerate(candidates):
+            try:
+                rows_by_index[index] = evaluate_hybrid_astar_candidate_path_cost(
+                    grid=grid,
+                    current_pose=current_pose,
+                    candidate=payload_for(index, candidate),
+                    platform_contract_hash=platform_hash,
+                    max_traversable_slope_deg=max_slope,
+                    theta_bin_count=int(planner_options["theta_bin_count"]),
+                    goal_position_tolerance_m=planner_options["goal_position_tolerance_m"],
+                    goal_theta_tolerance_deg=float(planner_options["goal_theta_tolerance_deg"]),
+                    max_iterations=int(planner_options["max_iterations"]),
+                    primitive_duration_s=float(planner_options["primitive_duration_s"]),
+                    integration_dt_s=float(planner_options["integration_dt_s"]),
+                    max_speed_mps=float(planner_options["max_speed_mps"]),
+                    max_angular_speed_degps=float(planner_options["max_angular_speed_degps"]),
+                    rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
+                    reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
+                    turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+                )
+            except Exception:
+                failed_indices.add(index)
+
+    rows: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
+        row = rows_by_index.get(index)
+        if row is None or index in failed_indices:
+            row = _hybrid_astar_failed_candidate_row(candidate, reason="hybrid_astar_evaluation_failed")
         rows.append(row)
+    duration_s = max(0.0, time.perf_counter() - started)
+    failed_count = len(failed_indices)
     path_sources = [
         HYBRID_ASTAR_PATH_COST_SOURCE if row.get("path_cost_source_recommendation") == HYBRID_ASTAR_PATH_COST_SOURCE else None
         for row in rows
@@ -1182,6 +1281,12 @@ def _hybrid_astar_path_cost_metadata(
         "hybrid_astar_current_pose": current_pose,
         "hybrid_astar_current_pose_provenance": "stage21_1_current_cell_plus_previous_selected_theta/v1",
         "hybrid_astar_path_cost_source": HYBRID_ASTAR_PATH_COST_SOURCE,
+        "hybrid_astar_candidate_eval_parallel_enabled": parallel_enabled,
+        "hybrid_astar_candidate_eval_workers_requested": worker_requested,
+        "hybrid_astar_candidate_eval_workers_effective": worker_effective,
+        "hybrid_astar_candidate_eval_submitted_count": len(candidates),
+        "hybrid_astar_candidate_eval_failed_count": failed_count,
+        "hybrid_astar_candidate_eval_duration_s": duration_s,
     }
 
 
@@ -1529,6 +1634,10 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["hybrid_astar_pose_path_cost_enabled"] = bool(
         config.get("hybrid_astar_pose_path_cost_enabled", False)
     )
+    config["hybrid_astar_candidate_eval_workers"] = _positive_int(
+        config.get("hybrid_astar_candidate_eval_workers", 1),
+        "hybrid_astar_candidate_eval_workers",
+    )
     config["initial_theta_deg"] = float(config.get("initial_theta_deg", 0.0))
     config["hybrid_astar_theta_bin_count"] = _positive_int(
         config.get("hybrid_astar_theta_bin_count", 72),
@@ -1598,6 +1707,7 @@ def _load_high_fidelity_config(config: dict[str, Any], *, repo_root: Path) -> di
         "synthetic_terrain_hash",
         "synthetic_source_kind",
         "hybrid_astar_pose_path_cost_enabled",
+        "hybrid_astar_candidate_eval_workers",
         "initial_theta_deg",
         "hybrid_astar_theta_bin_count",
         "hybrid_astar_goal_position_tolerance_m",

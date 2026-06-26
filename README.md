@@ -6966,3 +6966,20 @@ a recommended Stage21.6 config, but it remains calibration evidence only: no
 checkpoint publication, default-policy replacement, executor connection, canary
 traffic, reward-target change, network change, action-space change,
 candidate-generation change, or default A* change is authorized.
+
+### Stage 26.4A Parallel Stage21.1 Hybrid A* Candidate Costs
+
+Stage26.4A adds a collector-side performance and equivalence audit for Hybrid
+A* candidate path-cost evaluation. Stage21.1 now accepts
+`hybrid_astar_candidate_eval_workers`, defaulting to `1`; when Hybrid A* path
+cost is enabled and the worker count is greater than one, candidate-level
+Hybrid A* evaluations can run in a process pool and are restored by candidate
+index before masks, path costs, and selected-action binding are used.
+
+The Stage26.4A wrapper runs Stage26.1 twice on the same synthetic terrain
+lineage, once with worker `1` and once with worker `4`, then compares selected
+actions, candidate hashes, Hybrid A* path costs, pose path hashes, reachability,
+and synthetic/platform lineage. It does not parallelize a single Hybrid A*
+search internally, run PPO, publish checkpoints, replace policies, connect
+executors, start canaries, change reward targets, change networks, replace
+default A*, or claim performance.

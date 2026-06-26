@@ -14,6 +14,7 @@
   "sampling_seed": 2101,
   "sampling_temperature": 1.0,
   "min_trainable_transition_count": 1,
+  "hybrid_astar_candidate_eval_workers": 1,
   "max_log_prob_recompute_abs_error": 1e-6,
   "stage21_1_authorized": false,
   "runs_new_ppo_update": false,
