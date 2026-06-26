@@ -54,6 +54,27 @@ def test_stage21_5_accepts_explicit_offline_evaluation_route_alias(tmp_path: Pat
     assert summary["next_required_change"] == ROUTE_STAGE21_6
 
 
+def test_stage21_5_xunce_only_uses_episode_count_when_pair_scenario_count_is_zero(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, scenario_count=0, incumbent_checkpoint_loaded=False)
+    _write_eval_root(root / "post", final=0.41, auc=1.11, scenario_count=0, incumbent_checkpoint_loaded=False)
+    config = _write_config(root, xunce_only_evaluation=True, include_oracle_baselines=False)
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["next_required_change"] == ROUTE_STAGE21_6
+    assert "pre_scenario_count_short" not in summary["reason_codes"]
+    assert "post_scenario_count_short" not in summary["reason_codes"]
+    assert "pre_incumbent_checkpoint_not_loaded" not in summary["reason_codes"]
+    assert "post_incumbent_checkpoint_not_loaded" not in summary["reason_codes"]
+
+
 def test_stage21_5_rejects_final_coverage_regression_even_when_auc_is_flat(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     _write_stage21_4(root / "stage21_4")
@@ -350,15 +371,17 @@ def _write_eval_root(
     auc_by_scenario: dict[str, float] | None = None,
     scenario_ids: tuple[str, str] = ("scenario-a", "scenario-b"),
     hard_risk_violation_count: int = 0,
+    scenario_count: int = 2,
+    incumbent_checkpoint_loaded: bool = True,
 ) -> None:
     root.mkdir(parents=True)
     summary = {
         "status": "failed",
         "xunce_checkpoint_loaded": True,
-        "incumbent_checkpoint_loaded": True,
+        "incumbent_checkpoint_loaded": incumbent_checkpoint_loaded,
         "true_model_inference_executed": True,
         "proxy_selection_used": False,
-        "scenario_count": 2,
+        "scenario_count": scenario_count,
         "rollout_steps": 4,
         "model_inference_failure_count": 0,
         "model_inference_mask_violation_count": 0,

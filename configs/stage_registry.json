@@ -540,6 +540,30 @@
       "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_0_synthetic_rock_pit_terrain_augmentation_contract_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage26-1-synthetic-terrain-collector-smoke": {
+      "script": "scripts/run_xunce_stage26_1_synthetic_terrain_collector_smoke.py",
+      "default_config": "configs/xunce_stage26_1_synthetic_terrain_collector_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_1_synthetic_terrain_collector_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-2-synthetic-terrain-ppo-update-smoke": {
+      "script": "scripts/run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke.py",
+      "default_config": "configs/xunce_stage26_2_synthetic_terrain_ppo_update_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_2_synthetic_terrain_ppo_update_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-3-synthetic-terrain-post-update-trajectory-eval-smoke": {
+      "script": "scripts/run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke.py",
+      "default_config": "configs/xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-4-synthetic-policy-update-signal-strength-repair": {
+      "script": "scripts/run_xunce_stage26_4_synthetic_policy_update_signal_strength_repair.py",
+      "default_config": "configs/xunce_stage26_4_synthetic_policy_update_signal_strength_repair_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_4_synthetic_policy_update_signal_strength_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18-research-evidence-pipeline": {
       "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
       "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",

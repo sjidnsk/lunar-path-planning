@@ -109,6 +109,54 @@ collector/reward stages can train on more cluttered terrain. It does not modify
 the original DEM/slope data, run PPO, publish checkpoints, replace policies,
 connect executors, start canaries, or claim performance.
 
+Stage26.1 connects the Stage26.0 augmented sidecars to the real PPO data chain:
+Stage21.1 collector -> Stage21.2 reward -> Stage21.3 batch validation. The
+collector now carries `synthetic_terrain_hash`, `synthetic_source_kind`,
+synthetic hard-obstacle/LOS/high-risk provenance, and the platform-aligned
+30-degree slope lineage into transition `info`. Reward rows keep
+`coverage_source=endpoint_theta_slope_obstacle_los/v1` and
+`path_cost_source=hybrid_astar_pose_path/v1`, while Stage21.3 can reject batches
+that omit synthetic provenance or fall back to point-only, unobstructed theta,
+or grid-only path cost. Stage26.1 is still a collector/reward/batch smoke: it
+does not run PPO, publish checkpoints, replace policies, connect executors,
+start canaries, or claim performance.
+
+Stage26.2 consumes that real synthetic terrain PPO batch with Stage21.4 tiny PPO
+update. Its wrapper audits the Stage26.1 batch before update, requiring
+`synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`,
+`physical_obstacle_cells_written=false`, no `physical_obstacle_cells` payload,
+`coverage_source=endpoint_theta_slope_obstacle_los/v1`, and
+`path_cost_source=hybrid_astar_pose_path/v1`. It then checks finite loss,
+gradient/component norms, checkpoint reload, experimental-only boundary
+metadata, and that the Stage21.4 source checkpoint SHA matches the behavior
+checkpoint recorded by the Stage26.1 collector. Its physical-obstacle payload
+check requires Stage26.1 upstream Stage21.1/21.2 artifacts to exist and audits
+them as well as the final Stage21.3 batch. Stage26.2 still stops before
+trajectory evaluation and makes no performance claim.
+
+Stage26.3 takes the Stage26.2 experimental checkpoint into Stage21.5 offline
+pre/post trajectory evaluation on the same synthetic rock/pit terrain lineage.
+It forces synthetic terrain, slope-obstacle theta coverage, and Hybrid A* path
+cost fields into high-fidelity inference rows, then strong-joins pre/post rows
+with `scenario_id + step_index + current_cell + covered_cells_hash +
+candidate_set_hash + synthetic_terrain_hash`. The audit reports selected
+`(x,y,theta)` changes, action probability deltas, coverage/AUC deltas, Hybrid
+A* path-cost deltas, and safety regressions. It does not run another PPO update,
+publish checkpoints, replace policies, connect executors, start canaries,
+regenerate synthetic terrain, or claim performance.
+
+Stage26.4 repairs the Stage26.3 result where the synthetic terrain update barely
+moved action probabilities and did not change selected `(x,y,theta)`. It reuses
+Stage26.1/26.2/26.3, first increasing synthetic collector horizon to target at
+least 16 trainable transitions, then running bounded PPO update/eval combos for
+baseline, value-loss-off depth, and policy-amplified depth. The wrapper records
+policy/value/entropy gradient ratios, probability and selected-action deltas,
+coverage/AUC/Hybrid path-cost deltas, and synthetic advantage/reward component
+gaps. Stage26.4 keeps the synthetic terrain as
+`synthetic_terrain_obstacle_proxy/v1`, never writes physical obstacle payloads,
+and does not modify PPO math, reward targets, network, Hybrid A*, default A*,
+candidate generation, release policy, executor, or canary state.
+
 ## Windows and Ubuntu Support
 
 The supported cross-platform execution layer is Python-first. Use

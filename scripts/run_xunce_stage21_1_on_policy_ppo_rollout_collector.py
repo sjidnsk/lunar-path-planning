@@ -394,6 +394,12 @@ def _collect_episode(
             obstacle_source_linkage=obstacle_source_linkage,
         )
         observation_payload.update(slope_theta_metadata)
+        synthetic_terrain_metadata = _synthetic_terrain_metadata(
+            slice_row,
+            config=hf_config,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
+        observation_payload.update(synthetic_terrain_metadata)
         hybrid_path_metadata = (
             {}
             if continuous_theta_enabled(config)
@@ -505,6 +511,12 @@ def _collect_episode(
                 obstacle_source_linkage=obstacle_source_linkage,
             )
             observation_payload.update(slope_theta_metadata)
+            synthetic_terrain_metadata = _synthetic_terrain_metadata(
+                slice_row,
+                config=hf_config,
+                obstacle_source_linkage=obstacle_source_linkage,
+            )
+            observation_payload.update(synthetic_terrain_metadata)
             hybrid_path_metadata = _hybrid_astar_path_cost_metadata(
                 candidates,
                 current_cell=cell_before,
@@ -654,6 +666,7 @@ def _collect_episode(
                 "candidate_cells": candidate_observation_cells(candidates),
                 **theta_metadata(candidates),
                 **slope_theta_metadata,
+                **synthetic_terrain_metadata,
                 **hybrid_path_metadata,
                 "candidate_set_id": candidate_set_id,
                 "candidate_set_hash": candidate_set_hash_value,
@@ -905,6 +918,69 @@ def _slope_obstacle_theta_metadata(
     }
 
 
+def _synthetic_terrain_metadata(
+    slice_row: dict[str, Any],
+    *,
+    config: dict[str, Any],
+    obstacle_source_linkage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not bool(config.get("synthetic_terrain_contract_enabled", False)):
+        return {}
+    sidecar_path = _resolved_file(slice_row.get("sidecar"))
+    sidecar: dict[str, Any] = {}
+    if sidecar_path is not None and sidecar_path.is_file():
+        try:
+            sidecar = _read_json(sidecar_path)
+        except Exception:
+            sidecar = {}
+    synthetic_hash = str(config.get("synthetic_terrain_hash") or sidecar.get("synthetic_terrain_hash") or "")
+    source_kind = str(config.get("synthetic_source_kind") or sidecar.get("synthetic_source_kind") or "")
+    model_id = str(config.get("synthetic_terrain_model_id") or sidecar.get("synthetic_terrain_model_id") or "")
+    hard_cells = _cell_list_payload(sidecar.get("synthetic_hard_obstacle_cells"))
+    los_cells = _cell_list_payload(sidecar.get("synthetic_los_blocker_cells"))
+    high_risk_cells = _cell_list_payload(sidecar.get("synthetic_high_risk_cells"))
+    physical_written = bool(sidecar.get("physical_obstacle_cells_written_by_synthetic", False))
+    obstacle_kind = None
+    obstacle_hash = None
+    if isinstance(obstacle_source_linkage, dict):
+        obstacle_kind = obstacle_source_linkage.get("obstacle_source_kind")
+        obstacle_hash = obstacle_source_linkage.get("obstacle_source_hash")
+    return {
+        "synthetic_terrain_model_id": model_id,
+        "synthetic_terrain_hash": synthetic_hash,
+        "synthetic_source_kind": source_kind,
+        "synthetic_hard_obstacle_cells_used": bool(hard_cells),
+        "synthetic_los_blocker_cells_used": bool(los_cells),
+        "synthetic_high_risk_cells_available": bool(high_risk_cells),
+        "synthetic_hard_obstacle_cell_count": len(hard_cells),
+        "synthetic_los_blocker_cell_count": len(los_cells),
+        "synthetic_high_risk_cell_count": len(high_risk_cells),
+        "physical_obstacle_cells_written": physical_written,
+        "effective_hard_obstacle_source": [
+            source
+            for source in (
+                "physical_obstacle_cells",
+                "slope_blocked_cells",
+                "blocked_cells",
+                "synthetic_hard_obstacle_cells" if hard_cells else None,
+            )
+            if source
+        ],
+        "effective_los_blocker_source": [
+            source
+            for source in (
+                "physical_obstacle_cells",
+                "slope_blocked_cells",
+                "synthetic_los_blocker_cells" if los_cells else None,
+            )
+            if source
+        ],
+        "synthetic_obstacle_source_hash": obstacle_hash if obstacle_kind == "synthetic_terrain_obstacle_proxy/v1" else None,
+        "synthetic_obstacle_source_kind": obstacle_kind if obstacle_kind == "synthetic_terrain_obstacle_proxy/v1" else None,
+        "synthetic_terrain_contract_enabled": True,
+    }
+
+
 def _selected_continuous_theta_candidate(
     candidate: dict[str, Any],
     *,
@@ -1040,7 +1116,7 @@ def _hybrid_astar_path_cost_metadata(
         )
     current_pose = [float(current_world.x), float(current_world.y), math.radians(float(current_theta_deg))]
     platform_hash = str(platform_contract_hash or config.get("platform_contract_hash") or sidecar.get("platform_contract_hash") or "")
-    max_slope = float(sidecar.get("max_traversable_slope_deg") or config.get("max_traversable_slope_deg") or 30.0)
+    max_slope = float(config.get("max_traversable_slope_deg") or sidecar.get("max_traversable_slope_deg") or 30.0)
     rows: list[dict[str, Any]] = []
     for index, candidate in enumerate(candidates):
         payload = dict(candidate)
@@ -1113,7 +1189,25 @@ def _hybrid_astar_reachable_mask(metadata: dict[str, Any], *, candidate_count: i
     flags = metadata.get("hybrid_astar_reachable_flags")
     if not isinstance(flags, list) or len(flags) != candidate_count:
         return tuple(True for _ in range(candidate_count))
-    return tuple(value is True for value in flags)
+    costs = metadata.get("hybrid_astar_path_costs")
+    hashes = metadata.get("hybrid_astar_pose_path_hashes")
+    kinds = metadata.get("hybrid_astar_trajectory_kinds")
+    sources = metadata.get("path_cost_sources")
+    mask: list[bool] = []
+    for index, value in enumerate(flags):
+        valid = value is True
+        if isinstance(costs, list) and len(costs) == candidate_count:
+            cost = _finite(costs[index])
+            valid = valid and cost is not None and cost > 0.0
+        if isinstance(hashes, list) and len(hashes) == candidate_count:
+            path_hash = hashes[index]
+            valid = valid and isinstance(path_hash, str) and bool(path_hash.strip())
+        if isinstance(kinds, list) and len(kinds) == candidate_count:
+            valid = valid and kinds[index] == "hybrid_astar_pose_path"
+        if isinstance(sources, list) and len(sources) == candidate_count:
+            valid = valid and sources[index] == HYBRID_ASTAR_PATH_COST_SOURCE
+        mask.append(bool(valid))
+    return tuple(mask)
 
 
 def _hybrid_cell_center_world(spec: Any, cell: HYBRID_CELL) -> HYBRID_WORLD_POINT:
@@ -1428,6 +1522,10 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["slope_obstacle_aware_theta_reward_enabled"] = bool(
         config.get("slope_obstacle_aware_theta_reward_enabled", False)
     )
+    config["synthetic_terrain_contract_enabled"] = bool(config.get("synthetic_terrain_contract_enabled", False))
+    for key in ("synthetic_terrain_model_id", "synthetic_terrain_hash", "synthetic_source_kind"):
+        if config.get(key) is not None:
+            config[key] = str(config[key])
     config["hybrid_astar_pose_path_cost_enabled"] = bool(
         config.get("hybrid_astar_pose_path_cost_enabled", False)
     )
@@ -1495,6 +1593,10 @@ def _load_high_fidelity_config(config: dict[str, Any], *, repo_root: Path) -> di
         "sensor_fov_deg",
         "sensor_range_cells",
         "slope_obstacle_aware_theta_reward_enabled",
+        "synthetic_terrain_contract_enabled",
+        "synthetic_terrain_model_id",
+        "synthetic_terrain_hash",
+        "synthetic_source_kind",
         "hybrid_astar_pose_path_cost_enabled",
         "initial_theta_deg",
         "hybrid_astar_theta_bin_count",
@@ -1586,6 +1688,17 @@ def _cell_to_list(cell: Any) -> list[int] | None:
     if normalized is None:
         return None
     return [int(normalized[0]), int(normalized[1])]
+
+
+def _cell_list_payload(value: Any) -> list[list[int]]:
+    if not isinstance(value, list):
+        return []
+    cells: list[list[int]] = []
+    for item in value:
+        cell = _cell_to_list(item)
+        if cell is not None:
+            cells.append(cell)
+    return cells
 
 
 def _float_list(tensor: torch.Tensor) -> list[float]:

@@ -109,6 +109,30 @@ and Hybrid A* path-cost deltas. Stage26.0 is map-augmentation evidence only; it
 does not train, publish checkpoints, replace default A*, alter reward targets,
 connect executors, or claim performance.
 
+Stage26.1 moves that synthetic terrain contract into the real PPO data path.
+Stage21.1 reads the augmented sidecars and writes synthetic terrain provenance
+into transition `info`; Stage21.2 preserves it while using
+`endpoint_theta_slope_obstacle_los/v1` coverage and `hybrid_astar_pose_path/v1`
+path cost; Stage21.3 rejects batches that omit synthetic provenance or fall back
+to point-only, unobstructed theta, or grid-only path-cost evidence. Synthetic
+cells remain `synthetic_terrain_obstacle_proxy/v1`, never
+`physical_obstacle_cells`. Stage26.1 still stops before PPO update and only
+routes to the synthetic-terrain PPO update smoke when collector, reward, and
+batch contracts are closed.
+
+Stage26.2 is that bounded PPO update smoke. It runs a pre-update audit over the
+Stage26.1 batch, then invokes Stage21.4 only if synthetic terrain provenance,
+Hybrid A* path-cost provenance, slope-obstacle theta coverage, action/mask
+binding, behavior-policy checkpoint SHA, and boundary fields are all clean. The
+audit requires Stage26.1 upstream artifacts to exist, then rejects both
+`physical_obstacle_cells_written=true` and non-empty `physical_obstacle_cells`
+payloads across those artifacts and the final Stage21.3 batch because synthetic
+terrain remains a proxy.
+The resulting checkpoint must remain `experimental_only=true` and reloadable; no
+default policy, executor, canary, or performance claim is allowed. Passing
+Stage26.2 only proves the synthetic terrain batch can enter tiny PPO update and
+routes to post-update trajectory evaluation.
+
 Stage 18.7 is a prerequisite audit before using candidate-count arguments to
 justify architecture or reward changes. It tests only candidate-set cardinality:
 `dynamic_max_candidates_per_step` is swept over `6/12/24/36`, with proposal pool
@@ -2038,3 +2062,44 @@ checkpoint map. It does not authorize checkpoint publication, default-policy
 replacement, executor connection, canary traffic, reward-target changes,
 network changes, action-space changes, candidate-generation changes, or default
 A* changes.
+
+## Stage 26.3 Synthetic Terrain Post-Update Trajectory Eval Smoke
+
+Stage26.3 uses the Stage26.2 experimental-only checkpoint in Stage21.5
+pre/post trajectory evaluation under the same synthetic rock/pit terrain
+lineage. High-fidelity inference rows must include the synthetic terrain hash
+and source kind, synthetic hard-obstacle/LOS provenance,
+`physical_obstacle_cells_written=false`, slope-obstacle theta coverage, and
+Hybrid A* path-cost provenance.
+
+The strong binding key is `scenario_id + step_index + current_cell +
+covered_cells_hash + candidate_set_hash + synthetic_terrain_hash`. The stage
+reports action/viewpoint/theta changes, probability deltas, coverage/AUC,
+Hybrid A* path-cost, coverage-per-100m, and safety deltas. It is a bounded
+smoke only: it does not run another PPO update, publish or replace checkpoints,
+connect executors, start canaries, regenerate synthetic terrain, change reward
+targets, change the network, replace default A*, or claim performance.
+
+## Stage 26.4 Synthetic Policy Update Signal Strength Repair
+
+Stage26.4 follows the Stage26.3 result that binding and safety are clean but the
+PPO update barely moves action probabilities. It reuses Stage26.1/26.2/26.3 and
+first expands the synthetic collector horizon to target at least 16 trainable
+transitions. It then runs bounded update/eval combos for the current baseline,
+a value-loss-off depth check, and a policy-amplified depth check.
+
+The stage records policy/value/entropy gradient norms, value-to-policy gradient
+ratio, KL, parameter delta, strong join availability, probability deltas,
+selected `(x,y,theta)` changes, coverage/AUC deltas, Hybrid A* path-cost deltas,
+and safety counters. It also audits advantage separation and synthetic
+LOS/path-cost reward component gaps so the next route can distinguish update
+strength, policy/value balance, advantage signal, discrete margin crossing, and
+credit assignment.
+
+Stage26.4 keeps `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`,
+`physical_obstacle_cells_written=false`,
+`coverage_source=endpoint_theta_slope_obstacle_los/v1`, and
+`path_cost_source=hybrid_astar_pose_path/v1`. It does not regenerate synthetic
+terrain, change PPO math, change reward targets, alter the network, replace
+Hybrid A* or default A*, publish checkpoints, replace policies, connect
+executors, start canaries, or claim final performance.

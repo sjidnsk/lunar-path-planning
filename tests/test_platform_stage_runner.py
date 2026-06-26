@@ -86,6 +86,10 @@ SUPPORTED_STAGE_IDS = {
     "xunce-stage24-5a-repair-hybrid-path-inference-binding",
     "xunce-stage25-0-continuous-theta-hybrid-action-space-foundation",
     "xunce-stage26-0-synthetic-rock-pit-terrain-augmentation-contract",
+    "xunce-stage26-1-synthetic-terrain-collector-smoke",
+    "xunce-stage26-2-synthetic-terrain-ppo-update-smoke",
+    "xunce-stage26-3-synthetic-terrain-post-update-trajectory-eval-smoke",
+    "xunce-stage26-4-synthetic-policy-update-signal-strength-repair",
     "xunce-stage18i-evidence-closure-audit",
     "xunce-stage18-research-evidence-pipeline",
 }

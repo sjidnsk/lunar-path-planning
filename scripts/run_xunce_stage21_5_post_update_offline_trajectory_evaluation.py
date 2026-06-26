@@ -147,7 +147,7 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
         pre_eval_summary, pre_episodes = _read_evaluation_root(pre_root)
         post_eval_summary, post_episodes = _read_evaluation_root(post_root)
 
-    execution_reasons = _evaluation_execution_rejections(pre_eval_summary, post_eval_summary, config)
+    execution_reasons = _evaluation_execution_rejections(pre_eval_summary, post_eval_summary, pre_episodes, post_episodes, config)
     execution_reasons.extend(_episode_alignment_rejections(pre_episodes, post_episodes, config))
     pre_metrics = _policy_metrics(pre_eval_summary, pre_episodes, policy_name="xunce")
     post_metrics = _policy_metrics(post_eval_summary, post_episodes, policy_name="xunce")
@@ -208,7 +208,9 @@ def _run_high_fidelity_eval(
         "dynamic_max_candidates_per_step": int(config["dynamic_max_candidates_per_step"]),
         "dynamic_proposal_pool_limit_per_step": int(config["dynamic_proposal_pool_limit_per_step"]),
         "dynamic_validation_work_root": str(output_root / "_xunce_dynamic_validation_work"),
-        "include_oracle_baselines": True,
+        "include_oracle_baselines": bool(config["include_oracle_baselines"]),
+        "xunce_only_evaluation": bool(config["xunce_only_evaluation"]),
+        "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
         "include_roi_weighted_coverage": True,
         "include_canonical_reward_rerank_oracle": bool(config["include_canonical_reward_rerank_oracle"]),
         "canonical_reward_rerank_profile": str(config["canonical_reward_rerank_profile"])
@@ -412,19 +414,27 @@ def _hard_risk_or_safety_boundary_regressed(
     return _scenario_safety_boundary_regression_count(scenario_delta_rows) > 0
 
 
-def _evaluation_execution_rejections(pre_summary: dict[str, Any], post_summary: dict[str, Any], config: dict[str, Any]) -> list[str]:
+def _evaluation_execution_rejections(
+    pre_summary: dict[str, Any],
+    post_summary: dict[str, Any],
+    pre_episodes: list[dict[str, Any]],
+    post_episodes: list[dict[str, Any]],
+    config: dict[str, Any],
+) -> list[str]:
     reasons: list[str] = []
-    for label, summary in (("pre", pre_summary), ("post", post_summary)):
+    xunce_only = bool(config.get("xunce_only_evaluation", False))
+    for label, summary, episodes in (("pre", pre_summary, pre_episodes), ("post", post_summary, post_episodes)):
         if not summary:
             reasons.append(f"{label}_evaluation_summary_missing")
             continue
         if not summary.get("xunce_checkpoint_loaded"):
             reasons.append(f"{label}_xunce_checkpoint_not_loaded")
-        if not summary.get("incumbent_checkpoint_loaded"):
+        if not xunce_only and not summary.get("incumbent_checkpoint_loaded"):
             reasons.append(f"{label}_incumbent_checkpoint_not_loaded")
         if not summary.get("true_model_inference_executed"):
             reasons.append(f"{label}_true_model_inference_not_executed")
-        if int(summary.get("scenario_count", 0)) < int(config["required_scenario_count"]):
+        scenario_count = len(_xunce_episode_map(episodes)) if xunce_only else int(summary.get("scenario_count", 0))
+        if scenario_count < int(config["required_scenario_count"]):
             reasons.append(f"{label}_scenario_count_short")
         if int(summary.get("rollout_steps", 0)) != int(config["rollout_steps"]):
             reasons.append(f"{label}_rollout_steps_mismatch")
@@ -715,6 +725,12 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         "dynamic_proposal_pool_limit_per_step",
     )
     config["include_canonical_reward_rerank_oracle"] = bool(config.get("include_canonical_reward_rerank_oracle", True))
+    config["include_oracle_baselines"] = bool(config.get("include_oracle_baselines", True))
+    config["xunce_only_evaluation"] = bool(config.get("xunce_only_evaluation", False))
+    config["hybrid_astar_candidate_eval_workers"] = _positive_int(
+        config.get("hybrid_astar_candidate_eval_workers", 1),
+        "hybrid_astar_candidate_eval_workers",
+    )
     config["emit_candidate_metric_audit"] = bool(config.get("emit_candidate_metric_audit", True))
     config["min_post_update_coverage_delta"] = _nonnegative_float(
         config.get("min_post_update_coverage_delta", 0.0),

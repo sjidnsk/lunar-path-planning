@@ -904,6 +904,57 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-candidate-metric-audit.jsonl")
         self.assertTrue(all(row["obstacle_source_kind"] == "slope_blocked_as_obstacle_proxy" for row in rows))
 
+    def test_sidecar_slope_and_synthetic_cells_materialize_effective_synthetic_los_source(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        self._write_expansion_evidence()
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        sidecar = self._read_json(sidecar_path)
+        sidecar["slope_blocked_cells"] = [[2, 0]]
+        sidecar["synthetic_los_blocker_cells"] = [[3, 0]]
+        sidecar["synthetic_hard_obstacle_cells"] = [[4, 0]]
+        sidecar["synthetic_terrain_hash"] = "synthetic-hash"
+        sidecar["synthetic_source_kind"] = "synthetic_terrain_obstacle_proxy/v1"
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            theta_aware_candidate_viewpoints_enabled=True,
+            sensor_fov_deg=90.0,
+            sensor_range_cells=5,
+            emit_candidate_metric_audit=True,
+            emit_obstacle_source_audit=True,
+            obstacle_occlusion_enabled=True,
+            synthetic_terrain_contract_enabled=True,
+            synthetic_terrain_hash="synthetic-hash",
+            synthetic_source_kind="synthetic_terrain_obstacle_proxy/v1",
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        sources = self._read_json(self.output_root / "xunce-exploration-coverage-obstacle-sources.json")
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(sources["source_count"], 1)
+        source = sources["sources"][0]
+        self.assertEqual(source["obstacle_source_payload"], "effective")
+        self.assertEqual(source["obstacle_source_field"], "effective_los_blocker_cells")
+        self.assertEqual(source["obstacle_source_kind"], "synthetic_terrain_obstacle_proxy/v1")
+        self.assertIn([2, 0], source["obstacle_cells"])
+        self.assertIn([3, 0], source["obstacle_cells"])
+        self.assertNotIn([4, 0], source["obstacle_cells"])
+        self.assertIn("slope_blocked_cells", source["obstacle_source_components"])
+        self.assertIn("synthetic_los_blocker_cells", source["obstacle_source_components"])
+        rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-candidate-metric-audit.jsonl")
+        self.assertTrue(rows)
+        self.assertTrue(all(row["obstacle_source_kind"] == "synthetic_terrain_obstacle_proxy/v1" for row in rows))
+        self.assertTrue(all(row["obstacle_cell_count"] >= 2 for row in rows))
+
     def test_obstacle_source_precedence_prefers_physical_then_slope_then_blocked(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,

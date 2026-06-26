@@ -343,6 +343,16 @@ def _build_batch(
                     "hybrid_astar_ackermann_feasible_claimed"
                 ),
                 "point_grid_path_cost_fallback_used": reward_row.get("point_grid_path_cost_fallback_used"),
+                "synthetic_terrain_reward_provenance": reward_row.get("synthetic_terrain_reward_provenance"),
+                "synthetic_terrain_model_id": reward_row.get("synthetic_terrain_model_id"),
+                "synthetic_terrain_hash": reward_row.get("synthetic_terrain_hash"),
+                "synthetic_source_kind": reward_row.get("synthetic_source_kind"),
+                "synthetic_hard_obstacle_cells_used": reward_row.get("synthetic_hard_obstacle_cells_used"),
+                "synthetic_los_blocker_cells_used": reward_row.get("synthetic_los_blocker_cells_used"),
+                "synthetic_high_risk_cells_available": reward_row.get("synthetic_high_risk_cells_available"),
+                "physical_obstacle_cells_written": reward_row.get("physical_obstacle_cells_written"),
+                "effective_hard_obstacle_source": reward_row.get("effective_hard_obstacle_source"),
+                "effective_los_blocker_source": reward_row.get("effective_los_blocker_source"),
                 "reward_metrics": reward_row.get("metrics"),
                 "point_only_reward_fallback_used": reward_row.get("point_only_reward_fallback_used"),
                 "old_log_prob_recompute_abs_error": info.get("old_log_prob_recompute_abs_error"),
@@ -527,6 +537,8 @@ def _contract_rejections(rows: list[dict[str, Any]], audit_rows: list[dict[str, 
         reasons.append("slope_obstacle_aware_theta_reward_contract_missing")
     if bool(config.get("require_hybrid_astar_path_cost_contract")) and _hybrid_astar_path_cost_contract_missing_count(rows) > 0:
         reasons.append("hybrid_astar_path_cost_contract_missing")
+    if bool(config.get("require_synthetic_terrain_contract")) and _synthetic_terrain_contract_missing_count(rows) > 0:
+        reasons.append("synthetic_terrain_contract_missing")
     if bool(config.get("require_continuous_theta_action_contract")) and _continuous_theta_action_contract_missing_count(rows) > 0:
         reasons.append("continuous_theta_action_contract_missing")
     if _hard_risk_count(rows) > 0:
@@ -669,6 +681,14 @@ def _write_outputs(
         "unobstructed_theta_reward_fallback_used_count": _unobstructed_theta_reward_fallback_used_count(batch_rows),
         "hybrid_astar_path_cost_contract_required": bool(config.get("require_hybrid_astar_path_cost_contract")),
         "hybrid_astar_path_cost_contract_missing_count": _hybrid_astar_path_cost_contract_missing_count(batch_rows),
+        "synthetic_terrain_contract_required": bool(config.get("require_synthetic_terrain_contract")),
+        "synthetic_terrain_contract_missing_count": _synthetic_terrain_contract_missing_count(batch_rows),
+        "synthetic_terrain_reward_provenance_count": sum(
+            1 for row in batch_rows if row.get("synthetic_terrain_reward_provenance") is True
+        ),
+        "synthetic_physical_obstacle_pollution_count": sum(
+            1 for row in batch_rows if row.get("physical_obstacle_cells_written") is True
+        ),
         "continuous_theta_action_contract_required": bool(config.get("require_continuous_theta_action_contract")),
         "continuous_theta_action_contract_missing_count": _continuous_theta_action_contract_missing_count(batch_rows),
         "point_grid_path_cost_fallback_used_count": _point_grid_path_cost_fallback_used_count(batch_rows),
@@ -779,6 +799,7 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["require_hybrid_astar_path_cost_contract"] = bool(
         config.get("require_hybrid_astar_path_cost_contract", False)
     )
+    config["require_synthetic_terrain_contract"] = bool(config.get("require_synthetic_terrain_contract", False))
     config["require_continuous_theta_action_contract"] = bool(
         config.get("require_continuous_theta_action_contract", False)
     )
@@ -859,6 +880,10 @@ def _hybrid_astar_path_cost_contract_missing_count(rows: list[dict[str, Any]]) -
     return sum(1 for row in rows if not _row_has_hybrid_astar_path_cost_contract(row))
 
 
+def _synthetic_terrain_contract_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if not _row_has_synthetic_terrain_contract(row))
+
+
 def _continuous_theta_action_contract_missing_count(rows: list[dict[str, Any]]) -> int:
     return sum(1 for row in rows if not _row_has_continuous_theta_action_contract(row))
 
@@ -921,7 +946,7 @@ def _row_has_slope_obstacle_theta_reward_contract(row: dict[str, Any]) -> bool:
         and bool(str(row.get("platform_contract_hash")).strip())
         and _finite(row.get("max_traversable_slope_deg")) is not None
         and abs(_finite(row.get("max_traversable_slope_deg")) - SLOPE_OBSTACLE_MAX_TRAVERSABLE_SLOPE_DEG) <= 1.0e-9
-        and row.get("slope_blocked_source_kind") == "slope_blocked_as_obstacle_proxy"
+        and _valid_obstacle_source_kind(row)
         and row.get("point_only_reward_fallback_used") is False
         and row.get("unobstructed_theta_reward_fallback_used") is False
     ):
@@ -960,6 +985,38 @@ def _row_has_hybrid_astar_path_cost_contract(row: dict[str, Any]) -> bool:
     path_cost = _finite(metrics.get("path_cost_m"))
     hybrid_cost = _finite(row.get("hybrid_astar_path_cost"))
     return path_cost is not None and hybrid_cost is not None and abs(path_cost - hybrid_cost) <= 1.0e-9
+
+
+def _row_has_synthetic_terrain_contract(row: dict[str, Any]) -> bool:
+    return (
+        row.get("synthetic_terrain_reward_provenance") is True
+        and row.get("synthetic_terrain_model_id") == "synthetic_rock_pit_terrain/v1"
+        and isinstance(row.get("synthetic_terrain_hash"), str)
+        and bool(str(row.get("synthetic_terrain_hash")).strip())
+        and row.get("synthetic_source_kind") == "synthetic_terrain_obstacle_proxy/v1"
+        and row.get("synthetic_hard_obstacle_cells_used") is True
+        and row.get("synthetic_los_blocker_cells_used") is True
+        and row.get("synthetic_high_risk_cells_available") is True
+        and row.get("physical_obstacle_cells_written") is False
+        and isinstance(row.get("effective_hard_obstacle_source"), list)
+        and "synthetic_hard_obstacle_cells" in row.get("effective_hard_obstacle_source")
+        and isinstance(row.get("effective_los_blocker_source"), list)
+        and "synthetic_los_blocker_cells" in row.get("effective_los_blocker_source")
+        and row.get("point_only_reward_fallback_used") is False
+        and row.get("unobstructed_theta_reward_fallback_used") is False
+        and row.get("point_grid_path_cost_fallback_used") is False
+        and row.get("default_astar_replaced") is False
+        and row.get("hybrid_astar_ackermann_feasible_claimed") is False
+    )
+
+
+def _valid_obstacle_source_kind(row: dict[str, Any]) -> bool:
+    kind = row.get("slope_blocked_source_kind")
+    if kind == "slope_blocked_as_obstacle_proxy":
+        return True
+    if kind == "synthetic_terrain_obstacle_proxy/v1" and row.get("synthetic_terrain_reward_provenance") is True:
+        return True
+    return False
 
 
 def _row_has_continuous_theta_action_contract(row: dict[str, Any]) -> bool:

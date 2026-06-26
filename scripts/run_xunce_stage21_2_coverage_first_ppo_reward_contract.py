@@ -158,6 +158,7 @@ def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, co
     require_theta_reward = bool(config.get("require_theta_aware_reward_contract", False))
     slope_obstacle_reward_enabled = bool(config.get("slope_obstacle_aware_theta_reward_enabled", False))
     require_hybrid_path_cost = bool(config.get("require_hybrid_astar_path_cost_contract", False))
+    require_synthetic_terrain = bool(config.get("require_synthetic_terrain_contract", False))
     theta_denominator = _positive_or_default(config.get("theta_coverage_denominator_cells"), 1.0)
     rows: list[dict[str, Any]] = []
     for row in transitions:
@@ -165,6 +166,7 @@ def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, co
         theta_reward = _theta_reward_provenance(row, theta_denominator=theta_denominator)
         slope_reward = _slope_obstacle_reward_provenance(row, theta_denominator=theta_denominator)
         hybrid_path = _hybrid_astar_path_cost_provenance(row)
+        synthetic_terrain = _synthetic_terrain_provenance(row)
         path_cost_m = info.get("path_cost")
         point_grid_path_cost_fallback_used = False
         if require_hybrid_path_cost and hybrid_path["hybrid_astar_path_cost_reward_contract"]:
@@ -265,6 +267,19 @@ def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, co
                 "default_astar_replaced": hybrid_path["default_astar_replaced"],
                 "hybrid_astar_ackermann_feasible_claimed": hybrid_path["hybrid_astar_ackermann_feasible_claimed"],
                 "point_grid_path_cost_fallback_used": point_grid_path_cost_fallback_used,
+                "synthetic_terrain_contract_required": bool(require_synthetic_terrain),
+                "synthetic_terrain_reward_provenance": bool(
+                    require_synthetic_terrain and synthetic_terrain["synthetic_terrain_reward_provenance"]
+                ),
+                "synthetic_terrain_model_id": synthetic_terrain["synthetic_terrain_model_id"],
+                "synthetic_terrain_hash": synthetic_terrain["synthetic_terrain_hash"],
+                "synthetic_source_kind": synthetic_terrain["synthetic_source_kind"],
+                "synthetic_hard_obstacle_cells_used": synthetic_terrain["synthetic_hard_obstacle_cells_used"],
+                "synthetic_los_blocker_cells_used": synthetic_terrain["synthetic_los_blocker_cells_used"],
+                "synthetic_high_risk_cells_available": synthetic_terrain["synthetic_high_risk_cells_available"],
+                "physical_obstacle_cells_written": synthetic_terrain["physical_obstacle_cells_written"],
+                "effective_hard_obstacle_source": synthetic_terrain["effective_hard_obstacle_source"],
+                "effective_los_blocker_source": synthetic_terrain["effective_los_blocker_source"],
                 "point_only_reward_fallback_used": point_only_fallback_used,
                 "unobstructed_theta_reward_fallback_used": unobstructed_theta_reward_fallback_used,
                 "risk_deduplication_applied": result.risk_deduplication_applied,
@@ -314,6 +329,16 @@ def _profile_audit(profile: Any, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "point_grid_path_cost_fallback_used_count": sum(
             1 for row in rows if row.get("point_grid_path_cost_fallback_used") is True
         ),
+        "synthetic_terrain_reward_provenance_required": any(
+            row.get("synthetic_terrain_contract_required") is True for row in rows
+        ),
+        "synthetic_terrain_reward_provenance_count": sum(
+            1 for row in rows if row.get("synthetic_terrain_reward_provenance") is True
+        ),
+        "synthetic_terrain_contract_missing_count": _synthetic_terrain_contract_missing_count(rows),
+        "synthetic_physical_obstacle_pollution_count": sum(
+            1 for row in rows if row.get("physical_obstacle_cells_written") is True
+        ),
     }
 
 
@@ -341,6 +366,10 @@ def _contract_rejections(rows: list[dict[str, Any]], profile_audit: dict[str, An
         reasons.append("hybrid_astar_path_cost_contract_missing")
     if profile_audit.get("point_grid_path_cost_fallback_used_count", 0) > 0:
         reasons.append("point_grid_path_cost_fallback_used")
+    if profile_audit.get("synthetic_terrain_contract_missing_count", 0) > 0:
+        reasons.append("synthetic_terrain_contract_missing")
+    if profile_audit.get("synthetic_physical_obstacle_pollution_count", 0) > 0:
+        reasons.append("synthetic_physical_obstacle_pollution")
     return reasons
 
 
@@ -412,6 +441,16 @@ def _write_outputs(
             "hybrid_astar_path_cost_contract_missing_count"
         ],
         "point_grid_path_cost_fallback_used_count": profile_audit["point_grid_path_cost_fallback_used_count"],
+        "synthetic_terrain_reward_provenance_required": profile_audit[
+            "synthetic_terrain_reward_provenance_required"
+        ],
+        "synthetic_terrain_reward_provenance_count": profile_audit[
+            "synthetic_terrain_reward_provenance_count"
+        ],
+        "synthetic_terrain_contract_missing_count": profile_audit["synthetic_terrain_contract_missing_count"],
+        "synthetic_physical_obstacle_pollution_count": profile_audit[
+            "synthetic_physical_obstacle_pollution_count"
+        ],
         "blocking_reason_codes": _unique(blocking_reason_codes),
         "reason_codes": _unique(blocking_reason_codes),
         "stage21_2_authorized": False,
@@ -468,6 +507,7 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["require_hybrid_astar_path_cost_contract"] = bool(
         config.get("require_hybrid_astar_path_cost_contract", False)
     )
+    config["require_synthetic_terrain_contract"] = bool(config.get("require_synthetic_terrain_contract", False))
     config["theta_coverage_denominator_cells"] = _positive_or_default(config.get("theta_coverage_denominator_cells"), 1.0)
     for field in BOUNDARY_FIELDS:
         config.setdefault(field, False)
@@ -565,6 +605,15 @@ def _hybrid_astar_path_cost_contract_missing_count(rows: list[dict[str, Any]]) -
         for row in rows
         if row.get("hybrid_astar_path_cost_reward_contract_required") is True
         and row.get("hybrid_astar_path_cost_reward_contract") is not True
+    )
+
+
+def _synthetic_terrain_contract_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if row.get("synthetic_terrain_contract_required") is True
+        and not _row_has_synthetic_terrain_contract(row)
     )
 
 
@@ -672,7 +721,7 @@ def _slope_obstacle_reward_provenance(row: dict[str, Any], *, theta_denominator:
         and bool(platform_hash.strip())
         and max_slope_value is not None
         and abs(max_slope_value - SLOPE_OBSTACLE_MAX_TRAVERSABLE_SLOPE_DEG) <= 1.0e-9
-        and str(source_kind or "") == "slope_blocked_as_obstacle_proxy"
+        and str(source_kind or "") in {"slope_blocked_as_obstacle_proxy", "synthetic_terrain_obstacle_proxy/v1"}
     )
     return {
         "slope_obstacle_aware_theta_reward_contract": bool(contract),
@@ -767,6 +816,63 @@ def _hybrid_astar_path_cost_provenance(row: dict[str, Any]) -> dict[str, Any]:
         "default_astar_replaced": default_astar_replaced,
         "hybrid_astar_ackermann_feasible_claimed": ackermann_claimed,
     }
+
+
+def _synthetic_terrain_provenance(row: dict[str, Any]) -> dict[str, Any]:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    model_id = _selected_any(row, info, None, ("synthetic_terrain_model_id",))
+    terrain_hash = _selected_any(row, info, None, ("synthetic_terrain_hash",))
+    source_kind = _selected_any(row, info, None, ("synthetic_source_kind", "synthetic_obstacle_source_kind"))
+    hard_used = _selected_any(row, info, None, ("synthetic_hard_obstacle_cells_used",))
+    los_used = _selected_any(row, info, None, ("synthetic_los_blocker_cells_used",))
+    high_risk_available = _selected_any(row, info, None, ("synthetic_high_risk_cells_available",))
+    physical_written = _selected_any(row, info, None, ("physical_obstacle_cells_written",))
+    effective_hard = _selected_any(row, info, None, ("effective_hard_obstacle_source",))
+    effective_los = _selected_any(row, info, None, ("effective_los_blocker_source",))
+    contract = (
+        str(model_id or "") == "synthetic_rock_pit_terrain/v1"
+        and isinstance(terrain_hash, str)
+        and bool(terrain_hash.strip())
+        and source_kind == "synthetic_terrain_obstacle_proxy/v1"
+        and hard_used is True
+        and los_used is True
+        and high_risk_available is True
+        and physical_written is False
+        and isinstance(effective_hard, list)
+        and "synthetic_hard_obstacle_cells" in effective_hard
+        and isinstance(effective_los, list)
+        and "synthetic_los_blocker_cells" in effective_los
+    )
+    return {
+        "synthetic_terrain_reward_provenance": bool(contract),
+        "synthetic_terrain_model_id": model_id,
+        "synthetic_terrain_hash": terrain_hash,
+        "synthetic_source_kind": source_kind,
+        "synthetic_hard_obstacle_cells_used": hard_used,
+        "synthetic_los_blocker_cells_used": los_used,
+        "synthetic_high_risk_cells_available": high_risk_available,
+        "physical_obstacle_cells_written": physical_written,
+        "effective_hard_obstacle_source": effective_hard,
+        "effective_los_blocker_source": effective_los,
+    }
+
+
+def _row_has_synthetic_terrain_contract(row: dict[str, Any]) -> bool:
+    return (
+        row.get("synthetic_terrain_reward_provenance") is True
+        and row.get("synthetic_terrain_model_id") == "synthetic_rock_pit_terrain/v1"
+        and isinstance(row.get("synthetic_terrain_hash"), str)
+        and bool(str(row.get("synthetic_terrain_hash")).strip())
+        and row.get("synthetic_source_kind") == "synthetic_terrain_obstacle_proxy/v1"
+        and row.get("synthetic_hard_obstacle_cells_used") is True
+        and row.get("synthetic_los_blocker_cells_used") is True
+        and row.get("synthetic_high_risk_cells_available") is True
+        and row.get("physical_obstacle_cells_written") is False
+        and isinstance(row.get("effective_hard_obstacle_source"), list)
+        and "synthetic_hard_obstacle_cells" in row.get("effective_hard_obstacle_source")
+        and isinstance(row.get("effective_los_blocker_source"), list)
+        and "synthetic_los_blocker_cells" in row.get("effective_los_blocker_source")
+    )
 
 
 def _count_per_path_cost(count: Any, path_cost: Any, *, fallback: Any) -> float | None:

@@ -8,6 +8,41 @@
 - Effective hard obstacles may combine physical obstacles, slope-blocked cells, blocked cells, and `synthetic_hard_obstacle_cells`; effective LOS blockers may combine physical obstacles, slope-blocked cells, and `synthetic_los_blocker_cells`.
 - Stage26.0 audits deterministic hashes, start clearance, synthetic blocked fraction, connectivity, endpoint theta LOS impact, and Hybrid A* path-cost impact. It does not start PPO, publish checkpoints, replace default policy, connect executor, start canary, change reward targets, modify the network, replace default A*, model 3D LOS, or claim performance.
 
+## Stage 26.1 Synthetic Terrain Collector Smoke
+
+- Stage26.1 verifies that the Stage26.0 augmented sidecars are consumed by the real Stage21.1 -> Stage21.2 -> Stage21.3 PPO data path, not only by offline map audits.
+- The runner is `scripts/run_xunce_stage26_1_synthetic_terrain_collector_smoke.py`, the config is `configs/xunce_stage26_1_synthetic_terrain_collector_smoke_v1.json`, and the default output root is `D:\CodexDownloads\lunar-path-planning\stage26_synthetic_terrain_augmentation\outputs\path_feedback_batch_xunce_stage26_1_synthetic_terrain_collector_smoke_v1`.
+- Stage21.1 must carry `synthetic_terrain_model_id`, `synthetic_terrain_hash`, `synthetic_source_kind`, synthetic hard-obstacle/LOS/high-risk provenance, effective hard/LOS obstacle sources, and `physical_obstacle_cells_written=false` into transition `info`.
+- Stage21.2 must keep `coverage_source=endpoint_theta_slope_obstacle_los/v1`, `path_cost_source=hybrid_astar_pose_path/v1`, `synthetic_terrain_reward_provenance=true`, and all point-only, unobstructed-theta, and grid-path fallbacks false.
+- Stage21.3 can require `require_synthetic_terrain_contract=true`; then missing synthetic provenance, synthetic-as-physical pollution, grid-only path cost, default-A* replacement, or Ackermann feasibility claims must be rejected before PPO.
+- Stage26.1 does not run PPO update, publish checkpoints, replace default policy, connect executor, start canary, modify reward targets, change the network, replace default A*, model 3D LOS, or claim performance. Passing Stage26.1 only routes to `run_stage26_2_synthetic_terrain_ppo_update_smoke`.
+
+## Stage 26.2 Synthetic Terrain PPO Update Smoke
+
+- Stage26.2 verifies that the real Stage26.1 synthetic rock/pit terrain PPO batch can be consumed by Stage21.4 tiny PPO update and saved as a reloadable experimental-only checkpoint.
+- The runner is `scripts/run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke.py`, the config is `configs/xunce_stage26_2_synthetic_terrain_ppo_update_smoke_v1.json`, and the default output root is `D:\CodexDownloads\lunar-path-planning\stage26_synthetic_terrain_augmentation\outputs\path_feedback_batch_xunce_stage26_2_synthetic_terrain_ppo_update_smoke_v1`.
+- Stage26.2 performs its own pre-update batch audit before invoking Stage21.4. It requires synthetic provenance, `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`, `physical_obstacle_cells_written=false`, no `physical_obstacle_cells` payload, `coverage_source=endpoint_theta_slope_obstacle_los/v1`, `path_cost_source=hybrid_astar_pose_path/v1`, and no point-only/unobstructed/grid fallback.
+- The physical-obstacle payload check requires Stage26.1 upstream Stage21.1/21.2 artifacts to exist and covers them as well as the Stage21.3 batch, so synthetic proxy pollution cannot be hidden before batch validation.
+- Stage26.2 must also verify that the Stage21.4 source checkpoint SHA matches the checkpoint SHA recorded by the Stage26.1 Stage21.1 collector manifest, so PPO `old_log_prob` lineage stays tied to the behavior policy that collected the batch.
+- Stage26.2 reuses Stage21.4 PPO loss and checkpoint logic, but it does not change PPO math, reward targets, the network, default A*, candidate generation, or synthetic map generation.
+- Passing Stage26.2 only routes to `run_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke`. It does not run trajectory evaluation, publish checkpoints, replace default policy, connect executor, start canary, model 3D LOS, or claim performance.
+
+## Stage 26.3 Synthetic Terrain Post-Update Trajectory Eval Smoke
+
+- Stage26.3 compares the Stage26.2 source checkpoint and experimental-only checkpoint with bounded Stage21.5 pre/post trajectory evaluation on the same synthetic rock/pit terrain lineage.
+- The runner is `scripts/run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke.py`, the config is `configs/xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke_v1.json`, and the default output root is `D:\CodexDownloads\lunar-path-planning\stage26_synthetic_terrain_augmentation\outputs\path_feedback_batch_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke_v1`.
+- Stage26.3 requires high-fidelity inference rows to keep `synthetic_terrain_hash`, `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`, synthetic hard-obstacle/LOS provenance, `physical_obstacle_cells_written=false`, `coverage_source=endpoint_theta_slope_obstacle_los/v1`, and `path_cost_source=hybrid_astar_pose_path/v1`.
+- The strong join key adds synthetic lineage to the normal state key: `scenario_id + step_index + current_cell + covered_cells_hash + candidate_set_hash + synthetic_terrain_hash`. A five-field base key may only diagnose lineage mismatches; it cannot be used to claim action/probability changes.
+- Stage26.3 does not run PPO update, publish checkpoints, replace default policy, connect executor, start canary, regenerate synthetic terrain, alter reward/network/default A*/candidate generation, or claim performance.
+
+## Stage 26.4 Synthetic Policy Update Signal Strength Repair
+
+- Stage26.4 repairs the Stage26.3 finding that synthetic rock/pit terrain PPO updates produce nearly unchanged action probabilities and no selected `(x,y,theta)` trajectory changes.
+- The runner is `scripts/run_xunce_stage26_4_synthetic_policy_update_signal_strength_repair.py`, the config is `configs/xunce_stage26_4_synthetic_policy_update_signal_strength_repair_v1.json`, and the default output root is `D:\CodexDownloads\lunar-path-planning\stage26_synthetic_terrain_augmentation\outputs\path_feedback_batch_xunce_stage26_4_synthetic_policy_update_signal_strength_repair_v1`.
+- Stage26.4 reuses Stage26.1/26.2/26.3. It first expands synthetic collector samples, then runs bounded update/eval combos to separate sample-count limits, value-loss dominance, update-depth weakness, advantage gap, and discrete action-margin issues.
+- Stage26.4 must preserve `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`, `physical_obstacle_cells_written=false`, `coverage_source=endpoint_theta_slope_obstacle_los/v1`, `path_cost_source=hybrid_astar_pose_path/v1`, and `max_traversable_slope_deg=30.0`.
+- Stage26.4 is offline diagnostic evidence. It must not regenerate synthetic terrain, publish checkpoints, replace default policy, connect executor, start canary, change reward targets, modify network/default A*/Hybrid A*/candidate generation, or claim final performance.
+
 ## Stage 25.0 Continuous Theta Hybrid Action Space Foundation
 
 - Stage25.0 upgrades the action contract from discrete `(x,y,theta_bin)` viewpoints to `action_space_type=hybrid_discrete_xy_continuous_theta/v1`: first sample a discrete base candidate cell `(x,y)`, then sample a continuous observation heading `theta_rad` from that candidate's Von Mises distribution.

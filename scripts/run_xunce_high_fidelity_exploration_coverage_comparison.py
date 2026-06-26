@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import nullcontext
 import hashlib
 import json
 import math
@@ -532,6 +534,10 @@ def _load_config(
         payload.get("hybrid_astar_max_iterations", 100_000),
         "hybrid_astar_max_iterations",
     )
+    normalized["hybrid_astar_candidate_eval_workers"] = _positive_int(
+        payload.get("hybrid_astar_candidate_eval_workers", 1),
+        "hybrid_astar_candidate_eval_workers",
+    )
     normalized["hybrid_astar_primitive_duration_s"] = _positive_float(
         payload.get("hybrid_astar_primitive_duration_s", 1.0),
         "hybrid_astar_primitive_duration_s",
@@ -574,6 +580,10 @@ def _load_config(
     normalized["include_canonical_reward_rerank_oracle"] = _require_bool(
         payload.get("include_canonical_reward_rerank_oracle", False),
         "include_canonical_reward_rerank_oracle",
+    )
+    normalized["xunce_only_evaluation"] = _require_bool(
+        payload.get("xunce_only_evaluation", False),
+        "xunce_only_evaluation",
     )
     rerank_profile_path = payload.get("canonical_reward_rerank_profile")
     if normalized["include_canonical_reward_rerank_oracle"]:
@@ -805,10 +815,22 @@ def _select_obstacle_source_for_scenario(
         ("config", config),
     )
     include_no_go = bool(config.get("no_go_blocks_los", False))
+    sidecar_payload = _read_sidecar_payload(slice_row, repo_root)
+    effective_source = _effective_synthetic_los_obstacle_source(
+        scenario_id=scenario_id,
+        payloads=payloads + (("sidecar", sidecar_payload),),
+        include_no_go=include_no_go,
+        config=config,
+        sidecar_payload=sidecar_payload,
+    )
+    if effective_source is not None:
+        return effective_source
     source_fields: list[tuple[str, str, bool]] = [
         ("obstacle_cells", "physical_obstacle_cells", False),
         ("obstacle_rectangles", "physical_obstacle_cells", False),
         ("slope_blocked_cells", "slope_blocked_as_obstacle_proxy", True),
+        ("synthetic_los_blocker_cells", "synthetic_terrain_obstacle_proxy/v1", True),
+        ("synthetic_hard_obstacle_cells", "synthetic_terrain_obstacle_proxy/v1", True),
         ("blocked_cells", "blocked_as_obstacle_proxy", True),
         ("blocked_rectangles", "blocked_as_obstacle_proxy", True),
     ]
@@ -893,12 +915,8 @@ def _obstacle_source_from_sidecar(
     derive_slope_blocked: bool = False,
     max_traversable_slope_deg: float = 30.0,
 ) -> tuple[set[tuple[int, int]], str, str, bool] | None:
-    sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
-    if sidecar_path is None:
-        return None
-    try:
-        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    payload = _read_sidecar_payload(slice_row, repo_root)
+    if not payload:
         return None
     physical_fields: list[tuple[str, str, bool]] = [
         ("obstacle_cells", "physical_obstacle_cells", False),
@@ -912,6 +930,14 @@ def _obstacle_source_from_sidecar(
         ("slope_blocked_cells", "slope_blocked_as_obstacle_proxy", True),
     ]
     for field, source_kind, is_proxy in slope_fields:
+        cells, source_field = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
+        if cells:
+            return cells, source_kind, source_field or field, is_proxy
+    synthetic_fields: list[tuple[str, str, bool]] = [
+        ("synthetic_los_blocker_cells", "synthetic_terrain_obstacle_proxy/v1", True),
+        ("synthetic_hard_obstacle_cells", "synthetic_terrain_obstacle_proxy/v1", True),
+    ]
+    for field, source_kind, is_proxy in synthetic_fields:
         cells, source_field = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
         if cells:
             return cells, source_kind, source_field or field, is_proxy
@@ -943,6 +969,115 @@ def _obstacle_source_from_sidecar(
             if cells:
                 return cells, source_kind, source_field or field, is_proxy
     return None
+
+
+def _read_sidecar_payload(slice_row: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
+    if sidecar_path is None:
+        return {}
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _effective_synthetic_los_obstacle_source(
+    *,
+    scenario_id: str | None,
+    payloads: tuple[tuple[str, dict[str, Any]], ...],
+    include_no_go: bool,
+    config: dict[str, Any],
+    sidecar_payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    synthetic_cells = _collect_obstacle_cells_from_payloads(
+        payloads,
+        ("synthetic_los_blocker_cells",),
+        include_no_go=include_no_go,
+    )
+    if not synthetic_cells:
+        return None
+    physical_cells = _collect_obstacle_cells_from_payloads(
+        payloads,
+        ("obstacle_cells", "obstacle_rectangles"),
+        include_no_go=include_no_go,
+    )
+    slope_cells = _collect_obstacle_cells_from_payloads(
+        payloads,
+        ("slope_blocked_cells",),
+        include_no_go=include_no_go,
+    )
+    if sidecar_payload and bool(config.get("derive_slope_blocked_cells_from_sidecar_dem", False)):
+        slope_cells.update(
+            _slope_blocked_cells_from_sidecar_dem_payload(
+                sidecar_payload,
+                max_traversable_slope_deg=float(config.get("max_traversable_slope_deg", 30.0)),
+            )
+        )
+    if include_no_go:
+        physical_cells.update(
+            _collect_obstacle_cells_from_payloads(
+                payloads,
+                ("no_go_cells", "no_go_rectangles"),
+                include_no_go=include_no_go,
+            )
+        )
+    effective_cells = physical_cells | slope_cells | synthetic_cells
+    if not effective_cells:
+        return None
+    source_kind = "synthetic_terrain_obstacle_proxy/v1"
+    sorted_cells = [list(cell) for cell in sorted(effective_cells)]
+    source_hash = stable_obstacle_source_hash(
+        source_kind=source_kind,
+        obstacle_cells=sorted_cells,
+        no_go_blocks_los=include_no_go,
+    )
+    source_id = f"scenario:{scenario_id}:{source_kind}" if scenario_id is not None else None
+    return {
+        "schema_version": "xunce-exploration-coverage-obstacle-source/v1",
+        "scenario_id": scenario_id,
+        "obstacle_source_id": source_id,
+        "obstacle_source_hash": source_hash,
+        "obstacle_source_kind": source_kind,
+        "obstacle_source_field": "effective_los_blocker_cells",
+        "obstacle_source_payload": "effective",
+        "obstacle_source_is_proxy": True,
+        "obstacle_source_components": [
+            component
+            for component, cells in (
+                ("physical_obstacle_cells", physical_cells),
+                ("slope_blocked_cells", slope_cells),
+                ("synthetic_los_blocker_cells", synthetic_cells),
+            )
+            if cells
+        ],
+        "platform_contract_id": config.get("platform_contract_id"),
+        "platform_contract_hash": config.get("platform_contract_hash"),
+        "platform_max_climb_deg": config.get("platform_max_climb_deg"),
+        "max_traversable_slope_deg": config.get("max_traversable_slope_deg"),
+        "obstacle_cell_count": len(sorted_cells),
+        "obstacle_cells": sorted_cells,
+        "synthetic_obstacle_cell_count": len(synthetic_cells),
+        "slope_obstacle_cell_count": len(slope_cells),
+        "physical_obstacle_cell_count": len(physical_cells),
+        "no_go_blocks_los": include_no_go,
+    }
+
+
+def _collect_obstacle_cells_from_payloads(
+    payloads: tuple[tuple[str, dict[str, Any]], ...],
+    fields: tuple[str, ...],
+    *,
+    include_no_go: bool,
+) -> set[tuple[int, int]]:
+    cells: set[tuple[int, int]] = set()
+    for _, payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        for field in fields:
+            extracted, _ = _extract_specific_obstacle_field(payload, field, include_no_go=include_no_go)
+            cells.update(extracted)
+    return cells
 
 
 def _blocked_cells_from_sidecar_passable_mask(slice_row: dict[str, Any], repo_root: Path) -> set[tuple[int, int]]:
@@ -1176,40 +1311,51 @@ def _run_coverage_rollouts(
     candidate_metric_rows: list[dict[str, Any]] = []
     on_policy_teacher_label_rows: list[dict[str, Any]] = []
     validation_cache: dict[str, list[dict[str, Any]]] = {}
-    for scenario_index, scenario in enumerate(scenarios[: config["required_scenario_count"]]):
-        if not isinstance(scenario, dict):
-            continue
-        scenario_id = str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))
-        slice_row = slice_by_id.get(scenario_id, {})
-        obstacle_source_linkage = obstacle_source_by_scenario.get(scenario_id)
-        roi_group = resolve_roi_group(scenario, slice_row)
-        policy_names = POLICIES + (ORACLE_POLICIES if config["include_oracle_baselines"] else ())
-        if config["include_canonical_reward_rerank_oracle"]:
-            policy_names = policy_names + (CANONICAL_REWARD_RERANK_ORACLE,)
-        for policy_name in policy_names:
-            episode = _run_policy_episode(
-                policy_name=policy_name,
-                scenario=scenario,
-                scenario_index=scenario_index,
-                scenario_id=scenario_id,
-                roi_group=roi_group,
-                split=slice_row.get("split"),
-                config=config,
-                model_bundle=model_bundle,
-                slice_row=slice_row,
-                obstacle_source_linkage=obstacle_source_linkage,
-                repo_root=repo_root,
-                output_root=output_root,
-                validation_cache=validation_cache,
-            )
-            episodes.append(episode)
-            steps.extend(episode.get("steps", []))
-            inference_rows.extend(episode.get("inference_rows", []))
-            dynamic_proposals.extend(episode.get("dynamic_proposals", []))
-            dynamic_validation_rows.extend(episode.get("dynamic_validation_rows", []))
-            paired_decision_rows.extend(episode.get("paired_decision_rows", []))
-            candidate_metric_rows.extend(episode.get("candidate_metric_rows", []))
-            on_policy_teacher_label_rows.extend(episode.get("on_policy_teacher_label_rows", []))
+    worker_count = int(config.get("hybrid_astar_candidate_eval_workers", 1))
+    executor_context = (
+        ProcessPoolExecutor(max_workers=worker_count)
+        if bool(config.get("hybrid_astar_pose_path_cost_enabled")) and worker_count > 1
+        else nullcontext(None)
+    )
+    with executor_context as hybrid_astar_executor:
+        for scenario_index, scenario in enumerate(scenarios[: config["required_scenario_count"]]):
+            if not isinstance(scenario, dict):
+                continue
+            scenario_id = str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))
+            slice_row = slice_by_id.get(scenario_id, {})
+            obstacle_source_linkage = obstacle_source_by_scenario.get(scenario_id)
+            roi_group = resolve_roi_group(scenario, slice_row)
+            if config.get("xunce_only_evaluation"):
+                policy_names = ("xunce",)
+            else:
+                policy_names = POLICIES + (ORACLE_POLICIES if config["include_oracle_baselines"] else ())
+                if config["include_canonical_reward_rerank_oracle"]:
+                    policy_names = policy_names + (CANONICAL_REWARD_RERANK_ORACLE,)
+            for policy_name in policy_names:
+                episode = _run_policy_episode(
+                    policy_name=policy_name,
+                    scenario=scenario,
+                    scenario_index=scenario_index,
+                    scenario_id=scenario_id,
+                    roi_group=roi_group,
+                    split=slice_row.get("split"),
+                    config=config,
+                    model_bundle=model_bundle,
+                    slice_row=slice_row,
+                    obstacle_source_linkage=obstacle_source_linkage,
+                    repo_root=repo_root,
+                    output_root=output_root,
+                    validation_cache=validation_cache,
+                    hybrid_astar_executor=hybrid_astar_executor,
+                )
+                episodes.append(episode)
+                steps.extend(episode.get("steps", []))
+                inference_rows.extend(episode.get("inference_rows", []))
+                dynamic_proposals.extend(episode.get("dynamic_proposals", []))
+                dynamic_validation_rows.extend(episode.get("dynamic_validation_rows", []))
+                paired_decision_rows.extend(episode.get("paired_decision_rows", []))
+                candidate_metric_rows.extend(episode.get("candidate_metric_rows", []))
+                on_policy_teacher_label_rows.extend(episode.get("on_policy_teacher_label_rows", []))
     return (
         episodes,
         steps,
@@ -1237,6 +1383,7 @@ def _run_policy_episode(
     repo_root: Path,
     output_root: Path,
     validation_cache: dict[str, list[dict[str, Any]]],
+    hybrid_astar_executor: Any | None = None,
 ) -> dict[str, Any]:
     denominator_context = resolve_coverage_denominator(scenario, slice_row, config, repo_root)
     denominator = float(denominator_context["legacy_coverage_denominator_cells"])
@@ -1297,6 +1444,7 @@ def _run_policy_episode(
             repo_root=repo_root,
             output_root=output_root,
             validation_cache=validation_cache,
+            hybrid_astar_executor=hybrid_astar_executor,
         )
         candidates = candidate_batch["candidates"]
         candidate_set_id = candidate_batch["candidate_set_id"]
@@ -1520,6 +1668,7 @@ def _run_policy_episode(
                     config=config,
                     slice_row=slice_row,
                     repo_root=repo_root,
+                    hybrid_astar_executor=hybrid_astar_executor,
                 )
                 _apply_continuous_theta_hybrid_reachable_eval_policy(
                     detail_payload,
@@ -1561,6 +1710,7 @@ def _run_policy_episode(
                     config=config,
                     slice_row=slice_row,
                     repo_root=repo_root,
+                    hybrid_astar_executor=hybrid_astar_executor,
                 )
         selected_cell = _cell_tuple(_candidate_cell(selected_candidate)) if selected_candidate is not None else None
         selected_cost = _candidate_cost(selected_candidate) if selected_candidate is not None else None
@@ -1820,6 +1970,27 @@ def _run_policy_episode(
                     "default_astar_replaced": bool(selected_candidate.get("default_astar_replaced", False)),
                     "hybrid_astar_ackermann_feasible_claimed": bool(
                         selected_candidate.get("hybrid_astar_ackermann_feasible_claimed", False)
+                    ),
+                    "synthetic_terrain_model_id": selected_candidate.get("synthetic_terrain_model_id")
+                    or config.get("synthetic_terrain_model_id"),
+                    "synthetic_terrain_hash": selected_candidate.get("synthetic_terrain_hash")
+                    or config.get("synthetic_terrain_hash"),
+                    "synthetic_source_kind": selected_candidate.get("synthetic_source_kind")
+                    or config.get("synthetic_source_kind"),
+                    "synthetic_los_blocker_cells_used": bool(
+                        selected_candidate.get(
+                            "synthetic_los_blocker_cells_used",
+                            config.get("synthetic_los_blocker_cells_used", bool(config.get("synthetic_terrain_hash"))),
+                        )
+                    ),
+                    "synthetic_hard_obstacle_cells_used": bool(
+                        selected_candidate.get(
+                            "synthetic_hard_obstacle_cells_used",
+                            config.get("synthetic_hard_obstacle_cells_used", bool(config.get("synthetic_terrain_hash"))),
+                        )
+                    ),
+                    "physical_obstacle_cells_written": bool(
+                        selected_candidate.get("physical_obstacle_cells_written", config.get("physical_obstacle_cells_written", False))
                     ),
                     "max_traversable_slope_deg": config.get("max_traversable_slope_deg"),
                     "obstacle_occlusion_enabled": selected_obstacle_audit.get("obstacle_occlusion_enabled"),
@@ -3128,6 +3299,8 @@ def _summary(
         "candidate_refresh_mode": config["candidate_refresh_mode"],
         "coverage_metric_mode": config["coverage_metric_mode"],
         "include_oracle_baselines": config["include_oracle_baselines"],
+        "xunce_only_evaluation": bool(config.get("xunce_only_evaluation", False)),
+        "hybrid_astar_candidate_eval_workers": int(config.get("hybrid_astar_candidate_eval_workers", 1)),
         "include_roi_weighted_coverage": config["include_roi_weighted_coverage"],
         "canonical_reward_profile": config["canonical_reward_profile"],
         "profile_id": config["profile_id"],
@@ -3369,6 +3542,7 @@ def _candidate_rows_for_step(
     repo_root: Path,
     output_root: Path,
     validation_cache: dict[str, list[dict[str, Any]]],
+    hybrid_astar_executor: Any | None = None,
 ) -> dict[str, Any]:
     def with_theta(batch: dict[str, Any]) -> dict[str, Any]:
         if not theta_viewpoints_enabled(config):
@@ -3413,6 +3587,7 @@ def _candidate_rows_for_step(
                 config=config,
                 slice_row=slice_row,
                 repo_root=repo_root,
+                hybrid_astar_executor=hybrid_astar_executor,
             )
         return batch
 
@@ -3612,6 +3787,40 @@ def _apply_continuous_theta_hybrid_reachable_eval_policy(
     detail_payload["continuous_theta_eval_policy"] = "hybrid_astar_reachable_theta_mu_argmax/v1"
 
 
+def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> tuple[int, dict[str, Any] | None, str | None]:
+    (
+        index,
+        grid,
+        current_pose,
+        payload,
+        platform_hash,
+        max_slope,
+        planner_options,
+    ) = args
+    try:
+        row = evaluate_hybrid_astar_candidate_path_cost(
+            grid=grid,
+            current_pose=current_pose,
+            candidate=payload,
+            platform_contract_hash=platform_hash,
+            max_traversable_slope_deg=float(max_slope),
+            theta_bin_count=int(planner_options["theta_bin_count"]),
+            goal_position_tolerance_m=planner_options["goal_position_tolerance_m"],
+            goal_theta_tolerance_deg=float(planner_options["goal_theta_tolerance_deg"]),
+            max_iterations=int(planner_options["max_iterations"]),
+            primitive_duration_s=float(planner_options["primitive_duration_s"]),
+            integration_dt_s=float(planner_options["integration_dt_s"]),
+            max_speed_mps=float(planner_options["max_speed_mps"]),
+            max_angular_speed_degps=float(planner_options["max_angular_speed_degps"]),
+            rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
+            reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
+            turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+        )
+        return int(index), row, None
+    except Exception as exc:  # pragma: no cover - worker failures are represented per candidate.
+        return int(index), None, f"{type(exc).__name__}:{exc}"
+
+
 def _enrich_candidates_with_hybrid_astar_path_cost(
     candidates: list[dict[str, Any]],
     *,
@@ -3623,6 +3832,7 @@ def _enrich_candidates_with_hybrid_astar_path_cost(
     config: dict[str, Any],
     slice_row: dict[str, Any],
     repo_root: Path,
+    hybrid_astar_executor: Any | None = None,
 ) -> None:
     if not candidates:
         return
@@ -3659,36 +3869,89 @@ def _enrich_candidates_with_hybrid_astar_path_cost(
     if sidecar_max_slope is not None:
         max_slope = sidecar_max_slope
     current_pose = [float(current_world.x), float(current_world.y), math.radians(float(current_theta_deg))]
-    for index, candidate in enumerate(candidates):
+    planner_options = {
+        "theta_bin_count": int(config.get("hybrid_astar_theta_bin_count", 72)),
+        "goal_position_tolerance_m": (
+            float(config["hybrid_astar_goal_position_tolerance_m"])
+            if config.get("hybrid_astar_goal_position_tolerance_m") is not None
+            else None
+        ),
+        "goal_theta_tolerance_deg": float(config.get("hybrid_astar_goal_theta_tolerance_deg", 5.0)),
+        "max_iterations": int(config.get("hybrid_astar_max_iterations", 100_000)),
+        "primitive_duration_s": float(config.get("hybrid_astar_primitive_duration_s", 1.0)),
+        "integration_dt_s": float(config.get("hybrid_astar_integration_dt_s", 0.25)),
+        "max_speed_mps": float(config.get("hybrid_astar_max_speed_mps", 1.0)),
+        "max_angular_speed_degps": float(config.get("hybrid_astar_max_angular_speed_degps", 45.0)),
+        "rotation_cost_weight": float(config.get("hybrid_astar_rotation_cost_weight", 0.2)),
+        "reverse_penalty_weight": float(config.get("hybrid_astar_reverse_penalty_weight", 0.5)),
+        "turn_penalty_weight": float(config.get("hybrid_astar_turn_penalty_weight", 0.05)),
+    }
+
+    def payload_for(index: int, candidate: dict[str, Any]) -> dict[str, Any]:
         payload = dict(candidate)
         payload.setdefault("scenario_id", scenario_id)
         payload.setdefault("step_index", step_index)
         payload.setdefault("candidate_index", index)
         payload.setdefault("candidate_set_hash", candidate_set_hash_value)
-        try:
-            row = evaluate_hybrid_astar_candidate_path_cost(
-                grid=grid,
-                current_pose=current_pose,
-                candidate=payload,
-                platform_contract_hash=platform_hash,
-                max_traversable_slope_deg=float(max_slope),
-                theta_bin_count=int(config.get("hybrid_astar_theta_bin_count", 72)),
-                goal_position_tolerance_m=(
-                    float(config["hybrid_astar_goal_position_tolerance_m"])
-                    if config.get("hybrid_astar_goal_position_tolerance_m") is not None
-                    else None
+        return payload
+
+    rows_by_index: dict[int, dict[str, Any]] = {}
+    failed_indices: set[int] = set()
+    if hybrid_astar_executor is not None and len(candidates) > 1:
+        futures = {
+            hybrid_astar_executor.submit(
+                _evaluate_hybrid_astar_candidate_path_cost_worker,
+                (
+                    index,
+                    grid,
+                    current_pose,
+                    payload_for(index, candidate),
+                    platform_hash,
+                    float(max_slope),
+                    planner_options,
                 ),
-                goal_theta_tolerance_deg=float(config.get("hybrid_astar_goal_theta_tolerance_deg", 5.0)),
-                max_iterations=int(config.get("hybrid_astar_max_iterations", 100_000)),
-                primitive_duration_s=float(config.get("hybrid_astar_primitive_duration_s", 1.0)),
-                integration_dt_s=float(config.get("hybrid_astar_integration_dt_s", 0.25)),
-                max_speed_mps=float(config.get("hybrid_astar_max_speed_mps", 1.0)),
-                max_angular_speed_degps=float(config.get("hybrid_astar_max_angular_speed_degps", 45.0)),
-                rotation_cost_weight=float(config.get("hybrid_astar_rotation_cost_weight", 0.2)),
-                reverse_penalty_weight=float(config.get("hybrid_astar_reverse_penalty_weight", 0.5)),
-                turn_penalty_weight=float(config.get("hybrid_astar_turn_penalty_weight", 0.05)),
-            )
-        except Exception:
+            ): index
+            for index, candidate in enumerate(candidates)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                row_index, row, error = future.result()
+            except Exception:
+                failed_indices.add(index)
+                continue
+            if error is not None or row is None:
+                failed_indices.add(int(row_index))
+            else:
+                rows_by_index[int(row_index)] = row
+    else:
+        for index, candidate in enumerate(candidates):
+            payload = payload_for(index, candidate)
+            try:
+                rows_by_index[index] = evaluate_hybrid_astar_candidate_path_cost(
+                    grid=grid,
+                    current_pose=current_pose,
+                    candidate=payload,
+                    platform_contract_hash=platform_hash,
+                    max_traversable_slope_deg=float(max_slope),
+                    theta_bin_count=int(planner_options["theta_bin_count"]),
+                    goal_position_tolerance_m=planner_options["goal_position_tolerance_m"],
+                    goal_theta_tolerance_deg=float(planner_options["goal_theta_tolerance_deg"]),
+                    max_iterations=int(planner_options["max_iterations"]),
+                    primitive_duration_s=float(planner_options["primitive_duration_s"]),
+                    integration_dt_s=float(planner_options["integration_dt_s"]),
+                    max_speed_mps=float(planner_options["max_speed_mps"]),
+                    max_angular_speed_degps=float(planner_options["max_angular_speed_degps"]),
+                    rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
+                    reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
+                    turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+                )
+            except Exception:
+                failed_indices.add(index)
+
+    for index, candidate in enumerate(candidates):
+        row = rows_by_index.get(index)
+        if row is None or index in failed_indices:
             _apply_hybrid_astar_unavailable_candidate_fields(
                 candidate,
                 reason="hybrid_astar_evaluation_failed",
@@ -4528,6 +4791,23 @@ def _candidate_obstacles(
     obstacle_source_linkage: dict[str, Any] | None = None,
 ) -> tuple[set[tuple[int, int]], str | None, str | None, str | None, str | None, bool]:
     include_no_go = bool(config.get("no_go_blocks_los", False))
+    effective_source = _effective_synthetic_los_obstacle_source(
+        scenario_id=str(candidate.get("scenario_id")) if candidate.get("scenario_id") is not None else None,
+        payloads=(("candidate", candidate), ("config", config)),
+        include_no_go=include_no_go,
+        config=config,
+    )
+    if effective_source is not None:
+        cells = {_cell_tuple(cell) for cell in effective_source.get("obstacle_cells", [])}
+        cells = {cell for cell in cells if cell is not None}
+        return (
+            cells,
+            str(effective_source.get("obstacle_source_field") or "effective_los_blocker_cells"),
+            effective_source.get("obstacle_source_id"),
+            str(effective_source.get("obstacle_source_hash") or ""),
+            str(effective_source.get("obstacle_source_kind") or ""),
+            bool(effective_source.get("obstacle_source_is_proxy", True)),
+        )
     obstacles, source = extract_obstacle_cells(candidate, include_no_go=include_no_go)
     if obstacles:
         source_kind, source_is_proxy = _obstacle_kind_for_source_field(source)
@@ -4567,6 +4847,8 @@ def _obstacle_kind_for_source_field(source: str | None) -> tuple[str | None, boo
         return "physical_obstacle_cells", False
     if str(source).startswith("slope_blocked") or str(source).startswith("sidecar_dem_slope"):
         return "slope_blocked_as_obstacle_proxy", True
+    if str(source).startswith("synthetic_"):
+        return "synthetic_terrain_obstacle_proxy/v1", True
     if str(source).startswith("blocked"):
         return "blocked_as_obstacle_proxy", True
     if str(source).startswith("no_go"):
