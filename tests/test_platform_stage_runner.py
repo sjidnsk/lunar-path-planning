@@ -90,6 +90,9 @@ SUPPORTED_STAGE_IDS = {
     "xunce-stage26-2-synthetic-terrain-ppo-update-smoke",
     "xunce-stage26-3-synthetic-terrain-post-update-trajectory-eval-smoke",
     "xunce-stage26-4-synthetic-policy-update-signal-strength-repair",
+    "xunce-stage26-4a-parallelize-stage21-1-hybrid-astar-candidate-costs",
+    "xunce-stage26-5-synthetic-discrete-margin-crossing-calibration",
+    "xunce-stage26-5b-documentation-boundary-consolidation",
     "xunce-stage18i-evidence-closure-audit",
     "xunce-stage18-research-evidence-pipeline",
 }

@@ -570,6 +570,18 @@
       "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_4a_parallelize_stage21_1_hybrid_astar_candidate_costs_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage26-5-synthetic-discrete-margin-crossing-calibration": {
+      "script": "scripts/run_xunce_stage26_5_synthetic_discrete_margin_crossing_calibration.py",
+      "default_config": "configs/xunce_stage26_5_synthetic_discrete_margin_crossing_calibration_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_5_synthetic_discrete_margin_crossing_calibration_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-5b-documentation-boundary-consolidation": {
+      "script": "scripts/run_xunce_stage26_5b_documentation_boundary_consolidation.py",
+      "default_config": "configs/xunce_stage26_5b_documentation_boundary_consolidation_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_5b_documentation_boundary_consolidation_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18-research-evidence-pipeline": {
       "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
       "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",

@@ -1,0 +1,12 @@
+{
+  "schema_version": "xunce-stage26-5-synthetic-discrete-margin-crossing-calibration-config/v1",
+  "stage_id": "xunce-stage26-5-synthetic-discrete-margin-crossing-calibration",
+  "stage_name": "Stage26.5 Synthetic Discrete Margin Crossing Calibration",
+  "stage26_4_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_4_synthetic_policy_update_signal_strength_repair_v1",
+  "required_hybrid_astar_candidate_eval_workers": 4,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": "xunce-stage26-5b-documentation-boundary-consolidation-config/v1",
+  "stage_id": "xunce-stage26-5b-documentation-boundary-consolidation",
+  "agents_md_max_lines": 180,
+  "agents_md_max_stage_sections": 5,
+  "required_contract_strings": [
+    "coverage_source=endpoint_theta_slope_obstacle_los/v1",
+    "path_cost_source=hybrid_astar_pose_path/v1",
+    "synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1",
+    "action_space_type=hybrid_discrete_xy_continuous_theta/v1",
+    "max_traversable_slope_deg=30.0",
+    "不发布 checkpoint",
+    "不替换 default policy",
+    "不连接 executor",
+    "不启动 canary",
+    "docs/xunce-stage-documentation-index.md"
+  ],
+  "required_documentation_index_terms": [
+    "AGENTS.md",
+    "README.md",
+    "docs/superpowers/plans",
+    "outputs/.../report.md",
+    "docs/算法设计与系统架构报告.md",
+    "docs/superpowers/specs",
+    "configs/stage_registry.json",
+    "Stage26.0 -> Stage26.5",
+    "repair_stage26_synthetic_exploration_credit_assignment"
+  ]
+}

@@ -2124,3 +2124,37 @@ This stage does not parallelize a single Hybrid A* search internally, does not
 run PPO, publish checkpoints, replace default policy, connect executors, start
 canaries, change reward targets, change networks, replace default A*, or claim
 performance.
+
+## Stage 26.5 Synthetic Discrete Margin Crossing Calibration
+
+Stage26.5 directly uses Stage26.4 worker `4` synthetic terrain evidence and no
+longer gates on Stage26.4A serial/parallel equivalence. It strong-joins each
+combo's pre/post inference rows and measures whether the best synthetic
+coverage-per-cost candidate is closing the probability, logit, and rank gap to
+the selected action.
+
+The audit also records whether the counterfactual best candidate was ever
+sampled as a trainable selected action and whether candidate-level features
+expose synthetic LOS and Hybrid A* path-cost signals. Stage26.5 is read-only:
+it does not run PPO, regenerate synthetic terrain, publish checkpoints, replace
+default policy, connect an executor, start canary traffic, or change
+reward/network/Hybrid A*/candidate generation semantics.
+
+## Current Contract Summary And Documentation Boundary
+
+This specification is the long-lived technical contract for topology-aware and
+coverage-first policy work. It should summarize stable interfaces and current
+contracts, not repeat every stage execution report.
+
+Current active contracts:
+
+- `coverage_source=endpoint_theta_slope_obstacle_los/v1`
+- `path_cost_source=hybrid_astar_pose_path/v1`
+- `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
+- `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
+- `max_traversable_slope_deg=30.0`
+
+For future stages, keep full implementation plans under
+`docs/superpowers/plans/`, keep real metrics and blockers in
+`outputs/.../report.md`, and keep file ownership rules in
+`docs/xunce-stage-documentation-index.md`.
