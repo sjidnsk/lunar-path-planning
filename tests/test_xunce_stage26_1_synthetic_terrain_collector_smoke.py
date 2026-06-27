@@ -57,6 +57,55 @@ def test_stage26_1_passes_hybrid_astar_candidate_workers_to_collector(tmp_path: 
     assert stage21_1_config["hybrid_astar_candidate_eval_workers"] == 4
 
 
+def test_stage26_1_passes_synthetic_credit_path_efficiency_config_to_collector(tmp_path: Path, monkeypatch) -> None:
+    import scripts.run_xunce_stage26_1_synthetic_terrain_collector_smoke as s26
+
+    _patch_stage21_runs(monkeypatch, s26)
+    stage26_0 = _write_stage26_0_root(tmp_path)
+    config = _write_config(
+        tmp_path,
+        stage26_0,
+        synthetic_credit_score_version="path_efficiency_v2",
+        path_efficiency_max_cost_norm=0.55,
+    )
+
+    summary = s26.run_xunce_stage26_1_synthetic_terrain_collector_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    stage21_1_config = json.loads((tmp_path / "out" / "xunce-stage26-1-stage21-1-config.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "passed"
+    assert stage21_1_config["synthetic_credit_score_version"] == "path_efficiency_v2"
+    assert stage21_1_config["path_efficiency_max_cost_norm"] == 0.55
+
+
+def test_stage26_1_passes_continuous_theta_gate_to_stage21_3(tmp_path: Path, monkeypatch) -> None:
+    import scripts.run_xunce_stage26_1_synthetic_terrain_collector_smoke as s26
+
+    _patch_stage21_runs(monkeypatch, s26)
+    stage26_0 = _write_stage26_0_root(tmp_path)
+    config = _write_config(
+        tmp_path,
+        stage26_0,
+        continuous_theta_action_space_enabled=True,
+        action_space_type="hybrid_discrete_xy_continuous_theta/v1",
+        allow_synthetic_credit_behavior_policy=True,
+    )
+
+    summary = s26.run_xunce_stage26_1_synthetic_terrain_collector_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    stage21_3_config = json.loads((tmp_path / "out" / "xunce-stage26-1-stage21-3-config.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "passed"
+    assert stage21_3_config["require_continuous_theta_action_contract"] is True
+    assert stage21_3_config["allow_synthetic_credit_behavior_policy"] is True
+
+
 def test_stage26_1_rejects_unready_stage26_0_without_running_substages(tmp_path: Path, monkeypatch) -> None:
     import scripts.run_xunce_stage26_1_synthetic_terrain_collector_smoke as s26
 

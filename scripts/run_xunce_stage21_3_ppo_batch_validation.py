@@ -18,6 +18,7 @@ if str(MODEL_EXPLORER_SRC) not in sys.path:
     sys.path.insert(0, str(MODEL_EXPLORER_SRC))
 
 from model_explorer.policy.training import compute_returns_and_advantages
+from xunce_synthetic_exploration_credit import BEHAVIOR_POLICY_ID, synthetic_credit_behavior_logprob
 from xunce_theta_viewpoint_candidates import row_has_theta_viewpoint_contract
 
 THETA_COVERAGE_SOURCE = "theta_aware_sensor_footprint/v1"
@@ -284,6 +285,44 @@ def _build_batch(
                 "selected_theta_deg": transition.get("selected_theta_deg"),
                 "old_point_log_prob": transition.get("old_point_log_prob"),
                 "old_theta_log_prob": transition.get("old_theta_log_prob"),
+                "old_policy_point_log_prob": transition.get("old_policy_point_log_prob", info.get("old_policy_point_log_prob")),
+                "old_policy_log_prob": transition.get("old_policy_log_prob", info.get("old_policy_log_prob")),
+                "old_behavior_point_log_prob": transition.get(
+                    "old_behavior_point_log_prob",
+                    info.get("old_behavior_point_log_prob"),
+                ),
+                "old_behavior_log_prob": transition.get("old_behavior_log_prob", info.get("old_behavior_log_prob")),
+                "behavior_policy_id": transition.get("behavior_policy_id", info.get("behavior_policy_id")),
+                "synthetic_credit_mixture_probability": transition.get(
+                    "synthetic_credit_mixture_probability",
+                    info.get("synthetic_credit_mixture_probability"),
+                ),
+                "synthetic_credit_target_index": transition.get(
+                    "synthetic_credit_target_index",
+                    info.get("synthetic_credit_target_index"),
+                ),
+                "synthetic_credit_target_selected": transition.get(
+                    "synthetic_credit_target_selected",
+                    info.get("synthetic_credit_target_selected"),
+                ),
+                "synthetic_credit_score": transition.get("synthetic_credit_score", info.get("synthetic_credit_score")),
+                "synthetic_credit_score_version": transition.get(
+                    "synthetic_credit_score_version",
+                    info.get("synthetic_credit_score_version"),
+                ),
+                "path_efficiency_filter_relaxed": transition.get(
+                    "path_efficiency_filter_relaxed",
+                    info.get("path_efficiency_filter_relaxed"),
+                ),
+                "selected_target_hybrid_cost_norm": transition.get(
+                    "selected_target_hybrid_cost_norm",
+                    info.get("selected_target_hybrid_cost_norm"),
+                ),
+                "selected_target_gain_per_cost_norm": transition.get(
+                    "selected_target_gain_per_cost_norm",
+                    info.get("selected_target_gain_per_cost_norm"),
+                ),
+                "xunce_batch_feature_semantic_map": info.get("xunce_batch_feature_semantic_map"),
                 "base_candidate_set_hash": transition.get("base_candidate_set_hash"),
                 "action_sample_hash": transition.get("action_sample_hash"),
                 "old_log_prob": transition.get("old_log_prob"),
@@ -541,6 +580,12 @@ def _contract_rejections(rows: list[dict[str, Any]], audit_rows: list[dict[str, 
         reasons.append("synthetic_terrain_contract_missing")
     if bool(config.get("require_continuous_theta_action_contract")) and _continuous_theta_action_contract_missing_count(rows) > 0:
         reasons.append("continuous_theta_action_contract_missing")
+    if not bool(config.get("allow_synthetic_credit_behavior_policy")) and any(
+        _row_uses_synthetic_credit_behavior_policy(row) for row in rows
+    ):
+        reasons.append("synthetic_credit_behavior_policy_not_allowed")
+    if bool(config.get("allow_synthetic_credit_behavior_policy")) and _synthetic_credit_behavior_logprob_missing_count(rows) > 0:
+        reasons.append("synthetic_credit_behavior_logprob_contract_missing")
     if _hard_risk_count(rows) > 0:
         reasons.append("hard_risk_violation_detected")
     if _old_log_prob_recompute_violation_count(rows, float(config["max_old_log_prob_recompute_abs_error"])) > 0:
@@ -691,6 +736,11 @@ def _write_outputs(
         ),
         "continuous_theta_action_contract_required": bool(config.get("require_continuous_theta_action_contract")),
         "continuous_theta_action_contract_missing_count": _continuous_theta_action_contract_missing_count(batch_rows),
+        "synthetic_credit_behavior_policy_allowed": bool(config.get("allow_synthetic_credit_behavior_policy")),
+        "synthetic_credit_behavior_logprob_missing_count": _synthetic_credit_behavior_logprob_missing_count(batch_rows),
+        "synthetic_credit_behavior_policy_row_count": sum(
+            1 for row in batch_rows if _row_uses_synthetic_credit_behavior_policy(row)
+        ),
         "point_grid_path_cost_fallback_used_count": _point_grid_path_cost_fallback_used_count(batch_rows),
         "return_finite_count": sum(1 for row in batch_rows if _finite(row.get("return")) is not None),
         "advantage_finite_count": sum(1 for row in batch_rows if _finite(row.get("advantage")) is not None),
@@ -803,6 +853,9 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["require_continuous_theta_action_contract"] = bool(
         config.get("require_continuous_theta_action_contract", False)
     )
+    config["allow_synthetic_credit_behavior_policy"] = bool(
+        config.get("allow_synthetic_credit_behavior_policy", False)
+    )
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     for field in BOUNDARY_FIELDS:
         config.setdefault(field, False)
@@ -886,6 +939,15 @@ def _synthetic_terrain_contract_missing_count(rows: list[dict[str, Any]]) -> int
 
 def _continuous_theta_action_contract_missing_count(rows: list[dict[str, Any]]) -> int:
     return sum(1 for row in rows if not _row_has_continuous_theta_action_contract(row))
+
+
+def _synthetic_credit_behavior_logprob_missing_count(rows: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if _row_uses_synthetic_credit_behavior_policy(row)
+        and not _row_has_synthetic_credit_behavior_logprob(row)
+    )
 
 
 def _point_only_reward_fallback_used_count(rows: list[dict[str, Any]]) -> int:
@@ -1061,6 +1123,21 @@ def _row_has_continuous_theta_action_contract(row: dict[str, Any]) -> bool:
         return False
     if _angle_deg_delta_abs(theta_deg, math.degrees(theta_rad)) > 1.0e-5:
         return False
+    if _row_uses_synthetic_credit_behavior_policy(row):
+        policy_point_log_prob = _finite(row.get("old_policy_point_log_prob"))
+        if policy_point_log_prob is None:
+            policy_point_log_prob = _finite(info.get("old_policy_point_log_prob"))
+        return (
+            policy_point_log_prob is not None
+            and _continuous_theta_old_log_prob_recomputes(
+                info=info,
+                action_index=action_index,
+                theta_rad=theta_rad,
+                old_point_log_prob=policy_point_log_prob,
+                old_theta_log_prob=theta_log_prob,
+            )
+            and _row_has_synthetic_credit_behavior_logprob(row)
+        )
     return _continuous_theta_old_log_prob_recomputes(
         info=info,
         action_index=action_index,
@@ -1068,6 +1145,75 @@ def _row_has_continuous_theta_action_contract(row: dict[str, Any]) -> bool:
         old_point_log_prob=point_log_prob,
         old_theta_log_prob=theta_log_prob,
     )
+
+
+def _row_uses_synthetic_credit_behavior_policy(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    return (row.get("behavior_policy_id") or info.get("behavior_policy_id")) == BEHAVIOR_POLICY_ID
+
+
+def _row_has_synthetic_credit_behavior_logprob(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    action_index = _int_or_none(row.get("action_index"))
+    if action_index is None:
+        action_index = _int_or_none(info.get("action_index"))
+    old_action_probs = info.get("old_action_probs")
+    if not isinstance(old_action_probs, list):
+        old_action_probs = row.get("old_action_probs")
+    if action_index is None or not isinstance(old_action_probs, list):
+        return False
+    mixture_probability = _finite(
+        row.get("synthetic_credit_mixture_probability", info.get("synthetic_credit_mixture_probability"))
+    )
+    target_index = _int_or_none(row.get("synthetic_credit_target_index"))
+    if target_index is None:
+        target_index = _int_or_none(info.get("synthetic_credit_target_index"))
+    theta_log_prob = _finite(row.get("old_theta_log_prob"))
+    if theta_log_prob is None:
+        theta_log_prob = _finite(info.get("old_theta_log_prob"))
+    old_behavior_point = _finite(row.get("old_behavior_point_log_prob"))
+    if old_behavior_point is None:
+        old_behavior_point = _finite(info.get("old_behavior_point_log_prob"))
+    old_policy_point = _finite(row.get("old_policy_point_log_prob"))
+    if old_policy_point is None:
+        old_policy_point = _finite(info.get("old_policy_point_log_prob"))
+    old_policy_total = _finite(row.get("old_policy_log_prob"))
+    if old_policy_total is None:
+        old_policy_total = _finite(info.get("old_policy_log_prob"))
+    old_behavior_total = _finite(row.get("old_behavior_log_prob"))
+    if old_behavior_total is None:
+        old_behavior_total = _finite(info.get("old_behavior_log_prob"))
+    old_total = _finite(row.get("old_log_prob"))
+    if old_total is None:
+        old_total = _finite(info.get("old_log_prob"))
+    if (
+        mixture_probability is None
+        or old_behavior_point is None
+        or old_policy_point is None
+        or old_policy_total is None
+        or old_behavior_total is None
+        or old_total is None
+    ):
+        return False
+    try:
+        recomputed = synthetic_credit_behavior_logprob(
+            policy_probs=old_action_probs,
+            action_index=action_index,
+            target_index=target_index,
+            mixture_probability=mixture_probability,
+            theta_log_prob=theta_log_prob,
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if abs(float(recomputed["old_behavior_point_log_prob"]) - float(old_behavior_point)) > 1.0e-5:
+        return False
+    if abs(float(recomputed["old_policy_point_log_prob"]) - float(old_policy_point)) > 1.0e-5:
+        return False
+    if abs(float(recomputed["old_policy_log_prob"]) - float(old_policy_total)) > 1.0e-5:
+        return False
+    if abs(float(recomputed["old_log_prob"]) - float(old_behavior_total)) > 1.0e-5:
+        return False
+    return abs(float(recomputed["old_log_prob"]) - float(old_total)) <= 1.0e-5
 
 
 def _continuous_theta_old_log_prob_recomputes(

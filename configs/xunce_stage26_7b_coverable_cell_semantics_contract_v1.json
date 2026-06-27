@@ -1,0 +1,19 @@
+{
+  "schema_version": "xunce-stage26-7b-coverable-cell-semantics-contract-config/v1",
+  "stage_id": "xunce-stage26-7b-coverable-cell-semantics-contract",
+  "stage26_7_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7_synthetic_credit_assignment_path_efficiency_repair_v1",
+  "stage26_0_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_0_synthetic_rock_pit_terrain_augmentation_contract_v1",
+  "best_combo_work_dir": "c2",
+  "coverage_denominator_mode": "main_coverable_cells",
+  "coverage_denominator_source": "main_coverable_cells/v1",
+  "derive_slope_blocked_cells_from_sidecar_dem": false,
+  "max_traversable_slope_deg": 30.0,
+  "coverage_source": "endpoint_theta_slope_obstacle_los/v1",
+  "path_cost_source": "hybrid_astar_pose_path/v1",
+  "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

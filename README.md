@@ -98,11 +98,11 @@ Stage26.4
 Stage26.5
   synthetic discrete margin crossing calibration
 
-current next route
-  repair_stage26_synthetic_exploration_credit_assignment
+Stage26.6
+  synthetic exploration credit assignment
 ```
 
-Stage26.5 found that action probabilities moved, but the best synthetic candidate was never sampled as a trainable selected action, so PPO did not directly credit it. It also found missing candidate-level synthetic LOS / hard obstacle / Hybrid A* path-cost features.
+Stage26.6 addresses the Stage26.5 root cause by exposing synthetic LOS, synthetic hard-obstacle, Hybrid A* path-cost, and obstacle-aware coverage signals in candidate features, then using a mixture behavior policy so the synthetic credit target can become a real selected action.
 
 ### Current Contracts
 

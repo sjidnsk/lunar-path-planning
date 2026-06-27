@@ -222,6 +222,8 @@ def _run_stage21_1(
             "dynamic_validation_work_root": str(output_root / "_dynamic_validation_work_stage26_1"),
             "source_roi_expansion_root": str(synthetic_source_root),
             "theta_aware_candidate_viewpoints_enabled": True,
+            "action_space_type": config.get("action_space_type"),
+            "continuous_theta_action_space_enabled": bool(config.get("continuous_theta_action_space_enabled", False)),
             "theta_bin_count": int(config["theta_bin_count"]),
             "theta_step_deg": int(config["theta_step_deg"]),
             "sensor_model_id": config["sensor_model_id"],
@@ -237,6 +239,13 @@ def _run_stage21_1(
             "hybrid_astar_max_angular_speed_degps": float(config["hybrid_astar_max_angular_speed_degps"]),
             "hybrid_astar_max_iterations": int(config["hybrid_astar_max_iterations"]),
             "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+            "synthetic_credit_feature_exposure_enabled": bool(
+                config.get("synthetic_credit_feature_exposure_enabled", False)
+            ),
+            "synthetic_exploration_credit_enabled": bool(config.get("synthetic_exploration_credit_enabled", False)),
+            "synthetic_credit_mixture_probability": float(config.get("synthetic_credit_mixture_probability", 0.35)),
+            "synthetic_credit_score_version": str(config.get("synthetic_credit_score_version") or "coverage_proxy_v1"),
+            "path_efficiency_max_cost_norm": float(config.get("path_efficiency_max_cost_norm", 0.70)),
             "synthetic_terrain_contract_enabled": True,
             "synthetic_terrain_model_id": SYNTHETIC_MODEL_ID,
             "synthetic_terrain_hash": stage26_0_summary.get("synthetic_terrain_hash"),
@@ -307,6 +316,10 @@ def _run_stage21_3(config: dict[str, Any], output_root: Path, repo_root: Path) -
             "require_slope_obstacle_aware_theta_reward_contract": True,
             "require_hybrid_astar_path_cost_contract": True,
             "require_synthetic_terrain_contract": True,
+            "require_continuous_theta_action_contract": bool(
+                config.get("continuous_theta_action_space_enabled", False)
+            ),
+            "allow_synthetic_credit_behavior_policy": bool(config.get("allow_synthetic_credit_behavior_policy", False)),
             "stage21_3_authorized": False,
             "runs_new_ppo_update": False,
             "publishes_checkpoint": False,
@@ -663,6 +676,8 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     config["min_trainable_transition_count"] = _positive_int(config.get("min_trainable_transition_count", 1), "min_trainable_transition_count")
     config["theta_bin_count"] = _positive_int(config.get("theta_bin_count", 8), "theta_bin_count")
     config["theta_step_deg"] = _positive_int(config.get("theta_step_deg", 45), "theta_step_deg")
+    config["action_space_type"] = config.get("action_space_type")
+    config["continuous_theta_action_space_enabled"] = bool(config.get("continuous_theta_action_space_enabled", False))
     config["sensor_model_id"] = str(config.get("sensor_model_id") or "theta-fov-90-range-radius/v1")
     config["sensor_fov_deg"] = _positive_float(config.get("sensor_fov_deg", 90.0), "sensor_fov_deg")
     config["sensor_range_cells"] = _positive_int(config.get("sensor_range_cells", 3), "sensor_range_cells")
@@ -699,6 +714,22 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     config["hybrid_astar_candidate_eval_workers"] = _positive_int(
         config.get("hybrid_astar_candidate_eval_workers", 1),
         "hybrid_astar_candidate_eval_workers",
+    )
+    config["synthetic_credit_feature_exposure_enabled"] = bool(
+        config.get("synthetic_credit_feature_exposure_enabled", False)
+    )
+    config["synthetic_exploration_credit_enabled"] = bool(config.get("synthetic_exploration_credit_enabled", False))
+    config["synthetic_credit_mixture_probability"] = _fraction_float(
+        config.get("synthetic_credit_mixture_probability", 0.35),
+        "synthetic_credit_mixture_probability",
+    )
+    config["synthetic_credit_score_version"] = str(config.get("synthetic_credit_score_version") or "coverage_proxy_v1")
+    config["path_efficiency_max_cost_norm"] = _fraction_float(
+        config.get("path_efficiency_max_cost_norm", 0.70),
+        "path_efficiency_max_cost_norm",
+    )
+    config["allow_synthetic_credit_behavior_policy"] = bool(
+        config.get("allow_synthetic_credit_behavior_policy", False)
     )
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     for field in BOUNDARY_FIELDS:
@@ -804,6 +835,13 @@ def _nonnegative_float(value: Any, field: str) -> float:
         raise ConfigError(f"{field} must be a non-negative number") from exc
     if parsed < 0.0:
         raise ConfigError(f"{field} must be a non-negative number")
+    return parsed
+
+
+def _fraction_float(value: Any, field: str) -> float:
+    parsed = _nonnegative_float(value, field)
+    if parsed > 1.0:
+        raise ConfigError(f"{field} must be <= 1")
     return parsed
 
 

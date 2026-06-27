@@ -52,6 +52,12 @@ try:
         evaluate_hybrid_astar_candidate_path_cost,
     )
     from xunce_continuous_theta_action import CONTINUOUS_THETA_ACTION_SPACE, continuous_theta_enabled, normalize_theta_rad
+    from xunce_synthetic_exploration_credit import (
+        apply_feature_rows_to_xunce_batch,
+        build_synthetic_credit_feature_rows,
+        candidate_pressure_values,
+        feature_semantic_map,
+    )
     from xunce_platform_contract import apply_stage23_platform_defaults
     from xunce_theta_sensor_coverage import visible_cells_for_viewpoint
     from run_xunce_high_fidelity_real_map_comparison import (
@@ -106,6 +112,12 @@ except ModuleNotFoundError:  # pragma: no cover
         evaluate_hybrid_astar_candidate_path_cost,
     )
     from scripts.xunce_continuous_theta_action import CONTINUOUS_THETA_ACTION_SPACE, continuous_theta_enabled, normalize_theta_rad
+    from scripts.xunce_synthetic_exploration_credit import (
+        apply_feature_rows_to_xunce_batch,
+        build_synthetic_credit_feature_rows,
+        candidate_pressure_values,
+        feature_semantic_map,
+    )
     from scripts.xunce_platform_contract import apply_stage23_platform_defaults
     from scripts.xunce_theta_sensor_coverage import visible_cells_for_viewpoint
     from scripts.run_xunce_high_fidelity_real_map_comparison import (
@@ -454,8 +466,15 @@ def _load_config(
         payload.get("coverage_denominator_mode", "fixed_config_cells"),
         "coverage_denominator_mode",
     )
-    if normalized["coverage_denominator_mode"] not in {"roi_valid_cells", "fixed_config_cells", "raw_cells_only"}:
-        raise ConfigError("coverage_denominator_mode must be roi_valid_cells, fixed_config_cells, or raw_cells_only")
+    if normalized["coverage_denominator_mode"] not in {
+        "roi_valid_cells",
+        "fixed_config_cells",
+        "raw_cells_only",
+        "main_coverable_cells",
+    }:
+        raise ConfigError(
+            "coverage_denominator_mode must be roi_valid_cells, fixed_config_cells, raw_cells_only, or main_coverable_cells"
+        )
     normalized["path_budget_m"] = _positive_float(payload.get("path_budget_m", 5000.0), "path_budget_m")
     normalized["planning_backend"] = _require_string(payload.get("planning_backend", "channel_aware_astar"), "planning_backend")
     normalized["diagnostic_reason_codes"] = list(payload.get("diagnostic_reason_codes", [])) if isinstance(payload.get("diagnostic_reason_codes", []), list) else []
@@ -1190,8 +1209,32 @@ def resolve_coverage_denominator(
             "coverage_denominator_source": "raw_cells_only_no_rate_denominator/v1",
             "coverage_denominator_reason_codes": ["raw_cells_only"],
         }
+    sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
+    if mode == "main_coverable_cells":
+        if sidecar_path is not None:
+            semantics = _sidecar_coverable_cell_semantics(
+                sidecar_path,
+                derive_slope_blocked=bool(config.get("derive_slope_blocked_cells_from_sidecar_dem", False)),
+                max_traversable_slope_deg=float(config.get("max_traversable_slope_deg", 30.0)),
+            )
+            main_coverable_count = int(semantics.get("main_coverable_denominator_cells") or 0)
+            if main_coverable_count > 0:
+                return {
+                    **semantics,
+                    "coverage_denominator_cells": main_coverable_count,
+                    "legacy_coverage_denominator_cells": main_coverable_count,
+                    "coverage_denominator_mode": mode,
+                    "coverage_denominator_source": "main_coverable_cells/v1",
+                    "coverage_denominator_reason_codes": [],
+                }
+        return {
+            "coverage_denominator_cells": fixed_cells,
+            "legacy_coverage_denominator_cells": fixed_cells,
+            "coverage_denominator_mode": mode,
+            "coverage_denominator_source": "fixed_config_cells_fallback_due_missing_main_coverable_cells/v1",
+            "coverage_denominator_reason_codes": ["main_coverable_cells_unavailable", "fixed_config_cells_fallback"],
+        }
     if mode == "roi_valid_cells":
-        sidecar_path = _resolved_file(slice_row.get("sidecar"), repo_root)
         if sidecar_path is not None:
             valid_cells = _count_passable_mask_cells(sidecar_path)
             if valid_cells > 0:
@@ -1229,6 +1272,155 @@ def _count_passable_mask_cells(sidecar_path: Path) -> int:
     return _count_truthy_nested(mask)
 
 
+def _sidecar_coverable_cell_semantics(
+    sidecar_path: Path,
+    *,
+    derive_slope_blocked: bool,
+    max_traversable_slope_deg: float,
+) -> dict[str, Any]:
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    passable_cells, raw_roi_cells = _passable_and_raw_cells_from_payload(payload)
+    if not passable_cells:
+        return {}
+    physical_cells = _cells_from_payload_fields(
+        payload,
+        ("physical_obstacle_cells", "obstacle_cells", "obstacle_rectangles"),
+    )
+    slope_cells = _cells_from_payload_fields(payload, ("slope_blocked_cells",))
+    if derive_slope_blocked:
+        slope_cells.update(
+            _slope_blocked_cells_from_sidecar_dem_payload(
+                payload,
+                max_traversable_slope_deg=max_traversable_slope_deg,
+            )
+        )
+    blocked_cells = _cells_from_payload_fields(payload, ("blocked_cells", "blocked_rectangles"))
+    blocked_cells.update(_blocked_cells_from_sidecar_passable_mask_payload(payload))
+    synthetic_hard_cells = _cells_from_payload_fields(
+        payload,
+        (
+            "synthetic_hard_obstacle_cells",
+            "synthetic_rock_hard_obstacle_cells",
+            "synthetic_pit_hard_obstacle_cells",
+        ),
+    )
+    synthetic_los_cells = _cells_from_payload_fields(payload, ("synthetic_los_blocker_cells",))
+    synthetic_high_risk_cells = _cells_from_payload_fields(
+        payload,
+        ("synthetic_high_risk_cells", "synthetic_pit_high_risk_cells"),
+    )
+    hard_obstacle_cells = physical_cells | slope_cells | blocked_cells | synthetic_hard_cells
+    traversable_cells = passable_cells - hard_obstacle_cells
+    los_blocker_cells = physical_cells | slope_cells | synthetic_los_cells | synthetic_hard_cells
+    main_coverable_cells = passable_cells - hard_obstacle_cells
+    hazard_observable_cells = physical_cells | slope_cells | synthetic_hard_cells | synthetic_high_risk_cells
+    los_only_cells = synthetic_los_cells - synthetic_hard_cells - physical_cells - slope_cells - blocked_cells
+    hash_payload = {
+        "schema_version": "coverable_cell_semantics_hash/v1",
+        "passable_cells": _sorted_cell_lists(passable_cells),
+        "hard_obstacle_cells": _sorted_cell_lists(hard_obstacle_cells),
+        "los_blocker_cells": _sorted_cell_lists(los_blocker_cells),
+        "main_coverable_cells": _sorted_cell_lists(main_coverable_cells),
+        "hazard_observable_cells": _sorted_cell_lists(hazard_observable_cells),
+    }
+    semantics_hash = hashlib.sha256(
+        json.dumps(hash_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    return {
+        "coverable_cell_semantics_hash": semantics_hash,
+        "raw_roi_denominator_cells": len(raw_roi_cells),
+        "passable_denominator_cells": len(passable_cells),
+        "main_coverable_denominator_cells": len(main_coverable_cells),
+        "hazard_observable_denominator_cells": len(hazard_observable_cells),
+        "traversable_cell_count": len(traversable_cells),
+        "hard_obstacle_cell_count": len(hard_obstacle_cells),
+        "main_coverable_hard_obstacle_overlap_count": len(main_coverable_cells & hard_obstacle_cells),
+        "los_blocker_cell_count": len(los_blocker_cells),
+        "synthetic_los_only_blocker_cell_count": len(los_only_cells),
+        "synthetic_los_only_blocker_passable_count": len(los_only_cells & passable_cells),
+        "synthetic_los_only_blocker_main_coverable_count": len(los_only_cells & main_coverable_cells),
+        "_raw_roi_cells": raw_roi_cells,
+        "_passable_cells": passable_cells,
+        "_main_coverable_cells": main_coverable_cells,
+        "_hazard_observable_cells": hazard_observable_cells,
+        "_hard_obstacle_cells": hard_obstacle_cells,
+        "_synthetic_los_only_blocker_cells": los_only_cells,
+    }
+
+
+def _passable_and_raw_cells_from_payload(payload: dict[str, Any]) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    mask = _find_nested_key(payload, "passable_mask")
+    if not isinstance(mask, list):
+        return set(), set()
+    passable_cells: set[tuple[int, int]] = set()
+    raw_cells: set[tuple[int, int]] = set()
+    for y, row in enumerate(mask):
+        if not isinstance(row, list):
+            continue
+        for x, value in enumerate(row):
+            cell = (int(x), int(y))
+            raw_cells.add(cell)
+            if bool(value):
+                passable_cells.add(cell)
+    return passable_cells, raw_cells
+
+
+def _cells_from_payload_fields(payload: dict[str, Any], fields: tuple[str, ...]) -> set[tuple[int, int]]:
+    cells: set[tuple[int, int]] = set()
+    for field in fields:
+        value = payload.get(field)
+        if field.endswith("rectangles"):
+            cells.update(_cells_from_rectangles_value(value))
+        else:
+            cells.update(_cells_from_cell_list_value(value))
+    return cells
+
+
+def _cells_from_cell_list_value(value: Any) -> set[tuple[int, int]]:
+    if not isinstance(value, list):
+        return set()
+    cells: set[tuple[int, int]] = set()
+    for item in value:
+        cell = _cell_tuple(item)
+        if cell is not None:
+            cells.add(cell)
+    return cells
+
+
+def _cells_from_rectangles_value(value: Any) -> set[tuple[int, int]]:
+    if not isinstance(value, list):
+        return set()
+    cells: set[tuple[int, int]] = set()
+    for raw in value:
+        bounds: tuple[int, int, int, int] | None = None
+        if isinstance(raw, dict):
+            if all(key in raw for key in ("min_x", "min_y", "max_x", "max_y")):
+                bounds = (int(raw["min_x"]), int(raw["min_y"]), int(raw["max_x"]), int(raw["max_y"]))
+            elif all(key in raw for key in ("x0", "y0", "x1", "y1")):
+                bounds = (int(raw["x0"]), int(raw["y0"]), int(raw["x1"]), int(raw["y1"]))
+        elif isinstance(raw, (list, tuple)) and len(raw) >= 4:
+            try:
+                bounds = (int(raw[0]), int(raw[1]), int(raw[2]), int(raw[3]))
+            except (TypeError, ValueError):
+                bounds = None
+        if bounds is None:
+            continue
+        x0, y0, x1, y1 = bounds
+        for x in range(min(x0, x1), max(x0, x1) + 1):
+            for y in range(min(y0, y1), max(y0, y1) + 1):
+                cells.add((x, y))
+    return cells
+
+
+def _sorted_cell_lists(cells: set[tuple[int, int]]) -> list[list[int]]:
+    return [[int(x), int(y)] for x, y in sorted(cells)]
+
+
 def _find_nested_key(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         if key in value:
@@ -1259,6 +1451,56 @@ def _coverage_rate_from_count(cell_count: int, denominator_context: dict[str, An
     if numeric is None or float(numeric) <= TOLERANCE:
         return None
     return float(cell_count) / float(numeric)
+
+
+def _coverage_count_for_denominator(covered_cells: set[tuple[int, int]], denominator_context: dict[str, Any]) -> int:
+    main_coverable_cells = denominator_context.get("_main_coverable_cells")
+    if denominator_context.get("coverage_denominator_mode") == "main_coverable_cells" and isinstance(main_coverable_cells, set):
+        return len(covered_cells & main_coverable_cells)
+    return len(covered_cells)
+
+
+def _coverage_denominator_episode_fields(
+    covered_cells: set[tuple[int, int]],
+    denominator_context: dict[str, Any],
+) -> dict[str, Any]:
+    main_cells = denominator_context.get("_main_coverable_cells")
+    passable_cells = denominator_context.get("_passable_cells")
+    raw_cells = denominator_context.get("_raw_roi_cells")
+    hazard_cells = denominator_context.get("_hazard_observable_cells")
+
+    main_count = len(covered_cells & main_cells) if isinstance(main_cells, set) else _coverage_count_for_denominator(covered_cells, denominator_context)
+    passable_count = len(covered_cells & passable_cells) if isinstance(passable_cells, set) else None
+    raw_count = len(covered_cells & raw_cells) if isinstance(raw_cells, set) else len(covered_cells)
+    hazard_count = len(covered_cells & hazard_cells) if isinstance(hazard_cells, set) else 0
+
+    return {
+        "main_coverable_denominator_cells": denominator_context.get("main_coverable_denominator_cells"),
+        "main_covered_cell_count": main_count,
+        "main_coverage_rate": _safe_ratio(main_count, denominator_context.get("main_coverable_denominator_cells")),
+        "raw_roi_denominator_cells": denominator_context.get("raw_roi_denominator_cells"),
+        "raw_roi_coverage_rate": _safe_ratio(raw_count, denominator_context.get("raw_roi_denominator_cells")),
+        "passable_denominator_cells": denominator_context.get("passable_denominator_cells"),
+        "passable_covered_cell_count": passable_count,
+        "passable_coverage_rate": _safe_ratio(passable_count, denominator_context.get("passable_denominator_cells")),
+        "hazard_observable_denominator_cells": denominator_context.get("hazard_observable_denominator_cells"),
+        "hazard_observed_cell_count": hazard_count,
+        "hazard_observation_rate": _safe_ratio(hazard_count, denominator_context.get("hazard_observable_denominator_cells")),
+        "coverable_cell_semantics_hash": denominator_context.get("coverable_cell_semantics_hash"),
+        "traversable_cell_count": denominator_context.get("traversable_cell_count"),
+        "hard_obstacle_cell_count": denominator_context.get("hard_obstacle_cell_count"),
+        "main_coverable_hard_obstacle_overlap_count": denominator_context.get("main_coverable_hard_obstacle_overlap_count"),
+        "los_blocker_cell_count": denominator_context.get("los_blocker_cell_count"),
+        "synthetic_los_only_blocker_cell_count": denominator_context.get("synthetic_los_only_blocker_cell_count"),
+        "synthetic_los_only_blocker_passable_count": denominator_context.get("synthetic_los_only_blocker_passable_count"),
+        "synthetic_los_only_blocker_main_coverable_count": denominator_context.get(
+            "synthetic_los_only_blocker_main_coverable_count"
+        ),
+    }
+
+
+def _public_coverage_denominator_context(denominator_context: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in denominator_context.items() if not str(key).startswith("_")}
 
 
 def _coverage_rate_capped(rate: float | None) -> float | None:
@@ -1390,8 +1632,9 @@ def _run_policy_episode(
     radius = int(config["coverage_radius_cells"])
     start_cell = _cell_tuple(scenario.get("start_cell")) or (0, 0)
     covered_cells = set(_footprint(start_cell, radius=radius))
-    coverage_rates = [len(covered_cells) / denominator]
-    coverage_rate_raw_values: list[float | None] = [_coverage_rate_from_count(len(covered_cells), denominator_context)]
+    initial_coverage_count = _coverage_count_for_denominator(covered_cells, denominator_context)
+    coverage_rates = [initial_coverage_count / denominator]
+    coverage_rate_raw_values: list[float | None] = [_coverage_rate_from_count(initial_coverage_count, denominator_context)]
     coverage_rate_capped_values: list[float | None] = [_coverage_rate_capped(coverage_rate_raw_values[-1])]
     steps: list[dict[str, Any]] = []
     inference_rows: list[dict[str, Any]] = []
@@ -1406,6 +1649,7 @@ def _run_policy_episode(
     risk_boundary_violation_steps = 0
     energy_total = 0.0
     new_cell_total = 0
+    raw_new_cell_total = 0
     revisited_cell_total = 0
     coverage_return = 0.0
     valuable_area_covered = 0.0
@@ -1537,6 +1781,7 @@ def _run_policy_episode(
                 "coverage_denominator_mode": denominator_context["coverage_denominator_mode"],
                 "coverage_denominator_source": denominator_context["coverage_denominator_source"],
                 "coverage_denominator_reason_codes": denominator_context["coverage_denominator_reason_codes"],
+                **_coverage_denominator_episode_fields(covered_cells, denominator_context),
                 "new_covered_cell_count": 0,
                 "revisited_cell_count": 0,
                 "coverage_gain_per_path_cost": None,
@@ -1564,6 +1809,19 @@ def _run_policy_episode(
             candidates,
             scenario_index + step_index,
             model_bundle.get("xunce_config") or {},
+        )
+        synthetic_feature_metadata = _apply_synthetic_credit_feature_exposure_to_adapter(
+            adapter,
+            candidates=candidates,
+            current_cell=cell_before,
+            current_theta_deg=current_theta_deg,
+            covered_cells=covered_cells,
+            candidate_set_hash_value=candidate_set_hash_value,
+            config=config,
+            slice_row=slice_row,
+            obstacle_source_linkage=obstacle_source_linkage,
+            repo_root=repo_root,
+            hybrid_astar_executor=hybrid_astar_executor,
         )
         if config["emit_candidate_metric_audit"]:
             candidate_metric_rows.extend(
@@ -1812,16 +2070,19 @@ def _run_policy_episode(
                 hard_risk_violation_count += 1
                 risk_boundary_violation_steps += 1
             energy_total += _float_default(selected_energy)
-            new_cell_total += len(new_cells)
+            new_cells_for_rate = _coverage_count_for_denominator(new_cells, denominator_context)
+            raw_new_cell_total += len(new_cells)
+            new_cell_total += new_cells_for_rate
             revisited_cell_total += len(revisited_cells)
-            coverage_delta = len(new_cells) / denominator
+            coverage_delta = new_cells_for_rate / denominator
             coverage_return += coverage_delta
-            valuable_area_covered += len(new_cells) * _float_default(selected_value)
+            valuable_area_covered += new_cells_for_rate * _float_default(selected_value)
             selected_theta = _finite_or_none((selected_candidate or {}).get("candidate_theta_deg"))
             if selected_theta is not None:
                 current_theta_deg = float(selected_theta)
-        coverage_rates.append(len(covered_cells) / denominator)
-        coverage_rate_raw_values.append(_coverage_rate_from_count(len(covered_cells), denominator_context))
+        covered_count_for_rate = _coverage_count_for_denominator(covered_cells, denominator_context)
+        coverage_rates.append(covered_count_for_rate / denominator)
+        coverage_rate_raw_values.append(_coverage_rate_from_count(covered_count_for_rate, denominator_context))
         coverage_rate_capped_values.append(_coverage_rate_capped(coverage_rate_raw_values[-1]))
         if detail is not None:
             selected_probabilities.append(float(detail_payload["selected_probability"]))
@@ -1890,7 +2151,8 @@ def _run_policy_episode(
             "coverage_denominator_mode": denominator_context["coverage_denominator_mode"],
             "coverage_denominator_source": denominator_context["coverage_denominator_source"],
             "coverage_denominator_reason_codes": denominator_context["coverage_denominator_reason_codes"],
-            "new_covered_cell_count": len(new_cells),
+            **_coverage_denominator_episode_fields(covered_cells, denominator_context),
+            "new_covered_cell_count": _coverage_count_for_denominator(new_cells, denominator_context),
             "revisited_cell_count": len(revisited_cells),
             "coverage_gain_per_path_cost": _safe_ratio(coverage_delta, selected_cost),
             "coverage_gain_per_risk": _safe_ratio(coverage_delta, selected_risk),
@@ -2006,6 +2268,16 @@ def _run_policy_episode(
                     "action_probs": list(detail_payload.get("action_probs") or []),
                     "logits": list(detail_payload.get("logits") or []),
                     "masked_logits": list(detail_payload.get("masked_logits") or []),
+                    "xunce_batch_feature_semantic_map": synthetic_feature_metadata.get(
+                        "xunce_batch_feature_semantic_map"
+                    ),
+                    "synthetic_credit_feature_rows": synthetic_feature_metadata.get("synthetic_credit_feature_rows"),
+                    "synthetic_los_blocker_candidate_counts": synthetic_feature_metadata.get(
+                        "synthetic_los_blocker_candidate_counts"
+                    ),
+                    "synthetic_hard_obstacle_candidate_counts": synthetic_feature_metadata.get(
+                        "synthetic_hard_obstacle_candidate_counts"
+                    ),
                     "value": detail_payload.get("value"),
                     "finite_outputs": detail_payload.get("finite_outputs"),
                     "latency_ms": detail_payload.get("latency_ms"),
@@ -2064,7 +2336,7 @@ def _run_policy_episode(
         "coverage_return": coverage_return,
         "coverage_curve_auc": coverage_curve_auc,
         "raw_covered_cell_count": len(covered_cells),
-        "raw_new_covered_cell_count": new_cell_total,
+        "raw_new_covered_cell_count": raw_new_cell_total,
         "coverage_rate_raw": coverage_rate_raw,
         "coverage_rate_capped": coverage_rate_capped,
         "final_coverage_rate_capped": coverage_rate_capped,
@@ -2076,6 +2348,7 @@ def _run_policy_episode(
         "coverage_denominator_mode": denominator_context["coverage_denominator_mode"],
         "coverage_denominator_source": denominator_context["coverage_denominator_source"],
         "coverage_denominator_reason_codes": denominator_context["coverage_denominator_reason_codes"],
+        **_coverage_denominator_episode_fields(covered_cells, denominator_context),
         "new_covered_cell_count": new_cell_total,
         "total_new_cell_count": new_cell_total,
         "revisited_cell_count": revisited_cell_total,
@@ -3687,6 +3960,209 @@ def _candidate_rows_for_step(
     })
 
 
+def _apply_synthetic_credit_feature_exposure_to_adapter(
+    adapter: dict[str, Any],
+    *,
+    candidates: list[dict[str, Any]],
+    current_cell: tuple[int, int],
+    current_theta_deg: float,
+    covered_cells: set[tuple[int, int]],
+    candidate_set_hash_value: str,
+    config: dict[str, Any],
+    slice_row: dict[str, Any],
+    obstacle_source_linkage: dict[str, Any] | None,
+    repo_root: Path,
+    hybrid_astar_executor: Any | None = None,
+) -> dict[str, Any]:
+    if not bool(config.get("synthetic_credit_feature_exposure_enabled", False)):
+        return {"synthetic_credit_feature_exposure_enabled": False}
+    xunce_batch = adapter.get("xunce_batch")
+    if not isinstance(xunce_batch, dict) or "candidate_features" not in xunce_batch:
+        return {
+            "synthetic_credit_feature_exposure_enabled": True,
+            "candidate_feature_signal_missing": True,
+            "missing_reason": "xunce_batch_missing_candidate_features",
+        }
+    candidate_count = len(candidates)
+    feature_candidates = _synthetic_credit_feature_probe_candidates(
+        candidates,
+        current_theta_deg=current_theta_deg,
+        candidate_set_hash_value=candidate_set_hash_value,
+        config=config,
+        current_cell=current_cell,
+        slice_row=slice_row,
+        repo_root=repo_root,
+        hybrid_astar_executor=hybrid_astar_executor,
+    )
+    hybrid_costs = [candidate.get("hybrid_astar_path_cost") for candidate in feature_candidates]
+    hybrid_reachable = [candidate.get("hybrid_astar_reachable") is True for candidate in feature_candidates]
+    coverage_counts: list[int | None] = []
+    coverage_gain_per_cost: list[float | None] = []
+    for candidate in feature_candidates:
+        cell = _cell_tuple(_candidate_cell(candidate))
+        if cell is None:
+            coverage_counts.append(None)
+            coverage_gain_per_cost.append(None)
+            continue
+        visible = _candidate_coverage_cells(
+            start=current_cell,
+            end=cell,
+            candidate=candidate,
+            config=config,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
+        new_count = len(visible - covered_cells)
+        coverage_counts.append(new_count)
+        hybrid_cost = _finite_or_none(candidate.get("hybrid_astar_path_cost"))
+        fallback_cost = _candidate_cost(candidate)
+        denominator = hybrid_cost if hybrid_cost is not None and hybrid_cost > 0.0 else fallback_cost
+        coverage_gain_per_cost.append(_safe_ratio(float(new_count), denominator))
+    los_counts, hard_counts, pressure_source = _synthetic_pressure_counts_for_candidates(
+        feature_candidates,
+        config=config,
+        slice_row=slice_row,
+        repo_root=repo_root,
+    )
+    feature_rows = build_synthetic_credit_feature_rows(
+        candidate_count=candidate_count,
+        relative_distances=_relative_distances_from_current_cell(candidates, current_cell),
+        hybrid_reachable_flags=hybrid_reachable,
+        obstacle_aware_new_visible_cell_counts=coverage_counts,
+        obstacle_aware_gain_per_hybrid_costs=coverage_gain_per_cost,
+        hybrid_astar_path_costs=hybrid_costs,
+        synthetic_los_blocker_candidate_counts=los_counts,
+        synthetic_hard_obstacle_candidate_counts=hard_counts,
+        risk_values=[_finite_or_none(candidate.get("risk")) for candidate in candidates],
+    )
+    adapter["xunce_batch"] = apply_feature_rows_to_xunce_batch(xunce_batch, feature_rows)
+    semantic_map = feature_semantic_map()
+    semantic_map["feature_contract_id"] = "synthetic_credit_candidate_features/v1"
+    semantic_map["source"] = "high_fidelity_synthetic_credit_feature_exposure/v1"
+    semantic_map["synthetic_pressure_source"] = pressure_source
+    metadata = {
+        "synthetic_credit_feature_exposure_enabled": True,
+        "xunce_batch_feature_semantic_map": semantic_map,
+        "synthetic_credit_feature_rows": feature_rows,
+        "synthetic_los_blocker_candidate_counts": los_counts,
+        "synthetic_hard_obstacle_candidate_counts": hard_counts,
+        "candidate_feature_signal_missing": False,
+    }
+    adapter["xunce_batch_feature_semantic_map"] = semantic_map
+    adapter["synthetic_credit_feature_rows"] = feature_rows
+    return metadata
+
+
+def _synthetic_credit_feature_probe_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    current_theta_deg: float,
+    candidate_set_hash_value: str,
+    config: dict[str, Any],
+    current_cell: tuple[int, int],
+    slice_row: dict[str, Any],
+    repo_root: Path,
+    hybrid_astar_executor: Any | None,
+) -> list[dict[str, Any]]:
+    probes = [dict(candidate) for candidate in candidates]
+    if continuous_theta_enabled(config):
+        for index, candidate in enumerate(probes):
+            cell = _cell_tuple(_candidate_cell(candidate))
+            if cell is None:
+                continue
+            candidate["candidate_theta_deg"] = float(current_theta_deg)
+            candidate["candidate_viewpoint"] = [int(cell[0]), int(cell[1]), float(current_theta_deg)]
+            candidate["candidate_index"] = int(index)
+            candidate["candidate_set_hash"] = candidate_set_hash_value
+            candidate["continuous_theta_feature_probe"] = "current_heading_probe/v1"
+    if bool(config.get("hybrid_astar_pose_path_cost_enabled", False)) and not _candidates_have_hybrid_path_cost(probes):
+        _enrich_candidates_with_hybrid_astar_path_cost(
+            probes,
+            current_cell=current_cell,
+            current_theta_deg=current_theta_deg,
+            candidate_set_hash_value=candidate_set_hash_value,
+            step_index=0,
+            scenario_id="synthetic-credit-feature-probe",
+            config=config,
+            slice_row=slice_row,
+            repo_root=repo_root,
+            hybrid_astar_executor=hybrid_astar_executor,
+        )
+    return probes
+
+
+def _candidates_have_hybrid_path_cost(candidates: list[dict[str, Any]]) -> bool:
+    return bool(candidates) and all(candidate.get("hybrid_astar_path_cost") is not None for candidate in candidates)
+
+
+def _relative_distances_from_current_cell(
+    candidates: list[dict[str, Any]],
+    current_cell: tuple[int, int],
+) -> list[float | None]:
+    values: list[float | None] = []
+    for candidate in candidates:
+        cell = _cell_tuple(_candidate_cell(candidate))
+        if cell is None:
+            values.append(None)
+            continue
+        values.append(math.hypot(float(cell[0] - current_cell[0]), float(cell[1] - current_cell[1])))
+    return values
+
+
+def _synthetic_pressure_counts_for_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    config: dict[str, Any],
+    slice_row: dict[str, Any],
+    repo_root: Path,
+) -> tuple[list[float | None], list[float | None], str]:
+    explicit_los = [candidate.get("synthetic_los_blocker_candidate_count") for candidate in candidates]
+    explicit_hard = [candidate.get("synthetic_hard_obstacle_candidate_count") for candidate in candidates]
+    if any(_finite_or_none(value) is not None for value in explicit_los + explicit_hard):
+        return (
+            candidate_pressure_values(explicit_los, len(candidates)),
+            candidate_pressure_values(explicit_hard, len(candidates)),
+            "candidate_explicit_fields/v1",
+        )
+    sidecar = _read_sidecar_payload(slice_row, repo_root)
+    los_cells = _cell_set_from_payload(sidecar.get("synthetic_los_blocker_cells"))
+    hard_cells = _cell_set_from_payload(sidecar.get("synthetic_hard_obstacle_cells"))
+    if not los_cells and not hard_cells:
+        return ([0.0 for _ in candidates], [0.0 for _ in candidates], "missing_candidate_pressure_fields")
+    los_counts: list[float | None] = []
+    hard_counts: list[float | None] = []
+    for candidate in candidates:
+        footprint = _synthetic_pressure_footprint(candidate, config)
+        los_counts.append(float(len(footprint & los_cells)))
+        hard_counts.append(float(len(footprint & hard_cells)))
+    return los_counts, hard_counts, "sidecar_candidate_footprint_intersection/v1"
+
+
+def _synthetic_pressure_footprint(candidate: dict[str, Any], config: dict[str, Any]) -> set[tuple[int, int]]:
+    cell = _cell_tuple(_candidate_cell(candidate))
+    if cell is None:
+        return set()
+    theta_deg = _finite_or_none(candidate.get("candidate_theta_deg"))
+    if theta_deg is not None:
+        return visible_cells_for_viewpoint(
+            cell,
+            theta_deg=float(theta_deg),
+            sensor_range_cells=int(config.get("sensor_range_cells", config.get("coverage_radius_cells", 1))),
+            sensor_fov_deg=float(config.get("sensor_fov_deg", 90.0)),
+        )
+    return _footprint(cell, radius=int(config.get("coverage_radius_cells", 1)))
+
+
+def _cell_set_from_payload(value: Any) -> set[tuple[int, int]]:
+    cells: set[tuple[int, int]] = set()
+    if not isinstance(value, list):
+        return cells
+    for item in value:
+        cell = _cell_tuple(item)
+        if cell is not None:
+            cells.add(cell)
+    return cells
+
+
 def _bind_continuous_theta_to_selected_candidate(
     candidate: dict[str, Any],
     *,
@@ -4551,6 +5027,18 @@ def _paired_decision_audit_row(
         row.update({f"incumbent_{key}": value for key, value in _selected_candidate_metrics(candidates, row["incumbent_selected_action_index"]).items()})
     except Exception as exc:  # pragma: no cover
         reasons.append(f"incumbent_shadow_scoring_failed:{type(exc).__name__}")
+    for prefix in ("xunce", "incumbent"):
+        for key in (
+            "selected_cell",
+            "selected_viewpoint",
+            "selected_theta_deg",
+            "selected_base_candidate_index",
+            "selected_path_cost",
+            "selected_risk",
+            "selected_expected_new_coverage_cell_count",
+            "selected_roi_weighted_coverage_delta",
+        ):
+            row.setdefault(f"{prefix}_{key}", None)
     row["policy_disagreement"] = (
         row.get("xunce_selected_action_index") is not None
         and row.get("incumbent_selected_action_index") is not None

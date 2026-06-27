@@ -29,6 +29,9 @@ from xunce_continuous_theta_action import (
 )
 
 
+SYNTHETIC_CREDIT_BEHAVIOR_POLICY_ID = "synthetic_credit_mixture_policy/v1"
+
+
 CONFIG_SCHEMA_VERSION = "xunce-stage21-4-tiny-ppo-update-smoke-config/v1"
 SUMMARY_SCHEMA_VERSION = "xunce-stage21-4-tiny-ppo-update-smoke-summary/v1"
 ROUTING_SCHEMA_VERSION = "xunce-stage21-4-next-stage-routing/v1"
@@ -528,6 +531,11 @@ def _row_uses_continuous_theta(row: dict[str, Any]) -> bool:
     return (row.get("action_space_type") or info.get("action_space_type")) == CONTINUOUS_THETA_ACTION_SPACE
 
 
+def _row_uses_synthetic_credit_behavior_policy(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    return (row.get("behavior_policy_id") or info.get("behavior_policy_id")) == SYNTHETIC_CREDIT_BEHAVIOR_POLICY_ID
+
+
 def _deserialize_xunce_batch(payload: Any) -> dict[str, torch.Tensor]:
     if not isinstance(payload, dict):
         raise ValueError("xunce_batch_missing")
@@ -757,6 +765,10 @@ def _write_outputs(
         "entropy_loss_grad_norm": gradient_audit.get("component_grad_norms", {}).get("entropy_loss_grad_norm"),
         "gradient_parameter_count": gradient_audit.get("parameter_with_grad_count", 0),
         "loss_audit_row_count": len(loss_audit_rows),
+        "synthetic_credit_behavior_policy_row_count": sum(
+            1 for row in train_rows if _row_uses_synthetic_credit_behavior_policy(row)
+        ),
+        "old_log_prob_source": "behavior_policy_when_present",
         "final_total_loss": loss_audit_rows[-1]["total_loss"] if loss_audit_rows else None,
         "final_policy_loss": loss_audit_rows[-1]["policy_loss"] if loss_audit_rows else None,
         "final_value_loss": loss_audit_rows[-1]["value_loss"] if loss_audit_rows else None,
@@ -858,6 +870,13 @@ def _batch_rejections(
                 and abs(old_total - (old_point + old_theta)) > 1.0e-5
             ):
                 reasons.append("continuous_theta_old_log_prob_decomposition_mismatch")
+        if _row_uses_synthetic_credit_behavior_policy(row):
+            old_total = _finite(row.get("old_log_prob"))
+            old_behavior_total = _finite(row.get("old_behavior_log_prob"))
+            if old_total is None or old_behavior_total is None:
+                reasons.append("synthetic_credit_behavior_logprob_missing")
+            elif abs(old_total - old_behavior_total) > 1.0e-5:
+                reasons.append("synthetic_credit_behavior_logprob_mismatch")
         if _finite(row.get("return")) is None:
             reasons.append("non_finite_return")
         if _finite(row.get("advantage")) is None:

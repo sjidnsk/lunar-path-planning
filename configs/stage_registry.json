@@ -582,6 +582,24 @@
       "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_5b_documentation_boundary_consolidation_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage26-6-synthetic-exploration-credit-assignment": {
+      "script": "scripts/run_xunce_stage26_6_synthetic_exploration_credit_assignment.py",
+      "default_config": "configs/xunce_stage26_6_synthetic_exploration_credit_assignment_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_6_synthetic_exploration_credit_assignment_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-7-synthetic-credit-assignment-path-efficiency-repair": {
+      "script": "scripts/run_xunce_stage26_7_synthetic_credit_assignment_path_efficiency_repair.py",
+      "default_config": "configs/xunce_stage26_7_synthetic_credit_assignment_path_efficiency_repair_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7_synthetic_credit_assignment_path_efficiency_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-7b-coverable-cell-semantics-contract": {
+      "script": "scripts/run_xunce_stage26_7b_coverable_cell_semantics_contract.py",
+      "default_config": "configs/xunce_stage26_7b_coverable_cell_semantics_contract_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7b_coverable_cell_semantics_contract_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18-research-evidence-pipeline": {
       "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
       "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",

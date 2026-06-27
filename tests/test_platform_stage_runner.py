@@ -93,6 +93,9 @@ SUPPORTED_STAGE_IDS = {
     "xunce-stage26-4a-parallelize-stage21-1-hybrid-astar-candidate-costs",
     "xunce-stage26-5-synthetic-discrete-margin-crossing-calibration",
     "xunce-stage26-5b-documentation-boundary-consolidation",
+    "xunce-stage26-6-synthetic-exploration-credit-assignment",
+    "xunce-stage26-7-synthetic-credit-assignment-path-efficiency-repair",
+    "xunce-stage26-7b-coverable-cell-semantics-contract",
     "xunce-stage18i-evidence-closure-audit",
     "xunce-stage18-research-evidence-pipeline",
 }

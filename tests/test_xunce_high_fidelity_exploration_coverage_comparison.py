@@ -198,6 +198,13 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             run_xunce_high_fidelity_exploration_coverage_comparison,
         )
 
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        sidecar = self._read_json(sidecar_path)
+        sidecar["synthetic_los_blocker_cells"] = [[2, 0], [3, 0]]
+        sidecar["synthetic_hard_obstacle_cells"] = [[2, 0]]
+        sidecar["synthetic_terrain_hash"] = "synthetic-hash"
+        sidecar["synthetic_source_kind"] = "synthetic_terrain_obstacle_proxy/v1"
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
         self._update_config(
             required_scenario_count=1,
             rollout_steps=1,
@@ -221,6 +228,10 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             hybrid_astar_turn_penalty_weight=0.05,
             platform_contract_hash="platform-hash",
             max_traversable_slope_deg=30.0,
+            synthetic_credit_feature_exposure_enabled=True,
+            synthetic_terrain_contract_enabled=True,
+            synthetic_terrain_hash="synthetic-hash",
+            synthetic_source_kind="synthetic_terrain_obstacle_proxy/v1",
         )
 
         summary = run_xunce_high_fidelity_exploration_coverage_comparison(
@@ -242,6 +253,181 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertFalse(first["default_astar_replaced"])
         self.assertFalse(first["hybrid_astar_ackermann_feasible_claimed"])
         self.assertEqual(first["platform_contract_hash"], "platform-hash")
+        self.assertEqual(
+            first["xunce_batch_feature_semantic_map"]["feature_contract_id"],
+            "synthetic_credit_candidate_features/v1",
+        )
+        self.assertTrue(first["synthetic_credit_feature_rows"])
+
+    def test_main_coverable_denominator_excludes_hard_obstacles_but_keeps_los_only_blockers(self) -> None:
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as coverage
+
+        sidecar_path = self.temp_dir / "semantic.sidecar.json"
+        sidecar_path.write_text(
+            json.dumps(
+                {
+                    "passable_mask": [[True, True, True, True] for _ in range(4)],
+                    "physical_obstacle_cells": [[0, 0]],
+                    "slope_blocked_cells": [[1, 0]],
+                    "blocked_cells": [[2, 0]],
+                    "synthetic_hard_obstacle_cells": [[3, 0]],
+                    "synthetic_los_blocker_cells": [[0, 1]],
+                    "synthetic_high_risk_cells": [[1, 1]],
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        context = coverage.resolve_coverage_denominator(
+            {},
+            {"sidecar": str(sidecar_path)},
+            {
+                "coverage_denominator_mode": "main_coverable_cells",
+                "coverage_denominator_cells": 999,
+                "derive_slope_blocked_cells_from_sidecar_dem": False,
+                "max_traversable_slope_deg": 30.0,
+            },
+            self.repo_root,
+        )
+        self.assertEqual(context["coverage_denominator_source"], "main_coverable_cells/v1")
+        self.assertEqual(context["coverage_denominator_cells"], 12)
+        self.assertEqual(context["passable_denominator_cells"], 16)
+        self.assertEqual(context["hard_obstacle_cell_count"], 4)
+        self.assertEqual(context["synthetic_los_only_blocker_cell_count"], 1)
+        self.assertEqual(context["synthetic_los_only_blocker_main_coverable_count"], 1)
+
+        covered_cells = {(0, 1), (1, 1), (3, 3), (3, 0)}
+        self.assertEqual(coverage._coverage_count_for_denominator(covered_cells, context), 3)
+        fields = coverage._coverage_denominator_episode_fields(covered_cells, context)
+        self.assertEqual(fields["main_coverable_denominator_cells"], 12)
+        self.assertEqual(fields["main_covered_cell_count"], 3)
+        self.assertAlmostEqual(fields["main_coverage_rate"], 3 / 12)
+        self.assertAlmostEqual(fields["raw_roi_coverage_rate"], 4 / 16)
+        self.assertAlmostEqual(fields["passable_coverage_rate"], 4 / 16)
+        self.assertEqual(fields["hazard_observed_cell_count"], 2)
+        self.assertAlmostEqual(fields["hazard_observation_rate"], 2 / 4)
+        self.assertTrue(fields["coverable_cell_semantics_hash"])
+        json.dumps(coverage._public_coverage_denominator_context(context), sort_keys=True)
+
+    def test_roi_valid_cells_denominator_behavior_remains_unchanged(self) -> None:
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as coverage
+
+        sidecar_path = self.temp_dir / "roi-valid.sidecar.json"
+        sidecar_path.write_text(
+            json.dumps({"passable_mask": [[True, False], [True, True]]}, sort_keys=True),
+            encoding="utf-8",
+        )
+        context = coverage.resolve_coverage_denominator(
+            {},
+            {"sidecar": str(sidecar_path)},
+            {"coverage_denominator_mode": "roi_valid_cells", "coverage_denominator_cells": 999},
+            self.repo_root,
+        )
+        self.assertEqual(context["coverage_denominator_source"], "sidecar_passable_mask_valid_cells/v1")
+        self.assertEqual(context["coverage_denominator_cells"], 3)
+
+    def test_main_coverable_episode_keeps_raw_new_count_separate_from_main_new_count(self) -> None:
+        from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
+            run_xunce_high_fidelity_exploration_coverage_comparison,
+        )
+
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        sidecar = self._read_json(sidecar_path)
+        sidecar["passable_mask"] = [[True, True, True, True] for _ in range(4)]
+        sidecar["synthetic_hard_obstacle_cells"] = [[1, 0]]
+        sidecar["synthetic_los_blocker_cells"] = [[2, 0]]
+        sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+        self._update_config(
+            required_scenario_count=1,
+            rollout_steps=1,
+            coverage_denominator_mode="main_coverable_cells",
+            coverage_denominator_cells=999,
+            candidate_refresh_mode="static_from_source",
+            emit_candidate_metric_audit=False,
+        )
+
+        summary = run_xunce_high_fidelity_exploration_coverage_comparison(
+            config_path=self.config_path,
+            output_root=self.output_root,
+            repo_root=self.repo_root,
+        )
+
+        self.assertEqual(summary["status"], "passed")
+        episodes = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
+        self.assertTrue(episodes)
+        first = episodes[0]
+        self.assertEqual(first["coverage_denominator_source"], "main_coverable_cells/v1")
+        self.assertIn("main_covered_cell_count", first)
+        self.assertGreaterEqual(first["raw_new_covered_cell_count"], first["new_covered_cell_count"])
+
+    def test_synthetic_credit_feature_exposure_overrides_xunce_batch_features(self) -> None:
+        import torch
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as hf
+
+        sidecar = self.temp_dir / "synthetic-sidecar.json"
+        sidecar.write_text(
+            json.dumps(
+                {
+                    "synthetic_los_blocker_cells": [[2, 0], [3, 0]],
+                    "synthetic_hard_obstacle_cells": [[2, 0]],
+                    "synthetic_terrain_hash": "synthetic-hash",
+                    "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        adapter = {"xunce_batch": {"candidate_features": torch.zeros((1, 2, 8), dtype=torch.float32)}}
+        candidates = [
+            {
+                "cell": [1, 0],
+                "candidate_theta_deg": 0.0,
+                "path_cost": 1.0,
+                "risk": 0.1,
+                "hybrid_astar_path_cost": 2.0,
+                "hybrid_astar_reachable": True,
+            },
+            {
+                "cell": [0, 1],
+                "candidate_theta_deg": 180.0,
+                "path_cost": 1.5,
+                "risk": 0.2,
+                "hybrid_astar_path_cost": 4.0,
+                "hybrid_astar_reachable": True,
+            },
+        ]
+
+        metadata = hf._apply_synthetic_credit_feature_exposure_to_adapter(
+            adapter,
+            candidates=candidates,
+            current_cell=(0, 0),
+            current_theta_deg=0.0,
+            covered_cells=set(),
+            candidate_set_hash_value="candidate-hash",
+            config={
+                "synthetic_credit_feature_exposure_enabled": True,
+                "coverage_radius_cells": 1,
+                "coverage_metric_mode": "endpoint_footprint",
+                "sensor_range_cells": 3,
+                "sensor_fov_deg": 90.0,
+                "hybrid_astar_pose_path_cost_enabled": True,
+            },
+            slice_row={"sidecar": str(sidecar)},
+            obstacle_source_linkage=None,
+            repo_root=self.repo_root,
+        )
+
+        features = adapter["xunce_batch"]["candidate_features"]
+        self.assertEqual(features.shape, (1, 2, 8))
+        self.assertEqual(
+            metadata["xunce_batch_feature_semantic_map"]["feature_contract_id"],
+            "synthetic_credit_candidate_features/v1",
+        )
+        self.assertEqual(
+            metadata["xunce_batch_feature_semantic_map"]["synthetic_pressure_source"],
+            "sidecar_candidate_footprint_intersection/v1",
+        )
+        self.assertGreater(float(features[0, 0, 5]), float(features[0, 1, 5]))
+        self.assertGreater(float(features[0, 0, 6]), float(features[0, 1, 6]))
 
     def test_strict_v3_profile_loads_without_v2_only_risk_guard_keys(self) -> None:
         from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module

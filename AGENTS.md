@@ -66,13 +66,7 @@
 - `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
 - `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
 - `hybrid_astar_candidate_eval_workers=4` 是 Stage26.4/26.5 后续 synthetic terrain policy-signal 诊断默认并行 collector 设定。
-- 当前下一跳是 `repair_stage26_synthetic_exploration_credit_assignment`；不要回退到 Stage26.4A 串并行等价验收。
-
-## Stage25.0 Continuous Theta Hybrid Action Space Foundation
-
-- Stage25.0 将动作合同升级为离散候选点 `(x,y)` 加连续观测朝向 `theta`，但不连续化 x/y。
-- PPO joint logprob 为 point logprob + theta logprob，Hybrid A* 规划到采样位姿 `(x,y,theta)`。
-- 该阶段仍不发布 checkpoint、不替换 default policy、不连接 executor、不启动 canary。
+- 当前阶段是 Stage26.6 `synthetic_exploration_credit_assignment`；不要回退到 Stage26.4A 串并行等价验收。
 
 ## Stage26.0 Synthetic Rock/Pit Terrain Augmentation
 
@@ -97,4 +91,9 @@
 - Stage26.5 跳过 Stage26.4A 串并行等价验收，直接审计 Stage26.4 worker=4 结果。
 - 诊断结论：best synthetic candidate 没有被采样成 trainable selected action，未获得直接 PPO credit。
 - 同时发现 candidate feature 缺少 synthetic LOS / hard obstacle / Hybrid A* path-cost 候选级信号。
-- 下一阶段优先修复 `repair_stage26_synthetic_exploration_credit_assignment`，再处理 candidate feature exposure。
+
+## Stage26.6 Synthetic Exploration Credit Assignment
+
+- Stage26.6 给 8 维候选输入槽写入 synthetic/Hybrid/coverage 语义图，保持网络结构不变。
+- Stage21.1 新增 `synthetic_credit_mixture_policy/v1`，让 synthetic credit target 成为真实 selected action 并获得 direct PPO credit。
+- `old_log_prob` 使用 behavior total logprob，同时保留 `old_policy_*` 与 `old_behavior_*` 审计字段。

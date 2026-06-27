@@ -133,6 +133,8 @@ default policy, executor, canary, or performance claim is allowed. Passing
 Stage26.2 only proves the synthetic terrain batch can enter tiny PPO update and
 routes to post-update trajectory evaluation.
 
+Stage26.6 addresses the synthetic terrain credit-assignment gap found by Stage26.5. It keeps the network shape fixed but redefines the eight candidate-feature slots under an explicit `synthetic_credit_candidate_features/v1` semantic map, exposing normalized obstacle-aware coverage, Hybrid A* reachability/path cost, synthetic LOS pressure, synthetic hard-obstacle pressure, and risk/clearance proxy signals. Stage21.1 also adds `synthetic_credit_mixture_policy/v1`; when the mixture target is selected, the selected action is truly executed and `old_log_prob` is the behavior-policy total log probability while `old_policy_*` fields remain available for audit. Stage21.3 validates the behavior log probability and Stage21.4 continues to use `old_log_prob` as the PPO ratio denominator. This remains bounded smoke/diagnostic work: no checkpoint is published, no default policy is replaced, no executor or canary is enabled, and reward/HYBRID A* semantics are unchanged.
+
 Stage 18.7 is a prerequisite audit before using candidate-count arguments to
 justify architecture or reward changes. It tests only candidate-set cardinality:
 `dynamic_max_candidates_per_step` is swept over `6/12/24/36`, with proposal pool

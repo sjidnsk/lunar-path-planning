@@ -279,6 +279,11 @@ def _run_stage21_5(
         "hybrid_astar_ackermann_feasible_claimed": False,
         "hybrid_astar_candidate_eval_workers": int(config.get("hybrid_astar_candidate_eval_workers", 1)),
     }
+    if bool(config.get("continuous_theta_action_space_enabled")):
+        common["continuous_theta_action_space_enabled"] = True
+        common["action_space_type"] = str(config.get("action_space_type") or "hybrid_discrete_xy_continuous_theta/v1")
+    if bool(config.get("synthetic_credit_feature_exposure_enabled")):
+        common["synthetic_credit_feature_exposure_enabled"] = True
     high_fidelity_cfg.update(
         {
             **common,

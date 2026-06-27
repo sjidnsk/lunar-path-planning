@@ -343,6 +343,56 @@ def test_stage21_3_accepts_slope_obstacle_theta_reward_contract_when_required(tm
     assert rows[0]["max_traversable_slope_deg"] == 30.0
 
 
+def test_stage21_3_preserves_synthetic_credit_path_efficiency_fields(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+    from scripts.xunce_synthetic_exploration_credit import synthetic_credit_behavior_logprob
+
+    stage21_1, stage21_2 = _write_roots(tmp_path)
+    transition_path = stage21_1 / "xunce-stage21-1-ppo-trainable-batch.jsonl"
+    transitions = _read_jsonl(transition_path)
+    for transition in transitions:
+        logprob = synthetic_credit_behavior_logprob(
+            policy_probs=[1.0],
+            action_index=0,
+            target_index=0,
+            mixture_probability=1.0,
+        )
+        fields = {
+            **logprob,
+            "synthetic_credit_score": 0.42,
+            "synthetic_credit_score_version": "path_efficiency_v2",
+            "path_efficiency_filter_relaxed": False,
+            "selected_target_hybrid_cost_norm": 0.33,
+            "selected_target_gain_per_cost_norm": 0.77,
+        }
+        transition.update(fields)
+        transition["info"] = {
+            **transition["info"],
+            **fields,
+            "old_action_probs": [1.0],
+        }
+    _write_jsonl(transition_path, transitions)
+    config = _write_config(
+        tmp_path,
+        stage21_1,
+        stage21_2,
+        allow_synthetic_credit_behavior_policy=True,
+    )
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-3-ppo-trainable-batch.jsonl")
+    assert summary["status"] == "passed"
+    assert rows[0]["synthetic_credit_score_version"] == "path_efficiency_v2"
+    assert rows[0]["path_efficiency_filter_relaxed"] is False
+    assert rows[0]["selected_target_hybrid_cost_norm"] == 0.33
+    assert rows[0]["selected_target_gain_per_cost_norm"] == 0.77
+
+
 def test_stage21_3_rejects_unobstructed_theta_reward_when_slope_required(tmp_path: Path) -> None:
     from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
 

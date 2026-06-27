@@ -150,6 +150,33 @@ def test_stage26_3_routes_signal_repair_when_action_and_probabilities_do_not_cha
     assert summary["mean_abs_probability_delta"] == 0.0
 
 
+def test_stage26_3_forwards_continuous_theta_and_synthetic_feature_exposure(tmp_path: Path, monkeypatch) -> None:
+    import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
+
+    stage26_2 = _write_stage26_2_root(tmp_path)
+    _patch_stage21_5(monkeypatch, s26, mode="unchanged")
+    config = _write_config(
+        tmp_path,
+        stage26_2,
+        action_space_type="hybrid_discrete_xy_continuous_theta/v1",
+        continuous_theta_action_space_enabled=True,
+        synthetic_credit_feature_exposure_enabled=True,
+    )
+
+    s26.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    stage21_5_config = json.loads((tmp_path / "out" / "xunce-stage26-3-stage21-5-config.json").read_text(encoding="utf-8"))
+    high_fidelity_config = json.loads((tmp_path / "out" / "xunce-stage26-3-high-fidelity-config.json").read_text(encoding="utf-8"))
+    for generated in (stage21_5_config, high_fidelity_config):
+        assert generated["action_space_type"] == "hybrid_discrete_xy_continuous_theta/v1"
+        assert generated["continuous_theta_action_space_enabled"] is True
+        assert generated["synthetic_credit_feature_exposure_enabled"] is True
+
+
 def test_stage26_3_boundary_flags_hard_fail(tmp_path: Path, monkeypatch) -> None:
     import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
 
