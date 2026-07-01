@@ -126,6 +126,57 @@ def test_stage21_4_writes_loss_scaling_and_component_gradient_audit(tmp_path: Pa
     assert "total_loss_grad_norm" in gradient["component_grad_norms"]
 
 
+def test_stage21_4_gates_policy_kl_not_behavior_kl_for_synthetic_credit_rows(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_4_tiny_ppo_update_smoke import run_xunce_stage21_4_tiny_ppo_update_smoke
+
+    stage21_3, source_checkpoint, high_fidelity_config = _write_stage21_4_inputs(tmp_path)
+    rows_path = stage21_3 / "xunce-stage21-3-ppo-trainable-batch.jsonl"
+    rows = _read_jsonl(rows_path)
+    _mark_synthetic_behavior_rows(rows, behavior_offset=2.7, policy_offset=0.0)
+    _write_jsonl(rows_path, rows)
+    config = _write_config(tmp_path, stage21_3, source_checkpoint, high_fidelity_config, max_abs_approx_kl=1.5)
+
+    summary = run_xunce_stage21_4_tiny_ppo_update_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["ppo_ratio_old_log_prob_source"] == "behavior_policy_when_present"
+    assert summary["kl_gate_source"] == "policy_old_logprob_when_available/v1"
+    assert summary["behavior_policy_kl_diagnostic_only"] is True
+    assert summary["final_post_update_behavior_approx_kl"] > 1.5
+    assert abs(summary["final_pre_update_policy_approx_kl"]) < 1.0e-4
+    assert abs(summary["final_post_update_policy_approx_kl"]) <= 1.5
+    loss_row = _read_jsonl(Path(summary["loss_audit"]))[0]
+    assert loss_row["ratio_max"] < math.exp(-2.6)
+    assert loss_row["ratio_min"] > math.exp(-2.8)
+    assert loss_row["clip_fraction"] == 1.0
+
+
+def test_stage21_4_still_rejects_policy_kl_over_threshold(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_4_tiny_ppo_update_smoke import run_xunce_stage21_4_tiny_ppo_update_smoke
+
+    stage21_3, source_checkpoint, high_fidelity_config = _write_stage21_4_inputs(tmp_path)
+    rows_path = stage21_3 / "xunce-stage21-3-ppo-trainable-batch.jsonl"
+    rows = _read_jsonl(rows_path)
+    _mark_synthetic_behavior_rows(rows, behavior_offset=0.0, policy_offset=2.7)
+    _write_jsonl(rows_path, rows)
+    config = _write_config(tmp_path, stage21_3, source_checkpoint, high_fidelity_config, max_abs_approx_kl=1.5)
+
+    summary = run_xunce_stage21_4_tiny_ppo_update_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage21_4_ppo_update_numerics"
+    assert "post_update_approx_kl_exceeded" in summary["blocking_reason_codes"]
+    assert summary["final_post_update_policy_approx_kl"] > 1.5
+
+
 def test_stage21_4_boundary_flag_hard_fails(tmp_path: Path) -> None:
     from scripts.run_xunce_stage21_4_tiny_ppo_update_smoke import run_xunce_stage21_4_tiny_ppo_update_smoke
 
@@ -371,6 +422,24 @@ def _batch_row(
     if row_sampling_temperature is not None:
         row["info"]["sampling_temperature"] = row_sampling_temperature
     return row
+
+
+def _mark_synthetic_behavior_rows(rows: list[dict], *, behavior_offset: float, policy_offset: float) -> None:
+    for row in rows:
+        info = row.setdefault("info", {})
+        original = float(row["old_log_prob"])
+        behavior = original + behavior_offset
+        policy = original + policy_offset
+        row["behavior_policy_id"] = "synthetic_credit_mixture_policy/v1"
+        row["synthetic_credit_mixture_probability"] = 1.0
+        row["synthetic_credit_target_index"] = row["action_index"]
+        row["synthetic_credit_target_selected"] = True
+        row["old_policy_log_prob"] = policy
+        row["old_behavior_log_prob"] = behavior
+        row["old_log_prob"] = behavior
+        info["behavior_policy_id"] = "synthetic_credit_mixture_policy/v1"
+        info["old_policy_log_prob"] = policy
+        info["old_behavior_log_prob"] = behavior
 
 
 def _xunce_batch() -> dict:

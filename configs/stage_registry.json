@@ -600,6 +600,90 @@
       "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7b_coverable_cell_semantics_contract_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage26-7c-main-coverable-coverage-efficiency-rerun": {
+      "script": "scripts/run_xunce_stage26_7c_main_coverable_coverage_efficiency_rerun.py",
+      "default_config": "configs/xunce_stage26_7c_main_coverable_coverage_efficiency_rerun_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7c_main_coverable_coverage_efficiency_rerun_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-7d-repair-synthetic-credit-sampler-continuous-theta-reachability": {
+      "script": "scripts/run_xunce_stage26_7d_repair_synthetic_credit_sampler_continuous_theta_reachability.py",
+      "default_config": "configs/xunce_stage26_7d_repair_synthetic_credit_sampler_continuous_theta_reachability_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7d_repair_synthetic_credit_sampler_continuous_theta_reachability_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-7f-synthetic-credit-ppo-update-stability-sweep": {
+      "script": "scripts/run_xunce_stage26_7f_synthetic_credit_ppo_update_stability_sweep.py",
+      "default_config": "configs/xunce_stage26_7f_synthetic_credit_ppo_update_stability_sweep_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7f_synthetic_credit_ppo_update_stability_sweep_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-7g-repair-behavior-policy-kl-baseline": {
+      "script": "scripts/run_xunce_stage26_7g_repair_behavior_policy_kl_baseline.py",
+      "default_config": "configs/xunce_stage26_7g_repair_behavior_policy_kl_baseline_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7g_repair_behavior_policy_kl_baseline_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-7h-repair-credit-post-update-eval-binding": {
+      "script": "scripts/run_xunce_stage26_7h_repair_credit_post_update_eval_binding.py",
+      "default_config": "configs/xunce_stage26_7h_repair_credit_post_update_eval_binding_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7h_repair_credit_post_update_eval_binding_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8-synthetic-terrain-multi-seed-coverage-efficiency-pilot": {
+      "script": "scripts/run_xunce_stage26_8_synthetic_terrain_multi_seed_coverage_efficiency_pilot.py",
+      "default_config": "configs/xunce_stage26_8_synthetic_terrain_multi_seed_coverage_efficiency_pilot_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8_synthetic_terrain_multi_seed_coverage_efficiency_pilot_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8a-expand-seed-or-horizon-budget": {
+      "script": "scripts/run_xunce_stage26_8a_expand_seed_or_horizon_budget.py",
+      "default_config": "configs/xunce_stage26_8a_expand_seed_or_horizon_budget_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8a_expand_seed_or_horizon_budget_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8b-repair-horizon-collector-terminal-reachability": {
+      "script": "scripts/run_xunce_stage26_8b_repair_horizon_collector_terminal_reachability.py",
+      "default_config": "configs/xunce_stage26_8b_repair_horizon_collector_terminal_reachability_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8b_repair_horizon_collector_terminal_reachability_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8c-resume-h16-h20-horizon-efficiency": {
+      "script": "scripts/run_xunce_stage26_8c_resume_h16_h20_horizon_efficiency.py",
+      "default_config": "configs/xunce_stage26_8c_resume_h16_h20_horizon_efficiency_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8c_resume_h16_h20_horizon_efficiency_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8d-resumable-seed-horizon-execution": {
+      "script": "scripts/run_xunce_stage26_8d_resumable_seed_horizon_execution.py",
+      "default_config": "configs/xunce_stage26_8d_resumable_seed_horizon_execution_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8d_resumable_seed_horizon_execution_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8f-scenario-diversity-and-policy-margin-audit": {
+      "script": "scripts/run_xunce_stage26_8f_scenario_diversity_and_policy_margin_audit.py",
+      "default_config": "configs/xunce_stage26_8f_scenario_diversity_and_policy_margin_audit_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8f_scenario_diversity_and_policy_margin_audit_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8g-repair-synthetic-scenario-diversity": {
+      "script": "scripts/run_xunce_stage26_8g_repair_synthetic_scenario_diversity.py",
+      "default_config": "configs/xunce_stage26_8g_repair_synthetic_scenario_diversity_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8g_repair_synthetic_scenario_diversity_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8h-resumable-diverse-scenario-post-update-eval": {
+      "script": "scripts/run_xunce_stage26_8h_resumable_diverse_scenario_post_update_eval.py",
+      "default_config": "configs/xunce_stage26_8h_resumable_diverse_scenario_post_update_eval_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8h_resumable_diverse_scenario_post_update_eval_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8i-diverse-scenario-policy-signal-strength-repair": {
+      "script": "scripts/run_xunce_stage26_8i_diverse_scenario_policy_signal_strength_repair.py",
+      "default_config": "configs/xunce_stage26_8i_diverse_scenario_policy_signal_strength_repair_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8i_diverse_scenario_policy_signal_strength_repair_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage18-research-evidence-pipeline": {
       "script": "scripts/run_xunce_stage18_research_evidence_pipeline.py",
       "default_config": "configs/xunce_stage18_research_evidence_pipeline_v1.json",

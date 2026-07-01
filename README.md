@@ -30,11 +30,14 @@ Stage26.4
 Stage26.5
   synthetic discrete margin crossing calibration
 
+Stage26.6 -> Stage26.7H
+  synthetic credit direct-PPO-credit repair, main-coverable efficiency rerun, reachable theta repair, behavior-policy KL baseline repair, and eval binding repair
+
 当前下一跳
-  repair_stage26_synthetic_exploration_credit_assignment
+  xunce-stage26-8d-resumable-seed-horizon-execution
 ```
 
-Stage26.5 的结论是：动作概率已经变化，但 best synthetic candidate 从未被采样为 trainable selected action，因此没有直接 PPO credit；同时 candidate feature 还缺少 synthetic LOS / hard obstacle / Hybrid A* path-cost 候选级信号。
+当前结论是：Stage26.8F 已证明 `main_coverage_per_100m_delta=0` 的首要原因不是继续盲跑 H20，而是已完成 eval 的多个 scenario 只有不同 `scenario_id`，实际 first cell、candidate 序列、covered 序列、selected action 序列和 episode metrics 高度重复。Stage26.8G 修复 scenario fixture 多样性：同一 synthetic terrain 下，每个 scenario 必须从真实不同的安全起点/seed/ROI 上下文出发；早期 AUC、总路程和 Hybrid A* path cost 仍只作诊断。
 
 ### 当前合同
 
@@ -98,11 +101,14 @@ Stage26.4
 Stage26.5
   synthetic discrete margin crossing calibration
 
-Stage26.6
-  synthetic exploration credit assignment
+Stage26.6 -> Stage26.7H
+  synthetic exploration credit assignment, main-coverable efficiency rerun, reachable-theta repair, behavior-policy KL baseline repair, and eval binding repair
+
+Current next step
+  xunce-stage26-8g-repair-synthetic-scenario-diversity
 ```
 
-Stage26.6 addresses the Stage26.5 root cause by exposing synthetic LOS, synthetic hard-obstacle, Hybrid A* path-cost, and obstacle-aware coverage signals in candidate features, then using a mixture behavior policy so the synthetic credit target can become a real selected action.
+Stage26.8F showed that repeated zero `main_coverage_per_100m_delta` is currently dominated by scenario content duplication: different `scenario_id` values were sharing the same first cell, candidate sequence, covered-cell sequence, selected-action sequence, and episode metrics. Stage26.8G repairs the scenario fixture contract so each synthetic scenario uses a real distinct safe start/seed/ROI context before H16/H20 efficiency work resumes. Early AUC, total path length, and Hybrid A* path cost remain diagnostics only.
 
 ### Current Contracts
 

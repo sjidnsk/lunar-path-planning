@@ -47,6 +47,7 @@ from xunce_synthetic_exploration_credit import (
     build_synthetic_credit_feature_rows,
     candidate_pressure_values,
     feature_semantic_map,
+    select_reachable_synthetic_credit_theta,
     select_synthetic_credit_target,
     synthetic_credit_behavior_logprob,
 )
@@ -182,6 +183,19 @@ def run_xunce_stage21_1_on_policy_ppo_rollout_collector(
     non_blocking_reason_codes = set()
     if continuous_theta_enabled(config):
         non_blocking_reason_codes.add("selected_continuous_theta_hybrid_astar_unreachable")
+    terminal_no_reachable_allowed = (
+        "no_hybrid_reachable_candidate_terminal" in collection.reason_codes
+        and counts["trainable_transition_count"] >= int(config["min_trainable_transition_count"])
+        and counts["mask_violation_count"] == 0
+        and counts["hard_risk_violation_count"] == 0
+        and not any(
+            row.get("reason") in {"path_planning_failure", "open_grid_fallback"}
+            or "path_planning" in str(row.get("reason") or row.get("reason_code") or "")
+            for row in collection.rejections
+        )
+    )
+    if terminal_no_reachable_allowed:
+        non_blocking_reason_codes.add("no_hybrid_reachable_candidate_terminal")
     blocking = [reason for reason in collection.reason_codes if reason not in non_blocking_reason_codes]
     if counts["trainable_transition_count"] < int(config["min_trainable_transition_count"]):
         blocking.append("trainable_transition_count_below_minimum")
@@ -326,6 +340,17 @@ def _collect_episode(
     denominator = float(denominator_context["legacy_coverage_denominator_cells"])
     radius = int(hf_config["coverage_radius_cells"])
     start_cell = hf._cell_tuple(scenario.get("start_cell")) or (0, 0)
+    scenario_diversity_metadata = {
+        "scenario_seed": scenario.get("scenario_seed"),
+        "scenario_start_cell": scenario.get("scenario_start_cell") or list(start_cell),
+        "scenario_start_cell_source": scenario.get("scenario_start_cell_source"),
+        "scenario_roi_id": scenario.get("scenario_roi_id"),
+        "scenario_candidate_seed": scenario.get("scenario_candidate_seed"),
+        "scenario_diversity_source": scenario.get("scenario_diversity_source")
+        or hf_config.get("scenario_diversity_source"),
+        "scenario_diversity_signature_hash": scenario.get("scenario_diversity_signature_hash"),
+        "scenario_diversity_content_hash": scenario.get("scenario_diversity_content_hash"),
+    }
     covered_cells = set(hf._footprint(start_cell, radius=radius))
     current_cell = start_cell
     current_theta_deg = float(config.get("initial_theta_deg", 0.0))
@@ -483,6 +508,7 @@ def _collect_episode(
             enabled=bool(config.get("synthetic_credit_feature_exposure_enabled", False)),
             score_version=str(config.get("synthetic_credit_score_version") or SYNTHETIC_CREDIT_SCORE_V1),
             path_efficiency_max_cost_norm=float(config.get("path_efficiency_max_cost_norm", 0.70)),
+            theta_step_deg=float(config.get("theta_step_deg", 45.0)),
         )
         adapter["xunce_batch"] = synthetic_credit_metadata["updated_xunce_batch"]
         if synthetic_credit_metadata["enabled"]:
@@ -500,6 +526,19 @@ def _collect_episode(
                     "synthetic_credit_target_theta_deg": synthetic_credit_metadata.get(
                         "synthetic_credit_target_theta_deg"
                     ),
+                    "synthetic_credit_theta_policy_id": synthetic_credit_metadata.get(
+                        "synthetic_credit_theta_policy_id"
+                    ),
+                    "synthetic_credit_theta_proposals_deg": synthetic_credit_metadata.get(
+                        "synthetic_credit_theta_proposals_deg"
+                    ),
+                    "synthetic_credit_theta_selected_proposal_index": synthetic_credit_metadata.get(
+                        "synthetic_credit_theta_selected_proposal_index"
+                    ),
+                    "synthetic_credit_theta_reachable_proposal_count": synthetic_credit_metadata.get(
+                        "synthetic_credit_theta_reachable_proposal_count"
+                    ),
+                    "old_behavior_theta_log_prob": synthetic_credit_metadata.get("old_behavior_theta_log_prob"),
                     "synthetic_credit_score": synthetic_credit_metadata["synthetic_credit_target_score"],
                     "synthetic_credit_score_version": synthetic_credit_metadata["synthetic_credit_score_version"],
                     "path_efficiency_filter_relaxed": synthetic_credit_metadata["path_efficiency_filter_relaxed"],
@@ -509,6 +548,42 @@ def _collect_episode(
                 }
             )
         xunce_batch_payload = _xunce_batch_to_dict(adapter["xunce_batch"])
+
+        if not any(sampling_mask):
+            if pending is not None:
+                _finalize_pending(
+                    pending,
+                    transitions,
+                    trainable_batch,
+                    done=True,
+                    next_observation=observation_payload,
+                    next_xunce_batch=xunce_batch_payload,
+                )
+                pending = None
+            terminal_reason = _no_sampling_candidate_reason(
+                action_mask=action_mask,
+                hard_risk_clean_mask=hard_risk_clean_mask,
+                hybrid_reachable_mask=hybrid_reachable_mask,
+            )
+            reason_codes.append(terminal_reason)
+            rejections.append(
+                _rejection_row(
+                    scenario_id,
+                    step_index,
+                    terminal_reason,
+                    candidate_set_hash_value=candidate_set_hash_value,
+                    covered_cells_hash_value=covered_hash,
+                    action_mask=list(action_mask),
+                    hard_risk_clean_mask=list(hard_risk_clean_mask),
+                    hybrid_astar_reachable_mask=list(hybrid_reachable_mask),
+                    sampling_mask=list(sampling_mask),
+                    action_mask_true_count=sum(1 for value in action_mask if value),
+                    hard_risk_clean_mask_true_count=sum(1 for value in hard_risk_clean_mask if value),
+                    hybrid_astar_reachable_count=sum(1 for value in hybrid_reachable_mask if value),
+                    sampling_mask_true_count=sum(1 for value in sampling_mask if value),
+                )
+            )
+            break
 
         if pending is not None:
             _finalize_pending(
@@ -520,23 +595,6 @@ def _collect_episode(
                 next_xunce_batch=xunce_batch_payload,
             )
             pending = None
-
-        if not any(sampling_mask):
-            terminal_reason = "no_hard_risk_clean_action"
-            reason_codes.append(terminal_reason)
-            rejections.append(
-                _rejection_row(
-                    scenario_id,
-                    step_index,
-                    terminal_reason,
-                    candidate_set_hash_value=candidate_set_hash_value,
-                    covered_cells_hash_value=covered_hash,
-                    action_mask=list(action_mask),
-                    hard_risk_clean_mask=list(hard_risk_clean_mask),
-                    sampling_mask=list(sampling_mask),
-                )
-            )
-            break
 
         try:
             detail = _sample_xunce_action(
@@ -552,6 +610,31 @@ def _collect_episode(
                 ),
                 synthetic_credit_target_theta_deg=(
                     synthetic_credit_metadata.get("synthetic_credit_target_theta_deg")
+                    if bool(config.get("synthetic_exploration_credit_enabled", False))
+                    else None
+                ),
+                synthetic_credit_theta_proposals_deg=(
+                    synthetic_credit_metadata.get("synthetic_credit_theta_proposals_deg")
+                    if bool(config.get("synthetic_exploration_credit_enabled", False))
+                    else None
+                ),
+                synthetic_credit_theta_selected_proposal_index=(
+                    synthetic_credit_metadata.get("synthetic_credit_theta_selected_proposal_index")
+                    if bool(config.get("synthetic_exploration_credit_enabled", False))
+                    else None
+                ),
+                synthetic_credit_theta_reachable_proposal_count=(
+                    synthetic_credit_metadata.get("synthetic_credit_theta_reachable_proposal_count")
+                    if bool(config.get("synthetic_exploration_credit_enabled", False))
+                    else None
+                ),
+                synthetic_credit_theta_policy_id=(
+                    synthetic_credit_metadata.get("synthetic_credit_theta_policy_id")
+                    if bool(config.get("synthetic_exploration_credit_enabled", False))
+                    else None
+                ),
+                synthetic_credit_behavior_theta_log_prob=(
+                    synthetic_credit_metadata.get("old_behavior_theta_log_prob")
                     if bool(config.get("synthetic_exploration_credit_enabled", False))
                     else None
                 ),
@@ -676,6 +759,15 @@ def _collect_episode(
                     behavior_policy_id=detail.get("behavior_policy_id"),
                     synthetic_credit_target_index=synthetic_credit_metadata.get("synthetic_credit_target_index"),
                     synthetic_credit_target_theta_deg=synthetic_credit_metadata.get("synthetic_credit_target_theta_deg"),
+                    synthetic_credit_theta_policy_id=detail.get("synthetic_credit_theta_policy_id"),
+                    synthetic_credit_theta_proposals_deg=detail.get("synthetic_credit_theta_proposals_deg"),
+                    synthetic_credit_theta_selected_proposal_index=detail.get(
+                        "synthetic_credit_theta_selected_proposal_index"
+                    ),
+                    synthetic_credit_theta_reachable_proposal_count=detail.get(
+                        "synthetic_credit_theta_reachable_proposal_count"
+                    ),
+                    old_behavior_theta_log_prob=detail.get("old_behavior_theta_log_prob"),
                     synthetic_credit_target_selected=detail.get("synthetic_credit_target_selected"),
                     synthetic_credit_target_score=synthetic_credit_metadata.get("synthetic_credit_target_score"),
                     selected_theta_deg=detail.get("selected_theta_deg"),
@@ -724,6 +816,7 @@ def _collect_episode(
             "schema_version": "xunce-stage21-1-ppo-transition/v1",
             "transition_id": transition_id,
             "scenario_id": scenario_id,
+            **scenario_diversity_metadata,
             "roi_group": roi_group,
             "split": slice_row.get("split"),
             "step_index": step_index,
@@ -738,12 +831,22 @@ def _collect_episode(
             "old_theta_log_prob": detail.get("old_theta_log_prob"),
             "old_policy_point_log_prob": detail.get("old_policy_point_log_prob"),
             "old_policy_log_prob": detail.get("old_policy_log_prob"),
+            "old_policy_theta_log_prob": detail.get("old_policy_theta_log_prob"),
             "old_behavior_point_log_prob": detail.get("old_behavior_point_log_prob"),
+            "old_behavior_theta_log_prob": detail.get("old_behavior_theta_log_prob"),
             "old_behavior_log_prob": detail.get("old_behavior_log_prob"),
             "behavior_policy_id": detail.get("behavior_policy_id"),
             "synthetic_credit_mixture_probability": detail.get("synthetic_credit_mixture_probability"),
             "synthetic_credit_target_index": detail.get("synthetic_credit_target_index"),
             "synthetic_credit_target_theta_deg": synthetic_credit_metadata.get("synthetic_credit_target_theta_deg"),
+            "synthetic_credit_theta_policy_id": detail.get("synthetic_credit_theta_policy_id"),
+            "synthetic_credit_theta_proposals_deg": detail.get("synthetic_credit_theta_proposals_deg"),
+            "synthetic_credit_theta_selected_proposal_index": detail.get(
+                "synthetic_credit_theta_selected_proposal_index"
+            ),
+            "synthetic_credit_theta_reachable_proposal_count": detail.get(
+                "synthetic_credit_theta_reachable_proposal_count"
+            ),
             "synthetic_credit_target_selected": detail.get("synthetic_credit_target_selected"),
             "synthetic_credit_score": synthetic_credit_metadata.get("synthetic_credit_target_score"),
             "synthetic_credit_score_version": synthetic_credit_metadata.get("synthetic_credit_score_version"),
@@ -765,6 +868,7 @@ def _collect_episode(
             "trainable": True,
             "info": {
                 "scenario_id": scenario_id,
+                **scenario_diversity_metadata,
                 "step_index": step_index,
                 "current_cell_before": list(cell_before),
                 "selected_cell": list(selected_cell),
@@ -779,12 +883,22 @@ def _collect_episode(
                 "old_theta_log_prob": detail.get("old_theta_log_prob"),
                 "old_policy_point_log_prob": detail.get("old_policy_point_log_prob"),
                 "old_policy_log_prob": detail.get("old_policy_log_prob"),
+                "old_policy_theta_log_prob": detail.get("old_policy_theta_log_prob"),
                 "old_behavior_point_log_prob": detail.get("old_behavior_point_log_prob"),
+                "old_behavior_theta_log_prob": detail.get("old_behavior_theta_log_prob"),
                 "old_behavior_log_prob": detail.get("old_behavior_log_prob"),
                 "behavior_policy_id": detail.get("behavior_policy_id"),
                 "synthetic_credit_mixture_probability": detail.get("synthetic_credit_mixture_probability"),
                 "synthetic_credit_target_index": detail.get("synthetic_credit_target_index"),
                 "synthetic_credit_target_theta_deg": synthetic_credit_metadata.get("synthetic_credit_target_theta_deg"),
+                "synthetic_credit_theta_policy_id": detail.get("synthetic_credit_theta_policy_id"),
+                "synthetic_credit_theta_proposals_deg": detail.get("synthetic_credit_theta_proposals_deg"),
+                "synthetic_credit_theta_selected_proposal_index": detail.get(
+                    "synthetic_credit_theta_selected_proposal_index"
+                ),
+                "synthetic_credit_theta_reachable_proposal_count": detail.get(
+                    "synthetic_credit_theta_reachable_proposal_count"
+                ),
                 "synthetic_credit_target_selected": detail.get("synthetic_credit_target_selected"),
                 "synthetic_credit_score": synthetic_credit_metadata.get("synthetic_credit_target_score"),
                 "synthetic_credit_score_version": synthetic_credit_metadata.get("synthetic_credit_score_version"),
@@ -902,6 +1016,7 @@ def _collect_episode(
     episode = {
         "schema_version": "xunce-stage21-1-ppo-rollout-episode/v1",
         "scenario_id": scenario_id,
+        **scenario_diversity_metadata,
         "roi_group": roi_group,
         "split": slice_row.get("split"),
         "rollout_steps": int(hf_config["rollout_steps"]),
@@ -938,6 +1053,11 @@ def _sample_xunce_action(
     continuous_theta_action_space_enabled: bool = False,
     synthetic_credit_target_index: int | None = None,
     synthetic_credit_target_theta_deg: Any = None,
+    synthetic_credit_theta_proposals_deg: Any = None,
+    synthetic_credit_theta_selected_proposal_index: Any = None,
+    synthetic_credit_theta_reachable_proposal_count: Any = None,
+    synthetic_credit_theta_policy_id: Any = None,
+    synthetic_credit_behavior_theta_log_prob: Any = None,
     synthetic_credit_mixture_probability: float = 0.0,
 ) -> dict[str, Any]:
     if temperature <= 0.0 or not math.isfinite(temperature):
@@ -979,8 +1099,21 @@ def _sample_xunce_action(
         if use_credit_target and credit_target is not None:
             theta_distribution = torch.distributions.VonMises(theta_mu[credit_target], theta_kappa[credit_target])
             target_theta_deg = _finite(synthetic_credit_target_theta_deg)
-            theta_sample = theta_distribution.sample()
-            theta_behavior = "policy_von_mises_sample/v1"
+            policy_theta_sample = theta_distribution.sample()
+            reachability_theta_policy_enabled = (
+                target_theta_deg is not None
+                and str(synthetic_credit_theta_policy_id or "") == "reachability_theta_proposal_mixture/v1"
+            )
+            theta_sample = (
+                torch.tensor(math.radians(float(target_theta_deg)), dtype=theta_mu.dtype)
+                if reachability_theta_policy_enabled and target_theta_deg is not None
+                else policy_theta_sample
+            )
+            theta_behavior = (
+                str(synthetic_credit_theta_policy_id)
+                if reachability_theta_policy_enabled
+                else "policy_von_mises_sample/v1"
+            )
             detail = continuous_theta_log_prob(
                 point_logits=sampling_logits,
                 theta_mu_rad=theta_mu,
@@ -1001,6 +1134,20 @@ def _sample_xunce_action(
                     "action_entropy": float(torch.distributions.Categorical(logits=sampling_logits).entropy().item()),
                     "synthetic_credit_target_theta_deg": target_theta_deg,
                     "synthetic_credit_theta_behavior": theta_behavior,
+                    "synthetic_credit_theta_policy_id": theta_behavior,
+                    "synthetic_credit_theta_proposals_deg": (
+                        list(synthetic_credit_theta_proposals_deg)
+                        if isinstance(synthetic_credit_theta_proposals_deg, list)
+                        else None
+                    ),
+                    "synthetic_credit_theta_selected_proposal_index": _int_or_none(
+                        synthetic_credit_theta_selected_proposal_index
+                    ),
+                    "synthetic_credit_theta_reachable_proposal_count": _int_or_none(
+                        synthetic_credit_theta_reachable_proposal_count
+                    ),
+                    "old_policy_theta_log_prob": float(detail["old_theta_log_prob"]),
+                    "old_behavior_theta_log_prob": _finite(synthetic_credit_behavior_theta_log_prob),
                 }
             )
         else:
@@ -1016,6 +1163,7 @@ def _sample_xunce_action(
             policy_probs=_float_list(policy_probs),
             target_index=credit_target,
             mixture_probability=credit_p,
+            behavior_theta_log_prob=detail.get("old_behavior_theta_log_prob"),
         )
         detail.update(
             {
@@ -1085,6 +1233,7 @@ def _apply_synthetic_credit_behavior_logprob(
     policy_probs: list[float],
     target_index: int | None,
     mixture_probability: float,
+    behavior_theta_log_prob: Any = None,
 ) -> dict[str, Any]:
     if target_index is None or float(mixture_probability) <= 0.0:
         return detail
@@ -1095,6 +1244,7 @@ def _apply_synthetic_credit_behavior_logprob(
         target_index=target_index,
         mixture_probability=float(mixture_probability),
         theta_log_prob=theta_log_prob,
+        behavior_theta_log_prob=behavior_theta_log_prob,
     )
     detail["behavior_policy_id"] = SYNTHETIC_CREDIT_BEHAVIOR_POLICY_ID
     detail["synthetic_credit_mixture_probability"] = float(mixture_probability)
@@ -1102,11 +1252,15 @@ def _apply_synthetic_credit_behavior_logprob(
     detail["synthetic_credit_target_selected"] = bool(behavior["synthetic_credit_target_selected"])
     detail["old_policy_point_log_prob"] = float(behavior["old_policy_point_log_prob"])
     detail["old_policy_log_prob"] = float(behavior["old_policy_log_prob"])
+    detail["old_policy_theta_log_prob"] = theta_log_prob
     detail["old_behavior_point_log_prob"] = float(behavior["old_behavior_point_log_prob"])
+    detail["old_behavior_theta_log_prob"] = float(behavior["old_behavior_theta_log_prob"])
     detail["old_behavior_log_prob"] = float(behavior["old_behavior_log_prob"])
     detail["old_log_prob"] = float(behavior["old_log_prob"])
     if detail.get("old_point_log_prob") is not None:
         detail["old_point_log_prob"] = float(behavior["old_behavior_point_log_prob"])
+    if behavior_theta_log_prob is not None and detail.get("old_theta_log_prob") is not None:
+        detail["old_theta_log_prob"] = float(behavior["old_behavior_theta_log_prob"])
     return detail
 
 
@@ -1123,6 +1277,7 @@ def _synthetic_credit_step_metadata(
     enabled: bool,
     score_version: str = SYNTHETIC_CREDIT_SCORE_V1,
     path_efficiency_max_cost_norm: float = 0.70,
+    theta_step_deg: float = 45.0,
 ) -> dict[str, Any]:
     if not enabled:
         return {
@@ -1131,6 +1286,12 @@ def _synthetic_credit_step_metadata(
             "feature_rows": [],
             "synthetic_credit_target_index": None,
             "synthetic_credit_target_theta_deg": None,
+            "synthetic_credit_theta_policy_id": None,
+            "synthetic_credit_theta_proposals_deg": [],
+            "synthetic_credit_theta_selected_proposal_index": None,
+            "synthetic_credit_theta_reachable_proposal_count": 0,
+            "synthetic_credit_target_skipped_unreachable": False,
+            "old_behavior_theta_log_prob": None,
             "synthetic_credit_target_score": None,
             "synthetic_credit_score_version": score_version,
             "path_efficiency_filter_relaxed": False,
@@ -1163,18 +1324,35 @@ def _synthetic_credit_step_metadata(
         synthetic_hard_obstacle_candidate_counts=hard_counts,
         risk_values=_observation_feature_column(observation_payload, "risk", candidate_count),
     )
-    target = select_synthetic_credit_target(
-        feature_rows,
-        action_mask=action_mask,
-        sampling_mask=sampling_mask,
-        hard_risk_clean_mask=hard_risk_clean_mask,
-        hybrid_reachable_flags=hybrid_path_metadata.get("hybrid_astar_reachable_flags"),
-        score_version=score_version,
-        path_efficiency_max_cost_norm=path_efficiency_max_cost_norm,
-    )
+    working_sampling_mask = list(sampling_mask)
+    target: dict[str, Any] = {}
+    target_index = None
     target_theta_deg = None
-    if target.get("synthetic_credit_target_index") is not None:
-        target_theta_deg = _finite(hybrid_path_metadata.get("hybrid_astar_reachability_probe_theta_deg"))
+    theta_choice: dict[str, Any] = {}
+    for _ in range(candidate_count):
+        target = select_synthetic_credit_target(
+            feature_rows,
+            action_mask=action_mask,
+            sampling_mask=working_sampling_mask,
+            hard_risk_clean_mask=hard_risk_clean_mask,
+            hybrid_reachable_flags=hybrid_path_metadata.get("hybrid_astar_reachable_flags"),
+            score_version=score_version,
+            path_efficiency_max_cost_norm=path_efficiency_max_cost_norm,
+        )
+        target_index = target.get("synthetic_credit_target_index")
+        if target_index is None:
+            break
+        theta_choice = _synthetic_credit_theta_choice_for_target(
+            hybrid_path_metadata,
+            target_index=int(target_index),
+            theta_step_deg=theta_step_deg,
+        )
+        target_theta_deg = _finite(theta_choice.get("synthetic_credit_target_theta_deg"))
+        if not bool(theta_choice.get("synthetic_credit_target_skipped_unreachable")):
+            break
+        working_sampling_mask[int(target_index)] = False
+        target_index = None
+        target_theta_deg = None
     updated_batch = apply_feature_rows_to_xunce_batch(xunce_batch, feature_rows)
     semantic_map = feature_semantic_map()
     semantic_map["feature_contract_id"] = "synthetic_credit_candidate_features/v1"
@@ -1185,8 +1363,21 @@ def _synthetic_credit_step_metadata(
         "feature_rows": feature_rows,
         "synthetic_los_blocker_candidate_counts": los_counts,
         "synthetic_hard_obstacle_candidate_counts": hard_counts,
-        "synthetic_credit_target_index": target.get("synthetic_credit_target_index"),
+        "synthetic_credit_target_index": target_index,
         "synthetic_credit_target_theta_deg": target_theta_deg,
+        "synthetic_credit_theta_policy_id": theta_choice.get("synthetic_credit_theta_policy_id"),
+        "synthetic_credit_theta_proposals_deg": theta_choice.get("synthetic_credit_theta_proposals_deg", []),
+        "synthetic_credit_theta_selected_proposal_index": theta_choice.get(
+            "synthetic_credit_theta_selected_proposal_index"
+        ),
+        "synthetic_credit_theta_reachable_proposal_count": theta_choice.get(
+            "synthetic_credit_theta_reachable_proposal_count",
+            0,
+        ),
+        "synthetic_credit_target_skipped_unreachable": bool(
+            theta_choice.get("synthetic_credit_target_skipped_unreachable", False)
+        ),
+        "old_behavior_theta_log_prob": theta_choice.get("old_behavior_theta_log_prob"),
         "synthetic_credit_target_score": target.get("synthetic_credit_target_score"),
         "synthetic_credit_score_version": target.get("synthetic_credit_score_version"),
         "path_efficiency_filter_relaxed": target.get("path_efficiency_filter_relaxed"),
@@ -1195,6 +1386,50 @@ def _synthetic_credit_step_metadata(
         "synthetic_credit_target_reason": target.get("synthetic_credit_target_reason"),
         "xunce_batch_feature_semantic_map": semantic_map,
     }
+
+
+def _synthetic_credit_theta_choice_for_target(
+    hybrid_path_metadata: dict[str, Any],
+    *,
+    target_index: int,
+    theta_step_deg: float,
+) -> dict[str, Any]:
+    proposals = _nested_float_list(
+        hybrid_path_metadata.get("hybrid_astar_theta_proposals_deg_by_candidate"),
+        target_index,
+    )
+    reachable = _nested_float_list(
+        hybrid_path_metadata.get("hybrid_astar_reachable_theta_degs_by_candidate"),
+        target_index,
+    )
+    probe_theta = _finite(hybrid_path_metadata.get("hybrid_astar_reachability_probe_theta_deg"))
+    if not proposals:
+        probe_theta = _finite(hybrid_path_metadata.get("hybrid_astar_reachability_probe_theta_deg"))
+        proposals = [] if probe_theta is None else [probe_theta]
+        flags = hybrid_path_metadata.get("hybrid_astar_reachable_flags")
+        reachable = proposals if isinstance(flags, list) and target_index < len(flags) and flags[target_index] is True else []
+    return select_reachable_synthetic_credit_theta(
+        policy_theta_deg=None,
+        reachability_probe_theta_deg=probe_theta,
+        current_theta_deg=probe_theta,
+        theta_step_deg=theta_step_deg,
+        reachable_theta_degs=reachable,
+        proposal_theta_degs=proposals,
+    )
+
+
+def _nested_float_list(value: Any, index: int) -> list[float]:
+    if not isinstance(value, list) or index < 0 or index >= len(value):
+        return []
+    row = value[index]
+    if not isinstance(row, list):
+        return []
+    result: list[float] = []
+    for item in row:
+        number = _finite(item)
+        if number is not None:
+            result.append(float(number))
+    return result
 
 
 def _observation_feature_column(observation_payload: dict[str, Any], name: str, count: int) -> list[float | None]:
@@ -1467,12 +1702,14 @@ def _continuous_theta_reachability_probe_metadata(
 ) -> dict[str, Any]:
     if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
         return {}
-    probe_candidates = _continuous_theta_probe_candidates(
+    theta_step_deg = float(config.get("theta_step_deg", 45.0) or 45.0)
+    probe_candidates, proposal_sets = _continuous_theta_probe_candidate_sets(
         candidates,
         current_theta_deg=current_theta_deg,
+        theta_step_deg=theta_step_deg,
         candidate_set_hash_value=candidate_set_hash_value,
     )
-    metadata = _hybrid_astar_path_cost_metadata(
+    flat_metadata = _hybrid_astar_path_cost_metadata(
         probe_candidates,
         current_cell=current_cell,
         current_theta_deg=current_theta_deg,
@@ -1481,9 +1718,10 @@ def _continuous_theta_reachability_probe_metadata(
         slice_row=slice_row,
         platform_contract_hash=platform_contract_hash,
     )
+    metadata = _aggregate_continuous_theta_probe_metadata(flat_metadata, proposal_sets)
     metadata["hybrid_astar_reachability_probe_theta_deg"] = float(current_theta_deg)
     metadata["hybrid_astar_reachability_probe_provenance"] = (
-        "continuous_theta_base_candidate_current_heading_probe/v1"
+        "continuous_theta_multi_proposal_probe/v1"
     )
     return metadata
 
@@ -1505,6 +1743,156 @@ def _continuous_theta_probe_candidates(
         probe["candidate_set_hash"] = candidate_set_hash_value
         probe_candidates.append(probe)
     return probe_candidates
+
+
+def _continuous_theta_probe_candidate_sets(
+    candidates: list[dict[str, Any]],
+    *,
+    current_theta_deg: float,
+    theta_step_deg: float,
+    candidate_set_hash_value: str,
+) -> tuple[list[dict[str, Any]], list[list[float]]]:
+    probe_candidates: list[dict[str, Any]] = []
+    proposal_sets: list[list[float]] = []
+    for index, candidate in enumerate(candidates):
+        proposals = _continuous_theta_proposal_degs(
+            candidate,
+            current_theta_deg=current_theta_deg,
+            theta_step_deg=theta_step_deg,
+        )
+        proposal_sets.append(proposals)
+        cell = hf._cell_tuple(hf._candidate_cell(candidate))
+        for theta_deg in proposals:
+            probe = dict(candidate)
+            if cell is not None:
+                probe["candidate_theta_deg"] = float(theta_deg)
+                probe["candidate_viewpoint"] = [int(cell[0]), int(cell[1]), float(theta_deg)]
+            probe["candidate_index"] = int(index)
+            probe["candidate_set_hash"] = candidate_set_hash_value
+            probe_candidates.append(probe)
+    return probe_candidates, proposal_sets
+
+
+def _continuous_theta_proposal_degs(
+    candidate: dict[str, Any],
+    *,
+    current_theta_deg: float,
+    theta_step_deg: float,
+) -> list[float]:
+    viewpoint = candidate.get("candidate_viewpoint")
+    viewpoint_theta = None
+    if isinstance(viewpoint, list) and len(viewpoint) >= 3:
+        viewpoint_theta = _finite(viewpoint[2])
+    base = float(current_theta_deg)
+    step = float(theta_step_deg) if math.isfinite(float(theta_step_deg)) and float(theta_step_deg) > 0.0 else 45.0
+    return _unique_theta_degs(
+        [
+            candidate.get("candidate_theta_deg"),
+            viewpoint_theta,
+            base,
+            base + step,
+            base - step,
+        ]
+    )
+
+
+def _aggregate_continuous_theta_probe_metadata(
+    flat_metadata: dict[str, Any],
+    proposal_sets: list[list[float]],
+) -> dict[str, Any]:
+    best_indices: list[int] = []
+    reachable_sets: list[list[float]] = []
+    reachable_flags_by_candidate: list[list[bool]] = []
+    costs_by_candidate: list[list[float | None]] = []
+    offset = 0
+    for proposals in proposal_sets:
+        count = len(proposals)
+        indices = list(range(offset, offset + count))
+        flags = [
+            _flat_bool(flat_metadata.get("hybrid_astar_reachable_flags"), flat_index)
+            and _flat_value(flat_metadata.get("hybrid_astar_path_costs"), flat_index) is not None
+            and _flat_value(flat_metadata.get("hybrid_astar_pose_path_hashes"), flat_index) is not None
+            for flat_index in indices
+        ]
+        costs = [_finite(_flat_value(flat_metadata.get("hybrid_astar_path_costs"), flat_index)) for flat_index in indices]
+        reachable_offsets = [local for local, flag in enumerate(flags) if flag]
+        reachable_sets.append([float(proposals[local]) for local in reachable_offsets])
+        reachable_flags_by_candidate.append(flags)
+        costs_by_candidate.append(costs)
+        if reachable_offsets:
+            best_local = min(
+                reachable_offsets,
+                key=lambda local: (
+                    float("inf") if costs[local] is None else float(costs[local]),
+                    local,
+                ),
+            )
+            best_indices.append(indices[best_local])
+        elif indices:
+            best_indices.append(indices[0])
+        else:
+            best_indices.append(-1)
+        offset += count
+    metadata = {
+        "path_cost_source": HYBRID_ASTAR_PATH_COST_SOURCE,
+        "path_cost_sources": [_flat_value(flat_metadata.get("path_cost_sources"), index) for index in best_indices],
+        "hybrid_astar_path_costs": [_flat_value(flat_metadata.get("hybrid_astar_path_costs"), index) for index in best_indices],
+        "hybrid_astar_pose_path_hashes": [
+            _flat_value(flat_metadata.get("hybrid_astar_pose_path_hashes"), index) for index in best_indices
+        ],
+        "hybrid_astar_trajectory_kinds": [
+            _flat_value(flat_metadata.get("hybrid_astar_trajectory_kinds"), index) for index in best_indices
+        ],
+        "hybrid_astar_reachable_flags": [bool(items) for items in reachable_sets],
+        "hybrid_astar_failure_reasons": [
+            _flat_value(flat_metadata.get("hybrid_astar_failure_reasons"), index) for index in best_indices
+        ],
+        "legacy_grid_astar_path_costs": [
+            _flat_value(flat_metadata.get("legacy_grid_astar_path_costs"), index) for index in best_indices
+        ],
+        "hybrid_vs_grid_path_cost_deltas": [
+            _flat_value(flat_metadata.get("hybrid_vs_grid_path_cost_deltas"), index) for index in best_indices
+        ],
+        "default_astar_replaced": False,
+        "default_astar_replaced_flags": [
+            _flat_value(flat_metadata.get("default_astar_replaced_flags"), index) is True for index in best_indices
+        ],
+        "hybrid_astar_ackermann_feasible_claimed": False,
+        "hybrid_astar_ackermann_feasible_claimed_flags": [
+            _flat_value(flat_metadata.get("hybrid_astar_ackermann_feasible_claimed_flags"), index) is True
+            for index in best_indices
+        ],
+        "platform_contract_hash": flat_metadata.get("platform_contract_hash"),
+        "hybrid_astar_current_pose": flat_metadata.get("hybrid_astar_current_pose"),
+        "hybrid_astar_current_pose_provenance": flat_metadata.get("hybrid_astar_current_pose_provenance"),
+        "hybrid_astar_theta_proposals_deg_by_candidate": proposal_sets,
+        "hybrid_astar_reachable_theta_degs_by_candidate": reachable_sets,
+        "hybrid_astar_theta_probe_reachable_flags_by_candidate": reachable_flags_by_candidate,
+        "hybrid_astar_theta_probe_path_costs_by_candidate": costs_by_candidate,
+    }
+    return metadata
+
+
+def _unique_theta_degs(values: list[Any]) -> list[float]:
+    result: list[float] = []
+    for value in values:
+        number = _finite(value)
+        if number is None:
+            continue
+        normalized = float(number) % 360.0
+        if not any(abs(((normalized - existing + 180.0) % 360.0) - 180.0) <= 1.0e-6 for existing in result):
+            result.append(normalized)
+    return result
+
+
+def _flat_value(values: Any, index: int) -> Any:
+    if isinstance(values, list) and 0 <= index < len(values):
+        return values[index]
+    return None
+
+
+def _flat_bool(values: Any, index: int) -> bool:
+    return _flat_value(values, index) is True
 
 
 def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> tuple[int, dict[str, Any] | None, str | None]:
@@ -1739,6 +2127,24 @@ def _hybrid_astar_reachable_mask(metadata: dict[str, Any], *, candidate_count: i
     return tuple(mask)
 
 
+def _no_sampling_candidate_reason(
+    *,
+    action_mask: tuple[bool, ...],
+    hard_risk_clean_mask: tuple[bool, ...],
+    hybrid_reachable_mask: tuple[bool, ...],
+) -> str:
+    if not any(action_mask):
+        return "no_action_mask_candidate"
+    if not any(bool(valid) and bool(clean) for valid, clean in zip(action_mask, hard_risk_clean_mask)):
+        return "no_hard_risk_clean_candidate"
+    if not any(
+        bool(valid) and bool(clean) and bool(reachable)
+        for valid, clean, reachable in zip(action_mask, hard_risk_clean_mask, hybrid_reachable_mask)
+    ):
+        return "no_hybrid_reachable_candidate_terminal"
+    return "no_sampling_candidate_unknown"
+
+
 def _hybrid_cell_center_world(spec: Any, cell: HYBRID_CELL) -> HYBRID_WORLD_POINT:
     return HYBRID_WORLD_POINT(
         float(spec.origin[0]) + (float(cell.x) + 0.5) * float(spec.resolution),
@@ -1896,6 +2302,9 @@ def _contract_counts(collection: CollectionResult) -> dict[str, Any]:
         "old_log_prob_recompute_max_abs_error": max(log_errors) if log_errors else 0.0,
         "terminal_transition_count": sum(1 for row in trainable if row.get("done") is True),
         "transition_with_next_observation_count": sum(1 for row in trainable if row.get("next_observation") is not None),
+        "no_hybrid_reachable_candidate_terminal_count": sum(
+            1 for row in collection.rejections if row.get("reason") == "no_hybrid_reachable_candidate_terminal"
+        ),
         "sampled_action_equals_argmax_count": sum(
             1 for row in trainable if int(row["action_index"]) == int(row["info"].get("argmax_action_index", -1))
         ),

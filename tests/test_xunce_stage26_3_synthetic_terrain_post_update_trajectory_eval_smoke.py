@@ -95,6 +95,59 @@ def test_stage26_3_routes_binding_repair_when_synthetic_fields_are_missing(tmp_p
     assert summary["synthetic_inference_required_field_missing_count"] > 0
 
 
+def test_stage26_3_distinguishes_explicit_unreachable_from_missing_hybrid_provenance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
+
+    stage26_2 = _write_stage26_2_root(tmp_path)
+    _patch_stage21_5(monkeypatch, s26, mode="pre_explicit_unreachable")
+    config = _write_config(tmp_path, stage26_2)
+
+    summary = s26.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["synthetic_inference_required_field_missing_count"] == 0
+    assert summary["hybrid_path_missing_provenance_count"] == 0
+    assert summary["explicit_unreachable_selected_provenance_count"] == 1
+    assert summary["pre_unreachable_selected_count"] == 1
+    assert summary["post_unreachable_selected_count"] == 0
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage26_3_synthetic_inference_binding"
+    assert "synthetic_explicit_unreachable_selected_pose" in summary["blocking_reason_codes"]
+
+
+def test_stage26_3_does_not_pass_efficiency_metric_when_stage21_5_reports_post_unreachable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
+
+    stage26_2 = _write_stage26_2_root(tmp_path)
+    _patch_stage21_5(monkeypatch, s26, mode="post_unreachable_stage21_5_route")
+    config = _write_config(
+        tmp_path,
+        stage26_2,
+        coverage_denominator_mode="main_coverable_cells",
+        coverage_denominator_source="main_coverable_cells/v1",
+        post_update_success_metric="main_coverable_coverage_efficiency/v1",
+    )
+
+    summary = s26.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "rerun_stage26_3_required_inputs"
+    assert "post_unreachable_selected_count_nonzero" in summary["stage21_5_execution_reason_codes"]
+
+
 def test_stage26_3_routes_lineage_repair_on_synthetic_hash_mismatch(tmp_path: Path, monkeypatch) -> None:
     import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
 
@@ -177,6 +230,61 @@ def test_stage26_3_forwards_continuous_theta_and_synthetic_feature_exposure(tmp_
         assert generated["synthetic_credit_feature_exposure_enabled"] is True
 
 
+def test_stage26_3_forwards_main_coverable_denominator(tmp_path: Path, monkeypatch) -> None:
+    import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
+
+    stage26_2 = _write_stage26_2_root(tmp_path)
+    _patch_stage21_5(monkeypatch, s26, mode="unchanged")
+    config = _write_config(
+        tmp_path,
+        stage26_2,
+        coverage_denominator_mode="main_coverable_cells",
+        coverage_denominator_source="main_coverable_cells/v1",
+    )
+
+    summary = s26.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    stage21_5_config = json.loads((tmp_path / "out" / "xunce-stage26-3-stage21-5-config.json").read_text(encoding="utf-8"))
+    high_fidelity_config = json.loads((tmp_path / "out" / "xunce-stage26-3-high-fidelity-config.json").read_text(encoding="utf-8"))
+    assert summary["coverage_denominator_mode"] == "main_coverable_cells"
+    assert summary["coverage_denominator_source"] == "main_coverable_cells/v1"
+    for generated in (stage21_5_config, high_fidelity_config):
+        assert generated["coverage_denominator_mode"] == "main_coverable_cells"
+        assert generated["coverage_denominator_source"] == "main_coverable_cells/v1"
+
+
+def test_stage26_3_efficiency_metric_routes_multi_seed_when_auc_is_negative(tmp_path: Path, monkeypatch) -> None:
+    import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
+
+    stage26_2 = _write_stage26_2_root(tmp_path)
+    _patch_stage21_5(monkeypatch, s26, mode="efficiency_positive_auc_negative")
+    config = _write_config(
+        tmp_path,
+        stage26_2,
+        coverage_denominator_mode="main_coverable_cells",
+        coverage_denominator_source="main_coverable_cells/v1",
+        post_update_success_metric="main_coverable_coverage_efficiency/v1",
+    )
+
+    summary = s26.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    stage21_5_config = json.loads((tmp_path / "out" / "xunce-stage26-3-stage21-5-config.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "passed"
+    assert summary["next_required_change"] == "run_stage26_8_synthetic_terrain_multi_seed_ppo_pilot"
+    assert summary["coverage_auc_delta"] < 0
+    assert summary["coverage_per_100m_delta"] > 0
+    assert summary["post_update_success_metric"] == "main_coverable_coverage_efficiency/v1"
+    assert stage21_5_config["post_update_success_metric"] == "main_coverable_coverage_efficiency/v1"
+
+
 def test_stage26_3_boundary_flags_hard_fail(tmp_path: Path, monkeypatch) -> None:
     import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
 
@@ -203,6 +311,8 @@ def _patch_stage21_5(monkeypatch, s26, *, mode: str = "changed_and_improved") ->
         assert cfg["path_cost_source"] == s26.PATH_COST_SOURCE
         assert cfg["synthetic_terrain_hash"] == SYNTHETIC_HASH
         assert cfg["synthetic_source_kind"] == s26.SYNTHETIC_SOURCE_KIND
+        if mode == "efficiency_positive_auc_negative":
+            assert cfg["post_update_success_metric"] == "main_coverable_coverage_efficiency/v1"
         output_root.mkdir(parents=True, exist_ok=True)
         pre_root = output_root / "pre_ppo_xunce"
         post_root = output_root / "post_ppo_xunce"
@@ -211,6 +321,11 @@ def _patch_stage21_5(monkeypatch, s26, *, mode: str = "changed_and_improved") ->
         pre_rows = [_inference_row(0, 0), _inference_row(1, 45)]
         if mode == "missing_synthetic_fields":
             post_rows = [_inference_row(0, 45, omit_synthetic=True), _inference_row(1, 45)]
+        elif mode == "pre_explicit_unreachable":
+            pre_rows = [_inference_row(0, 0, explicit_unreachable=True), _inference_row(1, 45)]
+            post_rows = [_inference_row(0, 45, probs=[0.3, 0.7]), _inference_row(1, 45, probs=[0.4, 0.6])]
+        elif mode == "post_unreachable_stage21_5_route":
+            post_rows = [_inference_row(0, 45, probs=[0.3, 0.7]), _inference_row(1, 45, probs=[0.4, 0.6])]
         elif mode == "synthetic_hash_mismatch":
             post_rows = [_inference_row(0, 45, synthetic_hash="bad-hash"), _inference_row(1, 45)]
         elif mode == "physical_payload":
@@ -222,23 +337,31 @@ def _patch_stage21_5(monkeypatch, s26, *, mode: str = "changed_and_improved") ->
         _write_jsonl(pre_root / s26.MODEL_INFERENCE_FILE, pre_rows)
         _write_jsonl(post_root / s26.MODEL_INFERENCE_FILE, post_rows)
         improved = mode == "changed_and_improved"
+        efficiency_positive_auc_negative = mode == "efficiency_positive_auc_negative"
         delta = {
-            "final_coverage_rate_mean_delta": 0.02 if improved else 0.0,
-            "coverage_curve_auc_mean_delta": 0.03 if improved else 0.0,
-            "path_cost_total_m_mean_delta": -1.0 if improved else 0.0,
-            "coverage_per_100m_mean_delta": 2.0 if improved else 0.0,
+            "final_coverage_rate_mean_delta": 0.02 if improved or efficiency_positive_auc_negative else 0.0,
+            "coverage_curve_auc_mean_delta": -0.01 if efficiency_positive_auc_negative else 0.03 if improved else 0.0,
+            "path_cost_total_m_mean_delta": -1.0 if improved or efficiency_positive_auc_negative else 0.0,
+            "coverage_per_100m_mean_delta": 2.0 if improved or efficiency_positive_auc_negative else 0.0,
         }
         (output_root / s26.stage21_5.DELTA_FILE).write_text(json.dumps(delta), encoding="utf-8")
         summary = {
             "schema_version": "xunce-stage21-5-post-update-evaluation-summary/v1",
-            "status": "passed",
-            "next_required_change": "implement_stage21_6_multi_seed_ppo_pilot",
+            "status": "failed" if mode == "post_unreachable_stage21_5_route" else "passed",
+            "next_required_change": (
+                "repair_stage21_5_post_policy_unreachable_regression"
+                if mode == "post_unreachable_stage21_5_route"
+                else "implement_stage21_6_multi_seed_ppo_pilot"
+            ),
             "pre_evaluation_root": str(pre_root),
             "post_evaluation_root": str(post_root),
             "final_coverage_rate_delta": delta["final_coverage_rate_mean_delta"],
             "coverage_curve_auc_delta": delta["coverage_curve_auc_mean_delta"],
             "path_cost_total_m_delta": delta["path_cost_total_m_mean_delta"],
             "coverage_per_100m_delta": delta["coverage_per_100m_mean_delta"],
+            "post_update_success_metric": cfg.get("post_update_success_metric"),
+            "pre_unreachable_selected_count": 0,
+            "post_unreachable_selected_count": 1 if mode == "post_unreachable_stage21_5_route" else 0,
             "post_hard_risk_violation_count": 0,
             "post_mask_violation_count": 0,
             "post_path_planning_failure_count": 0,
@@ -266,6 +389,7 @@ def _inference_row(
     synthetic_hash: str = SYNTHETIC_HASH,
     physical_payload: bool = False,
     probs: list[float] | None = None,
+    explicit_unreachable: bool = False,
 ) -> dict:
     row = {
         "schema_version": "xunce-exploration-coverage-model-inference/v1",
@@ -284,6 +408,8 @@ def _inference_row(
         "path_cost_source": "hybrid_astar_pose_path/v1",
         "hybrid_astar_path_cost": 5.5,
         "hybrid_astar_pose_path_hash": f"pose-path-{index}-{selected_theta}",
+        "hybrid_astar_reachable": True,
+        "hybrid_astar_failure_reason": None,
         "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
         "legacy_grid_astar_path_cost": 4.0,
         "hybrid_vs_grid_path_cost_delta": 1.5,
@@ -292,6 +418,7 @@ def _inference_row(
         "hybrid_astar_ackermann_feasible_claimed": False,
         "synthetic_terrain_hash": synthetic_hash,
         "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+        "platform_contract_hash": "platform-hash",
         "synthetic_los_blocker_cells_used": True,
         "synthetic_hard_obstacle_cells_used": True,
         "physical_obstacle_cells_written": False,
@@ -309,6 +436,12 @@ def _inference_row(
     if physical_payload:
         row["physical_obstacle_cells_written"] = True
         row["physical_obstacle_cells"] = [[7, 7]]
+    if explicit_unreachable:
+        row["hybrid_astar_path_cost"] = None
+        row["hybrid_astar_pose_path_hash"] = None
+        row["hybrid_astar_reachable"] = False
+        row["hybrid_astar_failure_reason"] = "selected_continuous_theta_hybrid_astar_unreachable"
+        row["hybrid_vs_grid_path_cost_delta"] = None
     return row
 
 
@@ -334,6 +467,7 @@ def _write_stage26_2_root(
         "synthetic_source_root": str(src),
         "synthetic_terrain_hash": SYNTHETIC_HASH,
         "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+        "platform_contract_hash": "platform-hash",
     }
     s21_1_manifest = {
         "schema_version": "xunce-stage21-1-manifest/v1",
@@ -350,6 +484,7 @@ def _write_stage26_2_root(
         "synthetic_terrain_model_id": "synthetic_rock_pit_terrain/v1",
         "synthetic_terrain_hash": SYNTHETIC_HASH,
         "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+        "platform_contract_hash": "platform-hash",
         "max_traversable_slope_deg": 30.0,
         "checkpoint_exists": True,
         "checkpoint_reload_passed": True,

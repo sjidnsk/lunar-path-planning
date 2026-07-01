@@ -18,6 +18,7 @@ SYNTHETIC_CREDIT_FEATURE_NAMES = (
 )
 
 BEHAVIOR_POLICY_ID = "synthetic_credit_mixture_policy/v1"
+REACHABILITY_THETA_POLICY_ID = "reachability_theta_proposal_mixture/v1"
 SYNTHETIC_CREDIT_SCORE_V1 = "coverage_proxy_v1"
 SYNTHETIC_CREDIT_SCORE_V2 = "path_efficiency_v2"
 
@@ -187,6 +188,7 @@ def synthetic_credit_behavior_logprob(
     target_index: int | None,
     mixture_probability: float,
     theta_log_prob: float | None = None,
+    behavior_theta_log_prob: float | None = None,
 ) -> dict[str, Any]:
     p = float(mixture_probability)
     if not (0.0 <= p <= 1.0) or not math.isfinite(p):
@@ -200,6 +202,7 @@ def synthetic_credit_behavior_logprob(
     behavior_prob = (1.0 - p) * policy_prob + (p if target == action else 0.0)
     behavior_prob = max(behavior_prob, 1.0e-12)
     theta = 0.0 if theta_log_prob is None else float(theta_log_prob)
+    behavior_theta = theta if behavior_theta_log_prob is None else float(behavior_theta_log_prob)
     old_policy_point = math.log(policy_prob)
     old_behavior_point = math.log(behavior_prob)
     return {
@@ -210,8 +213,67 @@ def synthetic_credit_behavior_logprob(
         "old_policy_point_log_prob": old_policy_point,
         "old_policy_log_prob": old_policy_point + theta,
         "old_behavior_point_log_prob": old_behavior_point,
-        "old_behavior_log_prob": old_behavior_point + theta,
-        "old_log_prob": old_behavior_point + theta,
+        "old_behavior_theta_log_prob": behavior_theta,
+        "old_behavior_log_prob": old_behavior_point + behavior_theta,
+        "old_log_prob": old_behavior_point + behavior_theta,
+    }
+
+
+def select_reachable_synthetic_credit_theta(
+    *,
+    policy_theta_deg: Any,
+    reachability_probe_theta_deg: Any,
+    current_theta_deg: Any,
+    theta_step_deg: Any,
+    reachable_theta_degs: Sequence[Any],
+    proposal_theta_degs: Sequence[Any] | None = None,
+    selection_seed: Any = 0,
+) -> dict[str, Any]:
+    step = _finite(theta_step_deg, 45.0)
+    if step is None or step <= 0.0:
+        step = 45.0
+    proposals = (
+        _unique_theta_degs(proposal_theta_degs)
+        if proposal_theta_degs is not None
+        else _unique_theta_degs(
+            [
+                policy_theta_deg,
+                reachability_probe_theta_deg,
+                _theta_add(reachability_probe_theta_deg, step),
+                _theta_add(reachability_probe_theta_deg, -step),
+                current_theta_deg,
+            ]
+        )
+    )
+    reachable = _unique_theta_degs(reachable_theta_degs)
+    reachable_entries = [
+        (index, proposal)
+        for index, proposal in enumerate(proposals)
+        if any(_angle_delta_abs_deg(proposal, item) <= 1.0e-6 for item in reachable)
+    ]
+    selected: float | None = None
+    selected_index: int | None = None
+    if reachable_entries:
+        seed = int(_finite(selection_seed, 0.0) or 0.0)
+        selected_index, selected = reachable_entries[abs(seed) % len(reachable_entries)]
+    if selected is None:
+        return {
+            "synthetic_credit_theta_policy_id": REACHABILITY_THETA_POLICY_ID,
+            "synthetic_credit_theta_proposals_deg": proposals,
+            "synthetic_credit_theta_reachable_proposal_count": 0,
+            "synthetic_credit_theta_selected_proposal_index": None,
+            "synthetic_credit_target_theta_deg": None,
+            "synthetic_credit_target_skipped_unreachable": True,
+            "old_behavior_theta_log_prob": None,
+        }
+    return {
+        "synthetic_credit_theta_policy_id": REACHABILITY_THETA_POLICY_ID,
+        "synthetic_credit_theta_proposals_deg": proposals,
+        "synthetic_credit_theta_reachable_proposal_count": len(reachable_entries),
+        "synthetic_credit_theta_selected_proposal_index": selected_index,
+        "synthetic_credit_target_theta_deg": selected,
+        "synthetic_credit_target_skipped_unreachable": False,
+        "old_behavior_theta_log_prob": -math.log(max(1, len(reachable_entries))),
     }
 
 
@@ -284,6 +346,35 @@ def _finite(value: Any, default: float | None) -> float | None:
     except (TypeError, ValueError):
         return default
     return number if math.isfinite(number) else default
+
+
+def _theta_add(theta: Any, delta: Any) -> float | None:
+    base = _finite(theta, None)
+    amount = _finite(delta, None)
+    if base is None or amount is None:
+        return None
+    return _normalize_theta_deg(base + amount)
+
+
+def _unique_theta_degs(values: Sequence[Any]) -> list[float]:
+    result: list[float] = []
+    for value in values:
+        number = _finite(value, None)
+        if number is None:
+            continue
+        normalized = _normalize_theta_deg(number)
+        if not any(_angle_delta_abs_deg(normalized, existing) <= 1.0e-6 for existing in result):
+            result.append(normalized)
+    return result
+
+
+def _normalize_theta_deg(value: float) -> float:
+    normalized = float(value) % 360.0
+    return normalized if normalized >= 0.0 else normalized + 360.0
+
+
+def _angle_delta_abs_deg(a: float, b: float) -> float:
+    return abs(((float(a) - float(b) + 180.0) % 360.0) - 180.0)
 
 
 def _bool_at(values: Sequence[Any], index: int) -> bool:

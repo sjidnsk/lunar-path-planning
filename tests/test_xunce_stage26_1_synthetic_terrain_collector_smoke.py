@@ -36,6 +36,24 @@ def test_stage26_1_runs_collector_reward_batch_smoke(tmp_path: Path, monkeypatch
     assert stage21_1_config["synthetic_terrain_contract_enabled"] is True
     assert stage21_2_config["require_synthetic_terrain_contract"] is True
     assert stage21_3_config["require_synthetic_terrain_contract"] is True
+    source_summary = json.loads(
+        (tmp_path / "out" / "src" / "xunce-high-fidelity-real-map-roi-expansion-summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    source_slices = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "src" / "xunce-high-fidelity-real-map-slices.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert source_summary["slice_count"] == source_summary["scenario_count"]
+    assert source_summary["slice_count"] == len(source_slices)
+    assert source_slices
+    assert all(row.get("context_id") for row in source_slices)
+    assert all("synthetic-seed" in row["context_id"] for row in source_slices)
+    assert all("/" not in row["context_id"] and "\\" not in row["context_id"] for row in source_slices)
     assert summary["runs_new_ppo_update"] is False
 
 
@@ -55,6 +73,53 @@ def test_stage26_1_passes_hybrid_astar_candidate_workers_to_collector(tmp_path: 
     stage21_1_config = json.loads((tmp_path / "out" / "xunce-stage26-1-stage21-1-config.json").read_text(encoding="utf-8"))
     assert summary["status"] == "passed"
     assert stage21_1_config["hybrid_astar_candidate_eval_workers"] == 4
+
+
+def test_stage26_1_generates_distinct_scenario_fixtures_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    import scripts.run_xunce_stage26_1_synthetic_terrain_collector_smoke as s26
+
+    _patch_stage21_runs(monkeypatch, s26)
+    stage26_0 = _write_stage26_0_root(tmp_path)
+    config = _write_config(
+        tmp_path,
+        stage26_0,
+        required_scenario_count=2,
+        scenario_diversity_contract_enabled=True,
+        scenario_seed_base=260801,
+        scenario_diversity_source="synthetic_roi_start_seed_matrix/custom-test",
+        min_scenario_start_separation_cells=1,
+        min_scenario_start_clearance_cells=0,
+    )
+
+    summary = s26.run_xunce_stage26_1_synthetic_terrain_collector_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    fixture_rows = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "src" / "xunce-stage26-scenario-fixtures.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    start_cells = {tuple(row["scenario_start_cell"]) for row in fixture_rows}
+    signatures = {row["scenario_diversity_signature_hash"] for row in fixture_rows}
+    content_hashes = {row["scenario_diversity_content_hash"] for row in fixture_rows}
+    stage21_1_config = json.loads((tmp_path / "out" / "xunce-stage26-1-stage21-1-config.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "passed"
+    assert summary["scenario_diversity_contract_enabled"] is True
+    assert summary["scenario_diversity_source"] == "synthetic_roi_start_seed_matrix/custom-test"
+    assert summary["scenario_candidate_seed_applied_to_candidate_generation"] is False
+    assert len(fixture_rows) == 2
+    assert len(start_cells) == 2
+    assert len(signatures) == 2
+    assert len(content_hashes) == 2
+    assert all(row["scenario_diversity_source"] == "synthetic_roi_start_seed_matrix/custom-test" for row in fixture_rows)
+    assert all(row["scenario_candidate_seed_applied_to_candidate_generation"] is False for row in fixture_rows)
+    assert stage21_1_config["scenario_diversity_contract_enabled"] is True
+    assert stage21_1_config["scenario_diversity_source"] == "synthetic_roi_start_seed_matrix/custom-test"
 
 
 def test_stage26_1_passes_synthetic_credit_path_efficiency_config_to_collector(tmp_path: Path, monkeypatch) -> None:
@@ -141,6 +206,70 @@ def test_stage26_1_routes_reward_repair_when_synthetic_reward_missing(tmp_path: 
     assert summary["status"] == "failed"
     assert summary["next_required_change"] == "repair_stage26_1_synthetic_reward_provenance"
     assert "synthetic_reward_provenance_missing" in summary["blocking_reason_codes"]
+
+
+def test_stage26_1_does_not_misclassify_loaded_terminal_reachability_as_map_binding(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.run_xunce_stage26_1_synthetic_terrain_collector_smoke as s26
+
+    stage26_0 = _write_stage26_0_root(tmp_path)
+    config = _write_config(tmp_path, stage26_0)
+
+    def fake_stage21_1(*, config_path: Path, output_root: Path, repo_root: Path) -> dict:
+        output_root.mkdir(parents=True, exist_ok=True)
+        cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        rows = [_transition()]
+        _write_jsonl(output_root / s26.stage21_1.TRAINABLE_BATCH_FILE, rows)
+        _write_jsonl(output_root / s26.stage21_1.TRANSITIONS_FILE, rows)
+        _write_jsonl(
+            output_root / s26.stage21_1.REJECTION_FILE,
+            [
+                {
+                    "reason": "no_hybrid_reachable_candidate_terminal",
+                    "action_mask": [True, True],
+                    "hard_risk_clean_mask": [True, True],
+                    "hybrid_astar_reachable_mask": [False, False],
+                    "sampling_mask": [False, False],
+                    "action_mask_true_count": 2,
+                    "hard_risk_clean_mask_true_count": 2,
+                    "hybrid_astar_reachable_count": 0,
+                    "sampling_mask_true_count": 0,
+                }
+            ],
+        )
+        summary = {
+            "status": "failed",
+            "next_required_change": "repair_stage21_1_on_policy_collector_contract",
+            "blocking_reason_codes": ["no_hybrid_reachable_candidate_terminal"],
+            "no_hybrid_reachable_candidate_terminal_count": 1,
+            "trainable_transition_count": 1,
+        }
+        (output_root / s26.stage21_1.SUMMARY_FILE).write_text(json.dumps(summary), encoding="utf-8")
+        manifest = {"model_audit": {"source_roi_expansion_root": cfg.get("source_roi_expansion_root")}}
+        (output_root / s26.stage21_1.MANIFEST_FILE).write_text(json.dumps(manifest), encoding="utf-8")
+        return summary
+
+    monkeypatch.setattr(s26.stage21_1, "run_xunce_stage21_1_on_policy_ppo_rollout_collector", fake_stage21_1)
+    monkeypatch.setattr(
+        s26.stage21_2,
+        "run_xunce_stage21_2_coverage_first_ppo_reward_contract",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("Stage21.2 should not run when Stage21.1 failed")),
+    )
+
+    summary = s26.run_xunce_stage26_1_synthetic_terrain_collector_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage26_8b_stage21_1_terminal_reachability_contract"
+    assert summary["stage21_1_source_roi_expansion_root_match"] is True
+    assert summary["synthetic_transition_contract_missing_count"] == 0
+    assert "stage21_1_terminal_reachability_contract_failed" in summary["blocking_reason_codes"]
+    assert "stage21_1_source_roi_expansion_root_mismatch" not in summary["blocking_reason_codes"]
 
 
 def test_stage21_3_synthetic_gate_rejects_missing_contract() -> None:

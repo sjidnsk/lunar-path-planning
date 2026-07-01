@@ -135,6 +135,59 @@ routes to post-update trajectory evaluation.
 
 Stage26.6 addresses the synthetic terrain credit-assignment gap found by Stage26.5. It keeps the network shape fixed but redefines the eight candidate-feature slots under an explicit `synthetic_credit_candidate_features/v1` semantic map, exposing normalized obstacle-aware coverage, Hybrid A* reachability/path cost, synthetic LOS pressure, synthetic hard-obstacle pressure, and risk/clearance proxy signals. Stage21.1 also adds `synthetic_credit_mixture_policy/v1`; when the mixture target is selected, the selected action is truly executed and `old_log_prob` is the behavior-policy total log probability while `old_policy_*` fields remain available for audit. Stage21.3 validates the behavior log probability and Stage21.4 continues to use `old_log_prob` as the PPO ratio denominator. This remains bounded smoke/diagnostic work: no checkpoint is published, no default policy is replaced, no executor or canary is enabled, and reward/HYBRID A* semantics are unchanged.
 
+Stage26.7D extends the same behavior-policy contract to continuous theta. A synthetic credit target must bind both a discrete base candidate and a Hybrid A* reachable theta proposal. The batch must preserve `old_policy_theta_log_prob`, `old_behavior_theta_log_prob`, `synthetic_credit_theta_policy_id`, proposal list, selected proposal index, and reachable proposal count. Stage21.3 must reject mismatched behavior theta logprob, while older synthetic credit batches without the reachability theta policy remain compatible.
+
+Stage26.7G clarifies the PPO update-stability metric under synthetic credit behavior policies. PPO ratio still uses behavior old logprob because selected actions may come from the synthetic credit mixture policy, but the KL gate must compare the updated policy against old policy logprob. Behavior-policy KL is retained as an off-policy diagnostic only. Stage26.7H then tightens post-update evaluation binding: Stage26.3/Stage21.5 must distinguish missing Hybrid A* inference provenance from explicit selected-pose unreachability, and coverage efficiency may be interpreted only when the pre/post selected poses are bound and reachable enough for `main_coverage_per_100m_delta` to be defined.
+
+Stage26.8 is the bounded multi-seed pilot for that repaired evidence chain.
+It keeps synthetic terrain, reward, network, Hybrid A* search semantics, and
+deployment boundaries unchanged, and switches the primary post-update gate to
+`main_coverable_coverage_efficiency/v1`. In this mode, main coverage per 100m
+and final main coverage drive the decision; early coverage AUC and total Hybrid
+A* path-cost deltas are diagnostics only.
+
+Stage26.8A expands only the trajectory horizon after Stage26.8 produced a clean
+but zero-delta result at 8 steps. It keeps the same seeds and contracts while
+sweeping `rollout_steps=12/16/20`; the objective is to determine whether
+synthetic credit coverage-efficiency gains require a longer trajectory horizon
+before changing policy signal, reward, network, Hybrid A*, or synthetic terrain
+semantics.
+
+Stage26.8B repairs the collector semantics exposed by the H16 horizon. A loaded
+synthetic source with valid transition provenance must not be reported as a
+synthetic map-binding failure. If a long-horizon step reaches a state where
+action and hard-risk masks are valid but all candidates fail Hybrid A*
+reachability, the collector records explicit reachability diagnostics and may
+treat the condition as terminal only after the minimum trainable sample
+threshold and safety lineage checks are satisfied.
+
+Stage26.8C resumes only the H16/H20 horizon-efficiency pilot after the
+Stage26.8B repair. H12 remains a baseline audit and must not be rerun or treated
+as a failure. The primary gate is still `main_coverage_per_100m_delta`; AUC,
+total path length, and Hybrid A* path-cost deltas remain diagnostic only.
+
+Stage26.8D converts the H16/H20 pilot from a single long command into a
+resumable experiment pipeline. The atomic execution unit is
+`(horizon, seed, phase)`, where phases are Stage26.1 collector, Stage26.2 update,
+and Stage26.3 post-update eval. Completed artifacts can be carried forward
+read-only, failed or incomplete roots must not be treated as success, and each
+invocation should advance only a bounded number of phases by default. This stage
+changes orchestration only; reward, network, Hybrid A* search, synthetic terrain,
+candidate generation, and deployment boundaries remain unchanged.
+
+Stage26.8F is a read-only diagnostic audit for repeated zero
+`main_coverage_per_100m_delta` outcomes. It inspects completed Stage26.8D/8C
+eval artifacts for scenario duplication, unchanged argmax actions, policy
+margin size, candidate opportunity visibility, and coverage proxy sensitivity
+before further H20 execution or seed expansion.
+
+Stage26.8G repairs the scenario-diversity contract exposed by Stage26.8F.
+Synthetic terrain scenarios must not be treated as distinct merely because
+`scenario_id` differs. A valid Stage26 synthetic scenario records a deterministic
+safe start, scenario seed, ROI id, candidate seed, and diversity/content hashes.
+The content hash excludes `scenario_id`, so repeated starts and candidate
+contexts remain detectable even when scenario names differ.
+
 Stage 18.7 is a prerequisite audit before using candidate-count arguments to
 justify architecture or reward changes. It tests only candidate-set cardinality:
 `dynamic_max_candidates_per_step` is swept over `6/12/24/36`, with proposal pool
@@ -2155,6 +2208,8 @@ Current active contracts:
 - `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
 - `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
 - `max_traversable_slope_deg=30.0`
+- PPO ratio with synthetic credit uses behavior old logprob; PPO KL gate uses policy old logprob.
+- `hybrid_astar_path_cost_delta` is diagnostic only; exploration efficiency is judged with `main_coverage_per_100m_delta`.
 
 For future stages, keep full implementation plans under
 `docs/superpowers/plans/`, keep real metrics and blockers in

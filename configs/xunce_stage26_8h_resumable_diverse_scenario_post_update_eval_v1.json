@@ -1,0 +1,21 @@
+{
+  "schema_version": "xunce-stage26-8h-resumable-diverse-scenario-post-update-eval-config/v1",
+  "stage_id": "xunce-stage26-8h-resumable-diverse-scenario-post-update-eval",
+  "stage26_8g_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8g_repair_synthetic_scenario_diversity_v1",
+  "run_mode": "run_next",
+  "seed": 260801,
+  "rollout_steps": 16,
+  "scenario_duplicate_ratio_threshold": 0.01,
+  "coverage_denominator_source": "main_coverable_cells/v1",
+  "post_update_success_metric": "main_coverable_coverage_efficiency/v1",
+  "coverage_source": "endpoint_theta_slope_obstacle_los/v1",
+  "path_cost_source": "hybrid_astar_pose_path/v1",
+  "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+  "action_space_type": "hybrid_discrete_xy_continuous_theta/v1",
+  "max_traversable_slope_deg": 30.0,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

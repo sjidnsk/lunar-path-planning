@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -50,6 +51,7 @@ ROUTE_FROM_STAGE26_0 = "run_stage26_1_synthetic_terrain_collector_smoke"
 
 ROUTE_INPUTS = "rerun_stage26_1_required_inputs"
 ROUTE_COLLECTOR = "repair_stage26_1_collector_synthetic_map_binding"
+ROUTE_TERMINAL_REACHABILITY = "repair_stage26_8b_stage21_1_terminal_reachability_contract"
 ROUTE_TRANSITION = "repair_stage26_1_synthetic_transition_contract"
 ROUTE_REWARD = "repair_stage26_1_synthetic_reward_provenance"
 ROUTE_BATCH = "repair_stage26_1_batch_gate"
@@ -69,6 +71,8 @@ BOUNDARY_FIELDS = (
 EXPANSION_SUMMARY_FILE = "xunce-high-fidelity-real-map-roi-expansion-summary.json"
 EXPANSION_SLICES_FILE = "xunce-high-fidelity-real-map-slices.jsonl"
 EXPANSION_PATH_FEEDBACK_AUDIT_FILE = "xunce-high-fidelity-path-feedback-audit.json"
+SCENARIO_FIXTURE_FILE = "xunce-stage26-scenario-fixtures.jsonl"
+SCENARIO_DIVERSITY_SOURCE = "synthetic_roi_start_seed_matrix/v1"
 
 
 def main() -> int:
@@ -125,6 +129,7 @@ def run_xunce_stage26_1_synthetic_terrain_collector_smoke(
         rejections,
         expected_source_root=str(synthetic_source_root) if synthetic_source_root else None,
         stage21_1_manifest=manifest,
+        stage21_1_summary=stage21_1_summary,
         expected_synthetic_hash=str(stage26_0_summary.get("synthetic_terrain_hash") or ""),
     )
     status, route, route_reason = _route(
@@ -150,6 +155,8 @@ def run_xunce_stage26_1_synthetic_terrain_collector_smoke(
         "synthetic_source_root": str(synthetic_source_root) if synthetic_source_root else None,
         "stage21_1_root": str(output_root / "s21_1"),
         "stage21_1_status": stage21_1_summary.get("status"),
+        "stage21_1_next_required_change": stage21_1_summary.get("next_required_change"),
+        "stage21_1_blocking_reason_codes": stage21_1_summary.get("blocking_reason_codes", []),
         "stage21_2_root": str(output_root / "s21_2"),
         "stage21_2_status": stage21_2_summary.get("status"),
         "stage21_3_root": str(output_root / "s21_3"),
@@ -160,8 +167,23 @@ def run_xunce_stage26_1_synthetic_terrain_collector_smoke(
         "coverage_source": COVERAGE_SOURCE,
         "path_cost_source": PATH_COST_SOURCE,
         "max_traversable_slope_deg": float(config["max_traversable_slope_deg"]),
+        "platform_contract_id": config.get("platform_contract_id"),
+        "platform_contract_hash": config.get("platform_contract_hash"),
         "required_scenario_count": int(config["required_scenario_count"]),
         "rollout_steps": int(config["rollout_steps"]),
+        "scenario_diversity_contract_enabled": bool(config.get("scenario_diversity_contract_enabled", False)),
+        "scenario_diversity_source": (
+            str(config.get("scenario_diversity_source") or SCENARIO_DIVERSITY_SOURCE)
+            if bool(config.get("scenario_diversity_contract_enabled", False))
+            else "legacy_stage26_scenario_source/v1"
+        ),
+        "scenario_diversity_primary_mechanism": (
+            "deterministic_safe_start_pool/v1"
+            if bool(config.get("scenario_diversity_contract_enabled", False))
+            else "legacy_safe_start_cell/v1"
+        ),
+        "scenario_candidate_seed_applied_to_candidate_generation": False,
+        "scenario_fixture_catalog": str(synthetic_source_root / SCENARIO_FIXTURE_FILE) if synthetic_source_root else None,
         **_summary_counts(audit),
         "stage26_1_authorized": False,
         "runs_new_ppo_update": False,
@@ -221,6 +243,12 @@ def _run_stage21_1(
             "dynamic_proposal_pool_limit_per_step": int(config["dynamic_proposal_pool_limit_per_step"]),
             "dynamic_validation_work_root": str(output_root / "_dynamic_validation_work_stage26_1"),
             "source_roi_expansion_root": str(synthetic_source_root),
+            "scenario_diversity_contract_enabled": bool(config.get("scenario_diversity_contract_enabled", False)),
+            "scenario_diversity_source": (
+                str(config.get("scenario_diversity_source") or SCENARIO_DIVERSITY_SOURCE)
+                if bool(config.get("scenario_diversity_contract_enabled", False))
+                else "legacy_stage26_scenario_source/v1"
+            ),
             "theta_aware_candidate_viewpoints_enabled": True,
             "action_space_type": config.get("action_space_type"),
             "continuous_theta_action_space_enabled": bool(config.get("continuous_theta_action_space_enabled", False)),
@@ -357,6 +385,14 @@ def _prepare_synthetic_source_root(config: dict[str, Any], summary: dict[str, An
     rows: list[dict[str, Any]] = []
     scenarios: list[dict[str, Any]] = []
     required = int(config["required_scenario_count"])
+    selected_start_cells: list[tuple[int, int]] = []
+    fixture_rows: list[dict[str, Any]] = []
+    diversity_enabled = bool(config.get("scenario_diversity_contract_enabled", False))
+    scenario_diversity_source = (
+        str(config.get("scenario_diversity_source") or SCENARIO_DIVERSITY_SOURCE)
+        if diversity_enabled
+        else "legacy_stage26_scenario_source/v1"
+    )
     for index in range(required):
         src = sidecars[index % len(sidecars)]
         if not src.is_file():
@@ -387,14 +423,56 @@ def _prepare_synthetic_source_root(config: dict[str, Any], summary: dict[str, An
         else:
             raise ConfigError(f"source path-planner contract not found for synthetic sidecar: {source_sidecar}")
         scenario_id = f"stage26_synthetic_{index:03d}"
-        start_cell = _safe_start_cell(sidecar)
+        scenario_seed = int(config.get("scenario_seed_base", config.get("stage26_8_seed", 260100))) + index
+        if diversity_enabled:
+            start_cell = _diverse_start_cell(
+                sidecar,
+                scenario_seed=scenario_seed,
+                selected_start_cells=selected_start_cells,
+                min_separation_cells=int(config["min_scenario_start_separation_cells"]),
+                min_clearance_cells=int(config["min_scenario_start_clearance_cells"]),
+            )
+            start_source = "deterministic_safe_start_pool/v1"
+        else:
+            start_cell = _safe_start_cell(sidecar)
+            start_source = "legacy_first_safe_cell/v1"
+        selected_start_cells.append((int(start_cell[0]), int(start_cell[1])))
+        scenario_roi_id = f"{scenario_id}:sidecar-{index % len(sidecars):03d}"
+        scenario_candidate_seed = scenario_seed + 100000
+        scenario_diversity_content_hash = _stable_hash(
+            {
+                "scenario_seed": scenario_seed,
+                "scenario_start_cell": start_cell,
+                "scenario_roi_id": scenario_roi_id,
+                "scenario_candidate_seed": scenario_candidate_seed,
+                "synthetic_terrain_hash": summary.get("synthetic_terrain_hash"),
+                "source_sidecar": str(src),
+            }
+        )
+        scenario_diversity_signature_hash = _stable_hash(
+            {
+                "scenario_id": scenario_id,
+                "scenario_diversity_content_hash": scenario_diversity_content_hash,
+            }
+        )
+        context_id = f"{scenario_id}:synthetic-seed:{scenario_seed}:start:{start_cell[0]}-{start_cell[1]}"
         common = {
             "schema_version": "xunce-high-fidelity-real-map-slice/v1",
             "scenario_id": scenario_id,
             "slice_id": scenario_id,
-            "scenario_seed": 260100 + index,
+            "context_id": context_id,
+            "scenario_seed": scenario_seed,
             "scenario_group": "stage26_synthetic_terrain_smoke",
-            "scenario_variant_id": f"{scenario_id}-seed-{260100 + index}-start-{start_cell[0]}-{start_cell[1]}",
+            "scenario_variant_id": f"{scenario_id}-seed-{scenario_seed}-start-{start_cell[0]}-{start_cell[1]}",
+            "scenario_start_cell": start_cell,
+            "scenario_start_cell_source": start_source,
+            "scenario_roi_id": scenario_roi_id,
+            "scenario_candidate_seed": scenario_candidate_seed,
+            "scenario_diversity_source": scenario_diversity_source,
+            "scenario_diversity_signature_hash": scenario_diversity_signature_hash,
+            "scenario_diversity_content_hash": scenario_diversity_content_hash,
+            "scenario_diversity_primary_mechanism": "deterministic_safe_start_pool/v1" if diversity_enabled else "legacy_safe_start_cell/v1",
+            "scenario_candidate_seed_applied_to_candidate_generation": False,
             "split": "train",
             "start_cell": start_cell,
             "current_cell": start_cell,
@@ -411,16 +489,42 @@ def _prepare_synthetic_source_root(config: dict[str, Any], summary: dict[str, An
         }
         rows.append(common)
         scenarios.append({k: v for k, v in common.items() if k not in {"schema_version", "slice_id", "split"}})
+        fixture_rows.append(
+            {
+                "schema_version": "xunce-stage26-scenario-fixture/v1",
+                "scenario_index": index,
+                "scenario_id": scenario_id,
+                "scenario_seed": scenario_seed,
+                "scenario_start_cell": start_cell,
+                "scenario_start_cell_source": start_source,
+                "scenario_roi_id": scenario_roi_id,
+                "scenario_candidate_seed": scenario_candidate_seed,
+                "scenario_diversity_source": common["scenario_diversity_source"],
+                "scenario_diversity_signature_hash": scenario_diversity_signature_hash,
+                "scenario_diversity_content_hash": scenario_diversity_content_hash,
+                "scenario_diversity_primary_mechanism": common["scenario_diversity_primary_mechanism"],
+                "scenario_candidate_seed_applied_to_candidate_generation": False,
+                "source_sidecar": str(src),
+                "synthetic_terrain_hash": summary.get("synthetic_terrain_hash"),
+            }
+        )
     _write_json(root / EXPANSION_SUMMARY_FILE, {
         "schema_version": "xunce-high-fidelity-real-map-roi-expansion-summary/v1",
         "status": "passed",
+        "slice_count": len(rows),
         "scenario_count": len(scenarios),
         "source_kind": SYNTHETIC_SOURCE_KIND,
         "synthetic_terrain_hash": summary.get("synthetic_terrain_hash"),
         "source_stage26_0_root": config["stage26_0_root"],
+        "scenario_diversity_contract_enabled": diversity_enabled,
+        "scenario_diversity_source": scenario_diversity_source,
+        "scenario_diversity_primary_mechanism": "deterministic_safe_start_pool/v1" if diversity_enabled else "legacy_safe_start_cell/v1",
+        "scenario_candidate_seed_applied_to_candidate_generation": False,
+        "scenario_fixture_catalog": str(root / SCENARIO_FIXTURE_FILE),
     })
     _write_jsonl(root / EXPANSION_SLICES_FILE, rows)
     _write_jsonl(root / "xunce-high-res-terrain-slices.jsonl", rows)
+    _write_jsonl(root / SCENARIO_FIXTURE_FILE, fixture_rows)
     _write_json(root / EXPANSION_PATH_FEEDBACK_AUDIT_FILE, {
         "schema_version": "xunce-high-fidelity-path-feedback-audit/v1",
         "scenario_count": len(scenarios),
@@ -430,19 +534,89 @@ def _prepare_synthetic_source_root(config: dict[str, Any], summary: dict[str, An
 
 
 def _safe_start_cell(sidecar: dict[str, Any]) -> list[int]:
+    candidates = _safe_start_candidates(sidecar, min_clearance_cells=0)
+    if candidates:
+        return [candidates[0][0], candidates[0][1]]
+    return [0, 0]
+
+
+def _diverse_start_cell(
+    sidecar: dict[str, Any],
+    *,
+    scenario_seed: int,
+    selected_start_cells: list[tuple[int, int]],
+    min_separation_cells: int,
+    min_clearance_cells: int,
+) -> list[int]:
+    candidates = _safe_start_candidates(sidecar, min_clearance_cells=min_clearance_cells)
+    if not candidates:
+        raise ConfigError("no safe start cell candidates available for scenario diversity")
+    ordered = sorted(
+        candidates,
+        key=lambda cell: _stable_hash({"scenario_seed": scenario_seed, "cell": list(cell)}),
+    )
+    min_sep_sq = int(min_separation_cells) * int(min_separation_cells)
+    for cell in ordered:
+        if all(_distance_sq(cell, selected) >= min_sep_sq for selected in selected_start_cells):
+            return [cell[0], cell[1]]
+    raise ConfigError("not enough separated safe start cells for scenario diversity")
+
+
+def _safe_start_candidates(sidecar: dict[str, Any], *, min_clearance_cells: int) -> list[tuple[int, int]]:
     cost = sidecar.get("cost")
     height = len(cost) if isinstance(cost, list) else 0
     width = len(cost[0]) if height and isinstance(cost[0], list) else 0
     passable = sidecar.get("passable_mask")
-    blocked = _cells(sidecar.get("synthetic_hard_obstacle_cells")) | _cells(sidecar.get("slope_blocked_cells")) | _cells(sidecar.get("blocked_cells"))
+    blocked = (
+        _cells(sidecar.get("synthetic_hard_obstacle_cells"))
+        | _cells(sidecar.get("synthetic_rock_hard_obstacle_cells"))
+        | _cells(sidecar.get("synthetic_pit_hard_obstacle_cells"))
+        | _cells(sidecar.get("slope_blocked_cells"))
+        | _cells(sidecar.get("blocked_cells"))
+        | _cells(sidecar.get("physical_obstacle_cells"))
+        | _cells(sidecar.get("obstacle_cells"))
+        | _derived_slope_blocked_cells(sidecar)
+    )
+    candidates: list[tuple[int, int]] = []
     for y in range(height):
         row = passable[y] if isinstance(passable, list) and y < len(passable) and isinstance(passable[y], list) else []
         for x in range(width):
             if row and x < len(row) and not bool(row[x]):
                 continue
-            if (x, y) not in blocked:
-                return [x, y]
-    return [0, 0]
+            cell = (x, y)
+            if cell in blocked:
+                continue
+            if min_clearance_cells > 0 and any(_chebyshev_distance(cell, blocked_cell) <= min_clearance_cells for blocked_cell in blocked):
+                continue
+            candidates.append(cell)
+    return candidates
+
+
+def _derived_slope_blocked_cells(sidecar: dict[str, Any]) -> set[tuple[int, int]]:
+    helper = getattr(getattr(stage21_1, "hf", None), "_slope_blocked_cells_from_sidecar_dem_payload", None)
+    if helper is None:
+        return set()
+    try:
+        return set(
+            helper(
+                sidecar,
+                max_traversable_slope_deg=float(sidecar.get("max_traversable_slope_deg", 30.0)),
+            )
+        )
+    except Exception:
+        return set()
+
+
+def _distance_sq(left: tuple[int, int], right: tuple[int, int]) -> int:
+    return (int(left[0]) - int(right[0])) ** 2 + (int(left[1]) - int(right[1])) ** 2
+
+
+def _chebyshev_distance(left: tuple[int, int], right: tuple[int, int]) -> int:
+    return max(abs(int(left[0]) - int(right[0])), abs(int(left[1]) - int(right[1])))
+
+
+def _stable_hash(payload: Any) -> str:
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _contract_path_for_source_sidecar(source_sidecar: Any) -> Path | None:
@@ -463,6 +637,7 @@ def _contract_audit(
     *,
     expected_source_root: str | None,
     stage21_1_manifest: dict[str, Any],
+    stage21_1_summary: dict[str, Any],
     expected_synthetic_hash: str,
 ) -> dict[str, Any]:
     transition_ids = {str(row.get("transition_id")) for row in transitions if str(row.get("transition_id") or "").strip()}
@@ -489,6 +664,15 @@ def _contract_audit(
         "stage21_1_expected_source_roi_expansion_root": expected_source_root,
         "stage21_1_actual_source_roi_expansion_root": actual_source_root,
         "stage21_1_source_roi_expansion_root_match": _same_path(expected_source_root, actual_source_root),
+        "stage21_1_status": stage21_1_summary.get("status"),
+        "stage21_1_next_required_change": stage21_1_summary.get("next_required_change"),
+        "stage21_1_blocking_reason_codes": list(stage21_1_summary.get("blocking_reason_codes") or []),
+        "stage21_1_no_hybrid_reachable_candidate_terminal_count": int(
+            stage21_1_summary.get("no_hybrid_reachable_candidate_terminal_count") or 0
+        ),
+        "rejection_no_hybrid_reachable_candidate_terminal_count": sum(
+            1 for row in rejections if row.get("reason") == "no_hybrid_reachable_candidate_terminal"
+        ),
         "synthetic_transition_contract_missing_count": transition_missing,
         "synthetic_reward_provenance_missing_count": reward_missing,
         "synthetic_batch_contract_missing_count": batch_missing,
@@ -518,8 +702,16 @@ def _route(
         return "failed", ROUTE_BOUNDARY, "stage26_1_boundary_rejected"
     if input_reasons:
         return "failed", ROUTE_INPUTS, "stage26_1_inputs_missing_or_untrusted"
-    if stage21_1_summary.get("status") != "passed" or audit["stage21_1_source_roi_expansion_root_match"] is not True:
+    if audit["stage21_1_source_roi_expansion_root_match"] is not True:
         return "failed", ROUTE_COLLECTOR, "stage21_1_did_not_load_synthetic_augmented_sidecar"
+    if stage21_1_summary.get("status") != "passed":
+        stage21_1_reasons = set(stage21_1_summary.get("blocking_reason_codes") or [])
+        if (
+            "no_hybrid_reachable_candidate_terminal" in stage21_1_reasons
+            or audit.get("rejection_no_hybrid_reachable_candidate_terminal_count", 0) > 0
+        ) and audit["synthetic_transition_contract_missing_count"] == 0:
+            return "failed", ROUTE_TERMINAL_REACHABILITY, "stage21_1_terminal_reachability_contract_failed"
+        return "failed", ROUTE_TRANSITION, "stage21_1_failed_after_loading_synthetic_augmented_sidecar"
     if audit["transition_count"] <= 0 or audit["synthetic_transition_contract_missing_count"] > 0:
         return "failed", ROUTE_TRANSITION, "stage21_1_synthetic_transition_contract_missing"
     if any(audit[key] > 0 for key in ("hard_risk_violation_count", "mask_violation_count", "path_planning_failure_count", "open_grid_fallback_count")):
@@ -561,6 +753,9 @@ def _route_blockers(
     reasons: list[str] = []
     if route == ROUTE_COLLECTOR and stage21_1_summary.get("status") != "passed":
         reasons.append("stage21_1_not_passed")
+    if route == ROUTE_TERMINAL_REACHABILITY:
+        reasons.append("stage21_1_terminal_reachability_contract_failed")
+        reasons.extend(str(reason) for reason in stage21_1_summary.get("blocking_reason_codes") or [])
     for key, name in (
         ("stage21_1_source_roi_expansion_root_match", "stage21_1_source_roi_expansion_root_mismatch"),
         ("stage21_3_rejects_missing_synthetic_contract", "stage21_3_missing_synthetic_gate"),
@@ -611,6 +806,8 @@ def _summary_counts(audit: dict[str, Any]) -> dict[str, Any]:
         "mask_violation_count",
         "path_planning_failure_count",
         "open_grid_fallback_count",
+        "stage21_1_no_hybrid_reachable_candidate_terminal_count",
+        "rejection_no_hybrid_reachable_candidate_terminal_count",
     )
     return {key: audit.get(key) for key in keys} | {
         "stage21_1_source_roi_expansion_root_match": audit.get("stage21_1_source_roi_expansion_root_match"),
@@ -731,6 +928,20 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     config["allow_synthetic_credit_behavior_policy"] = bool(
         config.get("allow_synthetic_credit_behavior_policy", False)
     )
+    config["scenario_diversity_contract_enabled"] = bool(config.get("scenario_diversity_contract_enabled", False))
+    config["scenario_diversity_source"] = str(config.get("scenario_diversity_source") or SCENARIO_DIVERSITY_SOURCE)
+    config["scenario_seed_base"] = _positive_int(
+        config.get("scenario_seed_base", config.get("stage26_8_seed", 260100)),
+        "scenario_seed_base",
+    )
+    config["min_scenario_start_separation_cells"] = _positive_int(
+        config.get("min_scenario_start_separation_cells", 5),
+        "min_scenario_start_separation_cells",
+    )
+    config["min_scenario_start_clearance_cells"] = _nonnegative_int(
+        config.get("min_scenario_start_clearance_cells", 1),
+        "min_scenario_start_clearance_cells",
+    )
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     for field in BOUNDARY_FIELDS:
         config.setdefault(field, False)
@@ -815,6 +1026,13 @@ def _positive_int(value: Any, field: str) -> int:
     parsed = _int_or_none(value)
     if parsed is None or parsed <= 0:
         raise ConfigError(f"{field} must be a positive integer")
+    return parsed
+
+
+def _nonnegative_int(value: Any, field: str) -> int:
+    parsed = _int_or_none(value)
+    if parsed is None or parsed < 0:
+        raise ConfigError(f"{field} must be a non-negative integer")
     return parsed
 
 

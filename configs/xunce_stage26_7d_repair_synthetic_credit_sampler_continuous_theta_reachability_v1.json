@@ -1,0 +1,20 @@
+{
+  "schema_version": "xunce-stage26-7d-repair-synthetic-credit-sampler-continuous-theta-reachability-config/v1",
+  "stage_id": "xunce-stage26-7d-repair-synthetic-credit-sampler-continuous-theta-reachability",
+  "stage26_7c_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7c_main_coverable_coverage_efficiency_rerun_v1",
+  "run_stage26_chain": true,
+  "min_trainable_transition_count": 12,
+  "coverage_source": "endpoint_theta_slope_obstacle_los/v1",
+  "path_cost_source": "hybrid_astar_pose_path/v1",
+  "coverage_denominator_mode": "main_coverable_cells",
+  "coverage_denominator_source": "main_coverable_cells/v1",
+  "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+  "action_space_type": "hybrid_discrete_xy_continuous_theta/v1",
+  "max_traversable_slope_deg": 30.0,
+  "hybrid_astar_candidate_eval_workers": 4,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

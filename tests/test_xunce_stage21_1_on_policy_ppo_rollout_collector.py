@@ -80,6 +80,119 @@ def test_stage21_1_boundary_flag_hard_fails(tmp_path: Path, monkeypatch) -> None
     assert "publishes_checkpoint" in summary["blocking_reason_codes"]
 
 
+def test_stage21_1_treats_late_no_hybrid_reachable_as_terminal_when_trainable_enough(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    config = _write_config(tmp_path, min_trainable_transition_count=1, continuous_theta_action_space_enabled=True)
+    transition = _transition()
+
+    def fake_collect(**_kwargs):
+        return runner.CollectionResult(
+            episodes=[
+                {
+                    "schema_version": "xunce-stage21-1-ppo-rollout-episode/v1",
+                    "scenario_id": "s1",
+                    "trainable_transition_count": 1,
+                    "hard_risk_violation_count": 0,
+                    "reason_codes": ["no_hybrid_reachable_candidate_terminal"],
+                }
+            ],
+            transitions=[transition],
+            trainable_batch=[transition],
+            rejections=[
+                {
+                    "reason": "no_hybrid_reachable_candidate_terminal",
+                    "action_mask": [True, True],
+                    "hard_risk_clean_mask": [True, True],
+                    "hybrid_astar_reachable_mask": [False, False],
+                    "sampling_mask": [False, False],
+                    "action_mask_true_count": 2,
+                    "hard_risk_clean_mask_true_count": 2,
+                    "hybrid_astar_reachable_count": 0,
+                    "sampling_mask_true_count": 0,
+                }
+            ],
+            reward_audit=[],
+            sampling_audit=[],
+            model_audit={"xunce_checkpoint_audit": {"checkpoint_loaded": True}},
+            reason_codes=["no_hybrid_reachable_candidate_terminal"],
+        )
+
+    monkeypatch.setattr(runner, "_collect_rollouts", fake_collect)
+
+    summary = runner.run_xunce_stage21_1_on_policy_ppo_rollout_collector(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    rejections = [
+        json.loads(line)
+        for line in (tmp_path / "out" / runner.REJECTION_FILE).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert summary["status"] == "passed"
+    assert summary["next_required_change"] == "implement_stage21_2_coverage_first_ppo_reward_contract"
+    assert summary["no_hybrid_reachable_candidate_terminal_count"] == 1
+    assert "no_hybrid_reachable_candidate_terminal" not in summary["blocking_reason_codes"]
+    assert rejections[0]["hybrid_astar_reachable_count"] == 0
+
+
+def test_stage21_1_keeps_early_no_hybrid_reachable_terminal_blocking(tmp_path: Path, monkeypatch) -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    config = _write_config(tmp_path, min_trainable_transition_count=2, continuous_theta_action_space_enabled=True)
+    transition = _transition()
+
+    def fake_collect(**_kwargs):
+        return runner.CollectionResult(
+            episodes=[],
+            transitions=[transition],
+            trainable_batch=[transition],
+            rejections=[{"reason": "no_hybrid_reachable_candidate_terminal"}],
+            reward_audit=[],
+            sampling_audit=[],
+            model_audit={"xunce_checkpoint_audit": {"checkpoint_loaded": True}},
+            reason_codes=["no_hybrid_reachable_candidate_terminal"],
+        )
+
+    monkeypatch.setattr(runner, "_collect_rollouts", fake_collect)
+
+    summary = runner.run_xunce_stage21_1_on_policy_ppo_rollout_collector(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "expand_stage21_1_on_policy_rollout_collection"
+    assert "trainable_transition_count_below_minimum" in summary["blocking_reason_codes"]
+
+
+def test_no_sampling_candidate_reason_identifies_hybrid_reachability_terminal() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    assert (
+        runner._no_sampling_candidate_reason(
+            action_mask=(True, True),
+            hard_risk_clean_mask=(True, True),
+            hybrid_reachable_mask=(False, False),
+        )
+        == "no_hybrid_reachable_candidate_terminal"
+    )
+    assert (
+        runner._no_sampling_candidate_reason(
+            action_mask=(False, False),
+            hard_risk_clean_mask=(True, True),
+            hybrid_reachable_mask=(True, True),
+        )
+        == "no_action_mask_candidate"
+    )
+
+
 def test_stage21_1_requires_stage21_0_passed(tmp_path: Path, monkeypatch) -> None:
     from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
 

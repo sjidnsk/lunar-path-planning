@@ -286,10 +286,15 @@ def _build_batch(
                 "old_point_log_prob": transition.get("old_point_log_prob"),
                 "old_theta_log_prob": transition.get("old_theta_log_prob"),
                 "old_policy_point_log_prob": transition.get("old_policy_point_log_prob", info.get("old_policy_point_log_prob")),
+                "old_policy_theta_log_prob": transition.get("old_policy_theta_log_prob", info.get("old_policy_theta_log_prob")),
                 "old_policy_log_prob": transition.get("old_policy_log_prob", info.get("old_policy_log_prob")),
                 "old_behavior_point_log_prob": transition.get(
                     "old_behavior_point_log_prob",
                     info.get("old_behavior_point_log_prob"),
+                ),
+                "old_behavior_theta_log_prob": transition.get(
+                    "old_behavior_theta_log_prob",
+                    info.get("old_behavior_theta_log_prob"),
                 ),
                 "old_behavior_log_prob": transition.get("old_behavior_log_prob", info.get("old_behavior_log_prob")),
                 "behavior_policy_id": transition.get("behavior_policy_id", info.get("behavior_policy_id")),
@@ -300,6 +305,26 @@ def _build_batch(
                 "synthetic_credit_target_index": transition.get(
                     "synthetic_credit_target_index",
                     info.get("synthetic_credit_target_index"),
+                ),
+                "synthetic_credit_target_theta_deg": transition.get(
+                    "synthetic_credit_target_theta_deg",
+                    info.get("synthetic_credit_target_theta_deg"),
+                ),
+                "synthetic_credit_theta_policy_id": transition.get(
+                    "synthetic_credit_theta_policy_id",
+                    info.get("synthetic_credit_theta_policy_id"),
+                ),
+                "synthetic_credit_theta_proposals_deg": transition.get(
+                    "synthetic_credit_theta_proposals_deg",
+                    info.get("synthetic_credit_theta_proposals_deg"),
+                ),
+                "synthetic_credit_theta_selected_proposal_index": transition.get(
+                    "synthetic_credit_theta_selected_proposal_index",
+                    info.get("synthetic_credit_theta_selected_proposal_index"),
+                ),
+                "synthetic_credit_theta_reachable_proposal_count": transition.get(
+                    "synthetic_credit_theta_reachable_proposal_count",
+                    info.get("synthetic_credit_theta_reachable_proposal_count"),
                 ),
                 "synthetic_credit_target_selected": transition.get(
                     "synthetic_credit_target_selected",
@@ -1127,6 +1152,11 @@ def _row_has_continuous_theta_action_contract(row: dict[str, Any]) -> bool:
         policy_point_log_prob = _finite(row.get("old_policy_point_log_prob"))
         if policy_point_log_prob is None:
             policy_point_log_prob = _finite(info.get("old_policy_point_log_prob"))
+        policy_theta_log_prob = _finite(row.get("old_policy_theta_log_prob"))
+        if policy_theta_log_prob is None:
+            policy_theta_log_prob = _finite(info.get("old_policy_theta_log_prob"))
+        if policy_theta_log_prob is None:
+            policy_theta_log_prob = theta_log_prob
         return (
             policy_point_log_prob is not None
             and _continuous_theta_old_log_prob_recomputes(
@@ -1134,7 +1164,7 @@ def _row_has_continuous_theta_action_contract(row: dict[str, Any]) -> bool:
                 action_index=action_index,
                 theta_rad=theta_rad,
                 old_point_log_prob=policy_point_log_prob,
-                old_theta_log_prob=theta_log_prob,
+                old_theta_log_prob=policy_theta_log_prob,
             )
             and _row_has_synthetic_credit_behavior_logprob(row)
         )
@@ -1168,9 +1198,24 @@ def _row_has_synthetic_credit_behavior_logprob(row: dict[str, Any]) -> bool:
     target_index = _int_or_none(row.get("synthetic_credit_target_index"))
     if target_index is None:
         target_index = _int_or_none(info.get("synthetic_credit_target_index"))
-    theta_log_prob = _finite(row.get("old_theta_log_prob"))
+    theta_log_prob = _finite(row.get("old_policy_theta_log_prob"))
+    if theta_log_prob is None:
+        theta_log_prob = _finite(info.get("old_policy_theta_log_prob"))
+    if theta_log_prob is None:
+        theta_log_prob = _finite(row.get("old_theta_log_prob"))
     if theta_log_prob is None:
         theta_log_prob = _finite(info.get("old_theta_log_prob"))
+    behavior_theta_log_prob = _finite(row.get("old_behavior_theta_log_prob"))
+    if behavior_theta_log_prob is None:
+        behavior_theta_log_prob = _finite(info.get("old_behavior_theta_log_prob"))
+    theta_policy_id = (
+        row.get("synthetic_credit_theta_policy_id")
+        or info.get("synthetic_credit_theta_policy_id")
+        or row.get("synthetic_credit_theta_behavior")
+        or info.get("synthetic_credit_theta_behavior")
+    )
+    if behavior_theta_log_prob is None and theta_policy_id != "reachability_theta_proposal_mixture/v1":
+        behavior_theta_log_prob = theta_log_prob
     old_behavior_point = _finite(row.get("old_behavior_point_log_prob"))
     if old_behavior_point is None:
         old_behavior_point = _finite(info.get("old_behavior_point_log_prob"))
@@ -1193,7 +1238,20 @@ def _row_has_synthetic_credit_behavior_logprob(row: dict[str, Any]) -> bool:
         or old_policy_total is None
         or old_behavior_total is None
         or old_total is None
+        or behavior_theta_log_prob is None
     ):
+        return False
+    theta_info = dict(info)
+    for key in (
+        "synthetic_credit_theta_policy_id",
+        "synthetic_credit_theta_behavior",
+        "synthetic_credit_theta_proposals_deg",
+        "synthetic_credit_theta_selected_proposal_index",
+        "synthetic_credit_theta_reachable_proposal_count",
+    ):
+        if row.get(key) is not None:
+            theta_info[key] = row.get(key)
+    if not _behavior_theta_logprob_recomputes(info=theta_info, expected=behavior_theta_log_prob):
         return False
     try:
         recomputed = synthetic_credit_behavior_logprob(
@@ -1202,6 +1260,7 @@ def _row_has_synthetic_credit_behavior_logprob(row: dict[str, Any]) -> bool:
             target_index=target_index,
             mixture_probability=mixture_probability,
             theta_log_prob=theta_log_prob,
+            behavior_theta_log_prob=behavior_theta_log_prob,
         )
     except (TypeError, ValueError, OverflowError):
         return False
@@ -1214,6 +1273,22 @@ def _row_has_synthetic_credit_behavior_logprob(row: dict[str, Any]) -> bool:
     if abs(float(recomputed["old_log_prob"]) - float(old_behavior_total)) > 1.0e-5:
         return False
     return abs(float(recomputed["old_log_prob"]) - float(old_total)) <= 1.0e-5
+
+
+def _behavior_theta_logprob_recomputes(*, info: dict[str, Any], expected: float) -> bool:
+    policy_id = info.get("synthetic_credit_theta_policy_id") or info.get("synthetic_credit_theta_behavior")
+    if policy_id != "reachability_theta_proposal_mixture/v1":
+        return True
+    proposals = info.get("synthetic_credit_theta_proposals_deg")
+    selected_index = _int_or_none(info.get("synthetic_credit_theta_selected_proposal_index"))
+    reachable_count = _int_or_none(info.get("synthetic_credit_theta_reachable_proposal_count"))
+    if not isinstance(proposals, list) or selected_index is None:
+        return False
+    if selected_index < 0 or selected_index >= len(proposals) or not proposals:
+        return False
+    support_count = reachable_count if reachable_count is not None and reachable_count > 0 else len(proposals)
+    recomputed = -math.log(support_count)
+    return abs(float(recomputed) - float(expected)) <= 1.0e-5
 
 
 def _continuous_theta_old_log_prob_recomputes(

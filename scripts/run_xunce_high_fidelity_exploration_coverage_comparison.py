@@ -1631,6 +1631,17 @@ def _run_policy_episode(
     denominator = float(denominator_context["legacy_coverage_denominator_cells"])
     radius = int(config["coverage_radius_cells"])
     start_cell = _cell_tuple(scenario.get("start_cell")) or (0, 0)
+    scenario_diversity_metadata = {
+        "scenario_seed": scenario.get("scenario_seed"),
+        "scenario_start_cell": scenario.get("scenario_start_cell") or list(start_cell),
+        "scenario_start_cell_source": scenario.get("scenario_start_cell_source"),
+        "scenario_roi_id": scenario.get("scenario_roi_id"),
+        "scenario_candidate_seed": scenario.get("scenario_candidate_seed"),
+        "scenario_diversity_source": scenario.get("scenario_diversity_source")
+        or config.get("scenario_diversity_source"),
+        "scenario_diversity_signature_hash": scenario.get("scenario_diversity_signature_hash"),
+        "scenario_diversity_content_hash": scenario.get("scenario_diversity_content_hash"),
+    }
     covered_cells = set(_footprint(start_cell, radius=radius))
     initial_coverage_count = _coverage_count_for_denominator(covered_cells, denominator_context)
     coverage_rates = [initial_coverage_count / denominator]
@@ -1797,6 +1808,7 @@ def _run_policy_episode(
                 "terminal_reason": "candidate_generation_exhausted",
                 "executed": False,
                 "reason_codes": step_reasons,
+                **scenario_diversity_metadata,
             }
             steps.append(step_row)
             reason_codes.extend(step_reasons)
@@ -1932,6 +1944,15 @@ def _run_policy_episode(
                     detail_payload,
                     candidates=candidates,
                     action_mask=adapter["action_mask"],
+                    current_cell=cell_before,
+                    current_theta_deg=current_theta_deg,
+                    candidate_set_hash_value=candidate_set_hash_value,
+                    step_index=step_index,
+                    scenario_id=scenario_id,
+                    config=config,
+                    slice_row=slice_row,
+                    repo_root=repo_root,
+                    hybrid_astar_executor=hybrid_astar_executor,
                 )
         selected_index = detail["selected_action_index"] if is_oracle_policy and detail is not None else _selected_index(detail)
         if (
@@ -2095,6 +2116,7 @@ def _run_policy_episode(
         step_row = {
             "schema_version": "xunce-exploration-coverage-step/v1",
             "scenario_id": scenario_id,
+            **scenario_diversity_metadata,
             "roi_group": roi_group,
             "split": split,
             "policy": policy_name,
@@ -2182,6 +2204,7 @@ def _run_policy_episode(
                     "schema_version": "xunce-exploration-coverage-model-inference/v1",
                     "input_source": "high_fidelity_scenario_adapter/v1",
                     "scenario_id": scenario_id,
+                    **scenario_diversity_metadata,
                     "roi_group": roi_group,
                     "policy": policy_name,
                     "step_index": step_index,
@@ -2199,6 +2222,9 @@ def _run_policy_episode(
                     "selected_viewpoint": selected_candidate.get("candidate_viewpoint"),
                     "selected_theta_rad": selected_candidate.get("selected_theta_rad"),
                     "selected_theta_deg": selected_candidate.get("candidate_theta_deg"),
+                    "reachable": selected_candidate.get("reachable"),
+                    "path_cost": selected_cost,
+                    "selected_path_cost": selected_cost,
                     "action_space_type": selected_candidate.get("action_space_type")
                     or detail_payload.get("action_space_type")
                     or config.get("action_space_type"),
@@ -2223,6 +2249,8 @@ def _run_policy_episode(
                     ),
                     "hybrid_astar_path_cost": selected_candidate.get("hybrid_astar_path_cost"),
                     "hybrid_astar_pose_path_hash": selected_candidate.get("hybrid_astar_pose_path_hash"),
+                    "hybrid_astar_reachable": selected_candidate.get("hybrid_astar_reachable"),
+                    "hybrid_astar_failure_reason": selected_candidate.get("hybrid_astar_failure_reason"),
                     "hybrid_astar_trajectory_kind": selected_candidate.get("hybrid_astar_trajectory_kind"),
                     "legacy_grid_astar_path_cost": selected_candidate.get("legacy_grid_astar_path_cost"),
                     "hybrid_vs_grid_path_cost_delta": selected_candidate.get("hybrid_vs_grid_path_cost_delta"),
@@ -2319,6 +2347,7 @@ def _run_policy_episode(
     return {
         "schema_version": "xunce-exploration-coverage-episode/v1",
         "scenario_id": scenario_id,
+        **scenario_diversity_metadata,
         "roi_group": roi_group,
         "split": split,
         "policy": policy_name,
@@ -4220,6 +4249,15 @@ def _apply_continuous_theta_hybrid_reachable_eval_policy(
     *,
     candidates: list[dict[str, Any]],
     action_mask: Any,
+    current_cell: tuple[int, int] | None = None,
+    current_theta_deg: float | None = None,
+    candidate_set_hash_value: str | None = None,
+    step_index: int | None = None,
+    scenario_id: str | None = None,
+    config: dict[str, Any] | None = None,
+    slice_row: dict[str, Any] | None = None,
+    repo_root: Path | None = None,
+    hybrid_astar_executor: Any | None = None,
 ) -> None:
     logits = detail_payload.get("logits") or detail_payload.get("masked_logits")
     if not isinstance(logits, list) or not logits:
@@ -4231,7 +4269,29 @@ def _apply_continuous_theta_hybrid_reachable_eval_policy(
         action_allowed = bool(mask_values[index]) if index < len(mask_values) else True
         reachable_mask.append(action_allowed and candidates[index].get("hybrid_astar_reachable") is True)
     if not any(reachable_mask):
-        return
+        proposal = _continuous_theta_reachable_eval_proposal(
+            detail_payload,
+            candidates=candidates,
+            action_mask=action_mask,
+            current_cell=current_cell,
+            current_theta_deg=current_theta_deg,
+            candidate_set_hash_value=candidate_set_hash_value,
+            step_index=step_index,
+            scenario_id=scenario_id,
+            config=config,
+            slice_row=slice_row,
+            repo_root=repo_root,
+            hybrid_astar_executor=hybrid_astar_executor,
+        )
+        if proposal is None:
+            return
+        selected_index = int(proposal["selected_action_index"])
+        reachable_mask = [
+            bool(mask_values[index]) if index < len(mask_values) else True
+            for index in range(usable_count)
+        ]
+        for index in range(usable_count):
+            reachable_mask[index] = bool(reachable_mask[index] and index == selected_index)
     masked_logits = [
         float(logits[index]) if index < usable_count and reachable_mask[index] else -1.0e9
         for index in range(len(logits))
@@ -4255,12 +4315,181 @@ def _apply_continuous_theta_hybrid_reachable_eval_policy(
     detail_payload["selected_rank"] = int(selected_rank)
     theta_values = detail_payload.get("theta_mu_rad")
     if isinstance(theta_values, list) and selected_index < len(theta_values):
-        theta_rad = _finite_or_none(theta_values[selected_index])
+        theta_rad = _finite_or_none(
+            candidates[selected_index].get("candidate_theta_rad")
+            if candidates[selected_index].get("continuous_theta_eval_policy") == "hybrid_astar_reachable_theta_proposal_argmax/v1"
+            else theta_values[selected_index]
+        )
         if theta_rad is not None:
             theta_rad = float(normalize_theta_rad(float(theta_rad)))
             detail_payload["selected_theta_rad"] = theta_rad
             detail_payload["selected_theta_deg"] = math.degrees(theta_rad)
-    detail_payload["continuous_theta_eval_policy"] = "hybrid_astar_reachable_theta_mu_argmax/v1"
+    detail_payload["continuous_theta_eval_policy"] = str(
+        candidates[selected_index].get("continuous_theta_eval_policy")
+        or "hybrid_astar_reachable_theta_mu_argmax/v1"
+    )
+
+
+def _continuous_theta_reachable_eval_proposal(
+    detail_payload: dict[str, Any],
+    *,
+    candidates: list[dict[str, Any]],
+    action_mask: Any,
+    current_cell: tuple[int, int] | None,
+    current_theta_deg: float | None,
+    candidate_set_hash_value: str | None,
+    step_index: int | None,
+    scenario_id: str | None,
+    config: dict[str, Any] | None,
+    slice_row: dict[str, Any] | None,
+    repo_root: Path | None,
+    hybrid_astar_executor: Any | None,
+) -> dict[str, Any] | None:
+    if current_cell is None or current_theta_deg is None or config is None or slice_row is None or repo_root is None:
+        return None
+    logits = detail_payload.get("logits") or detail_payload.get("masked_logits")
+    theta_values = detail_payload.get("theta_mu_rad")
+    if not isinstance(logits, list) or not isinstance(theta_values, list):
+        return None
+    theta_step_deg = float(config.get("theta_step_deg", 45.0) or 45.0)
+    flat_probes: list[dict[str, Any]] = []
+    candidate_probe_indices: list[list[int]] = []
+    for index, candidate in enumerate(candidates):
+        cell = _cell_tuple(_candidate_cell(candidate))
+        if cell is None:
+            candidate_probe_indices.append([])
+            continue
+        policy_theta_rad = _finite_or_none(theta_values[index]) if index < len(theta_values) else None
+        policy_theta_deg = math.degrees(float(policy_theta_rad)) if policy_theta_rad is not None else None
+        proposals = _unique_continuous_theta_eval_proposals(
+            [
+                policy_theta_deg,
+                current_theta_deg,
+                float(current_theta_deg) + theta_step_deg,
+                float(current_theta_deg) - theta_step_deg,
+            ]
+        )
+        local_indices: list[int] = []
+        for theta_deg in proposals:
+            probe = dict(candidate)
+            probe["candidate_index"] = int(index)
+            probe["candidate_set_hash"] = str(candidate_set_hash_value or "")
+            probe["candidate_theta_deg"] = float(theta_deg)
+            probe["candidate_theta_rad"] = float(normalize_theta_rad(math.radians(float(theta_deg))))
+            probe["candidate_viewpoint"] = [int(cell[0]), int(cell[1]), float(theta_deg)]
+            local_indices.append(len(flat_probes))
+            flat_probes.append(probe)
+        candidate_probe_indices.append(local_indices)
+    if not flat_probes:
+        return None
+    _enrich_candidates_with_hybrid_astar_path_cost(
+        flat_probes,
+        current_cell=current_cell,
+        current_theta_deg=float(current_theta_deg),
+        candidate_set_hash_value=str(candidate_set_hash_value or ""),
+        step_index=int(step_index or 0),
+        scenario_id=str(scenario_id or "continuous-theta-eval-proposal"),
+        config=config,
+        slice_row=slice_row,
+        repo_root=repo_root,
+        hybrid_astar_executor=hybrid_astar_executor,
+    )
+    mask_values = list(action_mask) if isinstance(action_mask, (list, tuple)) else []
+    usable_count = min(len(logits), len(candidates))
+    best_score: tuple[float, float, int, int] | None = None
+    best_selection: tuple[int, int] | None = None
+    for candidate_index, probe_indices in enumerate(candidate_probe_indices):
+        if candidate_index >= usable_count:
+            continue
+        action_allowed = bool(mask_values[candidate_index]) if candidate_index < len(mask_values) else True
+        if not action_allowed:
+            continue
+        reachable_probes = [
+            probe_index
+            for probe_index in probe_indices
+            if flat_probes[probe_index].get("hybrid_astar_reachable") is True
+            and _finite_or_none(flat_probes[probe_index].get("hybrid_astar_path_cost")) is not None
+            and str(flat_probes[probe_index].get("hybrid_astar_pose_path_hash") or "").strip()
+        ]
+        if not reachable_probes:
+            continue
+        best_probe = min(
+            reachable_probes,
+            key=lambda probe_index: (
+                float(flat_probes[probe_index].get("hybrid_astar_path_cost")),
+                probe_index,
+            ),
+        )
+        logit = float(logits[candidate_index]) if candidate_index < len(logits) else -1.0e9
+        path_cost = float(flat_probes[best_probe].get("hybrid_astar_path_cost"))
+        score = (logit, -path_cost, -int(candidate_index), -int(best_probe))
+        if best_score is None or score > best_score:
+            best_score = score
+            best_selection = (int(candidate_index), int(best_probe))
+    if best_selection is None:
+        return None
+    selected_index, selected_probe_index = best_selection
+    selected_probe = flat_probes[selected_probe_index]
+    _copy_continuous_theta_eval_probe_to_candidate(
+        candidates[selected_index],
+        selected_probe,
+        selected_index=selected_index,
+        candidate_set_hash_value=str(candidate_set_hash_value or ""),
+    )
+    return {"selected_action_index": selected_index}
+
+
+def _copy_continuous_theta_eval_probe_to_candidate(
+    candidate: dict[str, Any],
+    probe: dict[str, Any],
+    *,
+    selected_index: int,
+    candidate_set_hash_value: str,
+) -> None:
+    for field in (
+        "candidate_theta_deg",
+        "candidate_theta_rad",
+        "candidate_viewpoint",
+        "path_cost_source",
+        "hybrid_astar_path_cost",
+        "hybrid_astar_pose_path_hash",
+        "hybrid_astar_trajectory_kind",
+        "hybrid_astar_reachable",
+        "hybrid_astar_failure_reason",
+        "legacy_grid_astar_path_cost",
+        "hybrid_vs_grid_path_cost_delta",
+        "point_grid_path_cost_fallback_used",
+        "default_astar_replaced",
+        "hybrid_astar_ackermann_feasible_claimed",
+        "platform_contract_hash",
+        "max_traversable_slope_deg",
+        "hybrid_astar_current_pose",
+        "hybrid_astar_current_pose_provenance",
+        "path_cost",
+        "reachable",
+        "hybrid_astar_action_mask_allowed",
+    ):
+        if field in probe:
+            candidate[field] = probe[field]
+    candidate["action_space_type"] = CONTINUOUS_THETA_ACTION_SPACE
+    candidate["base_candidate_index"] = int(selected_index)
+    candidate["selected_base_candidate_index"] = int(selected_index)
+    candidate["selected_theta_rad"] = candidate.get("candidate_theta_rad")
+    candidate["selected_theta_deg"] = candidate.get("candidate_theta_deg")
+    candidate["base_candidate_set_hash"] = str(candidate_set_hash_value)
+    candidate["continuous_theta_eval_policy"] = "hybrid_astar_reachable_theta_proposal_argmax/v1"
+
+
+def _unique_continuous_theta_eval_proposals(values: list[Any]) -> list[float]:
+    result: list[float] = []
+    for value in values:
+        number = _finite_or_none(value)
+        if number is None:
+            continue
+        normalized = float(number) % 360.0
+        if not any(abs(((normalized - existing + 180.0) % 360.0) - 180.0) <= 1.0e-6 for existing in result):
+            result.append(normalized)
+    return result
 
 
 def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> tuple[int, dict[str, Any] | None, str | None]:
@@ -4471,7 +4700,7 @@ def _apply_hybrid_astar_candidate_fields(
     candidate["hybrid_astar_current_pose_provenance"] = "high_fidelity_current_cell_plus_previous_selected_theta/v1"
     if _finite_or_none(hybrid_cost) is not None:
         candidate["path_cost"] = float(hybrid_cost)
-        candidate["reachable"] = candidate.get("reachable", True) is not False and candidate["hybrid_astar_reachable"]
+        candidate["reachable"] = candidate["hybrid_astar_reachable"]
     else:
         candidate["reachable"] = False
     candidate["hybrid_astar_action_mask_allowed"] = candidate["hybrid_astar_reachable"]

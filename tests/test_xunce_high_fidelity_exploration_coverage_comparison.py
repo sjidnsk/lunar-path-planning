@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import math
 import shutil
 import sys
 import tempfile
@@ -118,6 +119,7 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
 
         episode_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
         self.assertEqual(len(episode_rows), 24 * 2)
+
         first_episode = episode_rows[0]
         self.assertIn("coverage_return", first_episode)
         self.assertIn("coverage_curve_auc", first_episode)
@@ -193,6 +195,94 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(manifest["profile_version"], summary["profile_version"])
         self.assertEqual(manifest["profile_hash"], summary["profile_hash"])
 
+    def test_continuous_theta_eval_uses_reachable_proposal_when_mu_is_unreachable(self) -> None:
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as hf
+
+        candidates = [
+            {"cell": [0, 0], "hybrid_astar_reachable": False},
+            {"cell": [1, 0], "hybrid_astar_reachable": False},
+        ]
+        detail = {
+            "logits": [0.0, 2.0],
+            "masked_logits": [0.0, 2.0],
+            "theta_mu_rad": [math.radians(11.0), math.radians(17.0)],
+            "action_probs": [0.119, 0.881],
+            "selected_action_index": 1,
+            "selected_probability": 0.881,
+            "selected_rank": 1,
+        }
+
+        original = hf._enrich_candidates_with_hybrid_astar_path_cost
+
+        def fake_enrich(probes, **kwargs):
+            for probe in probes:
+                theta = float(probe.get("candidate_theta_deg"))
+                cell = probe.get("cell")
+                reachable = cell == [1, 0] and abs(theta - 0.0) < 1.0e-6
+                probe["path_cost_source"] = "hybrid_astar_pose_path/v1"
+                probe["hybrid_astar_trajectory_kind"] = "hybrid_astar_pose_path"
+                probe["hybrid_astar_reachable"] = reachable
+                probe["hybrid_astar_failure_reason"] = None if reachable else "test_unreachable"
+                probe["hybrid_astar_path_cost"] = 3.0 if reachable else None
+                probe["hybrid_astar_pose_path_hash"] = "reachable-hash" if reachable else None
+                probe["point_grid_path_cost_fallback_used"] = False
+                probe["default_astar_replaced"] = False
+                probe["hybrid_astar_ackermann_feasible_claimed"] = False
+                probe["platform_contract_hash"] = "platform-hash"
+                probe["max_traversable_slope_deg"] = 30.0
+                if reachable:
+                    probe["path_cost"] = 3.0
+                    probe["reachable"] = True
+
+        hf._enrich_candidates_with_hybrid_astar_path_cost = fake_enrich
+        try:
+            hf._apply_continuous_theta_hybrid_reachable_eval_policy(
+                detail,
+                candidates=candidates,
+                action_mask=[True, True],
+                current_cell=(0, 0),
+                current_theta_deg=0.0,
+                candidate_set_hash_value="candidate-set",
+                step_index=0,
+                scenario_id="scenario",
+                config={"theta_step_deg": 45.0, "hybrid_astar_pose_path_cost_enabled": True},
+                slice_row={},
+                repo_root=self.repo_root,
+            )
+        finally:
+            hf._enrich_candidates_with_hybrid_astar_path_cost = original
+
+        self.assertEqual(detail["selected_action_index"], 1)
+        self.assertEqual(detail["continuous_theta_eval_policy"], "hybrid_astar_reachable_theta_proposal_argmax/v1")
+        self.assertAlmostEqual(float(detail["selected_theta_deg"]), 0.0)
+        self.assertTrue(candidates[1]["hybrid_astar_reachable"])
+        self.assertEqual(candidates[1]["hybrid_astar_pose_path_hash"], "reachable-hash")
+
+    def test_hybrid_astar_reachability_overrides_legacy_candidate_reachability(self) -> None:
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as hf
+
+        candidate = {"cell": [1, 0], "reachable": False, "path_cost": None}
+        hf._apply_hybrid_astar_candidate_fields(
+            candidate,
+            row={
+                "hybrid_astar_reachable": True,
+                "hybrid_astar_path_cost": 12.5,
+                "hybrid_astar_pose_path_hash": "hybrid-hash",
+                "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+                "hybrid_astar_failure_reason": None,
+                "legacy_grid_astar_path_cost": None,
+                "hybrid_vs_grid_path_cost_delta": None,
+            },
+            current_pose=[0.5, 0.5, 0.0],
+            platform_contract_hash="platform-hash",
+            max_traversable_slope_deg=30.0,
+        )
+
+        self.assertTrue(candidate["hybrid_astar_reachable"])
+        self.assertTrue(candidate["reachable"])
+        self.assertEqual(candidate["path_cost"], 12.5)
+        self.assertEqual(candidate["path_cost_source"], "hybrid_astar_pose_path/v1")
+
     def test_hybrid_astar_path_cost_enabled_enriches_model_inference_rows(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,
@@ -247,6 +337,10 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(first["path_cost_source"], "hybrid_astar_pose_path/v1")
         self.assertEqual(first["hybrid_astar_trajectory_kind"], "hybrid_astar_pose_path")
         self.assertIsNotNone(first["hybrid_astar_path_cost"])
+        self.assertIsNotNone(first["path_cost"])
+        self.assertAlmostEqual(float(first["path_cost"]), float(first["hybrid_astar_path_cost"]))
+        self.assertTrue(first["reachable"])
+        self.assertTrue(first["hybrid_astar_reachable"])
         self.assertTrue(first["hybrid_astar_pose_path_hash"])
         self.assertIsNotNone(first["legacy_grid_astar_path_cost"])
         self.assertIsNotNone(first["hybrid_vs_grid_path_cost_delta"])
@@ -258,6 +352,11 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             "synthetic_credit_candidate_features/v1",
         )
         self.assertTrue(first["synthetic_credit_feature_rows"])
+        episodes = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
+        self.assertTrue(episodes)
+        xunce_episode = next(row for row in episodes if row["policy"] == "xunce")
+        self.assertGreater(float(xunce_episode["path_cost_total_m"]), 0.0)
+        self.assertEqual(xunce_episode["unreachable_selected_count"], 0)
 
     def test_main_coverable_denominator_excludes_hard_obstacles_but_keeps_los_only_blockers(self) -> None:
         import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as coverage

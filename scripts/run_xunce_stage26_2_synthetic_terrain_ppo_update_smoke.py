@@ -153,6 +153,8 @@ def run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke(
         "synthetic_terrain_model_id": stage26_1_summary.get("synthetic_terrain_model_id"),
         "synthetic_terrain_hash": stage26_1_summary.get("synthetic_terrain_hash"),
         "synthetic_source_kind": SYNTHETIC_SOURCE_KIND,
+        "platform_contract_id": stage26_1_summary.get("platform_contract_id"),
+        "platform_contract_hash": stage26_1_summary.get("platform_contract_hash"),
         "max_traversable_slope_deg": 30.0,
         **_summary_counts(batch_audit, loss_gradient_audit, checkpoint_boundary_audit),
         "stage26_2_authorized": False,

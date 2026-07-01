@@ -1,0 +1,20 @@
+{
+  "schema_version": "xunce-stage26-8d-resumable-seed-horizon-execution-config/v1",
+  "stage_id": "xunce-stage26-8d-resumable-seed-horizon-execution",
+  "stage26_8b_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8b_repair_horizon_collector_terminal_reachability_v1",
+  "stage26_8c_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8c_resume_h16_h20_horizon_efficiency_v1",
+  "stage26_8_base_config": "configs/xunce_stage26_8_synthetic_terrain_multi_seed_coverage_efficiency_pilot_v1.json",
+  "horizons": [16, 20],
+  "seeds": [260801, 260802, 260803],
+  "run_mode": "run_next",
+  "max_jobs_per_invocation": 1,
+  "required_scenario_count": 3,
+  "dynamic_max_candidates_per_step": 36,
+  "dynamic_proposal_pool_limit_per_step": 288,
+  "hybrid_astar_candidate_eval_workers": 4,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

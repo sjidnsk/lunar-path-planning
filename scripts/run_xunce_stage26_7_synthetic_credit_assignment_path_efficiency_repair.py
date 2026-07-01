@@ -158,6 +158,9 @@ def run_xunce_stage26_7_synthetic_credit_assignment_path_efficiency_repair(
         "best_combo_coverage_auc_delta": recommended.get("coverage_auc_delta", 0.0),
         "best_combo_hybrid_astar_path_cost_delta": recommended.get("hybrid_astar_path_cost_delta", 0.0),
         "best_combo_coverage_per_100m_delta": recommended.get("coverage_per_100m_delta", 0.0),
+        "coverage_denominator_mode": config.get("coverage_denominator_mode"),
+        "coverage_denominator_source": config.get("coverage_denominator_source"),
+        "hybrid_astar_path_cost_delta_is_diagnostic_only": True,
         "best_combo_scenario_regression_count": recommended.get("scenario_regression_count", 0),
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
@@ -361,6 +364,8 @@ def _build_stage26_3_config(config: dict[str, Any], stage26_2_root: Path) -> dic
             "continuous_theta_action_space_enabled": True,
             "synthetic_credit_feature_exposure_enabled": True,
             "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+            "coverage_denominator_mode": str(config.get("coverage_denominator_mode", "roi_valid_cells")),
+            "coverage_denominator_source": str(config.get("coverage_denominator_source", "roi_valid_cells/v1")),
             "stage26_3_authorized": False,
             "release_or_training_authorized": False,
             "runs_new_ppo_update": False,
@@ -442,7 +447,7 @@ def _route(
         return ROUTE_MULTI_SEED
     if int(best.get("selected_action_changed_count") or 0) <= 0:
         return ROUTE_MARGIN if float(best.get("mean_abs_probability_delta") or 0.0) > 0.0 else ROUTE_TARGET_SCORE
-    if float(best.get("hybrid_astar_path_cost_delta") or 0.0) > 0.0 or float(best.get("coverage_per_100m_delta") or 0.0) < 0.0:
+    if float(best.get("coverage_per_100m_delta") or 0.0) < 0.0:
         return ROUTE_TARGET_SCORE
     if float(best.get("final_coverage_delta") or 0.0) <= 0.0 or float(best.get("coverage_auc_delta") or 0.0) <= 0.0:
         return ROUTE_CREDIT
@@ -457,7 +462,6 @@ def _combo_success(combo: dict[str, Any]) -> bool:
         and int(combo.get("selected_action_changed_count") or 0) > 0
         and float(combo.get("final_coverage_delta") or 0.0) > 0.0
         and float(combo.get("coverage_auc_delta") or 0.0) > 0.0
-        and float(combo.get("hybrid_astar_path_cost_delta") or 0.0) <= 0.0
         and float(combo.get("coverage_per_100m_delta") or 0.0) >= 0.0
         and int(combo.get("scenario_regression_count") or 0) == 0
         and int(combo.get("hard_risk_violation_count") or 0) == 0
@@ -533,6 +537,8 @@ def _eval_metrics(stage26_3_summary: dict[str, Any]) -> dict[str, Any]:
         "coverage_auc_delta": float(stage26_3_summary.get("coverage_auc_delta") or 0.0),
         "hybrid_astar_path_cost_delta": float(stage26_3_summary.get("hybrid_astar_path_cost_delta") or 0.0),
         "coverage_per_100m_delta": float(stage26_3_summary.get("coverage_per_100m_delta") or 0.0),
+        "coverage_denominator_mode": stage26_3_summary.get("coverage_denominator_mode"),
+        "coverage_denominator_source": stage26_3_summary.get("coverage_denominator_source"),
         "scenario_regression_count": int(stage26_3_summary.get("scenario_regression_count") or 0),
         "hard_risk_violation_count": int(stage26_3_summary.get("hard_risk_violation_count") or 0),
         "mask_violation_count": int(stage26_3_summary.get("mask_violation_count") or 0),
@@ -603,6 +609,8 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         "synthetic_credit_mixture_probability",
     )
     config["hybrid_astar_candidate_eval_workers"] = int(config.get("hybrid_astar_candidate_eval_workers", 4))
+    config["coverage_denominator_mode"] = str(config.get("coverage_denominator_mode", "roi_valid_cells"))
+    config["coverage_denominator_source"] = str(config.get("coverage_denominator_source", "roi_valid_cells/v1"))
     config["epochs"] = int(config.get("epochs", 4))
     config["learning_rate"] = float(config.get("learning_rate", 1.0e-5))
     config["clip_ratio"] = float(config.get("clip_ratio", 0.2))

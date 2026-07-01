@@ -40,9 +40,13 @@ MANIFEST_FILE = "xunce-stage21-5-manifest.json"
 ROUTE_BOUNDARY = "resolve_stage21_5_post_update_evaluation_boundary_rejections"
 ROUTE_INPUTS = "rerun_stage21_5_required_inputs"
 ROUTE_EXECUTION = "repair_stage21_5_offline_evaluation_execution"
+ROUTE_PRE_UNREACHABLE = "repair_stage21_5_pre_policy_unreachable_baseline"
+ROUTE_POST_UNREACHABLE = "repair_stage21_5_post_policy_unreachable_regression"
 ROUTE_HARD_RISK = "repair_stage21_5_hard_risk_regression"
 ROUTE_REPAIR = "repair_stage21_5_reward_collector_advantage_or_horizon"
 ROUTE_STAGE21_6 = "implement_stage21_6_multi_seed_ppo_pilot"
+SUCCESS_METRIC_DEFAULT = "coverage_auc_and_final/v1"
+SUCCESS_METRIC_MAIN_COVERABLE_EFFICIENCY = "main_coverable_coverage_efficiency/v1"
 
 ACCEPTED_STAGE21_4_ROUTES = {
     "implement_stage21_5_single_seed_ppo_pilot",
@@ -125,6 +129,13 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
         stage21_4_checkpoint_audit = _read_json(stage21_4_root / "xunce-stage21-4-checkpoint-audit.json")
         stage21_4_routing = _read_json(stage21_4_root / "xunce-stage21-4-next-stage-routing.json")
         input_reasons.extend(_stage21_4_rejections(stage21_4_summary, stage21_4_checkpoint_audit, stage21_4_routing))
+        theta_head_init_seed = _resolve_continuous_theta_head_init_seed(
+            config,
+            stage21_4_summary=stage21_4_summary,
+            repo_root=repo_root,
+        )
+        if theta_head_init_seed is not None:
+            config["continuous_theta_head_init_seed"] = int(theta_head_init_seed)
 
     if not boundary_reasons and not input_reasons:
         if config["execute_high_fidelity_evaluations"]:
@@ -162,6 +173,12 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
     elif input_reasons:
         status = "failed"
         route = ROUTE_INPUTS
+    elif "post_unreachable_selected_count_nonzero" in execution_reasons:
+        status = "failed"
+        route = ROUTE_POST_UNREACHABLE
+    elif "pre_unreachable_selected_count_nonzero" in execution_reasons:
+        status = "failed"
+        route = ROUTE_PRE_UNREACHABLE
     elif execution_reasons:
         status = "failed"
         route = ROUTE_EXECUTION
@@ -172,7 +189,7 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
     elif _regressed(delta, scenario_delta_rows, config):
         status = "failed"
         route = ROUTE_REPAIR
-        blocking.append("post_ppo_coverage_or_auc_regressed")
+        blocking.append(_coverage_regression_reason(config))
 
     return _write_outputs(
         config=config,
@@ -211,6 +228,7 @@ def _run_high_fidelity_eval(
         "include_oracle_baselines": bool(config["include_oracle_baselines"]),
         "xunce_only_evaluation": bool(config["xunce_only_evaluation"]),
         "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+        "continuous_theta_head_init_seed": config.get("continuous_theta_head_init_seed"),
         "include_roi_weighted_coverage": True,
         "include_canonical_reward_rerank_oracle": bool(config["include_canonical_reward_rerank_oracle"]),
         "canonical_reward_rerank_profile": str(config["canonical_reward_rerank_profile"])
@@ -224,6 +242,47 @@ def _run_high_fidelity_eval(
         repo_root=repo_root,
         config_overrides={key: value for key, value in overrides.items() if value is not None},
     )
+
+
+def _resolve_continuous_theta_head_init_seed(
+    config: dict[str, Any],
+    *,
+    stage21_4_summary: dict[str, Any],
+    repo_root: Path,
+) -> int | None:
+    explicit = _nonnegative_int_or_none(config.get("continuous_theta_head_init_seed"))
+    if explicit is not None:
+        return explicit
+    summary_seed = _nonnegative_int_or_none(stage21_4_summary.get("continuous_theta_head_init_seed"))
+    if summary_seed is not None:
+        return summary_seed
+    stage21_3_root_raw = stage21_4_summary.get("stage21_3_ppo_batch_validation_root")
+    if not stage21_3_root_raw:
+        return None
+    stage21_3_root = _resolve_path(Path(str(stage21_3_root_raw)), repo_root)
+    stage21_3_summary_path = stage21_3_root / "xunce-stage21-3-ppo-batch-validation-summary.json"
+    if not stage21_3_summary_path.is_file():
+        return None
+    stage21_3_summary = _read_json(stage21_3_summary_path)
+    stage21_1_root_raw = stage21_3_summary.get("stage21_1_collector_root")
+    if not stage21_1_root_raw:
+        return None
+    stage21_1_root = _resolve_path(Path(str(stage21_1_root_raw)), repo_root)
+    stage21_1_summary_path = stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json"
+    if not stage21_1_summary_path.is_file():
+        return None
+    stage21_1_summary = _read_json(stage21_1_summary_path)
+    return _nonnegative_int_or_none(stage21_1_summary.get("sampling_seed"))
+
+
+def _nonnegative_int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if numeric >= 0 else None
 
 
 def _policy_metrics(summary: dict[str, Any], episodes: list[dict[str, Any]], *, policy_name: str) -> dict[str, Any]:
@@ -345,12 +404,7 @@ def _scenario_delta_rows(pre_episodes: list[dict[str, Any]], post_episodes: list
 
 def _scenario_regression_count(rows: list[dict[str, Any]], config: dict[str, Any]) -> int:
     min_delta = float(config["min_post_update_coverage_delta"])
-    fields = (
-        "final_coverage_rate_delta",
-        "final_coverage_rate_capped_delta",
-        "coverage_curve_auc_delta",
-        "coverage_curve_auc_capped_delta",
-    )
+    fields = _scenario_regression_fields(config)
     count = 0
     for row in rows:
         if any(_finite(row.get(field)) is None or float(_finite(row.get(field))) < -min_delta for field in fields):
@@ -378,18 +432,49 @@ def _scenario_safety_boundary_regression_count(rows: list[dict[str, Any]]) -> in
 
 def _regressed(delta: dict[str, Any], scenario_delta_rows: list[dict[str, Any]], config: dict[str, Any]) -> bool:
     min_delta = float(config["min_post_update_coverage_delta"])
-    fields = (
-        "final_coverage_rate_mean_delta",
-        "final_coverage_rate_capped_mean_delta",
-        "coverage_curve_auc_mean_delta",
-        "coverage_curve_auc_capped_mean_delta",
-    )
+    fields = _aggregate_regression_fields(config)
     values = [_finite(delta.get(field)) for field in fields]
     if any(value is None for value in values):
         return True
     if any(float(value) < -min_delta for value in values if value is not None):
         return True
     return _scenario_regression_count(scenario_delta_rows, config) > 0
+
+
+def _aggregate_regression_fields(config: dict[str, Any]) -> tuple[str, ...]:
+    if _uses_main_coverable_efficiency_metric(config):
+        return (
+            "final_coverage_rate_mean_delta",
+            "final_coverage_rate_capped_mean_delta",
+            "coverage_per_100m_mean_delta",
+        )
+    return (
+        "final_coverage_rate_mean_delta",
+        "final_coverage_rate_capped_mean_delta",
+        "coverage_curve_auc_mean_delta",
+        "coverage_curve_auc_capped_mean_delta",
+    )
+
+
+def _scenario_regression_fields(config: dict[str, Any]) -> tuple[str, ...]:
+    if _uses_main_coverable_efficiency_metric(config):
+        return ("coverage_per_100m_delta",)
+    return (
+        "final_coverage_rate_delta",
+        "final_coverage_rate_capped_delta",
+        "coverage_curve_auc_delta",
+        "coverage_curve_auc_capped_delta",
+    )
+
+
+def _uses_main_coverable_efficiency_metric(config: dict[str, Any]) -> bool:
+    return config.get("post_update_success_metric") == SUCCESS_METRIC_MAIN_COVERABLE_EFFICIENCY
+
+
+def _coverage_regression_reason(config: dict[str, Any]) -> str:
+    if _uses_main_coverable_efficiency_metric(config):
+        return "post_ppo_main_coverable_coverage_efficiency_regressed"
+    return "post_ppo_coverage_or_auc_regressed"
 
 
 def _hard_risk_or_safety_boundary_regressed(
@@ -607,8 +692,12 @@ def _write_outputs(
         "new_covered_cell_count_delta": delta.get("new_covered_cell_count_mean_delta"),
         "path_cost_total_m_delta": delta.get("path_cost_total_m_mean_delta"),
         "coverage_per_100m_delta": delta.get("coverage_per_100m_mean_delta"),
+        "post_update_success_metric": config.get("post_update_success_metric", SUCCESS_METRIC_DEFAULT),
+        "continuous_theta_head_init_seed": config.get("continuous_theta_head_init_seed"),
         "soft_risk_exposure_total_delta": delta.get("soft_risk_exposure_total_mean_delta"),
         "post_hard_risk_violation_count": post_metrics.get("hard_risk_violation_count", 0),
+        "pre_unreachable_selected_count": pre_metrics.get("unreachable_selected_count", 0),
+        "post_unreachable_selected_count": post_metrics.get("unreachable_selected_count", 0),
         "post_safety_boundary_violation_count": post_metrics.get("safety_boundary_violation_count", 0),
         "safety_boundary_violation_count_delta": delta.get("safety_boundary_violation_count_delta"),
         "scenario_delta_row_count": len(scenario_delta_rows),
@@ -658,6 +747,8 @@ def _report_markdown(summary: dict[str, Any]) -> str:
             f"- post_final_coverage_rate_mean: `{summary['post_final_coverage_rate_mean']}`",
             f"- final_coverage_rate_delta: `{summary['final_coverage_rate_delta']}`",
             f"- coverage_curve_auc_delta: `{summary['coverage_curve_auc_delta']}`",
+            f"- coverage_per_100m_delta: `{summary['coverage_per_100m_delta']}`",
+            f"- post_update_success_metric: `{summary['post_update_success_metric']}`",
             f"- post_hard_risk_violation_count: `{summary['post_hard_risk_violation_count']}`",
             f"- scenario_regression_count: `{summary['scenario_regression_count']}`",
             f"- scenario_safety_boundary_regression_count: `{summary['scenario_safety_boundary_regression_count']}`",
@@ -736,6 +827,7 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         config.get("min_post_update_coverage_delta", 0.0),
         "min_post_update_coverage_delta",
     )
+    config["post_update_success_metric"] = str(config.get("post_update_success_metric") or SUCCESS_METRIC_DEFAULT)
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     return config
 

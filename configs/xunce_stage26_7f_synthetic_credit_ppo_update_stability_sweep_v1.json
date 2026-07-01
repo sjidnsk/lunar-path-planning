@@ -1,0 +1,78 @@
+{
+  "schema_version": "xunce-stage26-7f-synthetic-credit-ppo-update-stability-sweep-config/v1",
+  "stage_id": "xunce-stage26-7f-synthetic-credit-ppo-update-stability-sweep",
+  "stage26_7d_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_7d_repair_synthetic_credit_sampler_continuous_theta_reachability_v1",
+  "stage26_2_base_config": "configs/xunce_stage26_2_synthetic_terrain_ppo_update_smoke_v1.json",
+  "stage26_3_base_config": "configs/xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke_v1.json",
+  "run_stage26_chain": true,
+  "primary_combo_work_dir": "c1",
+  "required_scenario_count": 2,
+  "eval_rollout_steps": 4,
+  "hybrid_astar_candidate_eval_workers": 4,
+  "clip_ratio": 0.2,
+  "entropy_coefficient": 0.01,
+  "advantage_clip_abs": 5.0,
+  "max_grad_norm": 1.0,
+  "max_abs_approx_kl": 1.5,
+  "update_sweep": [
+    {
+      "combo_id": "current_repro",
+      "work_dir": "u0",
+      "epochs": 4,
+      "learning_rate": 0.00001,
+      "policy_loss_coefficient": 1.0,
+      "value_loss_coefficient": 0.02,
+      "loss_scale": 0.25
+    },
+    {
+      "combo_id": "lr_half",
+      "work_dir": "u1",
+      "epochs": 4,
+      "learning_rate": 0.000005,
+      "policy_loss_coefficient": 1.0,
+      "value_loss_coefficient": 0.02,
+      "loss_scale": 0.25
+    },
+    {
+      "combo_id": "shallow_lr_half",
+      "work_dir": "u2",
+      "epochs": 2,
+      "learning_rate": 0.000005,
+      "policy_loss_coefficient": 1.0,
+      "value_loss_coefficient": 0.02,
+      "loss_scale": 0.25
+    },
+    {
+      "combo_id": "conservative",
+      "work_dir": "u3",
+      "epochs": 1,
+      "learning_rate": 0.000005,
+      "policy_loss_coefficient": 1.0,
+      "value_loss_coefficient": 0.02,
+      "loss_scale": 0.25
+    },
+    {
+      "combo_id": "ultra_conservative",
+      "work_dir": "u4",
+      "epochs": 1,
+      "learning_rate": 0.0000025,
+      "policy_loss_coefficient": 1.0,
+      "value_loss_coefficient": 0.02,
+      "loss_scale": 0.25
+    },
+    {
+      "combo_id": "policy_soft",
+      "work_dir": "u5",
+      "epochs": 2,
+      "learning_rate": 0.000005,
+      "policy_loss_coefficient": 0.5,
+      "value_loss_coefficient": 0.02,
+      "loss_scale": 0.25
+    }
+  ],
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

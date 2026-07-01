@@ -30,7 +30,7 @@
   "include_canonical_reward_rerank_oracle": false,
   "xunce_only_evaluation": true,
   "hybrid_astar_candidate_eval_workers": 4,
-  "stage21_5_timeout_seconds": 7200,
+  "stage21_5_timeout_seconds": 0,
   "stage26_3_authorized": false,
   "release_or_training_authorized": false,
   "runs_new_ppo_update": false,

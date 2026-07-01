@@ -7,6 +7,8 @@ from scripts.run_xunce_stage21_5_post_update_offline_trajectory_evaluation impor
     ROUTE_BOUNDARY,
     ROUTE_EXECUTION,
     ROUTE_HARD_RISK,
+    ROUTE_POST_UNREACHABLE,
+    ROUTE_PRE_UNREACHABLE,
     ROUTE_REPAIR,
     ROUTE_STAGE21_6,
     run_xunce_stage21_5_post_update_offline_trajectory_evaluation,
@@ -111,6 +113,27 @@ def test_stage21_5_rejects_auc_regression_even_when_final_coverage_is_flat(tmp_p
     assert "post_ppo_coverage_or_auc_regressed" in summary["reason_codes"]
 
 
+def test_stage21_5_efficiency_metric_ignores_auc_regression_when_efficiency_improves(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, path_cost_total_m=100.0, coverage_per_100m=40.0)
+    _write_eval_root(root / "post", final=0.41, auc=1.09, path_cost_total_m=90.0, coverage_per_100m=45.0)
+    config = _write_config(root, post_update_success_metric="main_coverable_coverage_efficiency/v1")
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["next_required_change"] == ROUTE_STAGE21_6
+    assert summary["post_update_success_metric"] == "main_coverable_coverage_efficiency/v1"
+    assert summary["coverage_curve_auc_delta"] < 0
+    assert summary["coverage_per_100m_delta"] > 0
+    assert "post_ppo_coverage_or_auc_regressed" not in summary["reason_codes"]
+
+
 def test_stage21_5_rejects_single_scenario_regression_even_when_mean_is_flat(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     _write_stage21_4(root / "stage21_4")
@@ -127,6 +150,85 @@ def test_stage21_5_rejects_single_scenario_regression_even_when_mean_is_flat(tmp
     assert summary["status"] == "failed"
     assert summary["next_required_change"] == ROUTE_REPAIR
     assert summary["scenario_regression_count"] == 1
+
+
+def test_stage21_5_efficiency_metric_scenario_regression_uses_per_100m(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(
+        root / "pre",
+        final_by_scenario={"scenario-a": 0.40, "scenario-b": 0.40},
+        auc_by_scenario={"scenario-a": 1.10, "scenario-b": 1.10},
+        coverage_per_100m_by_scenario={"scenario-a": 20.0, "scenario-b": 20.0},
+    )
+    _write_eval_root(
+        root / "post",
+        final_by_scenario={"scenario-a": 0.39, "scenario-b": 0.43},
+        auc_by_scenario={"scenario-a": 1.08, "scenario-b": 1.11},
+        coverage_per_100m_by_scenario={"scenario-a": 21.0, "scenario-b": 23.0},
+    )
+    config = _write_config(root, post_update_success_metric="main_coverable_coverage_efficiency/v1")
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["scenario_regression_count"] == 0
+    assert summary["coverage_per_100m_delta"] > 0
+
+
+def test_stage21_5_inherits_continuous_theta_head_seed_from_collector_lineage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.run_xunce_stage21_5_post_update_offline_trajectory_evaluation as s21
+
+    root = _fixture_root(tmp_path)
+    stage21_4_root = root / "stage21_4"
+    stage21_3_root = root / "stage21_3"
+    stage21_1_root = root / "stage21_1"
+    _write_stage21_4(stage21_4_root)
+    stage21_3_root.mkdir()
+    stage21_1_root.mkdir()
+    stage21_4_summary_path = stage21_4_root / "xunce-stage21-4-tiny-ppo-update-smoke-summary.json"
+    stage21_4_summary = json.loads(stage21_4_summary_path.read_text(encoding="utf-8"))
+    stage21_4_summary["stage21_3_ppo_batch_validation_root"] = str(stage21_3_root)
+    stage21_4_summary_path.write_text(json.dumps(stage21_4_summary), encoding="utf-8")
+    (stage21_3_root / "xunce-stage21-3-ppo-batch-validation-summary.json").write_text(
+        json.dumps({"stage21_1_collector_root": str(stage21_1_root)}),
+        encoding="utf-8",
+    )
+    (stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json").write_text(
+        json.dumps({"sampling_seed": 2101}),
+        encoding="utf-8",
+    )
+    captured: list[dict[str, object]] = []
+
+    def fake_high_fidelity(*, config_path: Path, output_root: Path, repo_root: Path, config_overrides: dict) -> dict:
+        captured.append(dict(config_overrides))
+        _write_eval_root(output_root, final=0.40 + 0.01 * len(captured), auc=1.10 + 0.01 * len(captured))
+        return {"status": "passed"}
+
+    monkeypatch.setattr(s21, "run_xunce_high_fidelity_exploration_coverage_comparison", fake_high_fidelity)
+    config = _write_config(
+        root,
+        execute_high_fidelity_evaluations=True,
+        pre_ppo_evaluation_root="",
+        post_ppo_evaluation_root="",
+    )
+
+    summary = s21.run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["continuous_theta_head_init_seed"] == 2101
+    assert [call["continuous_theta_head_init_seed"] for call in captured] == [2101, 2101]
 
 
 def test_stage21_5_rejects_post_update_hard_risk_violation(tmp_path: Path) -> None:
@@ -163,6 +265,64 @@ def test_stage21_5_rejects_mismatched_pre_post_scenarios(tmp_path: Path) -> None
     assert summary["status"] == "failed"
     assert summary["next_required_change"] == ROUTE_EXECUTION
     assert "pre_post_xunce_scenario_id_mismatch" in summary["reason_codes"]
+
+
+def test_stage21_5_routes_pre_unreachable_selected_separately(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, unreachable_selected_count=1)
+    _write_eval_root(root / "post", final=0.42, auc=1.12)
+    config = _write_config(root)
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == ROUTE_PRE_UNREACHABLE
+    assert summary["pre_unreachable_selected_count"] == 2
+    assert summary["post_unreachable_selected_count"] == 0
+    assert "pre_unreachable_selected_count_nonzero" in summary["reason_codes"]
+
+
+def test_stage21_5_routes_post_unreachable_selected_as_regression(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10)
+    _write_eval_root(root / "post", final=0.42, auc=1.12, unreachable_selected_count=1)
+    config = _write_config(root)
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == ROUTE_POST_UNREACHABLE
+    assert summary["pre_unreachable_selected_count"] == 0
+    assert summary["post_unreachable_selected_count"] == 2
+    assert "post_unreachable_selected_count_nonzero" in summary["reason_codes"]
+
+
+def test_stage21_5_prioritizes_post_unreachable_when_pre_and_post_unreachable(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, unreachable_selected_count=1)
+    _write_eval_root(root / "post", final=0.42, auc=1.12, unreachable_selected_count=1)
+    config = _write_config(root)
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["next_required_change"] == ROUTE_POST_UNREACHABLE
+    assert "pre_unreachable_selected_count_nonzero" in summary["reason_codes"]
+    assert "post_unreachable_selected_count_nonzero" in summary["reason_codes"]
 
 
 def test_stage21_5_rejects_stage21_4_routing_summary_mismatch(tmp_path: Path) -> None:
@@ -322,7 +482,7 @@ def _write_stage21_4(
     audit_checkpoint_sha256: str = "abc123",
     omit_audit_checkpoint_sha256: bool = False,
 ) -> None:
-    root.mkdir(parents=True)
+    root.mkdir(parents=True, exist_ok=True)
     experimental_checkpoint_path = str(root / "experimental.pt")
     summary = {
         "status": "passed",
@@ -367,14 +527,18 @@ def _write_eval_root(
     *,
     final: float = 0.40,
     auc: float = 1.10,
+    path_cost_total_m: float = 100.0,
+    coverage_per_100m: float | None = None,
     final_by_scenario: dict[str, float] | None = None,
     auc_by_scenario: dict[str, float] | None = None,
+    coverage_per_100m_by_scenario: dict[str, float] | None = None,
     scenario_ids: tuple[str, str] = ("scenario-a", "scenario-b"),
     hard_risk_violation_count: int = 0,
+    unreachable_selected_count: int = 0,
     scenario_count: int = 2,
     incumbent_checkpoint_loaded: bool = True,
 ) -> None:
-    root.mkdir(parents=True)
+    root.mkdir(parents=True, exist_ok=True)
     summary = {
         "status": "failed",
         "xunce_checkpoint_loaded": True,
@@ -386,13 +550,17 @@ def _write_eval_root(
         "model_inference_failure_count": 0,
         "model_inference_mask_violation_count": 0,
         "open_grid_fallback_count": 0,
-        "unreachable_selected_count": 0,
+        "unreachable_selected_count": unreachable_selected_count,
         "path_planning_failure_count": 0,
     }
     rows = []
     for scenario_id in scenario_ids:
         scenario_final = (final_by_scenario or {}).get(scenario_id, final)
         scenario_auc = (auc_by_scenario or {}).get(scenario_id, auc)
+        scenario_coverage_per_100m = (coverage_per_100m_by_scenario or {}).get(
+            scenario_id,
+            coverage_per_100m if coverage_per_100m is not None else scenario_final,
+        )
         rows.append(
             {
                 "policy": "xunce",
@@ -403,13 +571,13 @@ def _write_eval_root(
                 "coverage_curve_auc_capped": scenario_auc,
                 "coverage_return": scenario_auc,
                 "new_covered_cell_count": int(scenario_final * 100),
-                "path_cost_total_m": 100.0,
-                "coverage_per_100m": scenario_final,
+                "path_cost_total_m": path_cost_total_m,
+                "coverage_per_100m": scenario_coverage_per_100m,
                 "soft_risk_exposure_total": 0.0,
                 "hard_risk_violation_count": hard_risk_violation_count,
                 "model_inference_failure_count": 0,
                 "mask_violation_count": 0,
-                "unreachable_selected_count": 0,
+                "unreachable_selected_count": unreachable_selected_count,
                 "path_planning_failure_count": 0,
                 "open_grid_fallback_count": 0,
                 "candidate_generation_exhausted_count": 0,

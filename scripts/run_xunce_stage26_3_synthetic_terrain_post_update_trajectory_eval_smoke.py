@@ -45,8 +45,10 @@ ROUTE_SIGNAL = "repair_stage26_synthetic_policy_update_signal_strength"
 ROUTE_MARGIN = "calibrate_stage26_synthetic_discrete_margin_crossing"
 ROUTE_CREDIT = "repair_stage26_synthetic_credit_assignment"
 ROUTE_STAGE26_4 = "run_stage26_4_synthetic_terrain_multi_seed_ppo_pilot"
+ROUTE_STAGE26_8 = "run_stage26_8_synthetic_terrain_multi_seed_ppo_pilot"
 ROUTE_BOUNDARY = "resolve_stage26_3_boundary_rejections"
 ROUTE_FROM_STAGE26_2 = "run_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke"
+SUCCESS_METRIC_MAIN_COVERABLE_EFFICIENCY = "main_coverable_coverage_efficiency/v1"
 
 SUMMARY_FILE = "xunce-stage26-3-summary.json"
 STAGE21_5_CONFIG_FILE = "xunce-stage26-3-stage21-5-config.json"
@@ -85,10 +87,11 @@ REQUIRED_INFERENCE_FIELDS = (
     "logits",
     "coverage_source",
     "path_cost_source",
-    "hybrid_astar_path_cost",
-    "hybrid_astar_pose_path_hash",
+    "hybrid_astar_reachable",
+    "hybrid_astar_failure_reason",
     "synthetic_terrain_hash",
     "synthetic_source_kind",
+    "platform_contract_hash",
     "synthetic_los_blocker_cells_used",
     "synthetic_hard_obstacle_cells_used",
     "physical_obstacle_cells_written",
@@ -144,7 +147,7 @@ def run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
 
     action_audit = _synthetic_action_change_audit(stage21_5_summary, output_root / "s21_5", stage26_2_summary)
     delta_audit = _trajectory_delta_audit(stage21_5_summary, output_root / "s21_5")
-    stage21_5_execution_reasons = stage24_5._stage21_5_execution_rejections(stage21_5_summary)
+    stage21_5_execution_reasons = _stage21_5_execution_rejections(stage21_5_summary)
     if stage21_5_summary.get("stage26_3_runtime_blocker") is True:
         stage21_5_execution_reasons = _unique(stage21_5_execution_reasons + ["stage21_5_runtime_timeout_or_process_failure"])
     safety_reasons = stage24_5._safety_rejections(stage21_5_summary)
@@ -187,9 +190,14 @@ def run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
         "action_probability_audit_is_partial_diagnostic": bool(stage21_5_execution_reasons),
         "coverage_source": COVERAGE_SOURCE,
         "path_cost_source": PATH_COST_SOURCE,
+        "coverage_denominator_mode": config.get("coverage_denominator_mode"),
+        "coverage_denominator_source": config.get("coverage_denominator_source"),
+        "post_update_success_metric": config.get("post_update_success_metric"),
         "synthetic_terrain_model_id": SYNTHETIC_MODEL_ID,
         "synthetic_terrain_hash": stage26_2_summary.get("synthetic_terrain_hash") or config.get("synthetic_terrain_hash"),
         "synthetic_source_kind": SYNTHETIC_SOURCE_KIND,
+        "action_space_type": config.get("action_space_type", "hybrid_discrete_xy_continuous_theta/v1"),
+        "platform_contract_hash": stage26_2_summary.get("platform_contract_hash") or config.get("platform_contract_hash"),
         "max_traversable_slope_deg": 30.0,
         "default_astar_replaced": False,
         "ackermann_feasible_claimed": False,
@@ -258,6 +266,12 @@ def _run_stage21_5(
         "obstacle_occlusion_enabled": True,
         "coverage_source": COVERAGE_SOURCE,
         "path_cost_source": PATH_COST_SOURCE,
+        "coverage_denominator_mode": str(config.get("coverage_denominator_mode", "roi_valid_cells")),
+        "coverage_denominator_source": str(config.get("coverage_denominator_source", "roi_valid_cells/v1")),
+        "post_update_success_metric": str(config.get("post_update_success_metric", "")),
+        "execute_high_fidelity_evaluations": bool(config.get("execute_high_fidelity_evaluations", True)),
+        "pre_ppo_evaluation_root": str(config.get("pre_ppo_evaluation_root") or output_root / "pre"),
+        "post_ppo_evaluation_root": str(config.get("post_ppo_evaluation_root") or output_root / "post"),
         "synthetic_terrain_model_id": SYNTHETIC_MODEL_ID,
         "synthetic_terrain_hash": synthetic_hash,
         "synthetic_source_kind": SYNTHETIC_SOURCE_KIND,
@@ -302,9 +316,9 @@ def _run_stage21_5(
             **common,
             "stage21_4_tiny_ppo_update_smoke_root": str(Path(config["stage26_2_root"]) / "s21_4"),
             "high_fidelity_config": str(high_fidelity_config_path),
-            "execute_high_fidelity_evaluations": True,
-            "pre_ppo_evaluation_root": str(output_root / "pre"),
-            "post_ppo_evaluation_root": str(output_root / "post"),
+            "execute_high_fidelity_evaluations": bool(config.get("execute_high_fidelity_evaluations", True)),
+            "pre_ppo_evaluation_root": str(config.get("pre_ppo_evaluation_root") or output_root / "pre"),
+            "post_ppo_evaluation_root": str(config.get("post_ppo_evaluation_root") or output_root / "post"),
             "include_oracle_baselines": False,
             "include_canonical_reward_rerank_oracle": False,
             "xunce_only_evaluation": True,
@@ -417,6 +431,9 @@ def _synthetic_action_change_audit(
     post_base_index = _index_inference_rows_by_base_key(post_rows)
     joined = missing_post = 0
     coverage_source_mismatch = path_cost_source_mismatch = hybrid_contract_mismatch = 0
+    hybrid_missing_provenance = explicit_unreachable_selected = 0
+    pre_unreachable_selected = sum(1 for row in _xunce_rows(pre_rows) if _explicit_hybrid_unreachable(row))
+    post_unreachable_selected = sum(1 for row in _xunce_rows(post_rows) if _explicit_hybrid_unreachable(row))
     synthetic_contract_mismatch = physical_payload_count = grid_fallback_count = 0
     default_astar_replaced_count = ackermann_claimed_count = 0
     viewpoint_changed = theta_changed = cell_changed = action_changed = 0
@@ -444,9 +461,14 @@ def _synthetic_action_change_audit(
                 path_cost_source_mismatch += 1
             if row.get("hybrid_astar_trajectory_kind") != "hybrid_astar_pose_path":
                 hybrid_contract_mismatch += 1
-            if _finite_float(row.get("hybrid_astar_path_cost")) is None:
+            if _hybrid_path_missing_provenance(row):
+                hybrid_missing_provenance += 1
                 hybrid_contract_mismatch += 1
-            if not str(row.get("hybrid_astar_pose_path_hash") or "").strip():
+            elif _explicit_hybrid_unreachable(row):
+                explicit_unreachable_selected += 1
+            elif _finite_float(row.get("hybrid_astar_path_cost")) is None:
+                hybrid_contract_mismatch += 1
+            elif not str(row.get("hybrid_astar_pose_path_hash") or "").strip():
                 hybrid_contract_mismatch += 1
             if row.get("point_grid_path_cost_fallback_used") is True:
                 grid_fallback_count += 1
@@ -496,6 +518,10 @@ def _synthetic_action_change_audit(
         "pre_strong_key_unavailable_count": pre_key_missing,
         "post_strong_key_unavailable_count": post_key_missing,
         "synthetic_inference_required_field_missing_count": pre_missing + post_missing,
+        "hybrid_path_missing_provenance_count": hybrid_missing_provenance,
+        "explicit_unreachable_selected_provenance_count": explicit_unreachable_selected,
+        "pre_unreachable_selected_count": pre_unreachable_selected,
+        "post_unreachable_selected_count": post_unreachable_selected,
         "coverage_source_mismatch_count": coverage_source_mismatch,
         "path_cost_source_mismatch_count": path_cost_source_mismatch,
         "hybrid_path_contract_mismatch_count": hybrid_contract_mismatch,
@@ -560,21 +586,53 @@ def _route(
     final_delta = float(delta_audit.get("final_coverage_delta") or 0.0)
     auc_delta = float(delta_audit.get("coverage_auc_delta") or 0.0)
     path_delta = float(delta_audit.get("hybrid_astar_path_cost_delta") or delta_audit.get("path_cost_delta") or 0.0)
+    coverage_per_100m_delta = float(delta_audit.get("coverage_per_100m_delta") or 0.0)
     if not changed and prob_delta < min_probability_delta:
         return "failed", ROUTE_SIGNAL, "synthetic terrain PPO update did not move probabilities or selected viewpoint"
     if not changed:
         return "failed", ROUTE_MARGIN, "synthetic terrain probabilities moved but did not cross the discrete viewpoint boundary"
     if int(stage21_5_summary.get("scenario_regression_count") or 0) > 0:
         return "failed", ROUTE_CREDIT, "synthetic terrain smoke has at least one scenario-level regression"
+    if _uses_main_coverable_efficiency_metric(stage21_5_summary):
+        if final_delta >= 0.0 and coverage_per_100m_delta >= 0.0:
+            return "passed", ROUTE_STAGE26_8, "synthetic terrain smoke improved main coverage efficiency without safety regression"
+        return "failed", ROUTE_CREDIT, "synthetic terrain action changed but main coverage efficiency did not improve in the smoke"
     if final_delta > 0.0 and auc_delta > 0.0 and path_delta <= 0.0:
         return "passed", ROUTE_STAGE26_4, "synthetic terrain smoke improved coverage/AUC/path cost without safety regression"
     return "failed", ROUTE_CREDIT, "synthetic terrain action changed but coverage/AUC/path cost did not improve in the smoke"
+
+
+def _uses_main_coverable_efficiency_metric(stage21_5_summary: dict[str, Any]) -> bool:
+    return stage21_5_summary.get("post_update_success_metric") == SUCCESS_METRIC_MAIN_COVERABLE_EFFICIENCY
+
+
+def _stage21_5_execution_rejections(stage21_5_summary: dict[str, Any]) -> list[str]:
+    reasons = list(stage24_5._stage21_5_execution_rejections(stage21_5_summary))
+    next_change = str(stage21_5_summary.get("next_required_change") or "")
+    if (
+        next_change == "repair_stage21_5_pre_policy_unreachable_baseline"
+        and int(stage21_5_summary.get("pre_unreachable_selected_count") or 0) > 0
+    ):
+        reasons.append("pre_unreachable_selected_count_nonzero")
+    if (
+        next_change == "repair_stage21_5_post_policy_unreachable_regression"
+        and int(stage21_5_summary.get("post_unreachable_selected_count") or 0) > 0
+    ):
+        reasons.append("post_unreachable_selected_count_nonzero")
+    if int(stage21_5_summary.get("pre_unreachable_selected_count") or 0) > 0:
+        reasons.append("pre_unreachable_selected_count_nonzero")
+    if int(stage21_5_summary.get("post_unreachable_selected_count") or 0) > 0:
+        reasons.append("post_unreachable_selected_count_nonzero")
+    return _unique(reasons)
 
 
 def _binding_failed(action_audit: dict[str, Any]) -> bool:
     return (
         int(action_audit.get("strong_state_join_available_count") or 0) <= 0
         or int(action_audit.get("synthetic_inference_required_field_missing_count") or 0) > 0
+        or int(action_audit.get("explicit_unreachable_selected_provenance_count") or 0) > 0
+        or int(action_audit.get("pre_unreachable_selected_count") or 0) > 0
+        or int(action_audit.get("post_unreachable_selected_count") or 0) > 0
         or int(action_audit.get("coverage_source_mismatch_count") or 0) > 0
         or int(action_audit.get("path_cost_source_mismatch_count") or 0) > 0
         or int(action_audit.get("hybrid_path_contract_mismatch_count") or 0) > 0
@@ -597,6 +655,10 @@ def _summary_counts(action_audit: dict[str, Any], delta_audit: dict[str, Any], s
         "coverage_source_mismatch_count": int(action_audit.get("coverage_source_mismatch_count") or 0),
         "path_cost_source_mismatch_count": int(action_audit.get("path_cost_source_mismatch_count") or 0),
         "hybrid_path_contract_mismatch_count": int(action_audit.get("hybrid_path_contract_mismatch_count") or 0),
+        "hybrid_path_missing_provenance_count": int(action_audit.get("hybrid_path_missing_provenance_count") or 0),
+        "explicit_unreachable_selected_provenance_count": int(action_audit.get("explicit_unreachable_selected_provenance_count") or 0),
+        "pre_unreachable_selected_count": int(action_audit.get("pre_unreachable_selected_count") or 0),
+        "post_unreachable_selected_count": int(action_audit.get("post_unreachable_selected_count") or 0),
         "synthetic_contract_mismatch_count": int(action_audit.get("synthetic_contract_mismatch_count") or 0),
         "physical_obstacle_payload_count": int(action_audit.get("physical_obstacle_payload_count") or 0),
         "grid_fallback_count": int(action_audit.get("grid_fallback_count") or 0),
@@ -641,6 +703,12 @@ def _route_blocking_reasons(route: str, action_audit: dict[str, Any], stage21_5_
             reasons.append("synthetic_inference_path_cost_source_mismatch")
         if int(action_audit.get("hybrid_path_contract_mismatch_count") or 0) > 0:
             reasons.append("synthetic_hybrid_path_contract_mismatch")
+        if int(action_audit.get("explicit_unreachable_selected_provenance_count") or 0) > 0:
+            reasons.append("synthetic_explicit_unreachable_selected_pose")
+        if int(action_audit.get("pre_unreachable_selected_count") or 0) > 0:
+            reasons.append("synthetic_pre_selected_pose_unreachable")
+        if int(action_audit.get("post_unreachable_selected_count") or 0) > 0:
+            reasons.append("synthetic_post_selected_pose_unreachable")
         if int(action_audit.get("grid_fallback_count") or 0) > 0:
             reasons.append("synthetic_grid_fallback_used")
         return reasons
@@ -653,9 +721,15 @@ def _route_blocking_reasons(route: str, action_audit: dict[str, Any], stage21_5_
     if route == ROUTE_MARGIN:
         return ["synthetic_probability_changed_without_discrete_action_change"]
     if route == ROUTE_CREDIT:
-        reasons = ["synthetic_action_changed_without_coverage_auc_path_cost_improvement"]
+        if _uses_main_coverable_efficiency_metric(stage21_5_summary):
+            reasons = ["synthetic_action_changed_without_main_coverable_efficiency_improvement"]
+        else:
+            reasons = ["synthetic_action_changed_without_coverage_auc_path_cost_improvement"]
         if int(stage21_5_summary.get("scenario_regression_count") or 0) > 0:
-            reasons.append("synthetic_post_update_scenario_regression_detected")
+            if _uses_main_coverable_efficiency_metric(stage21_5_summary):
+                reasons.append("synthetic_post_update_main_coverage_efficiency_regression_detected")
+            else:
+                reasons.append("synthetic_post_update_scenario_regression_detected")
         return reasons
     if stage21_5_summary.get("status") == "failed":
         return ["stage21_5_failed"]
@@ -738,6 +812,20 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     config["sensor_model_id"] = str(payload.get("sensor_model_id", "theta-fov-90-range-radius/v1"))
     config["sensor_fov_deg"] = _positive_float(payload.get("sensor_fov_deg", 90.0), "sensor_fov_deg")
     config["sensor_range_cells"] = _positive_int(payload.get("sensor_range_cells", 2), "sensor_range_cells")
+    config["coverage_denominator_mode"] = str(payload.get("coverage_denominator_mode", "roi_valid_cells"))
+    config["coverage_denominator_source"] = str(payload.get("coverage_denominator_source", "roi_valid_cells/v1"))
+    config["post_update_success_metric"] = str(payload.get("post_update_success_metric", ""))
+    config["execute_high_fidelity_evaluations"] = bool(payload.get("execute_high_fidelity_evaluations", True))
+    config["pre_ppo_evaluation_root"] = (
+        str(_resolve_path(Path(str(payload["pre_ppo_evaluation_root"])), repo_root))
+        if payload.get("pre_ppo_evaluation_root")
+        else ""
+    )
+    config["post_ppo_evaluation_root"] = (
+        str(_resolve_path(Path(str(payload["post_ppo_evaluation_root"])), repo_root))
+        if payload.get("post_ppo_evaluation_root")
+        else ""
+    )
     for field in HYBRID_ASTAR_PLANNER_FIELDS:
         if field in {"hybrid_astar_theta_bin_count", "hybrid_astar_max_iterations"}:
             config[field] = _positive_int(payload.get(field, _default_hybrid_value(field)), field)
@@ -836,12 +924,41 @@ def _xunce_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _missing_required_fields(row: dict[str, Any]) -> list[str]:
-    missing = [field for field in REQUIRED_INFERENCE_FIELDS if row.get(field) is None]
+    missing = []
+    explicit_unreachable = _explicit_hybrid_unreachable(row)
+    for field in REQUIRED_INFERENCE_FIELDS:
+        if field == "hybrid_astar_failure_reason" and not explicit_unreachable:
+            continue
+        if row.get(field) is None:
+            missing.append(field)
+    if not explicit_unreachable:
+        if _finite_float(row.get("hybrid_astar_path_cost")) is None:
+            missing.append("hybrid_astar_path_cost")
+        if not str(row.get("hybrid_astar_pose_path_hash") or "").strip():
+            missing.append("hybrid_astar_pose_path_hash")
     if not isinstance(row.get("action_probs"), list) or not row.get("action_probs"):
         missing.append("action_probs_nonempty")
     if not isinstance(row.get("logits"), list):
         missing.append("logits_list")
     return missing
+
+
+def _explicit_hybrid_unreachable(row: dict[str, Any]) -> bool:
+    return row.get("hybrid_astar_reachable") is False and bool(str(row.get("hybrid_astar_failure_reason") or "").strip())
+
+
+def _hybrid_path_missing_provenance(row: dict[str, Any]) -> bool:
+    if row.get("path_cost_source") != PATH_COST_SOURCE:
+        return True
+    if row.get("hybrid_astar_trajectory_kind") != "hybrid_astar_pose_path":
+        return True
+    if not str(row.get("platform_contract_hash") or "").strip():
+        return True
+    if row.get("hybrid_astar_reachable") is True:
+        return _finite_float(row.get("hybrid_astar_path_cost")) is None or not str(row.get("hybrid_astar_pose_path_hash") or "").strip()
+    if _explicit_hybrid_unreachable(row):
+        return False
+    return True
 
 
 def _synthetic_contract_mismatch(row: dict[str, Any], *, expected_hash: str) -> bool:

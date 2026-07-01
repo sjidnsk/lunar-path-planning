@@ -1,0 +1,11 @@
+{
+  "schema_version": "xunce-stage26-8b-repair-horizon-collector-terminal-reachability-config/v1",
+  "stage_id": "xunce-stage26-8b-repair-horizon-collector-terminal-reachability",
+  "stage26_8a_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8a_expand_seed_or_horizon_budget_v1",
+  "run_repair_chain": true,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

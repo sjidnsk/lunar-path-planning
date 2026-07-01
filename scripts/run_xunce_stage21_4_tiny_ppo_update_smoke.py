@@ -215,7 +215,7 @@ def run_xunce_stage21_4_tiny_ppo_update_smoke(
                     numeric_reasons.append("gradient_audit_failed")
                 if any(not _loss_row_finite(row) for row in loss_audit_rows):
                     numeric_reasons.append("non_finite_loss_audit")
-                if any(abs(float(row["post_update_approx_kl"])) > float(config["max_abs_approx_kl"]) for row in loss_audit_rows):
+                if any(abs(float(row["post_update_policy_approx_kl"])) > float(config["max_abs_approx_kl"]) for row in loss_audit_rows):
                     numeric_reasons.append("post_update_approx_kl_exceeded")
             if not numeric_reasons:
                 checkpoint_path = output_root / CHECKPOINT_FILE
@@ -290,7 +290,8 @@ def _run_tiny_ppo_update(
         policy_losses: list[torch.Tensor] = []
         value_losses: list[torch.Tensor] = []
         entropies: list[torch.Tensor] = []
-        old_log_probs: list[torch.Tensor] = []
+        old_behavior_log_probs: list[torch.Tensor] = []
+        old_policy_log_probs: list[torch.Tensor] = []
         new_log_probs: list[torch.Tensor] = []
         ratios: list[torch.Tensor] = []
         values: list[torch.Tensor] = []
@@ -305,7 +306,8 @@ def _run_tiny_ppo_update(
         for row, advantage in zip(rows, effective_advantages):
             tensors = _deserialize_xunce_batch(row.get("xunce_batch"))
             action_index = _required_int(row.get("action_index"), "action_index")
-            old_log_prob = _required_float(row.get("old_log_prob"), "old_log_prob")
+            old_behavior_log_prob = _required_float(row.get("old_log_prob"), "old_log_prob")
+            old_policy_log_prob = _old_policy_log_prob_for_kl(row, fallback=old_behavior_log_prob)
             ret = _required_float(row.get("return"), "return")
             sampling_mask = _sampling_mask(row, tensors["action_mask"], action_index)
             output = model(**tensors)
@@ -326,16 +328,18 @@ def _run_tiny_ppo_update(
                 action = torch.tensor(action_index, dtype=torch.long)
                 new_log_prob = distribution.log_prob(action)
                 entropy_value = distribution.entropy()
-            old_log_prob_tensor = torch.tensor(old_log_prob, dtype=torch.float32)
+            old_behavior_log_prob_tensor = torch.tensor(old_behavior_log_prob, dtype=torch.float32)
+            old_policy_log_prob_tensor = torch.tensor(old_policy_log_prob, dtype=torch.float32)
             advantage_tensor = torch.tensor(advantage, dtype=torch.float32)
             return_tensor = torch.tensor(ret, dtype=torch.float32)
-            ratio = torch.exp(new_log_prob - old_log_prob_tensor)
+            ratio = torch.exp(new_log_prob - old_behavior_log_prob_tensor)
             unclipped = ratio * advantage_tensor
             clipped = torch.clamp(ratio, 1.0 - clip_ratio, 1.0 + clip_ratio) * advantage_tensor
             policy_losses.append(-torch.min(unclipped, clipped))
             value_losses.append(F.mse_loss(output.value[0], return_tensor))
             entropies.append(entropy_value)
-            old_log_probs.append(old_log_prob_tensor)
+            old_behavior_log_probs.append(old_behavior_log_prob_tensor)
+            old_policy_log_probs.append(old_policy_log_prob_tensor)
             new_log_probs.append(new_log_prob)
             ratios.append(ratio)
             values.append(output.value[0])
@@ -383,7 +387,8 @@ def _run_tiny_ppo_update(
             sampling_temperature=sampling_temperature,
         )
         ratio_tensor = torch.stack(ratios).detach()
-        approx_kl = (torch.stack(old_log_probs).detach() - torch.stack(new_log_probs).detach()).mean()
+        behavior_approx_kl = (torch.stack(old_behavior_log_probs).detach() - torch.stack(new_log_probs).detach()).mean()
+        policy_approx_kl = (torch.stack(old_policy_log_probs).detach() - torch.stack(new_log_probs).detach()).mean()
         audit_rows.append(
             {
                 "schema_version": "xunce-stage21-4-ppo-loss-audit/v1",
@@ -407,8 +412,15 @@ def _run_tiny_ppo_update(
                 "normalize_minibatch_advantages": bool(normalize_minibatch_advantages),
                 **advantage_stats,
                 **component_grad_norms,
-                "pre_update_approx_kl": float(approx_kl.detach()),
-                "post_update_approx_kl": post_metrics["approx_kl"],
+                "ppo_ratio_old_log_prob_source": "behavior_policy_when_present",
+                "kl_gate_source": "policy_old_logprob_when_available/v1",
+                "behavior_policy_kl_diagnostic_only": True,
+                "pre_update_behavior_approx_kl": float(behavior_approx_kl.detach()),
+                "post_update_behavior_approx_kl": post_metrics["behavior_approx_kl"],
+                "pre_update_policy_approx_kl": float(policy_approx_kl.detach()),
+                "post_update_policy_approx_kl": post_metrics["policy_approx_kl"],
+                "pre_update_approx_kl": float(policy_approx_kl.detach()),
+                "post_update_approx_kl": post_metrics["policy_approx_kl"],
                 "clip_fraction": float((torch.abs(ratio_tensor - 1.0) > clip_ratio).to(torch.float32).mean()),
                 "post_update_clip_fraction": post_metrics["clip_fraction"],
                 "ratio_min": float(ratio_tensor.min()),
@@ -490,7 +502,8 @@ def _evaluate_rows(
     sampling_temperature: float,
 ) -> dict[str, float]:
     model.eval()
-    old_values: list[float] = []
+    old_behavior_values: list[float] = []
+    old_policy_values: list[float] = []
     new_values: list[float] = []
     ratios: list[float] = []
     with torch.no_grad():
@@ -513,15 +526,21 @@ def _evaluate_rows(
             else:
                 distribution = torch.distributions.Categorical(logits=logits)
                 new_log_prob = float(distribution.log_prob(torch.tensor(action_index, dtype=torch.long)))
-            old_log_prob = _required_float(row.get("old_log_prob"), "old_log_prob")
-            old_values.append(old_log_prob)
+            old_behavior_log_prob = _required_float(row.get("old_log_prob"), "old_log_prob")
+            old_policy_log_prob = _old_policy_log_prob_for_kl(row, fallback=old_behavior_log_prob)
+            old_behavior_values.append(old_behavior_log_prob)
+            old_policy_values.append(old_policy_log_prob)
             new_values.append(new_log_prob)
-            ratios.append(float(math.exp(new_log_prob - old_log_prob)))
+            ratios.append(float(math.exp(new_log_prob - old_behavior_log_prob)))
     model.train()
     if not rows:
         return {"approx_kl": float("nan"), "clip_fraction": float("nan")}
+    behavior_approx_kl = float(sum(old - new for old, new in zip(old_behavior_values, new_values)) / len(rows))
+    policy_approx_kl = float(sum(old - new for old, new in zip(old_policy_values, new_values)) / len(rows))
     return {
-        "approx_kl": float(sum(old - new for old, new in zip(old_values, new_values)) / len(rows)),
+        "approx_kl": policy_approx_kl,
+        "behavior_approx_kl": behavior_approx_kl,
+        "policy_approx_kl": policy_approx_kl,
         "clip_fraction": float(sum(1 for ratio in ratios if abs(ratio - 1.0) > clip_ratio) / len(ratios)),
     }
 
@@ -534,6 +553,23 @@ def _row_uses_continuous_theta(row: dict[str, Any]) -> bool:
 def _row_uses_synthetic_credit_behavior_policy(row: dict[str, Any]) -> bool:
     info = row.get("info") if isinstance(row.get("info"), dict) else {}
     return (row.get("behavior_policy_id") or info.get("behavior_policy_id")) == SYNTHETIC_CREDIT_BEHAVIOR_POLICY_ID
+
+
+def _old_policy_log_prob_for_kl(row: dict[str, Any], *, fallback: float) -> float:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    for value in (row.get("old_policy_log_prob"), info.get("old_policy_log_prob")):
+        finite = _finite(value)
+        if finite is not None:
+            return finite
+    policy_point = _finite(row.get("old_policy_point_log_prob"))
+    if policy_point is None:
+        policy_point = _finite(info.get("old_policy_point_log_prob"))
+    policy_theta = _finite(row.get("old_policy_theta_log_prob"))
+    if policy_theta is None:
+        policy_theta = _finite(info.get("old_policy_theta_log_prob"))
+    if policy_point is not None and policy_theta is not None:
+        return policy_point + policy_theta
+    return float(fallback)
 
 
 def _deserialize_xunce_batch(payload: Any) -> dict[str, torch.Tensor]:
@@ -769,11 +805,18 @@ def _write_outputs(
             1 for row in train_rows if _row_uses_synthetic_credit_behavior_policy(row)
         ),
         "old_log_prob_source": "behavior_policy_when_present",
+        "ppo_ratio_old_log_prob_source": "behavior_policy_when_present",
+        "kl_gate_source": "policy_old_logprob_when_available/v1",
+        "behavior_policy_kl_diagnostic_only": True,
         "final_total_loss": loss_audit_rows[-1]["total_loss"] if loss_audit_rows else None,
         "final_policy_loss": loss_audit_rows[-1]["policy_loss"] if loss_audit_rows else None,
         "final_value_loss": loss_audit_rows[-1]["value_loss"] if loss_audit_rows else None,
         "final_entropy": loss_audit_rows[-1]["entropy"] if loss_audit_rows else None,
         "final_post_update_approx_kl": loss_audit_rows[-1]["post_update_approx_kl"] if loss_audit_rows else None,
+        "final_pre_update_behavior_approx_kl": loss_audit_rows[-1].get("pre_update_behavior_approx_kl") if loss_audit_rows else None,
+        "final_post_update_behavior_approx_kl": loss_audit_rows[-1].get("post_update_behavior_approx_kl") if loss_audit_rows else None,
+        "final_pre_update_policy_approx_kl": loss_audit_rows[-1].get("pre_update_policy_approx_kl") if loss_audit_rows else None,
+        "final_post_update_policy_approx_kl": loss_audit_rows[-1].get("post_update_policy_approx_kl") if loss_audit_rows else None,
         "checkpoint_reload_passed": bool(checkpoint_audit.get("checkpoint_reload_passed")),
         "experimental_checkpoint": bool(checkpoint_audit.get("experimental_checkpoint_exists")),
         "experimental_checkpoint_path": checkpoint_audit.get("experimental_checkpoint_path"),
@@ -822,6 +865,8 @@ def _report_markdown(summary: dict[str, Any]) -> str:
             f"- sample_count_too_low_for_performance_claim: `{summary['sample_count_too_low_for_performance_claim']}`",
             f"- final_total_loss: `{summary['final_total_loss']}`",
             f"- final_post_update_approx_kl: `{summary['final_post_update_approx_kl']}`",
+            f"- final_post_update_behavior_approx_kl: `{summary.get('final_post_update_behavior_approx_kl')}`",
+            f"- final_post_update_policy_approx_kl: `{summary.get('final_post_update_policy_approx_kl')}`",
             f"- parameter_delta_l2: `{summary['parameter_delta_l2']}`",
             f"- checkpoint_reload_passed: `{summary['checkpoint_reload_passed']}`",
             "",
@@ -1047,7 +1092,18 @@ def _finite(value: Any) -> float | None:
 
 
 def _loss_row_finite(row: dict[str, Any]) -> bool:
-    for key in ("total_loss", "policy_loss", "value_loss", "entropy", "pre_update_approx_kl", "post_update_approx_kl"):
+    for key in (
+        "total_loss",
+        "policy_loss",
+        "value_loss",
+        "entropy",
+        "pre_update_approx_kl",
+        "post_update_approx_kl",
+        "pre_update_behavior_approx_kl",
+        "post_update_behavior_approx_kl",
+        "pre_update_policy_approx_kl",
+        "post_update_policy_approx_kl",
+    ):
         if _finite(row.get(key)) is None:
             return False
     return True

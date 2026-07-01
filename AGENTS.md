@@ -65,14 +65,22 @@
 - `path_cost_source=hybrid_astar_pose_path/v1`
 - `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
 - `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
-- `hybrid_astar_candidate_eval_workers=4` 是 Stage26.4/26.5 后续 synthetic terrain policy-signal 诊断默认并行 collector 设定。
-- 当前阶段是 Stage26.6 `synthetic_exploration_credit_assignment`；不要回退到 Stage26.4A 串并行等价验收。
+- `hybrid_astar_candidate_eval_workers=4` 是 Stage26 synthetic terrain policy-signal 诊断默认并行 collector 设定。
+- 当前阶段是 Stage26.8G `repair_synthetic_scenario_diversity`；修复 Stage26.8F 证明的 scenario 内容重复问题，让同一 synthetic terrain 下的多个 scenario 从真实不同的安全起点/seed/ROI 上下文出发。
 
-## Stage26.0 Synthetic Rock/Pit Terrain Augmentation
+## Stage26.7C-26.7H Main-Coverable Efficiency And Eval Binding
 
-- Stage26.0 在样本/high-res ROI 上新增可复现 synthetic rock/pit proxy layer。
-- synthetic rocks/pits 必须保持 `synthetic_terrain_obstacle_proxy/v1` 语义，不能污染 physical obstacle payload。
-- 该层用于增强 endpoint theta LOS 和 Hybrid A* path-cost 审计压力，不覆盖原 DEM/slope 数据。
+- Stage26.7C 已把成功判据切到 `main_coverable_cells/v1` 与单位路程主覆盖率；`hybrid_astar_path_cost_delta` 只作为诊断字段。
+- Stage26.7D 修复 synthetic credit sampler 的 continuous theta reachability 与 behavior point/theta logprob 合同，不改 reward、network 或 Hybrid A* 搜索语义。
+- Stage26.7G 已证明 PPO update 稳定性应使用 policy-vs-policy KL；behavior-policy KL 只作 off-policy diagnostic。
+- Stage26.7H 当前只修 post-update eval binding：区分 inference fields missing、explicit selected theta unreachable 与 valid coverage-efficiency result。
+- Stage26.8 将 AUC 降级为早期覆盖节奏诊断，使用 `main_coverage_per_100m_delta` 作为 synthetic terrain multi-seed pilot 的主指标。
+- Stage26.8A 只扩大 horizon 预算，不同时扩 seed；若 H12/H16/H20 都为 0，则回到 policy signal / credit target 诊断。
+- Stage26.8B 区分“synthetic sidecar 未加载”和“长 horizon 末端无 Hybrid A* 可达候选”；只有已达最小训练样本、lineage/safety 干净的 `no_hybrid_reachable_candidate_terminal` 可作为自然终止。
+- Stage26.8C 不复用旧 H16 failed root；H12 只作为 baseline audit，H16/H20 写入新 root 并继续以 `main_coverage_per_100m_delta` 为主判据。
+- Stage26.8D 不新增算法能力，只提供可恢复实验流水线；Stage26.8C partial artifacts 只能只读 carryover，failed/incomplete root 不得当作成功。
+- Stage26.8F 不推进 Stage26.8D job，不运行 Stage26.1/26.2/26.3；它只读已完成 Stage26.3 pre/post artifacts，并把 H16/H20 pending job 标记为 source incomplete。
+- Stage26.8G 不改 reward、PPO、network、Hybrid A* 或 synthetic terrain；它只新增 `scenario_diversity_source=synthetic_roi_start_seed_matrix/v1` 与可审计 scenario fixture。
 
 ## Stage26.3 Synthetic Terrain Post-Update Eval
 

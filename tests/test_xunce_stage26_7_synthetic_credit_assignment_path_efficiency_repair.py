@@ -147,7 +147,7 @@ def test_stage26_7_routes_to_multi_seed_when_v2_improves_efficiency() -> None:
                 "selected_action_changed_count": 1,
                 "final_coverage_delta": 0.1,
                 "coverage_auc_delta": 0.1,
-                "hybrid_astar_path_cost_delta": -1.0,
+                "hybrid_astar_path_cost_delta": 12.0,
                 "coverage_per_100m_delta": 0.1,
                 "scenario_regression_count": 0,
                 "hard_risk_violation_count": 0,
@@ -232,7 +232,7 @@ def test_stage26_7_reads_v2_target_fields_from_trainable_batch(tmp_path: Path) -
     assert audit["mean_selected_target_gain_per_cost_norm"] == 0.77
 
 
-def test_stage26_7_routes_to_target_score_when_path_cost_still_rises() -> None:
+def test_stage26_7_routes_to_target_score_when_unit_distance_coverage_declines() -> None:
     import scripts.run_xunce_stage26_7_synthetic_credit_assignment_path_efficiency_repair as s26
 
     route = s26._route(
