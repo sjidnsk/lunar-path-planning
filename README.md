@@ -34,7 +34,7 @@ Stage26.6 -> Stage26.7H
   synthetic credit direct-PPO-credit repair, main-coverable efficiency rerun, reachable theta repair, behavior-policy KL baseline repair, and eval binding repair
 
 当前下一跳
-  xunce-stage26-8d-resumable-seed-horizon-execution
+  xunce-stage26-8m-generalized-resumable-training-pipeline
 ```
 
 当前结论是：Stage26.8F 已证明 `main_coverage_per_100m_delta=0` 的首要原因不是继续盲跑 H20，而是已完成 eval 的多个 scenario 只有不同 `scenario_id`，实际 first cell、candidate 序列、covered 序列、selected action 序列和 episode metrics 高度重复。Stage26.8G 修复 scenario fixture 多样性：同一 synthetic terrain 下，每个 scenario 必须从真实不同的安全起点/seed/ROI 上下文出发；早期 AUC、总路程和 Hybrid A* path cost 仍只作诊断。
@@ -105,10 +105,14 @@ Stage26.6 -> Stage26.7H
   synthetic exploration credit assignment, main-coverable efficiency rerun, reachable-theta repair, behavior-policy KL baseline repair, and eval binding repair
 
 Current next step
-  xunce-stage26-8g-repair-synthetic-scenario-diversity
+  xunce-stage26-8m-generalized-resumable-training-pipeline
 ```
 
 Stage26.8F showed that repeated zero `main_coverage_per_100m_delta` is currently dominated by scenario content duplication: different `scenario_id` values were sharing the same first cell, candidate sequence, covered-cell sequence, selected-action sequence, and episode metrics. Stage26.8G repairs the scenario fixture contract so each synthetic scenario uses a real distinct safe start/seed/ROI context before H16/H20 efficiency work resumes. Early AUC, total path length, and Hybrid A* path cost remain diagnostics only.
+
+Stage26.8M generalizes the specialized Stage26.8D/8H/8I resumable runners into one configurable training pipeline. It manages `collector -> update -> eval_pre -> eval_post -> aggregate` jobs over horizon, seed, scenario-count, rollout-step, and update-combo dimensions. All experiment state lives under the D-drive output root; the repository only stores source, configs, tests, and docs.
+
+Historical route anchor: Stage26.5 diagnosed missing direct synthetic exploration credit and routed to `repair_stage26_synthetic_exploration_credit_assignment`.
 
 ### Current Contracts
 

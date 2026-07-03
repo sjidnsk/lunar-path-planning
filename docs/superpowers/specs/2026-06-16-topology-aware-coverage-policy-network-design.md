@@ -175,6 +175,16 @@ invocation should advance only a bounded number of phases by default. This stage
 changes orchestration only; reward, network, Hybrid A* search, synthetic terrain,
 candidate generation, and deployment boundaries remain unchanged.
 
+Stage26.8M generalizes the Stage26.8D/8H/8I recovery pattern into a configurable
+training-grade orchestration contract. A job is keyed by horizon, seed,
+scenario count, collector/eval rollout steps, and update combo, then advances
+through `collector -> update -> eval_pre -> eval_post -> aggregate`. Experiment
+state is derived from JSON/JSONL artifacts under the D-drive output root; the C
+drive source tree keeps only runner code, configs, tests, and documentation.
+Stage26.8M does not add epoch-chunk PPO resume or scenario-sharded eval in v1,
+and it does not alter reward, policy network, Hybrid A*, candidate generation,
+synthetic terrain, or deployment boundaries.
+
 Stage26.8F is a read-only diagnostic audit for repeated zero
 `main_coverage_per_100m_delta` outcomes. It inspects completed Stage26.8D/8C
 eval artifacts for scenario duplication, unchanged argmax actions, policy

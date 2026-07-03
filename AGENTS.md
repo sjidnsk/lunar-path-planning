@@ -66,7 +66,7 @@
 - `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
 - `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
 - `hybrid_astar_candidate_eval_workers=4` 是 Stage26 synthetic terrain policy-signal 诊断默认并行 collector 设定。
-- 当前阶段是 Stage26.8G `repair_synthetic_scenario_diversity`；修复 Stage26.8F 证明的 scenario 内容重复问题，让同一 synthetic terrain 下的多个 scenario 从真实不同的安全起点/seed/ROI 上下文出发。
+- 当前阶段是 Stage26.8M `generalized_resumable_training_pipeline`；把 26.8D/8H/8I 的局部恢复器统一成可配置、可恢复、可审计的训练级 pipeline，状态文件放在 D 盘 output root。
 
 ## Stage26.7C-26.7H Main-Coverable Efficiency And Eval Binding
 
@@ -81,6 +81,7 @@
 - Stage26.8D 不新增算法能力，只提供可恢复实验流水线；Stage26.8C partial artifacts 只能只读 carryover，failed/incomplete root 不得当作成功。
 - Stage26.8F 不推进 Stage26.8D job，不运行 Stage26.1/26.2/26.3；它只读已完成 Stage26.3 pre/post artifacts，并把 H16/H20 pending job 标记为 source incomplete。
 - Stage26.8G 不改 reward、PPO、network、Hybrid A* 或 synthetic terrain；它只新增 `scenario_diversity_source=synthetic_roi_start_seed_matrix/v1` 与可审计 scenario fixture。
+- Stage26.8M 是后续长时间 PPO update-strength / sample-count 实验的首选通用可恢复 runner；它只编排 `collector -> update -> eval_pre -> eval_post -> aggregate`，状态文件放在 D 盘 output root，不改 reward、network、Hybrid A* 或 synthetic terrain。
 
 ## Stage26.3 Synthetic Terrain Post-Update Eval
 

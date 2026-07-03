@@ -110,6 +110,7 @@ SUPPORTED_STAGE_IDS = {
     "xunce-stage26-8g-repair-synthetic-scenario-diversity",
     "xunce-stage26-8h-resumable-diverse-scenario-post-update-eval",
     "xunce-stage26-8i-diverse-scenario-policy-signal-strength-repair",
+    "xunce-stage26-8m-generalized-resumable-training-pipeline",
     "xunce-stage18i-evidence-closure-audit",
     "xunce-stage18-research-evidence-pipeline",
 }
