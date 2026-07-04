@@ -3,9 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import xunce_artifact_io as artifact_io
 
 try:  # pragma: no cover
     import run_xunce_stage26_1_synthetic_terrain_collector_smoke as stage26_1
@@ -23,10 +30,7 @@ ROUTING_SCHEMA_VERSION = "xunce-stage26-8p-next-stage-routing/v1"
 MANIFEST_SCHEMA_VERSION = "xunce-stage26-8p-manifest/v1"
 
 DEFAULT_CONFIG = "configs/xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep_v1.json"
-DEFAULT_OUTPUT_ROOT = (
-    "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/"
-    "outputs/path_feedback_batch_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep_v1"
-)
+DEFAULT_OUTPUT_ROOT = "D:/xunce/out/s26_8p"
 DEFAULT_STAGE26_8O_ROOT = (
     "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/"
     "outputs/path_feedback_batch_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1"
@@ -92,7 +96,7 @@ def run_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep(
     if run_mode_override:
         config["run_mode"] = run_mode_override
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     stage26_8o_summary = _read_json_if_exists(Path(config["stage26_8o_root"]) / "xunce-stage26-8o-summary.json")
     boundary_rejections = _boundary_rejections(config)
@@ -184,13 +188,13 @@ def run_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
 def _run_combo(config: dict[str, Any], combo: dict[str, Any], output_root: Path, repo_root: Path) -> None:
     combo_root = _combo_root(output_root, combo["combo_id"])
-    combo_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(combo_root)
     stage26_1_config = _build_stage26_1_config(config, combo, repo_root, combo_root)
     config_path = combo_root / "xunce-stage26-8p-stage26-1-config.json"
     _write_json(config_path, stage26_1_config)
@@ -444,7 +448,7 @@ def _first_pending_combo(config: dict[str, Any], output_root: Path) -> dict[str,
     for combo in config["primitive_sweep_combos"]:
         summary_path = _combo_root(output_root, combo["combo_id"]) / "xunce-stage26-8p-stage26-1-summary.json"
         stage_summary_path = _combo_root(output_root, combo["combo_id"]) / "s26_1" / stage26_1.SUMMARY_FILE
-        if not summary_path.is_file() and not stage_summary_path.is_file():
+        if not artifact_io.path_is_file(summary_path) and not artifact_io.path_is_file(stage_summary_path):
             return combo
     return {}
 
@@ -474,7 +478,7 @@ def _input_rejections(config: dict[str, Any], stage26_8o_summary: dict[str, Any]
         reasons.append("missing_stage26_8o_summary")
     elif stage26_8o_summary.get("next_required_change") != STAGE26_8O_REQUIRED_ROUTE:
         reasons.append("stage26_8o_route_not_sample_budget_or_start_pool")
-    if not Path(config["source_scenario_fixture_root"]).exists():
+    if not artifact_io.path_exists(Path(config["source_scenario_fixture_root"])):
         reasons.append("source_scenario_fixture_root_missing")
     return reasons
 
@@ -633,27 +637,23 @@ def _finite(value: Any) -> float | None:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    return _read_json(path) if path.is_file() else {}
+    return _read_json(path) if artifact_io.path_is_file(path) else {}
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    return artifact_io.read_jsonl(path) if artifact_io.path_is_file(path) else []
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

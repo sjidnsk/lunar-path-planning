@@ -34,6 +34,14 @@ def path_exists(path: str | Path) -> bool:
     return os.path.exists(windows_safe_path(path))
 
 
+def path_is_dir(path: str | Path) -> bool:
+    return os.path.isdir(windows_safe_path(path))
+
+
+def file_size(path: str | Path) -> int:
+    return int(os.path.getsize(windows_safe_path(path)))
+
+
 def read_text(path: str | Path, *, encoding: str = "utf-8-sig") -> str:
     with open(windows_safe_path(path), "r", encoding=encoding) as handle:
         return handle.read()

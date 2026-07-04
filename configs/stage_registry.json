@@ -699,13 +699,13 @@
     "xunce-stage26-8o-repair-aggressive-collector-trainable-sample-budget": {
       "script": "scripts/run_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget.py",
       "default_config": "configs/xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1.json",
-      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1",
+      "default_output_root": "D:/xunce/out/s26_8o",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
     "xunce-stage26-8p-hybrid-astar-primitive-resolution-sweep": {
       "script": "scripts/run_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep.py",
       "default_config": "configs/xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep_v1.json",
-      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep_v1",
+      "default_output_root": "D:/xunce/out/s26_8p",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
     "xunce-stage26-8q-derived-high-res-planning-proxy-alignment": {
@@ -718,6 +718,12 @@
       "script": "scripts/run_xunce_stage26_io1_artifact_path_contract.py",
       "default_config": "configs/xunce_stage26_io1_artifact_path_contract_v1.json",
       "default_output_root": "D:/xunce/out/s26_io1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-io2-remaining-runner-long-path-migration": {
+      "script": "scripts/run_xunce_stage26_io2_remaining_runner_long_path_migration.py",
+      "default_config": "configs/xunce_stage26_io2_remaining_runner_long_path_migration_v1.json",
+      "default_output_root": "D:/xunce/out/s26_io2",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
     "xunce-stage18-research-evidence-pipeline": {

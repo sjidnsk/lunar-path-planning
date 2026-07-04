@@ -27,6 +27,32 @@
 - 如果看到明显 mojibake 片段，不要继续复制或提交；先用 `Path(...).read_text(encoding="utf-8")` 检查文件真实内容。
 - 测试文件中不得把 mojibake 字符串作为期望值；需要检查中文内容时，必须使用真实 UTF-8 中文或 Unicode escape。
 
+## 文件命名与路径规范
+
+- 仓库内只保存源码、配置、测试、文档和轻量索引；训练输出、实验 artifact、checkpoint audit、job state、report、manifest 默认写入 D 盘。
+- 新 Stage26 实验默认使用短输出根目录：`D:/xunce/out/<stage_short>`。
+- 历史 `D:/CodexDownloads/...` 长路径 output 不移动、不删除、不重命名，只作为 legacy input 读取。
+- 不把完整 stage id、seed、combo、hash、lineage、参数 sweep 全塞进路径名或文件名；完整语义写入 `summary.json`、`manifest.json`、`routing.json`、`config.json`、`job-state.jsonl` 等结构化 artifact。
+- Python runner 命名：`scripts/run_xunce_<stage_short>_<purpose>.py`。
+- Config 命名：`configs/xunce_<stage_short>_<purpose>_v1.json`。
+- Test 命名：`tests/test_xunce_<stage_short>_<purpose>.py`。
+- Plan doc 命名：`docs/superpowers/plans/YYYY-MM-DD-xunce-<stage-id>.md`。
+- Runtime artifact 优先使用短 canonical 文件名：`summary.json`、`manifest.json`、`routing.json`、`report.md`、`config.json`、`state.jsonl`、`job-state.jsonl`、`phase-state.jsonl`、`audit.json`、`results.jsonl`。
+- 需要区分审计类型时使用短前缀，例如 `path_audit.json`、`alias_audit.json`、`runner_static_io_audit.json`、`checkpoint_audit.json`、`kl_audit.json`、`margin_audit.json`、`efficiency_audit.json`。
+- 新 output root 推荐小于 80 字符；新 artifact 完整路径超过 180 字符应视为 warning；达到或超过 240 字符必须缩短 root、目录名或文件名。
+- 不以修改 Windows 系统 long path 设置作为默认解决方案。
+- 主线 runner 读写 artifact 时必须使用 `scripts/xunce_artifact_io.py` 和 `scripts/xunce_artifact_paths.py`。
+- 已迁移 runner 中，禁止直接对 artifact 使用 `Path.read_text()`、`Path.write_text()`、`Path.is_file()`、`Path.exists()`、`Path.open()`、`Path.mkdir()`。
+- Artifact IO 应使用 `artifact_io.read_json()`、`artifact_io.write_json()`、`artifact_io.read_jsonl()`、`artifact_io.write_jsonl()`、`artifact_io.read_text()`、`artifact_io.write_text()`、`artifact_io.path_is_file()`、`artifact_io.path_exists()`、`artifact_io.make_dirs()`。
+- 普通源码读取、静态配置 schema 检查、第三方 checkpoint 二进制加载可例外，但必须保持范围明确；checkpoint `.pt` 文件名不得因为 artifact alias 迁移被重命名。
+- Artifact alias 读取规则：优先 canonical 短名；canonical 不存在时 fallback legacy 旧名；两者都不存在时返回稳定 missing reason。
+- Artifact alias 写入规则：迁移期 dual-write，同时写 canonical 短名和 legacy 旧名。
+- `configs/stage_registry.json` 只承担机器注册职责，禁止写长篇阶段说明、实验结论或执行日志。
+- `summary.json` 放机器可读状态、关键指标和下一跳 route；`routing.json` 放 route、boundary、blocking reason；`manifest.json` 放 artifact 索引、lineage、hash、配置摘要；`report.md` 放面向人的阶段结果说明；`job-state.jsonl` / `phase-state.jsonl` 放可恢复执行状态。
+- 完整阶段计划放 `docs/superpowers/plans/`；真实执行结果放对应 output root 的 `report.md`；不要把每阶段完整计划追加进 `AGENTS.md`。
+- 禁止新实验默认写入深层 `D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_...`。
+- 禁止用路径名表达完整 lineage、hash、combo 参数；禁止移动、删除、批量重命名历史 outputs；禁止因为路径治理阶段通过而宣称算法性能提升。
+
 ## 下载与临时资源位置
 
 - 默认把下载资源、数据集、模型、缓存、导出文件等保存到 `D:\CodexDownloads`。
@@ -66,7 +92,7 @@
 - `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
 - `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
 - `hybrid_astar_candidate_eval_workers=4` 是 Stage26 synthetic terrain policy-signal 诊断默认并行 collector 设定。
-- 当前阶段是 Stage26.IO1 `artifact_path_contract_and_long_path_resilience`；用公共 long-path IO、短 artifact alias、短 D 盘 output root 治理 Windows 长路径问题，不改变 PPO、reward、Hybrid A*、candidate generation 或 synthetic terrain。
+- 当前阶段是 Stage26.IO2 `remaining_runner_long_path_migration`；在 IO1 已治理 Stage21.1/21.2/21.3 后，补齐 Stage21.4/21.5、Stage26.2/26.3 和 Stage26.8D/F/G/H/I/O/P 的 long-path artifact IO 与短 root 合同，不改变 PPO、reward、Hybrid A*、candidate generation 或 synthetic terrain。
 
 ## Stage26.7C-26.7H Main-Coverable Efficiency And Eval Binding
 
@@ -83,6 +109,7 @@
 - Stage26.8G 不改 reward、PPO、network、Hybrid A* 或 synthetic terrain；它只新增 `scenario_diversity_source=synthetic_roi_start_seed_matrix/v1` 与可审计 scenario fixture。
 - Stage26.8M 是后续长时间 PPO update-strength / sample-count 实验的首选通用可恢复 runner；它只编排 `collector -> update -> eval_pre -> eval_post -> aggregate`，状态文件放在 D 盘 output root，不改 reward、network、Hybrid A* 或 synthetic terrain。
 - Stage26.IO1 只治理 artifact IO/path contract：新实验默认写 `D:/xunce/out/<stage_short>`，Stage21.1/21.2/21.3 迁移期双写短名和旧名，历史长 root 只读兼容，不移动旧 outputs。
+- Stage26.IO2 补齐剩余主线 runner 迁移：Stage21.4/21.5、Stage26.2/26.3 和 Stage26.8D/F/G/H/I/O/P artifact 读写必须走 `xunce_artifact_io.py`；Stage26.8O/8P 默认输出 root 使用 `D:/xunce/out/s26_8o` 与 `D:/xunce/out/s26_8p`。
 
 ## Stage26.3 Synthetic Terrain Post-Update Eval
 

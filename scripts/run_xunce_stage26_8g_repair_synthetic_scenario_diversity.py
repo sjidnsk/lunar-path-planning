@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import xunce_artifact_io as artifact_io
 
 try:  # pragma: no cover
     import run_xunce_stage26_1_synthetic_terrain_collector_smoke as stage26_1
@@ -93,7 +100,7 @@ def run_xunce_stage26_8g_repair_synthetic_scenario_diversity(
     repo_root = repo_root.resolve()
     config = _load_config(config_path, repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     stage26_8f_root = Path(config["stage26_8f_root"])
     stage26_8f_summary = _read_json_if_exists(stage26_8f_root / stage26_8f.SUMMARY_FILE)
@@ -217,7 +224,7 @@ def run_xunce_stage26_8g_repair_synthetic_scenario_diversity(
         },
     }
     _write_json(output_root / ROOT_CAUSE_FILE, root_cause_audit)
-    if not (output_root / FIXTURE_FILE).exists():
+    if not artifact_io.path_exists(output_root / FIXTURE_FILE):
         _write_jsonl(output_root / FIXTURE_FILE, fixture_rows)
     _write_json(output_root / STAGE26_1_SUMMARY_FILE, stage26_1_summary)
     _write_json(output_root / STAGE26_2_SUMMARY_FILE, stage26_2_summary)
@@ -226,7 +233,7 @@ def run_xunce_stage26_8g_repair_synthetic_scenario_diversity(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary, root_cause_audit, recheck_audit), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary, root_cause_audit, recheck_audit))
     return summary
 
 
@@ -251,7 +258,7 @@ def _run_stage26_1(config: dict[str, Any], run_root: Path, repo_root: Path) -> d
 
 
 def _existing_summary_if_passed(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return None
     summary = _read_json_if_exists(path)
     return summary if summary.get("status") == "passed" else None
@@ -281,7 +288,7 @@ def _run_stage26_3(config: dict[str, Any], run_root: Path, repo_root: Path) -> d
 
 def _recheck_stage26_3(stage26_3_root: Path, config: dict[str, Any]) -> dict[str, Any]:
     summary_path = stage26_3_root / stage26_3.SUMMARY_FILE
-    if not summary_path.is_file():
+    if not artifact_io.path_is_file(summary_path):
         return _empty_recheck_audit() | {"missing_stage26_3_summary": True}
     eval_source = {
         "job_id": "stage26_8g_h16_s260801",
@@ -531,27 +538,23 @@ def _json_key(value: Any) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    return _read_json(path) if path.is_file() else {}
+    return _read_json(path) if artifact_io.path_is_file(path) else {}
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    return artifact_io.read_jsonl(path) if artifact_io.path_is_file(path) else []
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

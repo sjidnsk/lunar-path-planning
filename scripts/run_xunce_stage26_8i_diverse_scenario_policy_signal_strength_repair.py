@@ -4,8 +4,15 @@ import argparse
 import json
 import math
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import xunce_artifact_io as artifact_io
 
 try:  # pragma: no cover
     import run_xunce_high_fidelity_exploration_coverage_comparison as hf
@@ -93,7 +100,7 @@ def run_xunce_stage26_8i_diverse_scenario_policy_signal_strength_repair(
     repo_root = repo_root.resolve()
     config = _load_config(_resolve_path(config_path, repo_root), repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     stage26_8h_root = Path(config["stage26_8h_root"])
     stage26_8h_summary = _read_json_if_exists(stage26_8h_root / stage26_8h.SUMMARY_FILE)
@@ -212,7 +219,7 @@ def run_xunce_stage26_8i_diverse_scenario_policy_signal_strength_repair(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary, sweep_rows), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary, sweep_rows))
     return summary
 
 
@@ -227,7 +234,7 @@ def _run_combo(
     allow_eval: bool,
 ) -> dict[str, Any]:
     combo_root = output_root / str(combo["work_dir"])
-    combo_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(combo_root)
     stage26_2_config = _build_stage26_2_config(config, combo, primary_stage26_1_root)
     stage26_2_config_path = combo_root / "xunce-stage26-8i-stage26-2-config.json"
     _write_json(stage26_2_config_path, stage26_2_config)
@@ -317,9 +324,9 @@ def _prepare_eval_source_root(config: dict[str, Any], combo_root: Path, stage26_
     # Keep this path short enough for Windows environments without long-path support.
     source_root = combo_root / "e"
     job_root = source_root / "h16_seed260801"
-    (job_root / "s26_1").mkdir(parents=True, exist_ok=True)
-    (job_root / "s26_2").mkdir(parents=True, exist_ok=True)
-    (job_root / "s26_3").mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(job_root / "s26_1")
+    artifact_io.make_dirs(job_root / "s26_2")
+    artifact_io.make_dirs(job_root / "s26_3")
 
     _copy_required(stage26_8g_root / "h16_seed260801" / "s26_1" / "xunce-stage26-1-summary.json", job_root / "s26_1" / "xunce-stage26-1-summary.json")
     _copy_required(stage26_2_root / stage26_2.SUMMARY_FILE, job_root / "s26_2" / stage26_2.SUMMARY_FILE)
@@ -361,7 +368,7 @@ def _prepare_eval_source_root(config: dict[str, Any], combo_root: Path, stage26_
     high_fidelity_path = Path(str(stage21_5_config.get("high_fidelity_config") or ""))
     if not high_fidelity_path.is_absolute():
         high_fidelity_path = (repo_root / high_fidelity_path).resolve()
-    if high_fidelity_path.is_file():
+    if artifact_io.path_is_file(high_fidelity_path):
         _copy_required(high_fidelity_path, job_root / "s26_3" / "xunce-stage26-3-high-fidelity-config.json")
     else:
         _copy_required(stage26_8g_root / "h16_seed260801" / "s26_3" / "xunce-stage26-3-high-fidelity-config.json", job_root / "s26_3" / "xunce-stage26-3-high-fidelity-config.json")
@@ -687,7 +694,7 @@ def _input_rejections(stage26_8h_summary: dict[str, Any], stage26_3_summary: dic
         reasons.append("stage26_8h_scenario_diversity_not_clean")
     if _stage26_8h_binding_dirty(stage26_3_summary):
         reasons.append("stage26_8h_binding_or_safety_dirty")
-    if not stage26_8g_root.exists():
+    if not artifact_io.path_exists(stage26_8g_root):
         reasons.append("stage26_8g_root_missing")
     stage26_1_summary = _read_json_if_exists(stage26_1_root / "xunce-stage26-1-summary.json")
     if stage26_1_summary.get("status") != "passed":
@@ -1004,7 +1011,7 @@ def _render_report(summary: dict[str, Any], rows: list[dict[str, Any]]) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    payload = artifact_io.read_json(path)
     if not isinstance(payload, dict):
         raise ValueError(f"Expected JSON object: {path}")
     return payload
@@ -1019,37 +1026,28 @@ def _read_json_if_exists(path: Path) -> dict[str, Any]:
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
     try:
-        rows: list[dict[str, Any]] = []
-        for line in path.read_text(encoding="utf-8-sig").splitlines():
-            if not line.strip():
-                continue
-            payload = json.loads(line)
-            if isinstance(payload, dict):
-                rows.append(payload)
-        return rows
+        return artifact_io.read_jsonl(path)
     except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
         return []
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _copy_required(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if not src.is_file():
+    artifact_io.make_dirs(dst.parent)
+    if not artifact_io.path_is_file(src):
         raise FileNotFoundError(f"required Stage26.8I source artifact is missing: {src}")
     try:
-        shutil.copyfile(src, dst)
+        shutil.copyfile(artifact_io.windows_safe_path(src), artifact_io.windows_safe_path(dst))
     except FileNotFoundError:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
+        artifact_io.make_dirs(dst.parent)
+        shutil.copyfile(artifact_io.windows_safe_path(src), artifact_io.windows_safe_path(dst))
 
 
 def _copy_stage26_8g_fixture(stage26_8g_root: Path, dst: Path) -> None:
@@ -1057,7 +1055,7 @@ def _copy_stage26_8g_fixture(stage26_8g_root: Path, dst: Path) -> None:
         stage26_8g_root / stage26_8g_fixture_file_name(),
         stage26_8g_root / "h16_seed260801" / "s26_1" / "src" / "xunce-stage26-scenario-fixtures.jsonl",
     ):
-        if src.is_file() and _read_jsonl_if_exists(src):
+        if artifact_io.path_is_file(src) and _read_jsonl_if_exists(src):
             _copy_required(src, dst)
             return
     raise FileNotFoundError(f"required Stage26.8G scenario fixture is missing or empty under {stage26_8g_root}")
@@ -1073,9 +1071,9 @@ def _copy_pre_eval_carryover(stage26_8g_root: Path, job_root: Path) -> None:
         "xunce-exploration-coverage-episodes.jsonl",
         "xunce-exploration-coverage-steps.jsonl",
     )
-    if all((dst / name).is_file() for name in required):
+    if all(artifact_io.path_is_file(dst / name) for name in required):
         return
-    if not (src / summary).is_file():
+    if not artifact_io.path_is_file(src / summary):
         return
     for name in (
         summary,
@@ -1090,7 +1088,7 @@ def _copy_pre_eval_carryover(stage26_8g_root: Path, job_root: Path) -> None:
         "xunce-exploration-coverage-comparison-report.md",
     ):
         source = src / name
-        if source.is_file():
+        if artifact_io.path_is_file(source):
             _copy_required(source, dst / name)
 
 

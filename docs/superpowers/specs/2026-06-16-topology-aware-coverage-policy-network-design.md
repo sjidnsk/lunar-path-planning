@@ -195,6 +195,15 @@ manifest/summary JSON rather than in directory or filename chains. Stage26.IO1 i
 an orchestration and artifact contract only; it does not alter PPO, reward,
 policy network, Hybrid A*, candidate generation, or synthetic terrain semantics.
 
+Stage26.IO2 extends that path contract to the remaining active Stage26 line:
+Stage21.4/Stage21.5, Stage26.2/Stage26.3, and Stage26.8D/F/G/H/I/O/P runner
+artifacts must use `scripts/xunce_artifact_io.py` for JSON/JSONL/text reads,
+writes, existence checks, and output-directory creation. Stage21.4/Stage21.5 and
+Stage26.2/Stage26.3 handoff artifacts use canonical short names with legacy
+fallback and migration-period dual-write. Checkpoint `.pt` filenames are not
+renamed; only checkpoint audit JSON participates in aliasing. New Stage26 runner
+default roots should stay under `D:/xunce/out/<stage_short>`.
+
 Stage26.8F is a read-only diagnostic audit for repeated zero
 `main_coverage_per_100m_delta` outcomes. It inspects completed Stage26.8D/8C
 eval artifacts for scenario duplication, unchanged argmax actions, policy

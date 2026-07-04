@@ -105,14 +105,14 @@ Stage26.6 -> Stage26.7H
   synthetic exploration credit assignment, main-coverable efficiency rerun, reachable-theta repair, behavior-policy KL baseline repair, and eval binding repair
 
 Current next step
-  xunce-stage26-io1-artifact-path-contract-and-long-path-resilience
+  xunce-stage26-io2-remaining-runner-long-path-migration
 ```
 
 Stage26.8F showed that repeated zero `main_coverage_per_100m_delta` is currently dominated by scenario content duplication: different `scenario_id` values were sharing the same first cell, candidate sequence, covered-cell sequence, selected-action sequence, and episode metrics. Stage26.8G repairs the scenario fixture contract so each synthetic scenario uses a real distinct safe start/seed/ROI context before H16/H20 efficiency work resumes. Early AUC, total path length, and Hybrid A* path cost remain diagnostics only.
 
 Stage26.8M generalizes the specialized Stage26.8D/8H/8I resumable runners into one configurable training pipeline. It manages `collector -> update -> eval_pre -> eval_post -> aggregate` jobs over horizon, seed, scenario-count, rollout-step, and update-combo dimensions. All experiment state lives under the D-drive output root; the repository only stores source, configs, tests, and docs.
 
-Stage26.IO1 is the current path-governance step before resuming aggressive training sweeps. It adds long-path aware artifact IO, canonical short artifact aliases with legacy fallback, and short default output roots such as `D:/xunce/out/s26_8n`; it does not change PPO, reward, Hybrid A*, candidate generation, or synthetic terrain.
+Stage26.IO1 introduced long-path aware artifact IO, canonical short artifact aliases with legacy fallback, and short default output roots such as `D:/xunce/out/s26_8n`. Stage26.IO2 is the current path-governance step: it migrates the remaining active Stage21.4/21.5, Stage26.2/26.3, and Stage26.8 resume/update/eval runners so later Stage26.8N/8Q/8M work does not misreport missing artifacts on Windows long paths. Neither IO step changes PPO, reward, Hybrid A*, candidate generation, or synthetic terrain.
 
 Historical route anchor: Stage26.5 diagnosed missing direct synthetic exploration credit and routed to `repair_stage26_synthetic_exploration_credit_assignment`.
 

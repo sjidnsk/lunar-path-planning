@@ -15,6 +15,27 @@ except ModuleNotFoundError:  # pragma: no cover
     import scripts.run_xunce_stage21_3_ppo_batch_validation as stage21_3
     import scripts.run_xunce_stage24_4_hybrid_astar_path_cost_ppo_update_smoke as stage24_4
 
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_3_BATCH,
+    STAGE21_3_SUMMARY,
+    STAGE21_4_CHECKPOINT,
+    STAGE21_4_GRADIENT,
+    STAGE21_4_LOSS,
+    STAGE21_4_SUMMARY,
+    STAGE26_2_BATCH_AUDIT,
+    STAGE26_2_CHECKPOINT_BOUNDARY_AUDIT,
+    STAGE26_2_LOSS_GRADIENT_AUDIT,
+    STAGE26_2_MANIFEST,
+    STAGE26_2_ROUTING,
+    STAGE26_2_STAGE21_4_CONFIG,
+    STAGE26_2_STAGE21_4_SUMMARY,
+    STAGE26_2_SUMMARY,
+    read_json_artifact,
+    read_jsonl_artifact,
+    write_json_artifact,
+)
+
 
 CONFIG_SCHEMA_VERSION = "xunce-stage26-2-synthetic-terrain-ppo-update-smoke-config/v1"
 SUMMARY_SCHEMA_VERSION = "xunce-stage26-2-summary/v1"
@@ -90,12 +111,12 @@ def run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke(
     repo_root = repo_root.resolve()
     config = _load_config(config_path, repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     boundary_reasons = _boundary_rejections(config)
     input_reasons = _input_rejections(config)
     stage26_1_summary = _read_json_if_exists(Path(config["stage26_1_root"]) / "xunce-stage26-1-summary.json")
-    batch_rows = _read_jsonl_if_exists(Path(config["stage26_1_root"]) / "s21_3" / stage21_3.BATCH_FILE)
+    batch_rows = _read_jsonl_artifact_if_exists(Path(config["stage26_1_root"]) / "s21_3", STAGE21_3_BATCH)
     batch_audit = _synthetic_batch_update_audit(batch_rows, expected_summary=stage26_1_summary)
     checkpoint_lineage = _stage26_1_collector_checkpoint_lineage(config)
     upstream_physical_payload_audit = _stage26_1_upstream_physical_payload_audit(config)
@@ -106,9 +127,9 @@ def run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke(
         stage21_4_summary = _run_stage21_4(config, output_root, repo_root, stage21_4_config_path)
 
     stage21_4_root = output_root / "s21_4"
-    loss_rows = _read_jsonl_if_exists(stage21_4_root / stage21_4.LOSS_AUDIT_FILE)
-    gradient_audit = _read_json_if_exists(stage21_4_root / stage21_4.GRADIENT_AUDIT_FILE)
-    checkpoint_audit_raw = _read_json_if_exists(stage21_4_root / stage21_4.CHECKPOINT_AUDIT_FILE)
+    loss_rows = _read_jsonl_artifact_if_exists(stage21_4_root, STAGE21_4_LOSS)
+    gradient_audit = _read_json_artifact_if_exists(stage21_4_root, STAGE21_4_GRADIENT)
+    checkpoint_audit_raw = _read_json_artifact_if_exists(stage21_4_root, STAGE21_4_CHECKPOINT)
     loss_gradient_audit = stage24_4._loss_gradient_audit(loss_rows, gradient_audit, stage21_4_summary)
     checkpoint_boundary_audit = stage24_4._checkpoint_boundary_audit(
         checkpoint_audit_raw,
@@ -189,14 +210,14 @@ def run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke(
         "next_stage_routing": str(output_root / ROUTING_FILE),
         "report": str(output_root / REPORT_FILE),
     }
-    _write_json(output_root / SUMMARY_FILE, summary)
-    _write_json(output_root / STAGE21_4_SUMMARY_FILE, stage21_4_summary)
-    _write_json(output_root / BATCH_AUDIT_FILE, batch_audit)
-    _write_json(output_root / LOSS_GRADIENT_AUDIT_FILE, loss_gradient_audit)
-    _write_json(output_root / CHECKPOINT_BOUNDARY_AUDIT_FILE, checkpoint_boundary_audit)
-    _write_json(output_root / ROUTING_FILE, routing)
-    _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    write_json_artifact(output_root, STAGE26_2_SUMMARY, summary)
+    write_json_artifact(output_root, STAGE26_2_STAGE21_4_SUMMARY, stage21_4_summary)
+    write_json_artifact(output_root, STAGE26_2_BATCH_AUDIT, batch_audit)
+    write_json_artifact(output_root, STAGE26_2_LOSS_GRADIENT_AUDIT, loss_gradient_audit)
+    write_json_artifact(output_root, STAGE26_2_CHECKPOINT_BOUNDARY_AUDIT, checkpoint_boundary_audit)
+    write_json_artifact(output_root, STAGE26_2_ROUTING, routing)
+    write_json_artifact(output_root, STAGE26_2_MANIFEST, manifest)
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -229,7 +250,7 @@ def _run_stage21_4(config: dict[str, Any], output_root: Path, repo_root: Path, c
             "canary_traffic_fraction": 0.0,
         }
     )
-    _write_json(config_path, cfg)
+    write_json_artifact(config_path.parent, STAGE26_2_STAGE21_4_CONFIG, cfg)
     return stage21_4.run_xunce_stage21_4_tiny_ppo_update_smoke(
         config_path=config_path,
         output_root=output_root / "s21_4",
@@ -464,7 +485,7 @@ def _input_rejections(config: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     root = Path(config["stage26_1_root"])
     summary_path = root / "xunce-stage26-1-summary.json"
-    if not summary_path.is_file():
+    if not artifact_io.path_is_file(summary_path):
         return ["missing_stage26_1_summary"]
     summary = _read_json(summary_path)
     expected_zero = (
@@ -496,13 +517,13 @@ def _input_rejections(config: dict[str, Any]) -> list[str]:
         if int(summary.get(key, 0) or 0) != 0:
             reasons.append(f"stage26_1_{key}_nonzero")
     s21_3_root = root / "s21_3"
-    for name in (
-        stage21_3.SUMMARY_FILE,
-        "xunce-stage21-3-lineage-audit.json",
-        stage21_3.BATCH_FILE,
-    ):
-        if not (s21_3_root / name).is_file():
-            reasons.append(f"missing_stage26_1_s21_3_{name}")
+    for artifact in (STAGE21_3_SUMMARY, STAGE21_3_BATCH):
+        try:
+            read_json_artifact(s21_3_root, artifact) if artifact is STAGE21_3_SUMMARY else read_jsonl_artifact(s21_3_root, artifact)
+        except FileNotFoundError:
+            reasons.append(f"missing_stage26_1_s21_3_{artifact.legacy[0] if artifact.legacy else artifact.canonical}")
+    if not artifact_io.path_is_file(s21_3_root / "xunce-stage21-3-lineage-audit.json"):
+        reasons.append("missing_stage26_1_s21_3_xunce-stage21-3-lineage-audit.json")
     checkpoint_lineage = _stage26_1_collector_checkpoint_lineage(config)
     if not checkpoint_lineage["stage26_1_collector_manifest_exists"]:
         reasons.append("missing_stage26_1_s21_1_manifest")
@@ -518,12 +539,12 @@ def _input_rejections(config: dict[str, Any]) -> list[str]:
         reasons.append(f"missing_stage26_1_upstream_{Path(missing_path).name}")
     if upstream_physical_payload_audit["physical_obstacle_payload_count"] > 0:
         reasons.append("stage26_1_upstream_physical_obstacle_payload_present")
-    s21_3_summary = _read_json_if_exists(s21_3_root / stage21_3.SUMMARY_FILE)
+    s21_3_summary = _read_json_artifact_if_exists(s21_3_root, STAGE21_3_SUMMARY)
     if s21_3_summary.get("status") != "passed":
         reasons.append("stage26_1_stage21_3_not_passed")
-    if not Path(config["xunce_candidate_checkpoint"]).is_file():
+    if not artifact_io.path_is_file(Path(config["xunce_candidate_checkpoint"])):
         reasons.append("missing_xunce_candidate_checkpoint")
-    if not Path(config["high_fidelity_config"]).is_file():
+    if not artifact_io.path_is_file(Path(config["high_fidelity_config"])):
         reasons.append("missing_high_fidelity_config")
     return reasons
 
@@ -541,7 +562,7 @@ def _stage26_1_upstream_physical_payload_audit(config: dict[str, Any]) -> dict[s
     checked_files: list[str] = []
     missing_files: list[str] = []
     for path in paths:
-        if not path.is_file():
+        if not artifact_io.path_is_file(path):
             missing_files.append(str(path))
             continue
         rows = _read_jsonl_if_exists(path)
@@ -567,7 +588,7 @@ def _stage26_1_collector_checkpoint_lineage(config: dict[str, Any]) -> dict[str,
     collector_sha = checkpoint_audit.get("checkpoint_sha256")
     source_sha = _sha256_file(Path(config["xunce_candidate_checkpoint"]))
     return {
-        "stage26_1_collector_manifest_exists": manifest_path.is_file(),
+        "stage26_1_collector_manifest_exists": artifact_io.path_is_file(manifest_path),
         "stage26_1_collector_checkpoint_path": checkpoint_audit.get("checkpoint_path") or model_audit.get("xunce_candidate_checkpoint"),
         "stage26_1_collector_checkpoint_sha256": collector_sha,
         "stage26_2_source_checkpoint_path": config.get("xunce_candidate_checkpoint"),
@@ -643,36 +664,49 @@ def _unique(values: list[str]) -> list[str]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    return _read_json(path) if path.is_file() else {}
+    return _read_json(path) if artifact_io.path_is_file(path) else {}
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return []
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in artifact_io.read_text(path).splitlines():
         if line.strip():
             rows.append(json.loads(line))
     return rows
 
 
 def _sha256_file(path: Path) -> str | None:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return None
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    digest.update(artifact_io.read_bytes(path))
     return digest.hexdigest()
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    artifact_io.write_json(path, payload)
+
+
+def _read_json_artifact_if_exists(root: Path, artifact: Any) -> dict[str, Any]:
+    try:
+        payload, _source = read_json_artifact(root, artifact)
+        return payload
+    except FileNotFoundError:
+        return {}
+
+
+def _read_jsonl_artifact_if_exists(root: Path, artifact: Any) -> list[dict[str, Any]]:
+    try:
+        rows, _source = read_jsonl_artifact(root, artifact)
+        return rows
+    except FileNotFoundError:
+        return []
 
 
 def _load_json_template(path: str, repo_root: Path) -> dict[str, Any]:

@@ -16,6 +16,22 @@ except ModuleNotFoundError:  # pragma: no cover
     import scripts.run_xunce_stage24_5_hybrid_astar_path_cost_post_update_trajectory_eval_smoke as stage24_5
     import scripts.run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke as stage26_2
 
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_5_SUMMARY,
+    STAGE26_2_SUMMARY,
+    STAGE26_3_ACTION_AUDIT,
+    STAGE26_3_DELTA_AUDIT,
+    STAGE26_3_HIGH_FIDELITY_CONFIG,
+    STAGE26_3_MANIFEST,
+    STAGE26_3_ROUTING,
+    STAGE26_3_STAGE21_5_CONFIG,
+    STAGE26_3_STAGE21_5_SUMMARY,
+    STAGE26_3_SUMMARY,
+    read_json_artifact,
+    write_json_artifact,
+)
+
 
 CONFIG_SCHEMA_VERSION = "xunce-stage26-3-synthetic-terrain-post-update-trajectory-eval-smoke-config/v1"
 SUMMARY_SCHEMA_VERSION = "xunce-stage26-3-summary/v1"
@@ -124,9 +140,9 @@ def run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
     repo_root = repo_root.resolve()
     config = _load_config(config_path, repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
-    stage26_2_summary = _read_json_if_exists(Path(config["stage26_2_root"]) / stage26_2.SUMMARY_FILE)
+    stage26_2_summary = _read_json_artifact_if_exists(Path(config["stage26_2_root"]), STAGE26_2_SUMMARY)
     stage26_1_summary = _stage26_1_summary(stage26_2_summary)
     boundary_reasons = _boundary_rejections(config)
     input_reasons = _input_rejections(config, stage26_2_summary, stage26_1_summary)
@@ -235,13 +251,13 @@ def run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
         "next_stage_routing": str(output_root / ROUTING_FILE),
         "report": str(output_root / REPORT_FILE),
     }
-    _write_json(output_root / SUMMARY_FILE, summary)
-    _write_json(output_root / STAGE21_5_SUMMARY_FILE, stage21_5_summary)
-    _write_json(output_root / ACTION_AUDIT_FILE, action_audit)
-    _write_json(output_root / DELTA_AUDIT_FILE, delta_audit)
-    _write_json(output_root / ROUTING_FILE, routing)
-    _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    write_json_artifact(output_root, STAGE26_3_SUMMARY, summary)
+    write_json_artifact(output_root, STAGE26_3_STAGE21_5_SUMMARY, stage21_5_summary)
+    write_json_artifact(output_root, STAGE26_3_ACTION_AUDIT, action_audit)
+    write_json_artifact(output_root, STAGE26_3_DELTA_AUDIT, delta_audit)
+    write_json_artifact(output_root, STAGE26_3_ROUTING, routing)
+    write_json_artifact(output_root, STAGE26_3_MANIFEST, manifest)
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -309,7 +325,7 @@ def _run_stage21_5(
             "xunce_only_evaluation": True,
         }
     )
-    _write_json(high_fidelity_config_path, high_fidelity_cfg)
+    write_json_artifact(high_fidelity_config_path.parent, STAGE26_3_HIGH_FIDELITY_CONFIG, high_fidelity_cfg)
 
     cfg.update(
         {
@@ -331,7 +347,7 @@ def _run_stage21_5(
             "canary_traffic_fraction": 0.0,
         }
     )
-    _write_json(stage21_5_config_path, cfg)
+    write_json_artifact(stage21_5_config_path.parent, STAGE26_3_STAGE21_5_CONFIG, cfg)
     return _invoke_stage21_5(
         config_path=stage21_5_config_path,
         output_root=output_root / "s21_5",
@@ -779,7 +795,7 @@ def _input_rejections(config: dict[str, Any], summary: dict[str, Any], stage26_1
     for field in ("publishes_checkpoint", "replaces_default_policy", "connects_real_executor", "starts_online_canary"):
         if summary.get(field) is True:
             reasons.append(f"stage26_2_{field}_enabled")
-    if not (root / "s21_4").exists():
+    if not artifact_io.path_exists(root / "s21_4"):
         reasons.append("stage26_2_stage21_4_root_missing")
     if not stage26_1_summary:
         reasons.append("stage26_1_summary_missing")
@@ -989,19 +1005,27 @@ def _load_json_template(path: str, repo_root: Path) -> dict[str, Any]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    return _read_json(path) if path.exists() else {}
+    return _read_json(path) if artifact_io.path_exists(path) else {}
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    return stage24_5._read_jsonl_if_exists(path)
+    return artifact_io.read_jsonl(path) if artifact_io.path_is_file(path) else []
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    stage24_5._write_json(path, payload)
+    artifact_io.write_json(path, payload)
+
+
+def _read_json_artifact_if_exists(root: Path, artifact: Any) -> dict[str, Any]:
+    try:
+        payload, _source = read_json_artifact(root, artifact)
+        return payload
+    except FileNotFoundError:
+        return {}
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

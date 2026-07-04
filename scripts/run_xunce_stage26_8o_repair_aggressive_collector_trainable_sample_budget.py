@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import xunce_artifact_io as artifact_io
 
 try:  # pragma: no cover
     import run_xunce_stage26_1_synthetic_terrain_collector_smoke as stage26_1
@@ -19,10 +26,7 @@ ROUTING_SCHEMA_VERSION = "xunce-stage26-8o-next-stage-routing/v1"
 MANIFEST_SCHEMA_VERSION = "xunce-stage26-8o-manifest/v1"
 
 DEFAULT_CONFIG = "configs/xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1.json"
-DEFAULT_OUTPUT_ROOT = (
-    "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/"
-    "outputs/path_feedback_batch_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1"
-)
+DEFAULT_OUTPUT_ROOT = "D:/xunce/out/s26_8o"
 DEFAULT_STAGE26_8N_ROOT = (
     "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/"
     "outputs/path_feedback_batch_xunce_stage26_8n_aggressive_sample_update_sweep_v1"
@@ -83,7 +87,7 @@ def run_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget(
     repo_root = repo_root.resolve()
     config = _load_config(_resolve_path(config_path, repo_root), repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
     config["_generated_config_root"] = str(output_root / "_generated_config")
 
     stage26_8n_summary = _read_json_if_exists(Path(config["stage26_8n_root"]) / "xunce-stage26-8n-summary.json")
@@ -185,7 +189,7 @@ def run_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -273,7 +277,7 @@ def _build_stage26_1_config(config: dict[str, Any], repo_root: Path) -> dict[str
         stage21_1_base["sampling_seed"] = int(config["sampling_seed"])
         stage21_1_base["continuous_theta_head_init_seed"] = int(config["sampling_seed"])
         generated = Path(config.get("_generated_config_root", ".")) / "stage21-1-base-config.json"
-        generated.parent.mkdir(parents=True, exist_ok=True)
+        artifact_io.make_dirs(generated.parent)
         _write_json(generated, stage21_1_base)
         cfg["stage21_1_base_config"] = str(generated)
     return cfg
@@ -389,7 +393,7 @@ def _input_rejections(config: dict[str, Any], stage26_8n_summary: dict[str, Any]
         reasons.append("missing_stage26_8n_summary")
     elif stage26_8n_summary.get("next_required_change") != STAGE26_8N_REQUIRED_ROUTE:
         reasons.append("stage26_8n_route_not_aggressive_sample_budget")
-    if not Path(config["source_scenario_fixture_root"]).exists():
+    if not artifact_io.path_exists(Path(config["source_scenario_fixture_root"])):
         reasons.append("source_scenario_fixture_root_missing")
     if config["selected_continuous_theta_unreachable_resample_policy"] != "reachable_theta_proposal/v1":
         reasons.append("unsupported_selected_theta_resample_policy")
@@ -449,28 +453,21 @@ def _render_report(summary: dict[str, Any]) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return {}
     return _read_json(path)
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
-    return rows
+    return artifact_io.read_jsonl(path) if artifact_io.path_is_file(path) else []
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

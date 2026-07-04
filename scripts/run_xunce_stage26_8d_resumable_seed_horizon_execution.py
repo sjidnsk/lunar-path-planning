@@ -3,9 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import xunce_artifact_io as artifact_io
 
 try:  # pragma: no cover
     import run_xunce_stage26_8_synthetic_terrain_multi_seed_coverage_efficiency_pilot as stage26_8
@@ -121,7 +128,7 @@ def run_xunce_stage26_8d_resumable_seed_horizon_execution(
     if max_jobs_override is not None:
         config["max_jobs_per_invocation"] = int(max_jobs_override)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     stage26_8b_summary = _read_json_if_exists(Path(config["stage26_8b_root"]) / "xunce-stage26-8b-summary.json")
     boundary_rejections = _boundary_rejections(config)
@@ -226,13 +233,13 @@ def run_xunce_stage26_8d_resumable_seed_horizon_execution(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary, job_rows), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary, job_rows))
     return summary
 
 
 def _run_phase(item: dict[str, Any], *, config: dict[str, Any], output_root: Path, repo_root: Path, started_at: str) -> dict[str, Any]:
     job_root = _job_output_root(output_root, int(item["horizon_steps"]), int(item["seed"]))
-    job_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(job_root)
     phase = item["phase"]
     seed = int(item["seed"])
     horizon = int(item["horizon_steps"])
@@ -724,23 +731,21 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return {}
     return _read_json(path)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

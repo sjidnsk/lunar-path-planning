@@ -4,10 +4,17 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import xunce_artifact_io as artifact_io
 
 
 STAGE_ID = "xunce-stage26-8f-scenario-diversity-and-policy-margin-audit"
@@ -111,7 +118,7 @@ def run_xunce_stage26_8f_scenario_diversity_and_policy_margin_audit(
     repo_root = repo_root.resolve()
     config = _load_config(config_path, repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     stage26_8d_root = Path(config["stage26_8d_root"])
     stage26_8d_summary = _read_json_if_exists(stage26_8d_root / "xunce-stage26-8d-summary.json")
@@ -228,7 +235,10 @@ def run_xunce_stage26_8f_scenario_diversity_and_policy_margin_audit(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary, scenario_audit, margin_audit, opportunity_audit, sensitivity_audit), encoding="utf-8")
+    artifact_io.write_text(
+        output_root / REPORT_FILE,
+        _render_report(summary, scenario_audit, margin_audit, opportunity_audit, sensitivity_audit),
+    )
     return summary
 
 
@@ -251,7 +261,7 @@ def _completed_eval_source_index(job_rows: list[dict[str, Any]], *, min_count: i
             continue
         stage26_3_root = Path(str(row.get("stage26_3_root") or ""))
         summary_path = Path(str(row.get("summary_path") or "")) if row.get("summary_path") else stage26_3_root / "xunce-stage26-3-summary.json"
-        if not stage26_3_root.is_dir() or not summary_path.is_file():
+        if not artifact_io.path_is_dir(stage26_3_root) or not artifact_io.path_is_file(summary_path):
             continue
         sources.append(
             {
@@ -889,24 +899,21 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return {}
     return _read_json(path)
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return artifact_io.read_jsonl(path) if artifact_io.path_is_file(path) else []
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import xunce_artifact_io as artifact_io
 
 try:  # pragma: no cover
     import run_xunce_high_fidelity_exploration_coverage_comparison as hf
@@ -108,7 +115,7 @@ def run_xunce_stage26_8h_resumable_diverse_scenario_post_update_eval(
     if phase_override is not None:
         config["phase"] = phase_override
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     stage26_8g_root = Path(config["stage26_8g_root"])
     boundary_rejections = _boundary_rejections(config)
@@ -228,7 +235,7 @@ def run_xunce_stage26_8h_resumable_diverse_scenario_post_update_eval(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -375,7 +382,7 @@ def _route(
 
 def _input_rejections(stage26_8g_root: Path) -> list[str]:
     reasons: list[str] = []
-    if not stage26_8g_root.exists():
+    if not artifact_io.path_exists(stage26_8g_root):
         return ["stage26_8g_root_missing"]
     for rel, label in (
         ("h16_seed260801/s26_1/xunce-stage26-1-summary.json", "stage26_1"),
@@ -389,7 +396,7 @@ def _input_rejections(stage26_8g_root: Path) -> list[str]:
         (_stage21_5_config_path(stage26_8g_root), "stage21_5_config"),
         (_high_fidelity_config_path(stage26_8g_root), "high_fidelity_config"),
     ):
-        if not path.is_file():
+        if not artifact_io.path_is_file(path):
             reasons.append(f"{label}_missing")
     return reasons
 
@@ -479,8 +486,8 @@ def _phase_summary_complete(phase: str, root: Path, summary: dict[str, Any]) -> 
         if summary.get("status") != "passed":
             return False
         return (
-            (root / hf.EPISODES_FILE).is_file()
-            and (root / hf.MODEL_INFERENCE_FILE).is_file()
+            artifact_io.path_is_file(root / hf.EPISODES_FILE)
+            and artifact_io.path_is_file(root / hf.MODEL_INFERENCE_FILE)
             and _jsonl_count(root / hf.EPISODES_FILE) > 0
             and _jsonl_count(root / hf.MODEL_INFERENCE_FILE) > 0
         )
@@ -503,9 +510,9 @@ def _phase_blocking_reason(phase: str, root: Path, summary: dict[str, Any]) -> s
         return "summary_missing"
     if summary.get("status") != "passed":
         return "summary_not_passed"
-    if phase in {"pre_eval", "post_eval"} and not (root / hf.MODEL_INFERENCE_FILE).is_file():
+    if phase in {"pre_eval", "post_eval"} and not artifact_io.path_is_file(root / hf.MODEL_INFERENCE_FILE):
         return "model_inference_missing"
-    if phase in {"pre_eval", "post_eval"} and not (root / hf.EPISODES_FILE).is_file():
+    if phase in {"pre_eval", "post_eval"} and not artifact_io.path_is_file(root / hf.EPISODES_FILE):
         return "episodes_missing"
     return ""
 
@@ -533,7 +540,7 @@ def _eval_audit(root: Path, label: str) -> dict[str, Any]:
 
 
 def _scenario_recheck(stage26_3_root: Path, config: dict[str, Any]) -> dict[str, Any]:
-    if not (stage26_3_root / stage26_3.SUMMARY_FILE).is_file():
+    if not artifact_io.path_is_file(stage26_3_root / stage26_3.SUMMARY_FILE):
         return {"schema_version": "xunce-stage26-8h-scenario-diversity-recheck/v1", "scenario_signature_duplicate_group_count": 0, "scenario_diversity_repaired": False}
     recheck_config = {
         "collector_rollout_steps": int(config["rollout_steps"]),
@@ -630,33 +637,27 @@ def _json_key(value: Any) -> str:
 
 
 def _jsonl_count(path: Path) -> int:
-    if not path.is_file():
-        return 0
-    return sum(1 for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip())
+    return artifact_io.count_jsonl_rows(path) if artifact_io.path_is_file(path) else 0
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    return _read_json(path) if path.is_file() else {}
+    return _read_json(path) if artifact_io.path_is_file(path) else {}
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    return artifact_io.read_jsonl(path) if artifact_io.path_is_file(path) else []
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

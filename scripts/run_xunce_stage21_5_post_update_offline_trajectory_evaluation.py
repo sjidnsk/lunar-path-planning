@@ -16,6 +16,23 @@ if str(SCRIPT_DIR) not in sys.path:
 from run_xunce_high_fidelity_exploration_coverage_comparison import (  # noqa: E402
     run_xunce_high_fidelity_exploration_coverage_comparison,
 )
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_1_SUMMARY,
+    STAGE21_3_SUMMARY,
+    STAGE21_4_CHECKPOINT,
+    STAGE21_4_ROUTING,
+    STAGE21_4_SUMMARY,
+    STAGE21_5_DELTA,
+    STAGE21_5_MANIFEST,
+    STAGE21_5_RESULTS,
+    STAGE21_5_ROUTING,
+    STAGE21_5_SCENARIO_DELTA,
+    STAGE21_5_SUMMARY,
+    read_json_artifact,
+    write_json_artifact,
+    write_jsonl_artifact,
+)
 
 
 CONFIG_SCHEMA_VERSION = "xunce-stage21-5-post-update-offline-trajectory-evaluation-config/v1"
@@ -110,7 +127,7 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
     config_path = _resolve_path(config_path, repo_root)
     config = _load_config(config_path, repo_root=repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     boundary_reasons = _boundary_rejections(config)
     input_reasons = _input_rejections(config)
@@ -125,9 +142,9 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
 
     if not boundary_reasons and not input_reasons:
         stage21_4_root = Path(config["stage21_4_tiny_ppo_update_smoke_root"])
-        stage21_4_summary = _read_json(stage21_4_root / "xunce-stage21-4-tiny-ppo-update-smoke-summary.json")
-        stage21_4_checkpoint_audit = _read_json(stage21_4_root / "xunce-stage21-4-checkpoint-audit.json")
-        stage21_4_routing = _read_json(stage21_4_root / "xunce-stage21-4-next-stage-routing.json")
+        stage21_4_summary, _ = read_json_artifact(stage21_4_root, STAGE21_4_SUMMARY)
+        stage21_4_checkpoint_audit, _ = read_json_artifact(stage21_4_root, STAGE21_4_CHECKPOINT)
+        stage21_4_routing, _ = read_json_artifact(stage21_4_root, STAGE21_4_ROUTING)
         input_reasons.extend(_stage21_4_rejections(stage21_4_summary, stage21_4_checkpoint_audit, stage21_4_routing))
         theta_head_init_seed = _resolve_continuous_theta_head_init_seed(
             config,
@@ -139,8 +156,8 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
 
     if not boundary_reasons and not input_reasons:
         if config["execute_high_fidelity_evaluations"]:
-            pre_root.mkdir(parents=True, exist_ok=True)
-            post_root.mkdir(parents=True, exist_ok=True)
+            artifact_io.make_dirs(pre_root)
+            artifact_io.make_dirs(post_root)
             _run_high_fidelity_eval(
                 config,
                 repo_root=repo_root,
@@ -260,18 +277,18 @@ def _resolve_continuous_theta_head_init_seed(
     if not stage21_3_root_raw:
         return None
     stage21_3_root = _resolve_path(Path(str(stage21_3_root_raw)), repo_root)
-    stage21_3_summary_path = stage21_3_root / "xunce-stage21-3-ppo-batch-validation-summary.json"
-    if not stage21_3_summary_path.is_file():
+    try:
+        stage21_3_summary, _ = read_json_artifact(stage21_3_root, STAGE21_3_SUMMARY)
+    except FileNotFoundError:
         return None
-    stage21_3_summary = _read_json(stage21_3_summary_path)
     stage21_1_root_raw = stage21_3_summary.get("stage21_1_collector_root")
     if not stage21_1_root_raw:
         return None
     stage21_1_root = _resolve_path(Path(str(stage21_1_root_raw)), repo_root)
-    stage21_1_summary_path = stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json"
-    if not stage21_1_summary_path.is_file():
+    try:
+        stage21_1_summary, _ = read_json_artifact(stage21_1_root, STAGE21_1_SUMMARY)
+    except FileNotFoundError:
         return None
-    stage21_1_summary = _read_json(stage21_1_summary_path)
     return _nonnegative_int_or_none(stage21_1_summary.get("sampling_seed"))
 
 
@@ -645,12 +662,9 @@ def _write_outputs(
         "pre_evaluation_root": str(pre_root),
         "post_evaluation_root": str(post_root),
     }
-    paths["results"].write_text(json.dumps(results, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    paths["delta"].write_text(json.dumps(delta, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    paths["scenario_delta"].write_text(
-        "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in scenario_delta_rows),
-        encoding="utf-8",
-    )
+    write_json_artifact(output_root, STAGE21_5_RESULTS, results)
+    write_json_artifact(output_root, STAGE21_5_DELTA, delta)
+    write_jsonl_artifact(output_root, STAGE21_5_SCENARIO_DELTA, scenario_delta_rows)
     routing = {
         "schema_version": ROUTING_SCHEMA_VERSION,
         "status": status,
@@ -665,7 +679,7 @@ def _write_outputs(
         "starts_online_canary": False,
         "canary_traffic_fraction": 0.0,
     }
-    paths["routing"].write_text(json.dumps(routing, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    write_json_artifact(output_root, STAGE21_5_ROUTING, routing)
     summary = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -720,8 +734,8 @@ def _write_outputs(
         "starts_online_canary": False,
         "canary_traffic_fraction": 0.0,
     }
-    paths["summary"].write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    paths["report"].write_text(_report_markdown(summary), encoding="utf-8")
+    write_json_artifact(output_root, STAGE21_5_SUMMARY, summary)
+    artifact_io.write_text(paths["report"], _report_markdown(summary))
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "generated_at": summary["generated_at"],
@@ -732,7 +746,7 @@ def _write_outputs(
         "pre_evaluation_root": str(pre_root),
         "post_evaluation_root": str(post_root),
     }
-    paths["manifest"].write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    write_json_artifact(output_root, STAGE21_5_MANIFEST, manifest)
     return summary
 
 
@@ -772,23 +786,21 @@ def _boundary_rejections(config: dict[str, Any]) -> list[str]:
 def _input_rejections(config: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     stage21_4_root = Path(config["stage21_4_tiny_ppo_update_smoke_root"])
-    for name in (
-        "xunce-stage21-4-tiny-ppo-update-smoke-summary.json",
-        "xunce-stage21-4-checkpoint-audit.json",
-        "xunce-stage21-4-next-stage-routing.json",
-    ):
-        if not (stage21_4_root / name).is_file():
-            reasons.append(f"missing_{name}")
-    if not Path(config["high_fidelity_config"]).is_file():
+    for artifact in (STAGE21_4_SUMMARY, STAGE21_4_CHECKPOINT, STAGE21_4_ROUTING):
+        try:
+            read_json_artifact(stage21_4_root, artifact)
+        except FileNotFoundError:
+            reasons.append(f"missing_{artifact.legacy[0] if artifact.legacy else artifact.canonical}")
+    if not artifact_io.path_is_file(Path(config["high_fidelity_config"])):
         reasons.append("missing_high_fidelity_config")
-    if config["include_canonical_reward_rerank_oracle"] and not Path(config["canonical_reward_rerank_profile"]).is_file():
+    if config["include_canonical_reward_rerank_oracle"] and not artifact_io.path_is_file(Path(config["canonical_reward_rerank_profile"])):
         reasons.append("missing_canonical_reward_rerank_profile")
     if not config["execute_high_fidelity_evaluations"]:
         for label, key in (("pre", "pre_ppo_evaluation_root"), ("post", "post_ppo_evaluation_root")):
             root = Path(str(config.get(key, "")))
-            if not (root / "xunce-exploration-coverage-comparison-summary.json").is_file():
+            if not artifact_io.path_is_file(root / "xunce-exploration-coverage-comparison-summary.json"):
                 reasons.append(f"missing_{label}_evaluation_summary")
-            if not (root / "xunce-exploration-coverage-episodes.jsonl").is_file():
+            if not artifact_io.path_is_file(root / "xunce-exploration-coverage-episodes.jsonl"):
                 reasons.append(f"missing_{label}_evaluation_episodes")
     return reasons
 
@@ -833,14 +845,14 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return artifact_io.read_json(path)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not Path(path).is_file():
+    if not artifact_io.path_is_file(Path(path)):
         return []
     rows: list[dict[str, Any]] = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    for line in artifact_io.read_text(Path(path)).splitlines():
         if line.strip():
             payload = json.loads(line)
             if isinstance(payload, dict):

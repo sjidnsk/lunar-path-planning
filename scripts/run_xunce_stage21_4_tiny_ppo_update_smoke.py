@@ -27,6 +27,23 @@ from xunce_continuous_theta_action import (
     CONTINUOUS_THETA_ACTION_SPACE,
     continuous_theta_torch_log_prob,
 )
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_1_SUMMARY,
+    STAGE21_3_BATCH,
+    STAGE21_3_SUMMARY,
+    STAGE21_4_CHECKPOINT,
+    STAGE21_4_GRADIENT,
+    STAGE21_4_LOSS,
+    STAGE21_4_MANIFEST,
+    STAGE21_4_ROUTING,
+    STAGE21_4_SUMMARY,
+    read_json_artifact,
+    read_jsonl_artifact,
+    resolve_artifact,
+    write_json_artifact,
+    write_jsonl_artifact,
+)
 
 
 SYNTHETIC_CREDIT_BEHAVIOR_POLICY_ID = "synthetic_credit_mixture_policy/v1"
@@ -126,7 +143,7 @@ def run_xunce_stage21_4_tiny_ppo_update_smoke(
     config_path = _resolve_path(config_path, repo_root)
     config = _load_config(config_path, repo_root=repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     boundary_reasons = _boundary_rejections(config, output_root)
     input_reasons = _input_rejections(config)
@@ -145,15 +162,16 @@ def run_xunce_stage21_4_tiny_ppo_update_smoke(
 
     if not boundary_reasons and not input_reasons:
         stage21_3_root = Path(config["stage21_3_ppo_batch_validation_root"])
-        summary21_3 = _read_json(stage21_3_root / "xunce-stage21-3-ppo-batch-validation-summary.json")
+        summary21_3, _ = read_json_artifact(stage21_3_root, STAGE21_3_SUMMARY)
         lineage21_3 = _read_json(stage21_3_root / "xunce-stage21-3-lineage-audit.json")
-        batch_rows = _read_jsonl(stage21_3_root / "xunce-stage21-3-ppo-trainable-batch.jsonl")
+        batch_rows, _ = read_jsonl_artifact(stage21_3_root, STAGE21_3_BATCH)
         train_rows = [row for row in batch_rows if row.get("stage21_3_split") == "train"]
         stage21_1_root = Path(str(summary21_3.get("stage21_1_collector_root", "")))
         if stage21_1_root:
-            stage21_1_summary_path = stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json"
-            if stage21_1_summary_path.is_file():
-                stage21_1_summary = _read_json(stage21_1_summary_path)
+            try:
+                stage21_1_summary, _ = read_json_artifact(stage21_1_root, STAGE21_1_SUMMARY)
+            except FileNotFoundError:
+                stage21_1_summary = {}
 
     batch_reasons = _batch_rejections(train_rows, summary21_3, lineage21_3, config)
     numeric_reasons: list[str] = []
@@ -696,8 +714,9 @@ def _write_and_reload_checkpoint(
         "model_state_dict": copy.deepcopy(model.state_dict()),
         "metadata": metadata,
     }
-    torch.save(payload, checkpoint_path)
-    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.ensure_parent(checkpoint_path)
+    torch.save(payload, artifact_io.windows_safe_path(checkpoint_path))
+    artifact_io.write_json(metadata_path, metadata)
     high_fidelity_config = _read_json(Path(config["high_fidelity_config"]))
     reload_audit, reloaded_model, reloaded_config = _load_xunce_checkpoint(
         checkpoint_path,
@@ -709,8 +728,8 @@ def _write_and_reload_checkpoint(
         "schema_version": "xunce-stage21-4-checkpoint-audit/v1",
         "experimental_checkpoint_path": str(checkpoint_path),
         "experimental_checkpoint_metadata": str(metadata_path),
-        "experimental_checkpoint_exists": checkpoint_path.is_file(),
-        "experimental_checkpoint_size_bytes": checkpoint_path.stat().st_size if checkpoint_path.is_file() else 0,
+        "experimental_checkpoint_exists": artifact_io.path_is_file(checkpoint_path),
+        "experimental_checkpoint_size_bytes": artifact_io.file_size(checkpoint_path) if artifact_io.path_is_file(checkpoint_path) else 0,
         "experimental_checkpoint_sha256": checkpoint_hash,
         "checkpoint_reload_passed": bool(reloaded_model is not None and reload_audit.get("checkpoint_loaded")),
         "reload_audit": reload_audit,
@@ -748,9 +767,9 @@ def _write_outputs(
         "report": output_root / REPORT_FILE,
         "manifest": output_root / MANIFEST_FILE,
     }
-    _write_jsonl(paths["loss_audit"], loss_audit_rows)
-    paths["gradient_audit"].write_text(json.dumps(gradient_audit, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    paths["checkpoint_audit"].write_text(json.dumps(checkpoint_audit, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    write_jsonl_artifact(output_root, STAGE21_4_LOSS, loss_audit_rows)
+    write_json_artifact(output_root, STAGE21_4_GRADIENT, gradient_audit)
+    write_json_artifact(output_root, STAGE21_4_CHECKPOINT, checkpoint_audit)
     routing = {
         "schema_version": ROUTING_SCHEMA_VERSION,
         "status": status,
@@ -766,7 +785,7 @@ def _write_outputs(
         "starts_online_canary": False,
         "canary_traffic_fraction": 0.0,
     }
-    paths["routing"].write_text(json.dumps(routing, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    write_json_artifact(output_root, STAGE21_4_ROUTING, routing)
     summary = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -839,8 +858,8 @@ def _write_outputs(
         "starts_online_canary": False,
         "canary_traffic_fraction": 0.0,
     }
-    paths["summary"].write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    paths["report"].write_text(_report_markdown(summary), encoding="utf-8")
+    write_json_artifact(output_root, STAGE21_4_SUMMARY, summary)
+    artifact_io.write_text(paths["report"], _report_markdown(summary))
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "generated_at": summary["generated_at"],
@@ -850,7 +869,7 @@ def _write_outputs(
         "artifacts": {key: str(value) for key, value in paths.items()},
         "experimental_checkpoint": summary["experimental_checkpoint_path"],
     }
-    paths["manifest"].write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    write_json_artifact(output_root, STAGE21_4_MANIFEST, manifest)
     return summary
 
 
@@ -950,36 +969,31 @@ def _boundary_rejections(config: dict[str, Any], output_root: Path) -> list[str]
 def _input_rejections(config: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     stage21_3_root = Path(config["stage21_3_ppo_batch_validation_root"])
-    for name in (
-        "xunce-stage21-3-ppo-batch-validation-summary.json",
-        "xunce-stage21-3-lineage-audit.json",
-        "xunce-stage21-3-ppo-trainable-batch.jsonl",
-    ):
-        if not (stage21_3_root / name).is_file():
-            reasons.append(f"missing_{name}")
-    if not Path(config["xunce_candidate_checkpoint"]).is_file():
+    for artifact in (STAGE21_3_SUMMARY, STAGE21_3_BATCH):
+        if read_json_or_jsonl_missing(stage21_3_root, artifact):
+            reasons.append(f"missing_{artifact.legacy[0] if artifact.legacy else artifact.canonical}")
+    if not artifact_io.path_is_file(stage21_3_root / "xunce-stage21-3-lineage-audit.json"):
+        reasons.append("missing_xunce-stage21-3-lineage-audit.json")
+    if not artifact_io.path_is_file(Path(config["xunce_candidate_checkpoint"])):
         reasons.append("missing_xunce_candidate_checkpoint")
-    if not Path(config["high_fidelity_config"]).is_file():
+    if not artifact_io.path_is_file(Path(config["high_fidelity_config"])):
         reasons.append("missing_high_fidelity_config")
     return reasons
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8", newline="\n") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
-            handle.write("\n")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return artifact_io.read_json(path)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    if not Path(path).is_file():
+    if not artifact_io.path_is_file(Path(path)):
         return rows
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    for line in artifact_io.read_text(Path(path)).splitlines():
         if line.strip():
             payload = json.loads(line)
             if isinstance(payload, dict):
@@ -1021,6 +1035,11 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["canary_traffic_fraction"] = _nonnegative_float(config.get("canary_traffic_fraction", 0.0), "canary_traffic_fraction")
     config["require_d_drive_output_root"] = bool(config.get("require_d_drive_output_root", True))
     return config
+
+
+def read_json_or_jsonl_missing(root: Path, artifact: Any) -> bool:
+    path, _source = resolve_artifact(root, artifact)
+    return path is None
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:
@@ -1157,12 +1176,10 @@ def _parameter_delta_l2(model: XunceFullNetworkV1, initial_state: dict[str, torc
 
 
 def _sha256_file(path: Path) -> str | None:
-    if not Path(path).is_file():
+    if not artifact_io.path_is_file(path):
         return None
     digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    digest.update(artifact_io.read_bytes(path))
     return digest.hexdigest()
 
 

@@ -2,7 +2,7 @@
   "schema_version": "xunce-stage26-8p-hybrid-astar-primitive-resolution-sweep-config/v1",
   "stage_id": "xunce-stage26-8p-hybrid-astar-primitive-resolution-sweep",
   "run_mode": "run_next",
-  "stage26_8o_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1",
+  "stage26_8o_root": "D:/xunce/out/s26_8o",
   "source_scenario_fixture_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8g_repair_synthetic_scenario_diversity_v1",
   "base_stage26_1_config": "configs/xunce_stage26_1_synthetic_terrain_collector_smoke_v1.json",
   "required_scenario_count": 6,
