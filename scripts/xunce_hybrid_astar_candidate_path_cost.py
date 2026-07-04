@@ -41,10 +41,12 @@ def evaluate_hybrid_astar_candidate_path_cost(
     rotation_cost_weight: float = 0.2,
     reverse_penalty_weight: float = 0.5,
     turn_penalty_weight: float = 0.05,
+    closed_key_xy_resolution_m: float | None = None,
 ) -> dict[str, Any]:
     base = _base_row(candidate, platform_contract_hash, max_traversable_slope_deg)
     pose = _parse_current_pose(current_pose)
     viewpoint = _parse_viewpoint(candidate.get("candidate_viewpoint"))
+    goal_world_pose = _parse_goal_world_pose(candidate.get("candidate_goal_world_pose"))
     theta_deg = _finite_float(candidate.get("candidate_theta_deg"))
     if pose is None:
         return {**base, **_failed_contract("current_pose_missing")}
@@ -55,8 +57,12 @@ def evaluate_hybrid_astar_candidate_path_cost(
     if len(str(candidate.get("candidate_set_hash") or "")) == 0:
         return {**base, **_failed_contract("candidate_set_hash_missing")}
 
-    goal_cell = Cell(int(viewpoint[0]), int(viewpoint[1]))
-    goal_world = _cell_center_world(grid.spec, goal_cell)
+    if goal_world_pose is None:
+        goal_cell = Cell(int(viewpoint[0]), int(viewpoint[1]))
+        goal_world = _cell_center_world(grid.spec, goal_cell)
+    else:
+        goal_world = WorldPoint(float(goal_world_pose[0]), float(goal_world_pose[1]))
+        goal_cell = grid.spec.world_to_cell(goal_world)
     goal_pose = Pose2D(goal_world.x, goal_world.y, math.radians(float(theta_deg)))
     request = PosePlanRequest(
         start=Pose2D(float(pose[0]), float(pose[1]), float(pose[2])),
@@ -79,6 +85,11 @@ def evaluate_hybrid_astar_candidate_path_cost(
         rotation_cost_weight=float(rotation_cost_weight),
         reverse_penalty_weight=float(reverse_penalty_weight),
         turn_penalty_weight=float(turn_penalty_weight),
+        closed_key_xy_resolution_m=(
+            float(closed_key_xy_resolution_m)
+            if closed_key_xy_resolution_m is not None and float(closed_key_xy_resolution_m) > 0.0
+            else None
+        ),
     )
     hybrid = HybridAStarPlanner().plan(grid, request)
     start_cell = grid.spec.world_to_cell(WorldPoint(float(pose[0]), float(pose[1])))
@@ -105,6 +116,12 @@ def evaluate_hybrid_astar_candidate_path_cost(
         "hybrid_astar_control_count": len(hybrid.control_sequence),
         "hybrid_astar_ackermann_feasible_claimed": bool(hybrid.diagnostics.ackermann_feasible_claimed),
         "hybrid_astar_dominance_key_policy": hybrid.diagnostics.to_dict()["dominance_key_policy"],
+        "hybrid_astar_planning_grid_source": grid.metadata.get("planning_grid_source"),
+        "planner_grid_resolution_m": grid.metadata.get("planner_grid_resolution_m"),
+        "source_grid_resolution_m": grid.metadata.get("source_grid_resolution_m"),
+        "planning_proxy_hash": grid.metadata.get("planning_proxy_hash"),
+        "closed_key_xy_resolution_m": request.closed_key_xy_resolution_m,
+        "candidate_goal_world_pose": list(goal_world_pose) if goal_world_pose is not None else None,
         "legacy_grid_astar_reachable": bool(legacy.success),
         "legacy_grid_astar_path_cost": legacy_cost,
         "legacy_grid_astar_failure_reason": legacy.failure_reason.value if legacy.failure_reason else None,
@@ -131,7 +148,12 @@ def build_cost_grid_from_config(grid_config: dict[str, Any]) -> CostGrid:
             passable[y][x] = False
     import numpy as np
 
-    return CostGrid(GridSpec(width=width, height=height, resolution=resolution), np.asarray(cost, dtype=float), np.asarray(passable, dtype=bool))
+    return CostGrid(
+        GridSpec(width=width, height=height, resolution=resolution),
+        np.asarray(cost, dtype=float),
+        np.asarray(passable, dtype=bool),
+        metadata={"planning_grid_source": "config_grid/v1", "planner_grid_resolution_m": resolution},
+    )
 
 
 def build_cost_grid_from_sidecar(sidecar: dict[str, Any]) -> CostGrid:
@@ -168,7 +190,60 @@ def build_cost_grid_from_sidecar(sidecar: dict[str, Any]) -> CostGrid:
         GridSpec(width=width, height=height, resolution=resolution),
         np.asarray(cost, dtype=float),
         np.asarray(passable, dtype=bool),
+        metadata={"planning_grid_source": "sidecar_cost_grid/v1", "planner_grid_resolution_m": resolution},
     )
+
+
+def build_derived_high_res_planning_proxy_grid(source_grid: CostGrid, target_resolution_m: float) -> CostGrid:
+    target_resolution = float(target_resolution_m)
+    if target_resolution <= 0.0 or not math.isfinite(target_resolution):
+        raise ValueError("target_resolution_m must be a positive finite float")
+    source_resolution = float(source_grid.spec.resolution)
+    if target_resolution >= source_resolution:
+        raise ValueError("target_resolution_m must be smaller than source grid resolution")
+
+    world_width_m = float(source_grid.spec.width) * source_resolution
+    world_height_m = float(source_grid.spec.height) * source_resolution
+    width = int(math.ceil(world_width_m / target_resolution))
+    height = int(math.ceil(world_height_m / target_resolution))
+    import numpy as np
+
+    cost = np.zeros((height, width), dtype=float)
+    passable = np.zeros((height, width), dtype=bool)
+    for y in range(height):
+        for x in range(width):
+            world = WorldPoint(
+                source_grid.spec.origin[0] + (float(x) + 0.5) * target_resolution,
+                source_grid.spec.origin[1] + (float(y) + 0.5) * target_resolution,
+            )
+            source_cell = source_grid.spec.world_to_cell(world)
+            if source_grid.spec.in_bounds(source_cell):
+                cost[y, x] = source_grid.cost_at(source_cell)
+                passable[y, x] = source_grid.is_passable(source_cell)
+            else:
+                cost[y, x] = 1.0
+                passable[y, x] = False
+    spec = GridSpec(
+        width=width,
+        height=height,
+        resolution=target_resolution,
+        origin=source_grid.spec.origin,
+        frame_id=source_grid.spec.frame_id,
+    )
+    source_grid_hash = _cost_grid_content_hash(source_grid)
+    metadata = {
+        "planning_grid_source": "derived_high_res_planning_proxy/v1",
+        "source_grid_resolution_m": source_resolution,
+        "planner_grid_resolution_m": target_resolution,
+        "source_grid_width": source_grid.spec.width,
+        "source_grid_height": source_grid.spec.height,
+        "proxy_grid_width": width,
+        "proxy_grid_height": height,
+        "source_grid_hash": source_grid_hash,
+        "planning_proxy_hash": _planning_proxy_hash(spec, cost, passable, source_grid_hash=source_grid_hash),
+        "planning_proxy_semantics": "conservative_constant_inheritance/v1",
+    }
+    return CostGrid(spec, cost, passable, metadata=metadata)
 
 
 def declared_obstacle_cells(grid_config: dict[str, Any]) -> set[tuple[int, int]]:
@@ -239,6 +314,16 @@ def _parse_viewpoint(value: Any) -> tuple[int, int, float] | None:
     return (int(x), int(y), float(theta))
 
 
+def _parse_goal_world_pose(value: Any) -> tuple[float, float] | None:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        return None
+    x = _finite_float(value[0])
+    y = _finite_float(value[1])
+    if x is None or y is None:
+        return None
+    return (float(x), float(y))
+
+
 def _cell_center_world(spec: GridSpec, cell: Cell) -> WorldPoint:
     return WorldPoint(
         spec.origin[0] + (float(cell.x) + 0.5) * spec.resolution,
@@ -265,6 +350,39 @@ def _pose_path_hash(poses: tuple[Pose2D, ...]) -> str | None:
         [round(float(pose.x_m), 6), round(float(pose.y_m), 6), round(float(pose.theta_rad), 6)]
         for pose in poses
     ]
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _cost_grid_content_hash(grid: CostGrid) -> str:
+    import numpy as np
+
+    cost_array = np.asarray(grid.cost, dtype=np.float64)
+    passable_array = np.asarray(grid.passable_mask, dtype=bool)
+    payload = {
+        "spec": grid.spec.to_dict(),
+        "cost_shape": list(cost_array.shape),
+        "cost_hash": hashlib.sha256(cost_array.tobytes()).hexdigest(),
+        "passable_shape": list(passable_array.shape),
+        "passable_hash": hashlib.sha256(passable_array.astype("uint8").tobytes()).hexdigest(),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _planning_proxy_hash(spec: GridSpec, cost: Any, passable: Any, *, source_grid_hash: str | None = None) -> str:
+    import numpy as np
+
+    cost_array = np.asarray(cost, dtype=np.float64)
+    passable_array = np.asarray(passable, dtype=bool)
+    payload = {
+        "spec": spec.to_dict(),
+        "cost_shape": list(cost_array.shape),
+        "cost_hash": hashlib.sha256(cost_array.tobytes()).hexdigest(),
+        "passable_shape": list(passable_array.shape),
+        "passable_hash": hashlib.sha256(passable_array.astype("uint8").tobytes()).hexdigest(),
+        "source_grid_hash": source_grid_hash,
+    }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

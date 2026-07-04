@@ -4,9 +4,14 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 try:  # pragma: no cover
     import run_xunce_high_fidelity_exploration_coverage_comparison as hf
@@ -25,6 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover
     import scripts.run_xunce_stage26_8_synthetic_terrain_multi_seed_coverage_efficiency_pilot as stage26_8
     import scripts.run_xunce_stage26_8i_diverse_scenario_policy_signal_strength_repair as stage26_8i
 
+import xunce_artifact_io as artifact_io
 
 STAGE_ID = "xunce-stage26-8m-generalized-resumable-training-pipeline"
 CONFIG_SCHEMA_VERSION = "xunce-stage26-8m-generalized-resumable-training-pipeline-config/v1"
@@ -34,12 +40,10 @@ JOB_STATE_SCHEMA_VERSION = "xunce-stage26-8m-job-state/v1"
 EFFICIENCY_AGGREGATE_SCHEMA_VERSION = "xunce-stage26-8m-efficiency-aggregate/v1"
 ROUTING_SCHEMA_VERSION = "xunce-stage26-8m-next-stage-routing/v1"
 MANIFEST_SCHEMA_VERSION = "xunce-stage26-8m-manifest/v1"
+COLLECTOR_REUSE_MARKER_FILE = "xunce-stage26-8m-collector-reuse-key.json"
 
 DEFAULT_CONFIG = "configs/xunce_stage26_8m_generalized_resumable_training_pipeline_v1.json"
-DEFAULT_OUTPUT_ROOT = (
-    "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/"
-    "outputs/path_feedback_batch_xunce_stage26_8m_generalized_resumable_training_pipeline_v1"
-)
+DEFAULT_OUTPUT_ROOT = "D:/xunce/out/s26_8m"
 
 SUMMARY_FILE = "xunce-stage26-8m-summary.json"
 JOB_PLAN_FILE = "xunce-stage26-8m-job-plan.json"
@@ -53,7 +57,15 @@ JOB_STATE_LOCAL_FILE = "job-state.jsonl"
 
 PHASES = ("collector", "update", "eval_pre", "eval_post", "aggregate")
 RUN_MODES = ("run_next", "aggregate_only", "run_job", "run_phase")
-BOUNDARY_FIELDS = ("publishes_checkpoint", "replaces_default_policy", "connects_real_executor", "starts_online_canary")
+BOUNDARY_FIELDS = (
+    "release_or_training_authorized",
+    "publishes_checkpoint",
+    "replaces_default_policy",
+    "connects_real_executor",
+    "starts_online_canary",
+)
+COLLECTOR_REUSE_NONE = "none/v1"
+COLLECTOR_REUSE_BY_HORIZON_SEED_SCENARIO_ROLLOUT = "by_horizon_seed_scenario_rollout/v1"
 
 ROUTE_INPUTS = "rerun_stage26_8m_required_inputs"
 ROUTE_RESUME_STATE = "repair_stage26_8m_resume_state_contract"
@@ -139,7 +151,8 @@ def run_xunce_stage26_8m_generalized_resumable_training_pipeline(
     _validate_run_selection(config)
 
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
+    config["_output_root_hint"] = str(output_root)
 
     boundary_rejections = _boundary_rejections(config)
     input_rejections = _input_rejections(config)
@@ -188,6 +201,7 @@ def run_xunce_stage26_8m_generalized_resumable_training_pipeline(
         "boundary_rejections": boundary_rejections,
         "input_rejections": input_rejections,
         "resume_state_rejections": resume_state_rejections,
+        "release_or_training_authorized": False,
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
         "connects_real_executor": False,
@@ -203,6 +217,7 @@ def run_xunce_stage26_8m_generalized_resumable_training_pipeline(
         "boundary_rejections": boundary_rejections,
         "input_rejections": input_rejections,
         "resume_state_rejections": resume_state_rejections,
+        "release_or_training_authorized": False,
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
         "connects_real_executor": False,
@@ -231,7 +246,7 @@ def run_xunce_stage26_8m_generalized_resumable_training_pipeline(
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / SUMMARY_FILE, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary, job_rows), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary, job_rows))
     return summary
 
 
@@ -240,11 +255,14 @@ def _run_phase(row: dict[str, Any], *, config: dict[str, Any], output_root: Path
     job = _job_by_id(config, str(row["job_id"]))
     phase = str(row["phase"])
     job_root = _job_output_root(output_root, job)
+    config_root = _phase_config_root(output_root, job)
     try:
         if phase == "collector":
-            root = job_root / "collector"
-            cfg_path = job_root / "xunce-stage26-8m-collector-config.json"
-            _write_json(cfg_path, _build_collector_config(config, job, job_root, repo_root))
+            root = _phase_root(job_root, phase, job)
+            cfg_path = config_root / "collector-config.json"
+            _write_json(cfg_path, _build_collector_config(config, job, config_root, repo_root))
+            if job.get("collector_root"):
+                _write_json(root / COLLECTOR_REUSE_MARKER_FILE, _collector_reuse_marker(job))
             summary = stage26_1.run_xunce_stage26_1_synthetic_terrain_collector_smoke(
                 config_path=cfg_path,
                 output_root=root,
@@ -252,8 +270,8 @@ def _run_phase(row: dict[str, Any], *, config: dict[str, Any], output_root: Path
             )
             _ensure_summary(root / stage26_1.SUMMARY_FILE, summary)
         elif phase == "update":
-            root = job_root / "update"
-            cfg_path = job_root / "xunce-stage26-8m-update-config.json"
+            root = _phase_root(job_root, phase, job)
+            cfg_path = config_root / "update-config.json"
             _write_json(cfg_path, _build_update_config(config, job, job_root, repo_root))
             summary = stage26_2.run_xunce_stage26_2_synthetic_terrain_ppo_update_smoke(
                 config_path=cfg_path,
@@ -262,9 +280,9 @@ def _run_phase(row: dict[str, Any], *, config: dict[str, Any], output_root: Path
             )
             _ensure_summary(root / stage26_2.SUMMARY_FILE, summary)
         elif phase in {"eval_pre", "eval_post"}:
-            root = job_root / "eval" / ("pre" if phase == "eval_pre" else "post")
-            cfg = _build_stage21_5_eval_config(config, job, job_root, repo_root)
-            cfg_path = job_root / "xunce-stage26-8m-stage21-5-config.json"
+            root = _phase_root(job_root, phase, job)
+            cfg = _build_stage21_5_eval_config(config, job, job_root, config_root, repo_root)
+            cfg_path = config_root / "stage21-5-config.json"
             _write_json(cfg_path, cfg)
             checkpoint = _checkpoint_for_eval(job_root / "update", label="pre" if phase == "eval_pre" else "post")
             stage21_5._run_high_fidelity_eval(
@@ -276,8 +294,8 @@ def _run_phase(row: dict[str, Any], *, config: dict[str, Any], output_root: Path
             )
             summary = _read_json_if_exists(root / hf.SUMMARY_FILE)
         elif phase == "aggregate":
-            root = job_root / "aggregate"
-            cfg_path = job_root / "xunce-stage26-8m-aggregate-config.json"
+            root = _phase_root(job_root, phase, job)
+            cfg_path = config_root / "aggregate-config.json"
             _write_json(cfg_path, _build_aggregate_config(config, job, job_root, repo_root))
             summary = stage26_3.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
                 config_path=cfg_path,
@@ -290,7 +308,7 @@ def _run_phase(row: dict[str, Any], *, config: dict[str, Any], output_root: Path
         status = summary.get("status")
         blocking_reason = "" if summary else "summary_missing_after_execution"
     except Exception as exc:  # pragma: no cover - exercised through tests by monkeypatch
-        root = _phase_root(job_root, phase)
+        root = _phase_root(job_root, phase, job)
         status = "failed"
         blocking_reason = f"{type(exc).__name__}:{exc}"
         summary = {}
@@ -300,7 +318,7 @@ def _run_phase(row: dict[str, Any], *, config: dict[str, Any], output_root: Path
         "started_at": started_at,
         "finished_at": _utc_now(),
         "output_root": str(root),
-        "summary_path": str(_phase_summary_path(job_root, phase)),
+        "summary_path": str(_phase_summary_path(job_root, phase, job)),
         "status": status,
         "blocking_reason": blocking_reason,
         "next_required_change": summary.get("next_required_change"),
@@ -344,7 +362,7 @@ def _scan_jobs(
                     "collector_rollout_steps": job["collector_rollout_steps"],
                     "eval_rollout_steps": job["eval_rollout_steps"],
                     "update_combo_id": job["update_combo_id"],
-                    "config_hash": job["config_hash"],
+                    "config_hash": job["phase_config_hashes"][phase],
                     "input_hash": job["input_hash"],
                     "source_scenario_fixture_root": config["source_scenario_fixture_root"],
                     "summary_status": record["summary"].get("status"),
@@ -362,6 +380,7 @@ def _scan_jobs(
                     "synthetic_source_kind": config["synthetic_source_kind"],
                     "action_space_type": config["action_space_type"],
                     "max_traversable_slope_deg": float(config["max_traversable_slope_deg"]),
+                    "release_or_training_authorized": False,
                     "publishes_checkpoint": False,
                     "replaces_default_policy": False,
                     "connects_real_executor": False,
@@ -379,17 +398,45 @@ def _phase_record(
     existing_state: dict[tuple[str, str], dict[str, Any]],
     execution_by_key: dict[tuple[str, str], dict[str, Any]],
 ) -> dict[str, Any]:
-    root = _phase_root(job_root, phase)
-    summary_path = _phase_summary_path(job_root, phase)
+    root = _phase_root(job_root, phase, job)
+    summary_path = _phase_summary_path(job_root, phase, job)
     summary = _read_json_if_exists(summary_path)
     execution = execution_by_key.get((job["job_id"], phase), {})
     existing = existing_state.get((job["job_id"], phase), {})
-    hash_mismatch = bool(existing.get("config_hash")) and str(existing.get("config_hash")) != str(job["config_hash"])
+    existing_points_to_current_root = (
+        str(existing.get("output_root") or "") == str(root)
+        or str(existing.get("summary_path") or "") == str(summary_path)
+    )
+    expected_config_hash = str(job["phase_config_hashes"][phase])
+    hash_mismatch = (
+        existing_points_to_current_root
+        and bool(existing.get("config_hash"))
+        and str(existing.get("config_hash")) != expected_config_hash
+    )
+    input_hash_mismatch = (
+        existing_points_to_current_root
+        and bool(existing.get("input_hash"))
+        and str(existing.get("input_hash")) != str(job["input_hash"])
+    )
+    existing_state_matches = (
+        existing_points_to_current_root
+        and bool(existing.get("config_hash"))
+        and bool(existing.get("input_hash"))
+        and str(existing.get("config_hash")) == expected_config_hash
+        and str(existing.get("input_hash")) == str(job["input_hash"])
+    )
+    collector_reuse_key_reason = _collector_reuse_marker_blocking_reason(root, job, summary, existing_state_matches)
     complete = _phase_complete(phase, root, summary, job["max_abs_approx_kl"])
     failed = _phase_failed(phase, root, summary, job["max_abs_approx_kl"])
     if hash_mismatch:
         status = "failed"
         reason = "config_hash_mismatch"
+    elif input_hash_mismatch:
+        status = "failed"
+        reason = "input_hash_mismatch"
+    elif collector_reuse_key_reason:
+        status = "failed"
+        reason = collector_reuse_key_reason
     elif complete:
         status = "complete"
         reason = ""
@@ -423,8 +470,8 @@ def _phase_complete(phase: str, root: Path, summary: dict[str, Any], max_abs_app
     if phase in {"eval_pre", "eval_post"}:
         return (
             summary.get("status") == "passed"
-            and (root / hf.MODEL_INFERENCE_FILE).is_file()
-            and (root / hf.EPISODES_FILE).is_file()
+            and artifact_io.path_is_file(root / hf.MODEL_INFERENCE_FILE)
+            and artifact_io.path_is_file(root / hf.EPISODES_FILE)
             and _jsonl_count(root / hf.MODEL_INFERENCE_FILE) > 0
             and _jsonl_count(root / hf.EPISODES_FILE) > 0
         )
@@ -471,7 +518,23 @@ def _select_phase_executions(job_rows: list[dict[str, Any]], config: dict[str, A
         candidates = [row for row in candidates if row["job_id"] == config.get("job_id")]
     if mode == "run_phase":
         candidates = [row for row in candidates if row["phase"] == config.get("phase")]
+    candidates = _dedupe_reused_collector_candidates(candidates)
     return candidates[: int(config["max_jobs_per_invocation"])]
+
+
+def _dedupe_reused_collector_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen_collector_roots: set[str] = set()
+    for row in candidates:
+        if row.get("phase") != "collector":
+            selected.append(row)
+            continue
+        collector_root = str(row.get("output_root") or row.get("source_root") or "")
+        if collector_root in seen_collector_roots:
+            continue
+        seen_collector_roots.add(collector_root)
+        selected.append(row)
+    return selected
 
 
 def _pending_runnable_rows(job_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -493,13 +556,13 @@ def _pending_runnable_rows(job_rows: list[dict[str, Any]]) -> list[dict[str, Any
     return sorted(runnable, key=lambda row: str(row["job_id"]))
 
 
-def _build_collector_config(config: dict[str, Any], job: dict[str, Any], job_root: Path, repo_root: Path) -> dict[str, Any]:
+def _build_collector_config(config: dict[str, Any], job: dict[str, Any], config_root: Path, repo_root: Path) -> dict[str, Any]:
     cfg = _read_json(Path(config["base_stage26_1_config"]))
     stage21_1_base = _read_json_if_exists(_resolve_path(Path(str(cfg.get("stage21_1_base_config", ""))), repo_root))
     if stage21_1_base:
         stage21_1_base["sampling_seed"] = int(job["seed"])
         stage21_1_base["continuous_theta_head_init_seed"] = int(job["seed"])
-        generated_stage21_1_base = job_root / "xunce-stage26-8m-stage21-1-base-config.json"
+        generated_stage21_1_base = config_root / "stage21-1-base-config.json"
         _write_json(generated_stage21_1_base, stage21_1_base)
         cfg["stage21_1_base_config"] = str(generated_stage21_1_base)
     cfg.update(
@@ -539,7 +602,7 @@ def _build_update_config(config: dict[str, Any], job: dict[str, Any], job_root: 
         {
             "stage26_8m_job_id": job["job_id"],
             "stage26_8m_update_combo_id": job["update_combo_id"],
-            "stage26_1_root": str(job_root / "collector"),
+            "stage26_1_root": str(_phase_root(job_root, "collector", job)),
             "epochs": int(combo["epochs"]),
             "learning_rate": float(combo["learning_rate"]),
             "clip_ratio": float(config.get("clip_ratio", 0.2)),
@@ -605,8 +668,10 @@ def _build_stage26_3_base_config(config: dict[str, Any], job: dict[str, Any], jo
     return cfg
 
 
-def _build_stage21_5_eval_config(config: dict[str, Any], job: dict[str, Any], job_root: Path, repo_root: Path) -> dict[str, Any]:
-    stage26_3_config = stage26_3._load_config(_write_temp_stage26_3_config(config, job, job_root, repo_root), repo_root)
+def _build_stage21_5_eval_config(
+    config: dict[str, Any], job: dict[str, Any], job_root: Path, config_root: Path, repo_root: Path
+) -> dict[str, Any]:
+    stage26_3_config = stage26_3._load_config(_write_temp_stage26_3_config(config, job, job_root, config_root, repo_root), repo_root)
     stage26_2_summary = _read_json_if_exists(job_root / "update" / stage26_2.SUMMARY_FILE)
     stage26_1_summary = stage26_3._stage26_1_summary(stage26_2_summary)
     source_roi_root = stage26_3._source_roi_expansion_root(stage26_1_summary, stage26_2_summary)
@@ -667,10 +732,10 @@ def _build_stage21_5_eval_config(config: dict[str, Any], job: dict[str, Any], jo
         {
             **common,
             "source_roi_expansion_root": source_roi_root,
-            "dynamic_validation_work_root": str(job_root / "eval" / "_xunce_dynamic_validation_work"),
+            "dynamic_validation_work_root": str(job_root / "w"),
         }
     )
-    high_fidelity_path = job_root / "xunce-stage26-8m-high-fidelity-config.json"
+    high_fidelity_path = config_root / "high-fidelity-config.json"
     _write_json(high_fidelity_path, high_fidelity_cfg)
     stage21_5_cfg.update(
         {
@@ -682,8 +747,10 @@ def _build_stage21_5_eval_config(config: dict[str, Any], job: dict[str, Any], jo
     return stage21_5_cfg
 
 
-def _write_temp_stage26_3_config(config: dict[str, Any], job: dict[str, Any], job_root: Path, repo_root: Path) -> Path:
-    path = job_root / "xunce-stage26-8m-stage26-3-base-config.json"
+def _write_temp_stage26_3_config(
+    config: dict[str, Any], job: dict[str, Any], job_root: Path, config_root: Path, repo_root: Path
+) -> Path:
+    path = config_root / "stage26-3-base-config.json"
     _write_json(path, _build_stage26_3_base_config(config, job, job_root, repo_root))
     return path
 
@@ -717,8 +784,11 @@ def _expand_jobs(config: dict[str, Any], output_root: Path, repo_root: Path) -> 
                                 "max_abs_approx_kl": float(config["max_abs_approx_kl"]),
                             }
                             job["job_id"] = _job_id(job)
-                            job["config_hash"] = _job_config_hash(config, job)
-                            job["input_hash"] = _input_hash(config)
+                            job["input_hash"] = _input_hash(config, repo_root)
+                            if _collector_reuse_enabled(config):
+                                job["collector_root"] = str(output_root / _collector_reuse_id(job))
+                            job["phase_config_hashes"] = {phase: _phase_config_hash(config, job, phase) for phase in PHASES}
+                            job["config_hash"] = _stable_hash(job["phase_config_hashes"])
                             jobs.append(job)
     return jobs
 
@@ -731,11 +801,17 @@ def _job_id(job: dict[str, Any]) -> str:
 
 
 def _job_output_root(output_root: Path, job: dict[str, Any]) -> Path:
-    return output_root / "jobs" / str(job["job_id"])
+    return output_root / f"j{_stable_hash({'job_id': job['job_id']})[:8]}"
 
 
-def _phase_root(job_root: Path, phase: str) -> Path:
+def _phase_config_root(output_root: Path, job: dict[str, Any]) -> Path:
+    return output_root / "g" / _stable_hash({"job_id": job["job_id"]})[:8]
+
+
+def _phase_root(job_root: Path, phase: str, job: dict[str, Any] | None = None) -> Path:
     if phase == "collector":
+        if job and job.get("collector_root"):
+            return Path(str(job["collector_root"]))
         return job_root / "collector"
     if phase == "update":
         return job_root / "update"
@@ -748,8 +824,8 @@ def _phase_root(job_root: Path, phase: str) -> Path:
     raise ValueError(f"unknown phase: {phase}")
 
 
-def _phase_summary_path(job_root: Path, phase: str) -> Path:
-    root = _phase_root(job_root, phase)
+def _phase_summary_path(job_root: Path, phase: str, job: dict[str, Any] | None = None) -> Path:
+    root = _phase_root(job_root, phase, job)
     if phase == "collector":
         return root / stage26_1.SUMMARY_FILE
     if phase == "update":
@@ -800,6 +876,7 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         "clip_ratio": 0.2,
         "max_grad_norm": 1.0,
         "max_abs_approx_kl": 1.5,
+        "collector_reuse_policy": COLLECTOR_REUSE_NONE,
         "coverage_denominator_source": stage26_8.COVERAGE_DENOMINATOR_SOURCE,
         "post_update_success_metric": stage26_8.SUCCESS_METRIC,
         "coverage_source": stage26_8.COVERAGE_SOURCE,
@@ -828,6 +905,12 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     config["max_abs_approx_kl"] = float(config["max_abs_approx_kl"])
     if not math.isfinite(config["max_abs_approx_kl"]) or config["max_abs_approx_kl"] > 1.5:
         raise ValueError("max_abs_approx_kl must be finite and must not exceed 1.5")
+    config["collector_reuse_policy"] = str(config.get("collector_reuse_policy") or COLLECTOR_REUSE_NONE)
+    if config["collector_reuse_policy"] not in {
+        COLLECTOR_REUSE_NONE,
+        COLLECTOR_REUSE_BY_HORIZON_SEED_SCENARIO_ROLLOUT,
+    }:
+        raise ValueError("collector_reuse_policy is invalid")
     config["hybrid_astar_candidate_eval_workers"] = _positive_int(config["hybrid_astar_candidate_eval_workers"], "hybrid_astar_candidate_eval_workers")
     config["max_traversable_slope_deg"] = float(config["max_traversable_slope_deg"])
     for field in ("base_stage26_1_config", "base_stage26_2_config", "base_stage26_3_config", "source_scenario_fixture_root"):
@@ -894,6 +977,13 @@ def _route(
         return ROUTE_UPDATE
     if any(row["phase"] in {"eval_pre", "eval_post", "aggregate"} and row["status"] == "failed" for row in job_rows):
         return ROUTE_EVAL
+    if any(
+        row["phase"] == "aggregate"
+        and row["status"] == "complete"
+        and (row.get("binding_or_safety_failure") or row.get("lineage_mismatch"))
+        for row in job_rows
+    ):
+        return ROUTE_EVAL
     if any(row["status"] == "pending" for row in job_rows):
         return ROUTE_CONTINUE
     if int(aggregate.get("majority_positive_job_count") or 0) > 0:
@@ -908,13 +998,14 @@ def _route(
 def _efficiency_aggregate(job_rows: list[dict[str, Any]]) -> dict[str, Any]:
     aggregate_rows = [row for row in job_rows if row["phase"] == "aggregate" and row["status"] == "complete"]
     completed_job_count = len(aggregate_rows)
-    positive_rows = [row for row in aggregate_rows if float(row.get("main_coverage_per_100m_delta") or 0.0) > 0.0]
+    clean_aggregate_rows = [row for row in aggregate_rows if not row.get("binding_or_safety_failure") and not row.get("lineage_mismatch")]
+    positive_rows = [row for row in clean_aggregate_rows if float(row.get("main_coverage_per_100m_delta") or 0.0) > 0.0]
     changed_rows = [row for row in aggregate_rows if int(row.get("selected_action_changed_count") or 0) > 0]
     clean_changed_nonnegative = [
-        row for row in changed_rows if float(row.get("main_coverage_per_100m_delta") or 0.0) >= 0.0 and not row.get("binding_or_safety_failure")
+        row for row in changed_rows if float(row.get("main_coverage_per_100m_delta") or 0.0) >= 0.0 and not row.get("binding_or_safety_failure") and not row.get("lineage_mismatch")
     ]
     clean_changed_negative = [
-        row for row in changed_rows if float(row.get("main_coverage_per_100m_delta") or 0.0) < 0.0 and not row.get("binding_or_safety_failure")
+        row for row in changed_rows if float(row.get("main_coverage_per_100m_delta") or 0.0) < 0.0 and not row.get("binding_or_safety_failure") and not row.get("lineage_mismatch")
     ]
     total_jobs = len({row["job_id"] for row in job_rows})
     return {
@@ -935,9 +1026,9 @@ def _efficiency_aggregate(job_rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _input_rejections(config: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     for field in ("base_stage26_1_config", "base_stage26_2_config", "base_stage26_3_config"):
-        if not Path(str(config[field])).is_file():
+        if not artifact_io.path_is_file(Path(str(config[field]))):
             reasons.append(f"{field}_missing")
-    if config.get("source_scenario_fixture_root") and not Path(str(config["source_scenario_fixture_root"])).exists():
+    if config.get("source_scenario_fixture_root") and not artifact_io.path_exists(Path(str(config["source_scenario_fixture_root"]))):
         reasons.append("source_scenario_fixture_root_missing")
     return reasons
 
@@ -950,7 +1041,19 @@ def _boundary_rejections(config: dict[str, Any]) -> list[str]:
 
 
 def _resume_state_rejections(job_rows: list[dict[str, Any]]) -> list[str]:
-    return _unique([str(row["blocking_reason"]) for row in job_rows if row["blocking_reason"] == "config_hash_mismatch"])
+    return _unique(
+        [
+            str(row["blocking_reason"])
+            for row in job_rows
+            if row["blocking_reason"]
+            in {
+                "config_hash_mismatch",
+                "input_hash_mismatch",
+                "collector_reuse_key_missing",
+                "collector_reuse_key_mismatch",
+            }
+        ]
+    )
 
 
 def _phase_blocking_reason(phase: str, root: Path, summary: dict[str, Any], max_abs_approx_kl: float) -> str:
@@ -961,9 +1064,9 @@ def _phase_blocking_reason(phase: str, root: Path, summary: dict[str, Any], max_
     if phase in {"eval_pre", "eval_post"}:
         if summary.get("status") != "passed":
             return "summary_not_passed"
-        if not (root / hf.MODEL_INFERENCE_FILE).is_file():
+        if not artifact_io.path_is_file(root / hf.MODEL_INFERENCE_FILE):
             return "model_inference_missing"
-        if not (root / hf.EPISODES_FILE).is_file():
+        if not artifact_io.path_is_file(root / hf.EPISODES_FILE):
             return "episodes_missing"
     if phase == "collector" and summary.get("status") != "passed":
         return "summary_not_passed"
@@ -1012,7 +1115,14 @@ def _write_per_job_state(job_rows: list[dict[str, Any]]) -> None:
     for row in job_rows:
         by_job.setdefault(str(row["job_id"]), []).append(row)
     for rows in by_job.values():
-        job_root = Path(str(rows[0]["output_root"])).parents[0]
+        job_root = next(
+            (
+                Path(str(row["output_root"])).parents[0]
+                for row in rows
+                if row.get("phase") != "collector"
+            ),
+            Path(str(rows[0]["output_root"])).parents[0],
+        )
         _write_jsonl(job_root / JOB_STATE_LOCAL_FILE, rows)
         aggregate = [row for row in rows if row["phase"] == "aggregate"]
         _write_json(
@@ -1031,6 +1141,115 @@ def _existing_state_by_key(output_root: Path) -> dict[tuple[str, str], dict[str,
     return {(str(row.get("job_id")), str(row.get("phase"))): row for row in rows if row.get("job_id") and row.get("phase")}
 
 
+def _collector_reuse_enabled(config: dict[str, Any]) -> bool:
+    return config.get("collector_reuse_policy") == COLLECTOR_REUSE_BY_HORIZON_SEED_SCENARIO_ROLLOUT
+
+
+def _collector_reuse_id(job: dict[str, Any]) -> str:
+    return f"c{_stable_hash(_collector_reuse_payload(job))[:5]}"
+
+
+def _collector_reuse_payload(job: Mapping[str, Any]) -> dict[str, Any]:
+    payload = {
+        'horizon': job['horizon'],
+        'seed': job['seed'],
+        'scenario_count': job['scenario_count'],
+        'collector_rollout_steps': job['collector_rollout_steps'],
+        'input_hash': job['input_hash'],
+    }
+    return payload
+
+
+def _collector_reuse_marker(job: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "xunce-stage26-8m-collector-reuse-key/v1",
+        "collector_reuse_id": _collector_reuse_id(dict(job)),
+        "collector_reuse_payload_hash": _stable_hash(_collector_reuse_payload(job)),
+        "collector_phase_config_hash": str(job.get("phase_config_hashes", {}).get("collector") or ""),
+        "input_hash": str(job.get("input_hash") or ""),
+        "horizon": int(job["horizon"]),
+        "seed": int(job["seed"]),
+        "scenario_count": int(job["scenario_count"]),
+        "collector_rollout_steps": int(job["collector_rollout_steps"]),
+    }
+
+
+def _collector_reuse_marker_blocking_reason(
+    root: Path, job: Mapping[str, Any], summary: Mapping[str, Any], existing_state_matches: bool
+) -> str:
+    if not job.get("collector_root"):
+        return ""
+    marker_path = root / COLLECTOR_REUSE_MARKER_FILE
+    if not artifact_io.path_is_file(marker_path):
+        return "" if not summary or existing_state_matches else "collector_reuse_key_missing"
+    marker = _read_json_if_exists(marker_path)
+    expected = _collector_reuse_marker(job)
+    checked_fields = (
+        "collector_reuse_id",
+        "collector_reuse_payload_hash",
+        "collector_phase_config_hash",
+        "input_hash",
+        "horizon",
+        "seed",
+        "scenario_count",
+        "collector_rollout_steps",
+    )
+    if any(marker.get(field) != expected.get(field) for field in checked_fields):
+        return "collector_reuse_key_mismatch"
+    return ""
+
+
+def _phase_config_hash(config: dict[str, Any], job: dict[str, Any], phase: str) -> str:
+    common_contracts = {
+        key: config[key]
+        for key in (
+            "coverage_denominator_source",
+            "post_update_success_metric",
+            "coverage_source",
+            "path_cost_source",
+            "synthetic_source_kind",
+            "action_space_type",
+            "hybrid_astar_candidate_eval_workers",
+            "max_traversable_slope_deg",
+        )
+    }
+    if phase == "collector":
+        payload = {
+            "phase": phase,
+            "job": {
+                key: job[key]
+                for key in ("horizon", "seed", "scenario_count", "collector_rollout_steps")
+            },
+            "input_hash": job["input_hash"],
+            "collector_reuse_policy": config["collector_reuse_policy"],
+            "contracts": common_contracts,
+        }
+    elif phase == "update":
+        payload = {
+            "phase": phase,
+            "collector_root": job.get("collector_root"),
+            "input_hash": job["input_hash"],
+            "update_combo_id": job["update_combo_id"],
+            "combo": job["update_combo"],
+            "clip_ratio": float(config.get("clip_ratio", 0.2)),
+            "max_grad_norm": float(config.get("max_grad_norm", 1.0)),
+            "max_abs_approx_kl": config["max_abs_approx_kl"],
+        }
+    else:
+        payload = {
+            "phase": phase,
+            "job": {
+                key: job[key]
+                for key in ("horizon", "seed", "scenario_count", "eval_rollout_steps", "update_combo_id")
+            },
+            "input_hash": job["input_hash"],
+            "combo": job["update_combo"],
+            "max_abs_approx_kl": config["max_abs_approx_kl"],
+            "contracts": common_contracts,
+        }
+    return _stable_hash(payload)
+
+
 def _job_config_hash(config: dict[str, Any], job: dict[str, Any]) -> str:
     payload = {
         "job": {key: job[key] for key in ("horizon", "seed", "scenario_count", "collector_rollout_steps", "eval_rollout_steps", "update_combo_id")},
@@ -1047,6 +1266,7 @@ def _job_config_hash(config: dict[str, Any], job: dict[str, Any]) -> str:
                 "hybrid_astar_candidate_eval_workers",
                 "max_traversable_slope_deg",
                 "max_abs_approx_kl",
+                "collector_reuse_policy",
             )
         },
     }
@@ -1065,13 +1285,103 @@ def _experiment_config_hash(config: dict[str, Any]) -> str:
                 "eval_rollout_steps",
                 "update_combos",
                 "max_abs_approx_kl",
+                "collector_reuse_policy",
             )
         }
     )
 
 
-def _input_hash(config: dict[str, Any]) -> str:
-    return _stable_hash({"source_scenario_fixture_root": config.get("source_scenario_fixture_root")})
+def _input_hash(config: dict[str, Any], repo_root: Path) -> str:
+    return _stable_hash(
+        {
+            "source_scenario_fixture_root": config.get("source_scenario_fixture_root"),
+            "source_scenario_fixture_fingerprint": _source_fixture_fingerprint(
+                _resolve_path(Path(str(config.get("source_scenario_fixture_root", ""))), repo_root)
+            ),
+            "base_stage26_1_config": _config_with_nested_fingerprint(
+                config,
+                repo_root,
+                "base_stage26_1_config",
+                (
+                    "stage21_1_base_config",
+                    "stage21_2_base_config",
+                    "stage21_3_base_config",
+                    "coverage_first_reward_profile",
+                ),
+            ),
+            "base_stage26_2_config": _config_with_nested_fingerprint(
+                config, repo_root, "base_stage26_2_config", ("stage21_4_base_config", "high_fidelity_config")
+            ),
+            "base_stage26_3_config": _config_with_nested_fingerprint(
+                config, repo_root, "base_stage26_3_config", ("stage21_5_base_config", "high_fidelity_config")
+            ),
+        }
+    )
+
+
+def _config_with_nested_fingerprint(
+    config: Mapping[str, Any], repo_root: Path, key: str, nested_keys: Sequence[str]
+) -> dict[str, Any]:
+    raw_path = str(config.get(key, ""))
+    path = _resolve_path(Path(raw_path), repo_root)
+    payload = _read_json_if_exists(path)
+    nested: dict[str, Any] = {}
+    for nested_key in nested_keys:
+        nested_value = payload.get(nested_key)
+        if not isinstance(nested_value, str) or not nested_value:
+            continue
+        nested_path = _resolve_path(Path(nested_value), repo_root)
+        nested[nested_key] = {
+            "path": str(nested_path),
+            "fingerprint": _file_fingerprint(nested_path),
+        }
+    return {
+        "path": raw_path,
+        "resolved_path": str(path),
+        "fingerprint": _file_fingerprint(path),
+        "nested": nested,
+    }
+
+
+def _source_fixture_fingerprint(root: Path) -> dict[str, Any]:
+    if not artifact_io.path_exists(root):
+        return {"path": str(root), "exists": False}
+    if artifact_io.path_is_file(root):
+        return _file_fingerprint(root)
+    patterns = (
+        "xunce-stage26-8g-summary.json",
+        "xunce-stage26-1-summary.json",
+        "xunce-stage26-scenario-fixtures.jsonl",
+        "xunce-stage26-8g-scenario-fixture-catalog.jsonl",
+        "xunce-high-fidelity-real-map-roi-expansion-summary.json",
+    )
+    files: list[Path] = []
+    for pattern in patterns:
+        files.extend(sorted(root.rglob(pattern))[:16])
+    unique_files = sorted({path.resolve() for path in files})[:64]
+    return {
+        "path": str(root),
+        "exists": True,
+        "files": [
+            {
+                "relative_path": str(path.relative_to(root.resolve())),
+                **_file_fingerprint(path),
+            }
+            for path in unique_files
+        ],
+    }
+
+
+def _file_fingerprint(path: Path) -> dict[str, Any]:
+    if not artifact_io.path_is_file(path):
+        return {"path": str(path), "exists": False}
+    data = artifact_io.read_bytes(path)
+    return {
+        "path": str(path),
+        "exists": True,
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
 
 
 def _stable_hash(payload: Any) -> str:
@@ -1079,32 +1389,30 @@ def _stable_hash(payload: Any) -> str:
 
 
 def _ensure_summary(path: Path, payload: dict[str, Any]) -> None:
-    if payload and not path.is_file():
+    if payload and not artifact_io.path_is_file(path):
         _write_json(path, payload)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    return _read_json(path) if path.is_file() else {}
+    return _read_json(path) if artifact_io.path_is_file(path) else {}
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    return artifact_io.read_jsonl(path)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:
@@ -1143,9 +1451,7 @@ def _positive_int_list(value: Any, field: str) -> list[int]:
 
 
 def _jsonl_count(path: Path) -> int:
-    if not path.is_file():
-        return 0
-    return sum(1 for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip())
+    return artifact_io.count_jsonl_rows(path)
 
 
 def _mean(values: list[Any]) -> float:
@@ -1169,13 +1475,14 @@ def _first_float(*values: Any) -> float:
 
 
 def _coverage_per_100m_delta(summary: dict[str, Any]) -> float:
-    return _first_float(summary.get("main_coverage_per_100m_delta"), summary.get("coverage_per_100m_delta"))
+    return _first_float(summary.get("main_coverage_per_100m_delta"))
 
 
 def _binding_or_safety_failure(summary: dict[str, Any]) -> bool:
     if not summary:
         return False
-    return any(int(summary.get(field) or 0) != 0 for field in COUNT_FIELDS_REQUIRING_ZERO)
+    lineage_failure = summary.get("schema_version") == stage26_3.SUMMARY_SCHEMA_VERSION and _lineage_mismatch(summary)
+    return lineage_failure or any(int(summary.get(field) or 0) != 0 for field in COUNT_FIELDS_REQUIRING_ZERO)
 
 
 def _aggregate_execution_failure(summary: dict[str, Any]) -> bool:

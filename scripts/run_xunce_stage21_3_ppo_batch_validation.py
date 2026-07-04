@@ -14,10 +14,28 @@ import torch
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODEL_EXPLORER_SRC = SCRIPT_DIR.parent / "model-explorer" / "src"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 if str(MODEL_EXPLORER_SRC) not in sys.path:
     sys.path.insert(0, str(MODEL_EXPLORER_SRC))
 
 from model_explorer.policy.training import compute_returns_and_advantages
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_1_SUMMARY,
+    STAGE21_1_TRAINABLE,
+    STAGE21_2_REWARDS,
+    STAGE21_2_SUMMARY,
+    STAGE21_3_BATCH,
+    STAGE21_3_SPLITS,
+    STAGE21_3_SUMMARY,
+    artifact_path,
+    read_json_artifact,
+    read_jsonl_artifact,
+    resolve_artifact,
+    write_json_artifact,
+    write_jsonl_artifact,
+)
 from xunce_synthetic_exploration_credit import BEHAVIOR_POLICY_ID, synthetic_credit_behavior_logprob
 from xunce_theta_viewpoint_candidates import row_has_theta_viewpoint_contract
 
@@ -26,6 +44,7 @@ SLOPE_OBSTACLE_COVERAGE_SOURCE = "endpoint_theta_slope_obstacle_los/v1"
 HYBRID_ASTAR_PATH_COST_SOURCE = "hybrid_astar_pose_path/v1"
 CONTINUOUS_THETA_ACTION_SPACE = "hybrid_discrete_xy_continuous_theta/v1"
 SLOPE_OBSTACLE_MAX_TRAVERSABLE_SLOPE_DEG = 30.0
+REACHABILITY_GUARD_BEHAVIOR_POLICY_ID = "continuous_theta_reachability_guard_policy/v1"
 
 
 CONFIG_SCHEMA_VERSION = "xunce-stage21-3-ppo-batch-validation-config/v1"
@@ -114,7 +133,7 @@ def run_xunce_stage21_3_ppo_batch_validation(
     repo_root = Path(repo_root).resolve()
     config = _load_config(_resolve_path(config_path, repo_root), repo_root=repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
     boundary_reasons = _boundary_rejections(config)
     input_reasons = _input_rejections(config)
 
@@ -127,10 +146,10 @@ def run_xunce_stage21_3_ppo_batch_validation(
     if not boundary_reasons and not input_reasons:
         stage21_1_root = Path(config["stage21_1_collector_root"])
         stage21_2_root = Path(config["stage21_2_reward_contract_root"])
-        stage21_1_summary = _read_json(stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json")
-        stage21_2_summary = _read_json(stage21_2_root / "xunce-stage21-2-coverage-first-reward-summary.json")
-        transitions = _read_jsonl(stage21_1_root / "xunce-stage21-1-ppo-trainable-batch.jsonl")
-        reward_rows = _read_jsonl(stage21_2_root / "xunce-stage21-2-reward-contract-evaluation.jsonl")
+        stage21_1_summary, _ = read_json_artifact(stage21_1_root, STAGE21_1_SUMMARY)
+        stage21_2_summary, _ = read_json_artifact(stage21_2_root, STAGE21_2_SUMMARY)
+        transitions, _ = read_jsonl_artifact(stage21_1_root, STAGE21_1_TRAINABLE)
+        reward_rows, _ = read_jsonl_artifact(stage21_2_root, STAGE21_2_REWARDS)
         batch_rows, return_audit = _build_batch(
             transitions,
             reward_rows,
@@ -606,7 +625,8 @@ def _contract_rejections(rows: list[dict[str, Any]], audit_rows: list[dict[str, 
     if bool(config.get("require_continuous_theta_action_contract")) and _continuous_theta_action_contract_missing_count(rows) > 0:
         reasons.append("continuous_theta_action_contract_missing")
     if not bool(config.get("allow_synthetic_credit_behavior_policy")) and any(
-        _row_uses_synthetic_credit_behavior_policy(row) for row in rows
+        _row_uses_synthetic_credit_behavior_policy(row) or _row_uses_reachability_guard_behavior_policy(row)
+        for row in rows
     ):
         reasons.append("synthetic_credit_behavior_policy_not_allowed")
     if bool(config.get("allow_synthetic_credit_behavior_policy")) and _synthetic_credit_behavior_logprob_missing_count(rows) > 0:
@@ -809,6 +829,18 @@ def _write_outputs(
         "report": str((output_root / REPORT_FILE).resolve()),
         "manifest": str((output_root / MANIFEST_FILE).resolve()),
     }
+    canonical_artifacts = {
+        "summary": str(artifact_path(output_root, STAGE21_3_SUMMARY).resolve()),
+        "batch": str(artifact_path(output_root, STAGE21_3_BATCH).resolve()),
+        "splits": str(artifact_path(output_root, STAGE21_3_SPLITS).resolve()),
+    }
+    legacy_artifacts = {
+        "summary": summary["summary"],
+        "batch": summary["batch"],
+        "splits": summary["splits"],
+    }
+    summary["canonical_artifacts"] = canonical_artifacts
+    summary["legacy_artifacts"] = legacy_artifacts
     routing = {
         "schema_version": ROUTING_SCHEMA_VERSION,
         "primary_route": route,
@@ -834,17 +866,19 @@ def _write_outputs(
             "routing": summary["routing"],
             "report": summary["report"],
         },
+        "canonical_artifacts": canonical_artifacts,
+        "legacy_artifacts": legacy_artifacts,
         "summary_status": status,
         "next_required_change": route,
     }
-    _write_jsonl(output_root / BATCH_FILE, batch_rows)
+    write_jsonl_artifact(output_root, STAGE21_3_BATCH, batch_rows)
     _write_jsonl(output_root / RETURN_AUDIT_FILE, return_audit)
-    _write_json(output_root / SPLITS_FILE, splits)
+    write_json_artifact(output_root, STAGE21_3_SPLITS, splits)
     _write_json(output_root / LINEAGE_FILE, lineage)
     _write_json(output_root / ROUTING_FILE, routing)
-    _write_json(output_root / SUMMARY_FILE, summary)
+    write_json_artifact(output_root, STAGE21_3_SUMMARY, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    _write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -892,14 +926,15 @@ def _input_rejections(config: dict[str, Any]) -> list[str]:
     stage21_1_root = Path(config["stage21_1_collector_root"])
     stage21_2_root = Path(config["stage21_2_reward_contract_root"])
     required = [
-        stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json",
-        stage21_1_root / "xunce-stage21-1-ppo-trainable-batch.jsonl",
-        stage21_2_root / "xunce-stage21-2-coverage-first-reward-summary.json",
-        stage21_2_root / "xunce-stage21-2-reward-contract-evaluation.jsonl",
+        (stage21_1_root, STAGE21_1_SUMMARY),
+        (stage21_1_root, STAGE21_1_TRAINABLE),
+        (stage21_2_root, STAGE21_2_SUMMARY),
+        (stage21_2_root, STAGE21_2_REWARDS),
     ]
-    for path in required:
-        if not path.is_file():
-            reasons.append(f"missing_{path.name}")
+    for root, artifact in required:
+        path, _ = resolve_artifact(root, artifact)
+        if path is None:
+            reasons.append(f"missing_{artifact.legacy[0] if artifact.legacy else artifact.canonical}")
     return reasons
 
 
@@ -970,8 +1005,10 @@ def _synthetic_credit_behavior_logprob_missing_count(rows: list[dict[str, Any]])
     return sum(
         1
         for row in rows
-        if _row_uses_synthetic_credit_behavior_policy(row)
-        and not _row_has_synthetic_credit_behavior_logprob(row)
+        if (
+            (_row_uses_synthetic_credit_behavior_policy(row) and not _row_has_synthetic_credit_behavior_logprob(row))
+            or (_row_uses_reachability_guard_behavior_policy(row) and not _row_has_reachability_guard_behavior_logprob(row))
+        )
     )
 
 
@@ -1168,6 +1205,8 @@ def _row_has_continuous_theta_action_contract(row: dict[str, Any]) -> bool:
             )
             and _row_has_synthetic_credit_behavior_logprob(row)
         )
+    if _row_uses_reachability_guard_behavior_policy(row):
+        return _row_has_reachability_guard_behavior_logprob(row)
     return _continuous_theta_old_log_prob_recomputes(
         info=info,
         action_index=action_index,
@@ -1180,6 +1219,139 @@ def _row_has_continuous_theta_action_contract(row: dict[str, Any]) -> bool:
 def _row_uses_synthetic_credit_behavior_policy(row: dict[str, Any]) -> bool:
     info = row.get("info") if isinstance(row.get("info"), dict) else {}
     return (row.get("behavior_policy_id") or info.get("behavior_policy_id")) == BEHAVIOR_POLICY_ID
+
+
+def _row_uses_reachability_guard_behavior_policy(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    return (row.get("behavior_policy_id") or info.get("behavior_policy_id")) == REACHABILITY_GUARD_BEHAVIOR_POLICY_ID
+
+
+def _row_has_reachability_guard_behavior_logprob(row: dict[str, Any]) -> bool:
+    info = row.get("info") if isinstance(row.get("info"), dict) else {}
+    action_index = _int_or_none(row.get("action_index"))
+    if action_index is None:
+        action_index = _int_or_none(info.get("action_index"))
+    theta_rad = _finite(row.get("selected_theta_rad"))
+    if theta_rad is None:
+        theta_rad = _finite(info.get("selected_theta_rad"))
+    old_policy_point = _finite(row.get("old_policy_point_log_prob"))
+    if old_policy_point is None:
+        old_policy_point = _finite(info.get("old_policy_point_log_prob"))
+    old_policy_theta = _finite(row.get("old_policy_theta_log_prob"))
+    if old_policy_theta is None:
+        old_policy_theta = _finite(info.get("old_policy_theta_log_prob"))
+    old_behavior_point = _finite(row.get("old_behavior_point_log_prob"))
+    if old_behavior_point is None:
+        old_behavior_point = _finite(info.get("old_behavior_point_log_prob"))
+    old_behavior_theta = _finite(row.get("old_behavior_theta_log_prob"))
+    if old_behavior_theta is None:
+        old_behavior_theta = _finite(info.get("old_behavior_theta_log_prob"))
+    old_behavior_total = _finite(row.get("old_behavior_log_prob"))
+    if old_behavior_total is None:
+        old_behavior_total = _finite(info.get("old_behavior_log_prob"))
+    old_total = _finite(row.get("old_log_prob"))
+    if old_total is None:
+        old_total = _finite(info.get("old_log_prob"))
+    if (
+        action_index is None
+        or theta_rad is None
+        or old_policy_point is None
+        or old_policy_theta is None
+        or old_behavior_point is None
+        or old_behavior_theta is None
+        or old_behavior_total is None
+        or old_total is None
+    ):
+        return False
+    if not _continuous_theta_old_log_prob_recomputes(
+        info=info,
+        action_index=action_index,
+        theta_rad=theta_rad,
+        old_point_log_prob=old_policy_point,
+        old_theta_log_prob=old_policy_theta,
+    ):
+        return False
+    if not _reachability_guard_behavior_point_recomputes(
+        row=row,
+        info=info,
+        action_index=action_index,
+        old_behavior_point=old_behavior_point,
+        old_policy_point=old_policy_point,
+    ):
+        return False
+    theta_info = dict(info)
+    for key in (
+        "synthetic_credit_theta_policy_id",
+        "synthetic_credit_theta_behavior",
+        "synthetic_credit_theta_proposals_deg",
+        "synthetic_credit_theta_selected_proposal_index",
+        "synthetic_credit_theta_reachable_proposal_count",
+    ):
+        if row.get(key) is not None:
+            theta_info[key] = row.get(key)
+    if not _behavior_theta_logprob_recomputes(info=theta_info, expected=old_behavior_theta):
+        return False
+    if abs(float(old_behavior_total) - float(old_behavior_point + old_behavior_theta)) > 1.0e-5:
+        return False
+    return abs(float(old_total) - float(old_behavior_total)) <= 1.0e-5
+
+
+def _reachability_guard_behavior_point_recomputes(
+    *,
+    row: dict[str, Any],
+    info: dict[str, Any],
+    action_index: int,
+    old_behavior_point: float,
+    old_policy_point: float,
+) -> bool:
+    source = row.get("selected_continuous_theta_resample_point_log_prob_source") or info.get(
+        "selected_continuous_theta_resample_point_log_prob_source"
+    )
+    if source == "uniform_reachable_candidate_support":
+        indices = row.get("selected_continuous_theta_reachable_candidate_indices")
+        if not isinstance(indices, list):
+            indices = info.get("selected_continuous_theta_reachable_candidate_indices")
+        support = [_int_or_none(value) for value in indices] if isinstance(indices, list) else []
+        support = [int(value) for value in support if value is not None]
+        if action_index not in support or not support:
+            return False
+        recomputed = -math.log(len(set(support)))
+        return abs(float(recomputed) - float(old_behavior_point)) <= 1.0e-5
+    if source == "policy_point":
+        return abs(float(old_behavior_point) - float(old_policy_point)) <= 1.0e-5
+    if source == "existing_behavior_point":
+        original_behavior = row.get("selected_continuous_theta_guard_original_behavior_policy_id") or info.get(
+            "selected_continuous_theta_guard_original_behavior_policy_id"
+        )
+        if original_behavior != BEHAVIOR_POLICY_ID:
+            return abs(float(old_behavior_point) - float(old_policy_point)) <= 1.0e-5
+        old_action_probs = info.get("old_action_probs")
+        if not isinstance(old_action_probs, list):
+            old_action_probs = row.get("old_action_probs")
+        mixture_probability = _finite(
+            row.get("synthetic_credit_mixture_probability", info.get("synthetic_credit_mixture_probability"))
+        )
+        target_index = _int_or_none(row.get("synthetic_credit_target_index"))
+        if target_index is None:
+            target_index = _int_or_none(info.get("synthetic_credit_target_index"))
+        if (
+            not isinstance(old_action_probs, list)
+            or action_index < 0
+            or action_index >= len(old_action_probs)
+            or mixture_probability is None
+            or target_index is None
+        ):
+            return False
+        policy_prob = _finite(old_action_probs[action_index])
+        if policy_prob is None:
+            return False
+        behavior_prob = (1.0 - float(mixture_probability)) * float(policy_prob)
+        if int(action_index) == int(target_index):
+            behavior_prob += float(mixture_probability)
+        if behavior_prob <= 0.0:
+            return False
+        return abs(math.log(behavior_prob) - float(old_behavior_point)) <= 1.0e-5
+    return False
 
 
 def _row_has_synthetic_credit_behavior_logprob(row: dict[str, Any]) -> bool:
@@ -1277,7 +1449,7 @@ def _row_has_synthetic_credit_behavior_logprob(row: dict[str, Any]) -> bool:
 
 def _behavior_theta_logprob_recomputes(*, info: dict[str, Any], expected: float) -> bool:
     policy_id = info.get("synthetic_credit_theta_policy_id") or info.get("synthetic_credit_theta_behavior")
-    if policy_id != "reachability_theta_proposal_mixture/v1":
+    if policy_id not in {"reachability_theta_proposal_mixture/v1", "reachable_theta_proposal/v1"}:
         return True
     proposals = info.get("synthetic_credit_theta_proposals_deg")
     selected_index = _int_or_none(info.get("synthetic_credit_theta_selected_proposal_index"))
@@ -1533,20 +1705,16 @@ def _render_report(summary: dict[str, Any]) -> str:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = artifact_io.read_json(path)
     except FileNotFoundError as exc:
         raise ConfigError(f"JSON file does not exist: {path}") from exc
     except json.JSONDecodeError as exc:
@@ -1557,18 +1725,18 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        return artifact_io.read_jsonl(path)
     except FileNotFoundError as exc:
         raise ConfigError(f"JSONL file does not exist: {path}") from exc
-    for line in lines:
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        if isinstance(payload, dict):
-            rows.append(payload)
-    return rows
+
+
+def _write_text(path: Path, text: str) -> None:
+    artifact_io.write_text(path, text)
+
+
+def _path_is_file(path: Path) -> bool:
+    return artifact_io.path_is_file(path)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

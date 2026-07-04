@@ -185,6 +185,16 @@ Stage26.8M does not add epoch-chunk PPO resume or scenario-sharded eval in v1,
 and it does not alter reward, policy network, Hybrid A*, candidate generation,
 synthetic terrain, or deployment boundaries.
 
+Stage26.IO1 adds the artifact-path governance required for long Stage26 runs on
+Windows. It introduces common long-path aware JSON/JSONL/text IO, canonical short
+artifact aliases with legacy fallback for Stage21.1/Stage21.2/Stage21.3 handoff
+files, and short default output roots such as `D:/xunce/out/s26_8n`. Historical
+`D:/CodexDownloads/...` outputs remain readable legacy inputs, but new long-run
+experiments should keep lineage, hashes, stage ids, and combo ids inside
+manifest/summary JSON rather than in directory or filename chains. Stage26.IO1 is
+an orchestration and artifact contract only; it does not alter PPO, reward,
+policy network, Hybrid A*, candidate generation, or synthetic terrain semantics.
+
 Stage26.8F is a read-only diagnostic audit for repeated zero
 `main_coverage_per_100m_delta` outcomes. It inspects completed Stage26.8D/8C
 eval artifacts for scenario duplication, unchanged argmax actions, policy

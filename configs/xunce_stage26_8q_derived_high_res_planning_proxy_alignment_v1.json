@@ -1,0 +1,52 @@
+{
+  "schema_version": "xunce-stage26-8q-derived-high-res-planning-proxy-alignment-config/v1",
+  "stage_id": "xunce-stage26-8q-derived-high-res-planning-proxy-alignment",
+  "run_mode": "run_next",
+  "stage26_8p_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep_v1",
+  "source_scenario_fixture_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8g_repair_synthetic_scenario_diversity_v1",
+  "base_stage26_1_config": "configs/xunce_stage26_1_synthetic_terrain_collector_smoke_v1.json",
+  "required_scenario_count": 6,
+  "rollout_steps": 20,
+  "min_trainable_transition_count": 100,
+  "material_trainable_improvement_threshold": 20,
+  "sampling_seed": 260801,
+  "scenario_seed_base": 260801,
+  "baseline_combo_id": "current_baseline",
+  "aligned_combo_id": "aligned_1m_proxy",
+  "aligned_planner_grid_resolution_m": 1.0,
+  "coverage_source": "endpoint_theta_slope_obstacle_los/v1",
+  "path_cost_source": "hybrid_astar_pose_path/v1",
+  "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+  "action_space_type": "hybrid_discrete_xy_continuous_theta/v1",
+  "hybrid_astar_candidate_eval_workers": 4,
+  "max_traversable_slope_deg": 30.0,
+  "alignment_combos": [
+    {
+      "combo_id": "current_baseline",
+      "hybrid_astar_primitive_duration_s": 4.0,
+      "hybrid_astar_goal_position_tolerance_m": 4.0,
+      "hybrid_astar_goal_theta_tolerance_deg": 10.0,
+      "hybrid_astar_integration_dt_s": 0.25,
+      "hybrid_astar_max_speed_mps": 1.0,
+      "hybrid_astar_max_angular_speed_degps": 45.0
+    },
+    {
+      "combo_id": "aligned_1m_proxy",
+      "hybrid_astar_planning_grid_source": "derived_high_res_planning_proxy/v1",
+      "planner_grid_resolution_m": 1.0,
+      "hybrid_astar_closed_key_xy_resolution_m": 1.0,
+      "hybrid_astar_primitive_duration_s": 1.0,
+      "hybrid_astar_goal_position_tolerance_m": 1.0,
+      "hybrid_astar_goal_theta_tolerance_deg": 45.0,
+      "hybrid_astar_integration_dt_s": 0.25,
+      "hybrid_astar_max_speed_mps": 1.0,
+      "hybrid_astar_max_angular_speed_degps": 45.0
+    }
+  ],
+  "release_or_training_authorized": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

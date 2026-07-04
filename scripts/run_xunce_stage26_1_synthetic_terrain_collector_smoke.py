@@ -3,9 +3,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
+import sys
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 try:  # pragma: no cover
     import run_xunce_stage21_1_on_policy_ppo_rollout_collector as stage21_1
@@ -15,6 +19,17 @@ except ModuleNotFoundError:  # pragma: no cover
     import scripts.run_xunce_stage21_1_on_policy_ppo_rollout_collector as stage21_1
     import scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract as stage21_2
     import scripts.run_xunce_stage21_3_ppo_batch_validation as stage21_3
+
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_1_REJECTIONS,
+    STAGE21_1_TRAINABLE,
+    STAGE21_2_REWARDS,
+    STAGE21_3_BATCH,
+    ArtifactName,
+    read_jsonl_artifact,
+    resolve_artifact,
+)
 
 
 STAGE_ID = "xunce-stage26-1-synthetic-terrain-collector-smoke"
@@ -99,7 +114,7 @@ def run_xunce_stage26_1_synthetic_terrain_collector_smoke(
     repo_root = repo_root.resolve()
     config = _load_config(config_path, repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     boundary_reasons = _boundary_rejections(config)
     input_reasons, stage26_0_summary = _input_rejections(config)
@@ -117,10 +132,10 @@ def run_xunce_stage26_1_synthetic_terrain_collector_smoke(
         if stage21_2_summary.get("status") == "passed":
             stage21_3_summary = _run_stage21_3(config, output_root, repo_root)
 
-    transitions = _read_jsonl_if_exists(output_root / "s21_1" / stage21_1.TRAINABLE_BATCH_FILE)
-    rewards = _read_jsonl_if_exists(output_root / "s21_2" / stage21_2.EVALUATION_FILE)
-    batch_rows = _read_jsonl_if_exists(output_root / "s21_3" / stage21_3.BATCH_FILE)
-    rejections = _read_jsonl_if_exists(output_root / "s21_1" / stage21_1.REJECTION_FILE)
+    transitions = _read_jsonl_artifact_if_exists(output_root / "s21_1", STAGE21_1_TRAINABLE)
+    rewards = _read_jsonl_artifact_if_exists(output_root / "s21_2", STAGE21_2_REWARDS)
+    batch_rows = _read_jsonl_artifact_if_exists(output_root / "s21_3", STAGE21_3_BATCH)
+    rejections = _read_jsonl_artifact_if_exists(output_root / "s21_1", STAGE21_1_REJECTIONS)
     manifest = _read_json_if_exists(output_root / "s21_1" / stage21_1.MANIFEST_FILE)
     audit = _contract_audit(
         transitions,
@@ -223,7 +238,7 @@ def run_xunce_stage26_1_synthetic_terrain_collector_smoke(
     _write_json(output_root / AUDIT_FILE, audit)
     _write_json(output_root / ROUTING_FILE, routing)
     _write_json(output_root / MANIFEST_FILE, manifest_payload)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    artifact_io.write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -267,11 +282,20 @@ def _run_stage21_1(
             "hybrid_astar_max_angular_speed_degps": float(config["hybrid_astar_max_angular_speed_degps"]),
             "hybrid_astar_max_iterations": int(config["hybrid_astar_max_iterations"]),
             "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+            "hybrid_astar_planning_grid_source": config.get("hybrid_astar_planning_grid_source"),
+            "planner_grid_resolution_m": config.get("planner_grid_resolution_m"),
+            "hybrid_astar_closed_key_xy_resolution_m": config.get("hybrid_astar_closed_key_xy_resolution_m"),
             "synthetic_credit_feature_exposure_enabled": bool(
                 config.get("synthetic_credit_feature_exposure_enabled", False)
             ),
             "synthetic_exploration_credit_enabled": bool(config.get("synthetic_exploration_credit_enabled", False)),
             "synthetic_credit_mixture_probability": float(config.get("synthetic_credit_mixture_probability", 0.35)),
+            "selected_continuous_theta_reachability_guard_enabled": bool(
+                config.get("selected_continuous_theta_reachability_guard_enabled", False)
+            ),
+            "selected_continuous_theta_unreachable_resample_policy": str(
+                config.get("selected_continuous_theta_unreachable_resample_policy") or "terminal/v1"
+            ),
             "synthetic_credit_score_version": str(config.get("synthetic_credit_score_version") or "coverage_proxy_v1"),
             "path_efficiency_max_cost_norm": float(config.get("path_efficiency_max_cost_norm", 0.70)),
             "synthetic_terrain_contract_enabled": True,
@@ -347,7 +371,8 @@ def _run_stage21_3(config: dict[str, Any], output_root: Path, repo_root: Path) -
             "require_continuous_theta_action_contract": bool(
                 config.get("continuous_theta_action_space_enabled", False)
             ),
-            "allow_synthetic_credit_behavior_policy": bool(config.get("allow_synthetic_credit_behavior_policy", False)),
+            "allow_synthetic_credit_behavior_policy": bool(config.get("allow_synthetic_credit_behavior_policy", False))
+            or bool(config.get("selected_continuous_theta_reachability_guard_enabled", False)),
             "stage21_3_authorized": False,
             "runs_new_ppo_update": False,
             "publishes_checkpoint": False,
@@ -369,8 +394,8 @@ def _run_stage21_3(config: dict[str, Any], output_root: Path, repo_root: Path) -
 def _prepare_synthetic_source_root(config: dict[str, Any], summary: dict[str, Any], output_root: Path) -> Path:
     root = output_root / "src"
     sidecar_dir = root / "sc"
-    root.mkdir(parents=True, exist_ok=True)
-    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(root)
+    artifact_io.make_dirs(sidecar_dir)
     sidecars = [Path(path) for path in summary.get("augmented_sidecar_paths", []) if isinstance(path, str)]
     if not sidecars:
         raise ConfigError("Stage26.0 summary does not list augmented_sidecar_paths")
@@ -395,7 +420,7 @@ def _prepare_synthetic_source_root(config: dict[str, Any], summary: dict[str, An
     )
     for index in range(required):
         src = sidecars[index % len(sidecars)]
-        if not src.is_file():
+        if not artifact_io.path_is_file(src):
             raise ConfigError(f"augmented sidecar does not exist: {src}")
         sidecar = _read_json(src)
         sidecar["max_traversable_slope_deg"] = float(config["max_traversable_slope_deg"])
@@ -418,8 +443,8 @@ def _prepare_synthetic_source_root(config: dict[str, Any], summary: dict[str, An
             source_sidecar = source_audits[0].get("source_sidecar")
         src_contract = _contract_path_for_source_sidecar(source_sidecar)
         dst_contract = sidecar_dir / f"s26_1_{index:03d}.contract.json"
-        if src_contract is not None and src_contract.is_file():
-            shutil.copy2(src_contract, dst_contract)
+        if src_contract is not None and artifact_io.path_is_file(src_contract):
+            artifact_io.copy_file(src_contract, dst_contract)
         else:
             raise ConfigError(f"source path-planner contract not found for synthetic sidecar: {source_sidecar}")
         scenario_id = f"stage26_synthetic_{index:03d}"
@@ -670,8 +695,34 @@ def _contract_audit(
         "stage21_1_no_hybrid_reachable_candidate_terminal_count": int(
             stage21_1_summary.get("no_hybrid_reachable_candidate_terminal_count") or 0
         ),
+        "stage21_1_selected_continuous_theta_unreachable_attempt_count": int(
+            stage21_1_summary.get("selected_continuous_theta_unreachable_attempt_count") or 0
+        ),
+        "stage21_1_selected_continuous_theta_resample_success_count": int(
+            stage21_1_summary.get("selected_continuous_theta_resample_success_count") or 0
+        ),
+        "stage21_1_selected_candidate_resample_success_count": int(
+            stage21_1_summary.get("selected_candidate_resample_success_count") or 0
+        ),
+        "stage21_1_selected_pose_unreachable_terminal_count": int(
+            stage21_1_summary.get("selected_pose_unreachable_terminal_count") or 0
+        ),
+        "stage21_1_synthetic_credit_target_selected_count_from_transition_rows": int(
+            stage21_1_summary.get("synthetic_credit_target_selected_count_from_transition_rows") or 0
+        ),
+        "stage21_1_trainable_transition_count_by_scenario": stage21_1_summary.get(
+            "trainable_transition_count_by_scenario"
+        )
+        or {},
+        "stage21_1_scenario_early_terminal_step_histogram": stage21_1_summary.get(
+            "scenario_early_terminal_step_histogram"
+        )
+        or {},
         "rejection_no_hybrid_reachable_candidate_terminal_count": sum(
             1 for row in rejections if row.get("reason") == "no_hybrid_reachable_candidate_terminal"
+        ),
+        "rejection_no_selected_reachable_pose_candidate_terminal_count": sum(
+            1 for row in rejections if row.get("reason") == "no_selected_reachable_pose_candidate_terminal"
         ),
         "synthetic_transition_contract_missing_count": transition_missing,
         "synthetic_reward_provenance_missing_count": reward_missing,
@@ -708,7 +759,9 @@ def _route(
         stage21_1_reasons = set(stage21_1_summary.get("blocking_reason_codes") or [])
         if (
             "no_hybrid_reachable_candidate_terminal" in stage21_1_reasons
+            or "no_selected_reachable_pose_candidate_terminal" in stage21_1_reasons
             or audit.get("rejection_no_hybrid_reachable_candidate_terminal_count", 0) > 0
+            or audit.get("rejection_no_selected_reachable_pose_candidate_terminal_count", 0) > 0
         ) and audit["synthetic_transition_contract_missing_count"] == 0:
             return "failed", ROUTE_TERMINAL_REACHABILITY, "stage21_1_terminal_reachability_contract_failed"
         return "failed", ROUTE_TRANSITION, "stage21_1_failed_after_loading_synthetic_augmented_sidecar"
@@ -808,6 +861,14 @@ def _summary_counts(audit: dict[str, Any]) -> dict[str, Any]:
         "open_grid_fallback_count",
         "stage21_1_no_hybrid_reachable_candidate_terminal_count",
         "rejection_no_hybrid_reachable_candidate_terminal_count",
+        "stage21_1_selected_continuous_theta_unreachable_attempt_count",
+        "stage21_1_selected_continuous_theta_resample_success_count",
+        "stage21_1_selected_candidate_resample_success_count",
+        "stage21_1_selected_pose_unreachable_terminal_count",
+        "stage21_1_synthetic_credit_target_selected_count_from_transition_rows",
+        "stage21_1_trainable_transition_count_by_scenario",
+        "stage21_1_scenario_early_terminal_step_histogram",
+        "rejection_no_selected_reachable_pose_candidate_terminal_count",
     )
     return {key: audit.get(key) for key in keys} | {
         "stage21_1_source_roi_expansion_root_match": audit.get("stage21_1_source_roi_expansion_root_match"),
@@ -912,6 +973,18 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         config.get("hybrid_astar_candidate_eval_workers", 1),
         "hybrid_astar_candidate_eval_workers",
     )
+    if config.get("hybrid_astar_planning_grid_source") is not None:
+        config["hybrid_astar_planning_grid_source"] = str(config["hybrid_astar_planning_grid_source"])
+    if config.get("planner_grid_resolution_m") is not None:
+        config["planner_grid_resolution_m"] = _positive_float(
+            config.get("planner_grid_resolution_m"),
+            "planner_grid_resolution_m",
+        )
+    if config.get("hybrid_astar_closed_key_xy_resolution_m") is not None:
+        config["hybrid_astar_closed_key_xy_resolution_m"] = _positive_float(
+            config.get("hybrid_astar_closed_key_xy_resolution_m"),
+            "hybrid_astar_closed_key_xy_resolution_m",
+        )
     config["synthetic_credit_feature_exposure_enabled"] = bool(
         config.get("synthetic_credit_feature_exposure_enabled", False)
     )
@@ -919,6 +992,12 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     config["synthetic_credit_mixture_probability"] = _fraction_float(
         config.get("synthetic_credit_mixture_probability", 0.35),
         "synthetic_credit_mixture_probability",
+    )
+    config["selected_continuous_theta_reachability_guard_enabled"] = bool(
+        config.get("selected_continuous_theta_reachability_guard_enabled", False)
+    )
+    config["selected_continuous_theta_unreachable_resample_policy"] = str(
+        config.get("selected_continuous_theta_unreachable_resample_policy") or "terminal/v1"
     )
     config["synthetic_credit_score_version"] = str(config.get("synthetic_credit_score_version") or "coverage_proxy_v1")
     config["path_efficiency_max_cost_norm"] = _fraction_float(
@@ -953,7 +1032,7 @@ def _input_rejections(config: dict[str, Any]) -> tuple[list[str], dict[str, Any]
     summary_path = root / "xunce-stage26-0-summary.json"
     reasons: list[str] = []
     summary: dict[str, Any] = {}
-    if not summary_path.is_file():
+    if not artifact_io.path_is_file(summary_path):
         reasons.append("missing_stage26_0_summary")
     else:
         summary = _read_json(summary_path)
@@ -1072,35 +1151,35 @@ def _load_json_template(path: str, repo_root: Path) -> dict[str, Any]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return artifact_io.read_json(path)
 
 
 def _read_json_if_exists(path: Path) -> dict[str, Any]:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return {}
     return _read_json(path)
 
 
 def _read_jsonl_if_exists(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
+    if not artifact_io.path_is_file(path):
         return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            payload = json.loads(line)
-            if isinstance(payload, dict):
-                rows.append(payload)
+    return artifact_io.read_jsonl(path)
+
+
+def _read_jsonl_artifact_if_exists(root: Path, artifact: ArtifactName) -> list[dict[str, Any]]:
+    path, _ = resolve_artifact(root, artifact)
+    if path is None:
+        return []
+    rows, _ = read_jsonl_artifact(root, artifact)
     return rows
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows) + ("\n" if rows else ""), encoding="utf-8")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _unique(values: list[str]) -> list[str]:

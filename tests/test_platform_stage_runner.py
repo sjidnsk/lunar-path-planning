@@ -111,6 +111,11 @@ SUPPORTED_STAGE_IDS = {
     "xunce-stage26-8h-resumable-diverse-scenario-post-update-eval",
     "xunce-stage26-8i-diverse-scenario-policy-signal-strength-repair",
     "xunce-stage26-8m-generalized-resumable-training-pipeline",
+    "xunce-stage26-8n-aggressive-sample-update-sweep",
+    "xunce-stage26-8o-repair-aggressive-collector-trainable-sample-budget",
+    "xunce-stage26-8p-hybrid-astar-primitive-resolution-sweep",
+    "xunce-stage26-8q-derived-high-res-planning-proxy-alignment",
+    "xunce-stage26-io1-artifact-path-contract-and-long-path-resilience",
     "xunce-stage18i-evidence-closure-audit",
     "xunce-stage18-research-evidence-pipeline",
 }

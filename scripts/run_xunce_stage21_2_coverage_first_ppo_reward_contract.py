@@ -10,6 +10,8 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODEL_EXPLORER_SRC = SCRIPT_DIR.parent / "model-explorer" / "src"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 if str(MODEL_EXPLORER_SRC) not in sys.path:
     sys.path.insert(0, str(MODEL_EXPLORER_SRC))
 
@@ -17,6 +19,20 @@ from model_explorer.policy.coverage_first_reward import (
     compute_coverage_first_reward_components,
     coverage_first_profile_hash,
     load_coverage_first_reward_profile,
+)
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_1_EPISODES,
+    STAGE21_1_SUMMARY,
+    STAGE21_1_TRAINABLE,
+    STAGE21_2_REWARDS,
+    STAGE21_2_SUMMARY,
+    artifact_path,
+    read_json_artifact,
+    read_jsonl_artifact,
+    resolve_artifact,
+    write_json_artifact,
+    write_jsonl_artifact,
 )
 
 
@@ -104,7 +120,7 @@ def run_xunce_stage21_2_coverage_first_ppo_reward_contract(
     repo_root = Path(repo_root).resolve()
     config = _load_config(_resolve_path(config_path, repo_root), repo_root=repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
     profile = load_coverage_first_reward_profile(config["coverage_first_reward_profile"])
 
     boundary_reasons = _boundary_rejections(config)
@@ -114,9 +130,9 @@ def run_xunce_stage21_2_coverage_first_ppo_reward_contract(
     stage21_1_summary: dict[str, Any] = {}
     if not boundary_reasons and not input_reasons:
         stage21_1_root = Path(config["stage21_1_collector_root"])
-        stage21_1_summary = _read_json(stage21_1_root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json")
-        transitions = _read_jsonl(stage21_1_root / "xunce-stage21-1-ppo-trainable-batch.jsonl")
-        episodes = _read_jsonl(stage21_1_root / "xunce-stage21-1-ppo-rollout-episodes.jsonl")
+        stage21_1_summary, _ = read_json_artifact(stage21_1_root, STAGE21_1_SUMMARY)
+        transitions, _ = read_jsonl_artifact(stage21_1_root, STAGE21_1_TRAINABLE)
+        episodes, _ = read_jsonl_artifact(stage21_1_root, STAGE21_1_EPISODES)
         rows = _evaluate_transitions(transitions, profile=profile, config=config)
 
     profile_audit = _profile_audit(profile, rows)
@@ -467,6 +483,16 @@ def _write_outputs(
         "report": str((output_root / REPORT_FILE).resolve()),
         "manifest": str((output_root / MANIFEST_FILE).resolve()),
     }
+    canonical_artifacts = {
+        "summary": str(artifact_path(output_root, STAGE21_2_SUMMARY).resolve()),
+        "evaluation": str(artifact_path(output_root, STAGE21_2_REWARDS).resolve()),
+    }
+    legacy_artifacts = {
+        "summary": summary["summary"],
+        "evaluation": summary["evaluation"],
+    }
+    summary["canonical_artifacts"] = canonical_artifacts
+    summary["legacy_artifacts"] = legacy_artifacts
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "generated_at": generated_at,
@@ -478,15 +504,17 @@ def _write_outputs(
             "routing": summary["routing"],
             "report": summary["report"],
         },
+        "canonical_artifacts": canonical_artifacts,
+        "legacy_artifacts": legacy_artifacts,
         "summary_status": status,
         "next_required_change": route,
     }
-    _write_jsonl(output_root / EVALUATION_FILE, rows)
+    write_jsonl_artifact(output_root, STAGE21_2_REWARDS, rows)
     _write_json(output_root / PROFILE_AUDIT_FILE, profile_audit)
     _write_json(output_root / ROUTING_FILE, routing)
-    _write_json(output_root / SUMMARY_FILE, summary)
+    write_json_artifact(output_root, STAGE21_2_SUMMARY, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    _write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -517,10 +545,10 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
 def _input_rejections(config: dict[str, Any], profile: Any) -> list[str]:
     reasons: list[str] = []
     root = Path(config["stage21_1_collector_root"])
-    summary_path = root / "xunce-stage21-1-on-policy-ppo-rollout-collector-summary.json"
-    batch_path = root / "xunce-stage21-1-ppo-trainable-batch.jsonl"
-    episodes_path = root / "xunce-stage21-1-ppo-rollout-episodes.jsonl"
-    if not summary_path.is_file():
+    summary_path, _ = resolve_artifact(root, STAGE21_1_SUMMARY)
+    batch_path, _ = resolve_artifact(root, STAGE21_1_TRAINABLE)
+    episodes_path, _ = resolve_artifact(root, STAGE21_1_EPISODES)
+    if summary_path is None:
         reasons.append("missing_stage21_1_collector_summary")
     else:
         summary = _read_json(summary_path)
@@ -528,9 +556,9 @@ def _input_rejections(config: dict[str, Any], profile: Any) -> list[str]:
             reasons.append("stage21_1_collector_not_passed")
         if summary.get("next_required_change") != "implement_stage21_2_coverage_first_ppo_reward_contract":
             reasons.append("stage21_1_route_not_stage21_2_reward_contract")
-    if not batch_path.is_file():
+    if batch_path is None:
         reasons.append("missing_stage21_1_trainable_batch")
-    if not episodes_path.is_file():
+    if episodes_path is None:
         reasons.append("missing_stage21_1_episodes")
     if profile.profile_version not in {"stage21-coverage-first-v1", "stage21-coverage-constrained-v2"}:
         reasons.append("stage21_2_requires_supported_coverage_reward_profile")
@@ -924,20 +952,16 @@ def _int_or_none(value: Any) -> int | None:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    artifact_io.write_jsonl(path, rows)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = artifact_io.read_json(path)
     except FileNotFoundError as exc:
         raise ConfigError(f"JSON file does not exist: {path}") from exc
     except json.JSONDecodeError as exc:
@@ -948,18 +972,18 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        return artifact_io.read_jsonl(path)
     except FileNotFoundError as exc:
         raise ConfigError(f"JSONL file does not exist: {path}") from exc
-    for line in lines:
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        if isinstance(payload, dict):
-            rows.append(payload)
-    return rows
+
+
+def _write_text(path: Path, text: str) -> None:
+    artifact_io.write_text(path, text)
+
+
+def _path_is_file(path: Path) -> bool:
+    return artifact_io.path_is_file(path)
 
 
 def _resolve_path(path: Path, repo_root: Path) -> Path:

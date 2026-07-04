@@ -30,6 +30,7 @@ from xunce_hybrid_astar_candidate_path_cost import (
     PATH_COST_SOURCE as HYBRID_ASTAR_PATH_COST_SOURCE,
     Cell as HYBRID_CELL,
     WorldPoint as HYBRID_WORLD_POINT,
+    build_derived_high_res_planning_proxy_grid,
     build_cost_grid_from_sidecar,
     evaluate_hybrid_astar_candidate_path_cost,
 )
@@ -50,6 +51,17 @@ from xunce_synthetic_exploration_credit import (
     select_reachable_synthetic_credit_theta,
     select_synthetic_credit_target,
     synthetic_credit_behavior_logprob,
+)
+import xunce_artifact_io as artifact_io
+from xunce_artifact_paths import (
+    STAGE21_1_EPISODES,
+    STAGE21_1_REJECTIONS,
+    STAGE21_1_SUMMARY,
+    STAGE21_1_TRAINABLE,
+    STAGE21_1_TRANSITIONS,
+    artifact_path,
+    write_json_artifact,
+    write_jsonl_artifact,
 )
 from xunce_theta_viewpoint_candidates import candidate_observation_cells, theta_metadata
 
@@ -75,6 +87,9 @@ SAMPLING_AUDIT_FILE = "xunce-stage21-1-sampling-audit.jsonl"
 ROUTING_FILE = "xunce-stage21-1-next-stage-routing.json"
 REPORT_FILE = "xunce-stage21-1-report.md"
 MANIFEST_FILE = "xunce-stage21-1-manifest.json"
+
+REACHABILITY_GUARD_BEHAVIOR_POLICY_ID = "continuous_theta_reachability_guard_policy/v1"
+REACHABILITY_GUARD_THETA_POLICY_ID = "reachable_theta_proposal/v1"
 
 ROUTE_BOUNDARY = "resolve_stage21_1_on_policy_collector_boundary_rejections"
 ROUTE_INPUTS = "repair_stage21_1_on_policy_collector_inputs"
@@ -153,7 +168,7 @@ def run_xunce_stage21_1_on_policy_ppo_rollout_collector(
     repo_root = Path(repo_root).resolve()
     config = _load_config(_resolve_path(config_path, repo_root), repo_root=repo_root)
     output_root = _resolve_path(output_root, repo_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_io.make_dirs(output_root)
 
     profile = load_canonical_reward_profile(Path(config["canonical_reward_profile"]))
     boundary_reasons = _boundary_rejections(config)
@@ -183,8 +198,12 @@ def run_xunce_stage21_1_on_policy_ppo_rollout_collector(
     non_blocking_reason_codes = set()
     if continuous_theta_enabled(config):
         non_blocking_reason_codes.add("selected_continuous_theta_hybrid_astar_unreachable")
+    terminal_no_reachable_reasons = {
+        "no_hybrid_reachable_candidate_terminal",
+        "no_selected_reachable_pose_candidate_terminal",
+    }
     terminal_no_reachable_allowed = (
-        "no_hybrid_reachable_candidate_terminal" in collection.reason_codes
+        any(reason in collection.reason_codes for reason in terminal_no_reachable_reasons)
         and counts["trainable_transition_count"] >= int(config["min_trainable_transition_count"])
         and counts["mask_violation_count"] == 0
         and counts["hard_risk_violation_count"] == 0
@@ -195,7 +214,7 @@ def run_xunce_stage21_1_on_policy_ppo_rollout_collector(
         )
     )
     if terminal_no_reachable_allowed:
-        non_blocking_reason_codes.add("no_hybrid_reachable_candidate_terminal")
+        non_blocking_reason_codes.update(terminal_no_reachable_reasons)
     blocking = [reason for reason in collection.reason_codes if reason not in non_blocking_reason_codes]
     if counts["trainable_transition_count"] < int(config["min_trainable_transition_count"]):
         blocking.append("trainable_transition_count_below_minimum")
@@ -550,6 +569,9 @@ def _collect_episode(
         xunce_batch_payload = _xunce_batch_to_dict(adapter["xunce_batch"])
 
         if not any(sampling_mask):
+            planning_proxy_rejection_fields = _planning_proxy_rejection_fields(
+                continuous_hybrid_probe_metadata or hybrid_path_metadata
+            )
             if pending is not None:
                 _finalize_pending(
                     pending,
@@ -581,6 +603,7 @@ def _collect_episode(
                     hard_risk_clean_mask_true_count=sum(1 for value in hard_risk_clean_mask if value),
                     hybrid_astar_reachable_count=sum(1 for value in hybrid_reachable_mask if value),
                     sampling_mask_true_count=sum(1 for value in sampling_mask if value),
+                    **planning_proxy_rejection_fields,
                 )
             )
             break
@@ -660,6 +683,14 @@ def _collect_episode(
             )
             break
 
+        if continuous_theta_enabled(config) and bool(config.get("selected_continuous_theta_reachability_guard_enabled", False)):
+            detail = _apply_selected_continuous_theta_reachability_guard(
+                detail,
+                sampling_mask=sampling_mask,
+                hybrid_path_metadata=continuous_hybrid_probe_metadata,
+                sampling_seed=int(config["sampling_seed"]) + scenario_index + step_index,
+            )
+
         selected_index = detail["action_index"]
         selected_candidate = hf._candidate_at(candidates, selected_index)
         if selected_candidate is not None and continuous_theta_enabled(config):
@@ -733,7 +764,12 @@ def _collect_episode(
         ):
             terminal_reason = "selected_action_not_trainable"
             if selected_hybrid_unreachable:
-                terminal_reason = "selected_continuous_theta_hybrid_astar_unreachable"
+                guard_failure_reason = detail.get("selected_pose_reachability_guard_failure_reason")
+                terminal_reason = (
+                    str(guard_failure_reason)
+                    if guard_failure_reason == "no_selected_reachable_pose_candidate_terminal"
+                    else "selected_continuous_theta_hybrid_astar_unreachable"
+                )
                 _mark_latest_transition_terminal(
                     transitions,
                     trainable_batch,
@@ -741,6 +777,9 @@ def _collect_episode(
                     terminal_reason=terminal_reason,
                 )
             reason_codes.append(terminal_reason)
+            planning_proxy_rejection_fields = _planning_proxy_rejection_fields(
+                continuous_hybrid_probe_metadata or hybrid_path_metadata
+            )
             rejections.append(
                 _rejection_row(
                     scenario_id,
@@ -771,6 +810,17 @@ def _collect_episode(
                     synthetic_credit_target_selected=detail.get("synthetic_credit_target_selected"),
                     synthetic_credit_target_score=synthetic_credit_metadata.get("synthetic_credit_target_score"),
                     selected_theta_deg=detail.get("selected_theta_deg"),
+                    selected_continuous_theta_reachability_guard_enabled=detail.get(
+                        "selected_continuous_theta_reachability_guard_enabled"
+                    ),
+                    selected_continuous_theta_unreachable_attempted=detail.get(
+                        "selected_continuous_theta_unreachable_attempted"
+                    ),
+                    selected_pose_reachability_guard_failed=detail.get("selected_pose_reachability_guard_failed"),
+                    selected_pose_reachability_guard_failure_reason=detail.get(
+                        "selected_pose_reachability_guard_failure_reason"
+                    ),
+                    **planning_proxy_rejection_fields,
                 )
             )
             break
@@ -853,6 +903,38 @@ def _collect_episode(
             "path_efficiency_filter_relaxed": synthetic_credit_metadata.get("path_efficiency_filter_relaxed"),
             "selected_target_hybrid_cost_norm": synthetic_credit_metadata.get("selected_target_hybrid_cost_norm"),
             "selected_target_gain_per_cost_norm": synthetic_credit_metadata.get("selected_target_gain_per_cost_norm"),
+            "selected_continuous_theta_reachability_guard_enabled": detail.get(
+                "selected_continuous_theta_reachability_guard_enabled"
+            ),
+            "selected_continuous_theta_unreachable_attempted": detail.get(
+                "selected_continuous_theta_unreachable_attempted"
+            ),
+            "selected_continuous_theta_unreachable_original_index": detail.get(
+                "selected_continuous_theta_unreachable_original_index"
+            ),
+            "selected_continuous_theta_unreachable_original_theta_deg": detail.get(
+                "selected_continuous_theta_unreachable_original_theta_deg"
+            ),
+            "selected_continuous_theta_unreachable_reachable_candidate_count": detail.get(
+                "selected_continuous_theta_unreachable_reachable_candidate_count"
+            ),
+            "selected_theta_resampled_for_reachability": detail.get("selected_theta_resampled_for_reachability"),
+            "selected_candidate_resampled_for_reachability": detail.get(
+                "selected_candidate_resampled_for_reachability"
+            ),
+            "selected_continuous_theta_resample_policy": detail.get("selected_continuous_theta_resample_policy"),
+            "selected_continuous_theta_resample_point_log_prob_source": detail.get(
+                "selected_continuous_theta_resample_point_log_prob_source"
+            ),
+            "selected_continuous_theta_reachable_candidate_count": detail.get(
+                "selected_continuous_theta_reachable_candidate_count"
+            ),
+            "selected_continuous_theta_reachable_candidate_indices": detail.get(
+                "selected_continuous_theta_reachable_candidate_indices"
+            ),
+            "selected_continuous_theta_guard_original_behavior_policy_id": detail.get(
+                "selected_continuous_theta_guard_original_behavior_policy_id"
+            ),
             "base_candidate_set_hash": candidate_set_hash_value,
             "action_sample_hash": selected_candidate.get("action_sample_hash"),
             "old_log_prob": float(detail["old_log_prob"]),
@@ -905,6 +987,38 @@ def _collect_episode(
                 "path_efficiency_filter_relaxed": synthetic_credit_metadata.get("path_efficiency_filter_relaxed"),
                 "selected_target_hybrid_cost_norm": synthetic_credit_metadata.get("selected_target_hybrid_cost_norm"),
                 "selected_target_gain_per_cost_norm": synthetic_credit_metadata.get("selected_target_gain_per_cost_norm"),
+                "selected_continuous_theta_reachability_guard_enabled": detail.get(
+                    "selected_continuous_theta_reachability_guard_enabled"
+                ),
+                "selected_continuous_theta_unreachable_attempted": detail.get(
+                    "selected_continuous_theta_unreachable_attempted"
+                ),
+                "selected_continuous_theta_unreachable_original_index": detail.get(
+                    "selected_continuous_theta_unreachable_original_index"
+                ),
+                "selected_continuous_theta_unreachable_original_theta_deg": detail.get(
+                    "selected_continuous_theta_unreachable_original_theta_deg"
+                ),
+                "selected_continuous_theta_unreachable_reachable_candidate_count": detail.get(
+                    "selected_continuous_theta_unreachable_reachable_candidate_count"
+                ),
+                "selected_theta_resampled_for_reachability": detail.get("selected_theta_resampled_for_reachability"),
+                "selected_candidate_resampled_for_reachability": detail.get(
+                    "selected_candidate_resampled_for_reachability"
+                ),
+                "selected_continuous_theta_resample_policy": detail.get("selected_continuous_theta_resample_policy"),
+                "selected_continuous_theta_resample_point_log_prob_source": detail.get(
+                    "selected_continuous_theta_resample_point_log_prob_source"
+                ),
+                "selected_continuous_theta_reachable_candidate_count": detail.get(
+                    "selected_continuous_theta_reachable_candidate_count"
+                ),
+                "selected_continuous_theta_reachable_candidate_indices": detail.get(
+                    "selected_continuous_theta_reachable_candidate_indices"
+                ),
+                "selected_continuous_theta_guard_original_behavior_policy_id": detail.get(
+                    "selected_continuous_theta_guard_original_behavior_policy_id"
+                ),
                 "xunce_batch_feature_semantic_map": synthetic_credit_metadata.get("xunce_batch_feature_semantic_map"),
                 "theta_mu_rad": detail.get("theta_mu_rad"),
                 "theta_kappa": detail.get("theta_kappa"),
@@ -984,6 +1098,17 @@ def _collect_episode(
                 "path_efficiency_filter_relaxed": synthetic_credit_metadata.get("path_efficiency_filter_relaxed"),
                 "selected_target_hybrid_cost_norm": synthetic_credit_metadata.get("selected_target_hybrid_cost_norm"),
                 "selected_target_gain_per_cost_norm": synthetic_credit_metadata.get("selected_target_gain_per_cost_norm"),
+                "selected_continuous_theta_reachability_guard_enabled": detail.get(
+                    "selected_continuous_theta_reachability_guard_enabled"
+                ),
+                "selected_continuous_theta_unreachable_attempted": detail.get(
+                    "selected_continuous_theta_unreachable_attempted"
+                ),
+                "selected_theta_resampled_for_reachability": detail.get("selected_theta_resampled_for_reachability"),
+                "selected_candidate_resampled_for_reachability": detail.get(
+                    "selected_candidate_resampled_for_reachability"
+                ),
+                "selected_continuous_theta_resample_policy": detail.get("selected_continuous_theta_resample_policy"),
                 "selected_theta_rad": detail.get("selected_theta_rad"),
                 "selected_theta_deg": detail.get("selected_theta_deg"),
                 "action_space_type": detail.get("action_space_type"),
@@ -1418,6 +1543,205 @@ def _synthetic_credit_theta_choice_for_target(
     )
 
 
+def _apply_selected_continuous_theta_reachability_guard(
+    detail: dict[str, Any],
+    *,
+    sampling_mask: tuple[bool, ...],
+    hybrid_path_metadata: dict[str, Any],
+    sampling_seed: int,
+) -> dict[str, Any]:
+    selected_index = _int_or_none(detail.get("action_index"))
+    selected_theta = _finite(detail.get("selected_theta_deg"))
+    if selected_index is None or selected_theta is None:
+        return detail
+    reachable_by_candidate = hybrid_path_metadata.get("hybrid_astar_reachable_theta_degs_by_candidate")
+    if not isinstance(reachable_by_candidate, list):
+        return detail
+    selected_reachable = _theta_in_reachable_set(selected_theta, _nested_float_list(reachable_by_candidate, selected_index))
+    if selected_reachable:
+        updated = dict(detail)
+        updated["selected_continuous_theta_reachability_guard_enabled"] = True
+        updated["selected_theta_resampled_for_reachability"] = False
+        updated["selected_candidate_resampled_for_reachability"] = False
+        return updated
+
+    reachable_candidates = [
+        index
+        for index, mask in enumerate(sampling_mask)
+        if mask and _nested_float_list(reachable_by_candidate, index)
+    ]
+    updated = dict(detail)
+    updated["selected_continuous_theta_reachability_guard_enabled"] = True
+    updated["selected_continuous_theta_unreachable_attempted"] = True
+    updated["selected_continuous_theta_unreachable_original_index"] = int(selected_index)
+    updated["selected_continuous_theta_unreachable_original_theta_deg"] = float(selected_theta)
+    updated["selected_continuous_theta_unreachable_reachable_candidate_count"] = len(reachable_candidates)
+    if not reachable_candidates:
+        updated["selected_pose_reachability_guard_failed"] = True
+        updated["selected_pose_reachability_guard_failure_reason"] = "no_selected_reachable_pose_candidate_terminal"
+        return updated
+
+    chosen_index = (
+        selected_index
+        if selected_index in reachable_candidates
+        else _uniform_reachable_candidate_index(reachable_candidates, sampling_seed)
+    )
+    theta_choice = _reachable_guard_theta_choice(
+        hybrid_path_metadata,
+        candidate_index=chosen_index,
+        selection_seed=int(sampling_seed),
+    )
+    target_theta_deg = _finite(theta_choice.get("selected_theta_deg"))
+    if target_theta_deg is None:
+        updated["selected_pose_reachability_guard_failed"] = True
+        updated["selected_pose_reachability_guard_failure_reason"] = "selected_candidate_reachable_theta_missing"
+        return updated
+
+    policy_point_log_prob, policy_theta_log_prob = _policy_log_probs_for_continuous_theta(
+        detail,
+        action_index=chosen_index,
+        theta_deg=float(target_theta_deg),
+    )
+    if policy_point_log_prob is None or policy_theta_log_prob is None:
+        updated["selected_pose_reachability_guard_failed"] = True
+        updated["selected_pose_reachability_guard_failure_reason"] = "policy_logprob_recompute_failed"
+        return updated
+
+    candidate_changed = int(chosen_index) != int(selected_index)
+    existing_behavior_point = _finite(detail.get("old_behavior_point_log_prob"))
+    existing_point = _finite(detail.get("old_point_log_prob"))
+    if candidate_changed:
+        behavior_point_log_prob = -math.log(max(1, len(reachable_candidates)))
+        point_source = "uniform_reachable_candidate_support"
+    else:
+        behavior_point_log_prob = (
+            existing_behavior_point
+            if existing_behavior_point is not None
+            else existing_point
+            if existing_point is not None
+            else policy_point_log_prob
+        )
+        point_source = "existing_behavior_point" if existing_behavior_point is not None else "policy_point"
+    behavior_theta_log_prob = float(theta_choice["old_behavior_theta_log_prob"])
+    selected_theta_rad = math.radians(float(target_theta_deg))
+    old_policy_log_prob = float(policy_point_log_prob + policy_theta_log_prob)
+    old_behavior_log_prob = float(behavior_point_log_prob + behavior_theta_log_prob)
+    old_action_probs = detail.get("old_action_probs")
+    selected_probability = (
+        float(old_action_probs[chosen_index])
+        if isinstance(old_action_probs, list)
+        and 0 <= int(chosen_index) < len(old_action_probs)
+        and _finite(old_action_probs[chosen_index]) is not None
+        else detail.get("selected_probability")
+    )
+    updated.update(
+        {
+            "action_index": int(chosen_index),
+            "selected_base_candidate_index": int(chosen_index),
+            "selected_probability": selected_probability,
+            "selected_theta_deg": float(target_theta_deg),
+            "selected_theta_rad": selected_theta_rad,
+            "old_policy_point_log_prob": float(policy_point_log_prob),
+            "old_policy_theta_log_prob": float(policy_theta_log_prob),
+            "old_policy_log_prob": old_policy_log_prob,
+            "old_behavior_point_log_prob": float(behavior_point_log_prob),
+            "old_behavior_theta_log_prob": behavior_theta_log_prob,
+            "old_behavior_log_prob": old_behavior_log_prob,
+            "old_point_log_prob": float(behavior_point_log_prob),
+            "old_theta_log_prob": behavior_theta_log_prob,
+            "old_log_prob": old_behavior_log_prob,
+            "behavior_policy_id": REACHABILITY_GUARD_BEHAVIOR_POLICY_ID,
+            "selected_theta_resampled_for_reachability": True,
+            "selected_candidate_resampled_for_reachability": bool(candidate_changed),
+            "selected_continuous_theta_resample_policy": REACHABILITY_GUARD_THETA_POLICY_ID,
+            "selected_continuous_theta_resample_point_log_prob_source": point_source,
+            "selected_continuous_theta_reachable_candidate_count": len(reachable_candidates),
+            "selected_continuous_theta_reachable_candidate_indices": reachable_candidates,
+            "selected_continuous_theta_guard_original_behavior_policy_id": detail.get("behavior_policy_id"),
+            "synthetic_credit_target_selected": False if candidate_changed else detail.get("synthetic_credit_target_selected"),
+            "synthetic_credit_theta_policy_id": REACHABILITY_GUARD_THETA_POLICY_ID,
+            "synthetic_credit_theta_behavior": REACHABILITY_GUARD_THETA_POLICY_ID,
+            "synthetic_credit_theta_proposals_deg": theta_choice["proposals"],
+            "synthetic_credit_theta_selected_proposal_index": theta_choice["selected_proposal_index"],
+            "synthetic_credit_theta_reachable_proposal_count": theta_choice["reachable_count"],
+        }
+    )
+    return updated
+
+
+def _theta_in_reachable_set(theta_deg: float, reachable: list[float]) -> bool:
+    return any(_angle_deg_delta_abs(theta_deg, candidate) <= 1.0e-6 for candidate in reachable)
+
+
+def _angle_deg_delta_abs(lhs: float, rhs: float) -> float:
+    return abs(((float(lhs) - float(rhs) + 180.0) % 360.0) - 180.0)
+
+
+def _uniform_reachable_candidate_index(indices: list[int], selection_seed: int) -> int:
+    ordered = sorted(int(index) for index in indices)
+    return ordered[abs(int(selection_seed)) % len(ordered)]
+
+
+def _reachable_guard_theta_choice(
+    hybrid_path_metadata: dict[str, Any],
+    *,
+    candidate_index: int,
+    selection_seed: int,
+) -> dict[str, Any]:
+    proposals = _nested_float_list(hybrid_path_metadata.get("hybrid_astar_theta_proposals_deg_by_candidate"), candidate_index)
+    reachable = _nested_float_list(hybrid_path_metadata.get("hybrid_astar_reachable_theta_degs_by_candidate"), candidate_index)
+    flags = hybrid_path_metadata.get("hybrid_astar_theta_probe_reachable_flags_by_candidate")
+    costs = hybrid_path_metadata.get("hybrid_astar_theta_probe_path_costs_by_candidate")
+    flag_row = flags[candidate_index] if isinstance(flags, list) and 0 <= candidate_index < len(flags) and isinstance(flags[candidate_index], list) else []
+    cost_row = costs[candidate_index] if isinstance(costs, list) and 0 <= candidate_index < len(costs) and isinstance(costs[candidate_index], list) else []
+    reachable_entries: list[tuple[int, float, float]] = []
+    for proposal_index, theta in enumerate(proposals):
+        flag_reachable = bool(proposal_index < len(flag_row) and flag_row[proposal_index] is True)
+        set_reachable = _theta_in_reachable_set(theta, reachable)
+        if not flag_reachable and not set_reachable:
+            continue
+        cost = _finite(cost_row[proposal_index]) if proposal_index < len(cost_row) else None
+        reachable_entries.append((proposal_index, float(theta), float("inf") if cost is None else float(cost)))
+    if not reachable_entries:
+        return {"selected_theta_deg": None}
+    selected = reachable_entries[abs(int(selection_seed)) % len(reachable_entries)]
+    return {
+        "selected_proposal_index": int(selected[0]),
+        "selected_theta_deg": float(selected[1]),
+        "reachable_count": len(reachable_entries),
+        "old_behavior_theta_log_prob": -math.log(max(1, len(reachable_entries))),
+        "proposals": proposals,
+    }
+
+
+def _policy_log_probs_for_continuous_theta(
+    detail: dict[str, Any],
+    *,
+    action_index: int,
+    theta_deg: float,
+) -> tuple[float | None, float | None]:
+    logits = detail.get("old_sampling_logits")
+    theta_mu = detail.get("theta_mu_rad")
+    theta_kappa = detail.get("theta_kappa")
+    if not isinstance(logits, list) or not isinstance(theta_mu, list) or not isinstance(theta_kappa, list):
+        return None, None
+    if action_index < 0 or action_index >= len(logits) or action_index >= len(theta_mu) or action_index >= len(theta_kappa):
+        return None, None
+    try:
+        logits_tensor = torch.tensor([float(value) for value in logits], dtype=torch.float64)
+        point_log_prob = torch.distributions.Categorical(logits=logits_tensor).log_prob(
+            torch.tensor(int(action_index), dtype=torch.long)
+        )
+        theta_dist = torch.distributions.VonMises(
+            torch.tensor(float(theta_mu[action_index]), dtype=torch.float64),
+            torch.tensor(float(theta_kappa[action_index]), dtype=torch.float64),
+        )
+        theta_log_prob = theta_dist.log_prob(torch.tensor(math.radians(float(theta_deg)), dtype=torch.float64))
+    except (TypeError, ValueError, RuntimeError):
+        return None, None
+    return float(point_log_prob.item()), float(theta_log_prob.item())
+
+
 def _nested_float_list(value: Any, index: int) -> list[float]:
     if not isinstance(value, list) or index < 0 or index >= len(value):
         return []
@@ -1527,7 +1851,7 @@ def _synthetic_terrain_metadata(
         return {}
     sidecar_path = _resolved_file(slice_row.get("sidecar"))
     sidecar: dict[str, Any] = {}
-    if sidecar_path is not None and sidecar_path.is_file():
+    if sidecar_path is not None and artifact_io.path_is_file(sidecar_path):
         try:
             sidecar = _read_json(sidecar_path)
         except Exception:
@@ -1590,7 +1914,7 @@ def _synthetic_candidate_pressure_metadata(
     if not bool(config.get("synthetic_terrain_contract_enabled", False)):
         return {}
     sidecar_path = _resolved_file(slice_row.get("sidecar"))
-    if sidecar_path is None or not sidecar_path.is_file():
+    if sidecar_path is None or not artifact_io.path_is_file(sidecar_path):
         return {}
     try:
         sidecar = _read_json(sidecar_path)
@@ -1865,6 +2189,12 @@ def _aggregate_continuous_theta_probe_metadata(
         "platform_contract_hash": flat_metadata.get("platform_contract_hash"),
         "hybrid_astar_current_pose": flat_metadata.get("hybrid_astar_current_pose"),
         "hybrid_astar_current_pose_provenance": flat_metadata.get("hybrid_astar_current_pose_provenance"),
+        "hybrid_astar_planning_grid_source": flat_metadata.get("hybrid_astar_planning_grid_source"),
+        "planner_grid_resolution_m": flat_metadata.get("planner_grid_resolution_m"),
+        "source_grid_resolution_m": flat_metadata.get("source_grid_resolution_m"),
+        "planning_proxy_hash": flat_metadata.get("planning_proxy_hash"),
+        "closed_key_xy_resolution_m": flat_metadata.get("closed_key_xy_resolution_m"),
+        "planning_proxy_candidate_binding": flat_metadata.get("planning_proxy_candidate_binding"),
         "hybrid_astar_theta_proposals_deg_by_candidate": proposal_sets,
         "hybrid_astar_reachable_theta_degs_by_candidate": reachable_sets,
         "hybrid_astar_theta_probe_reachable_flags_by_candidate": reachable_flags_by_candidate,
@@ -1923,6 +2253,7 @@ def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> 
             rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
             reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
             turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+            closed_key_xy_resolution_m=planner_options["closed_key_xy_resolution_m"],
         )
         return int(index), row, None
     except Exception as exc:  # pragma: no cover - represented as per-candidate failure.
@@ -1959,7 +2290,7 @@ def _hybrid_astar_path_cost_metadata(
     if not candidates:
         return {}
     sidecar_path = _resolved_file(slice_row.get("sidecar"))
-    if sidecar_path is None or not sidecar_path.is_file():
+    if sidecar_path is None or not artifact_io.path_is_file(sidecar_path):
         return _hybrid_path_unavailable_metadata(
             candidates,
             reason="sidecar_missing",
@@ -1968,8 +2299,9 @@ def _hybrid_astar_path_cost_metadata(
         )
     try:
         sidecar = _read_json(sidecar_path)
-        grid = build_cost_grid_from_sidecar(sidecar)
-        current_world = _hybrid_cell_center_world(grid.spec, HYBRID_CELL(int(current_cell[0]), int(current_cell[1])))
+        source_grid = build_cost_grid_from_sidecar(sidecar)
+        grid = _hybrid_astar_planning_grid(source_grid, config)
+        current_world = _hybrid_cell_center_world(source_grid.spec, HYBRID_CELL(int(current_cell[0]), int(current_cell[1])))
     except Exception:
         return _hybrid_path_unavailable_metadata(
             candidates,
@@ -1999,12 +2331,23 @@ def _hybrid_astar_path_cost_metadata(
         "rotation_cost_weight": float(config.get("hybrid_astar_rotation_cost_weight", 0.2)),
         "reverse_penalty_weight": float(config.get("hybrid_astar_reverse_penalty_weight", 0.5)),
         "turn_penalty_weight": float(config.get("hybrid_astar_turn_penalty_weight", 0.05)),
+        "closed_key_xy_resolution_m": (
+            float(config["hybrid_astar_closed_key_xy_resolution_m"])
+            if config.get("hybrid_astar_closed_key_xy_resolution_m") is not None
+            else None
+        ),
     }
+    proxy_enabled = grid.metadata.get("planning_grid_source") == "derived_high_res_planning_proxy/v1"
 
     def payload_for(index: int, candidate: dict[str, Any]) -> dict[str, Any]:
         payload = dict(candidate)
         payload.setdefault("candidate_index", index)
         payload.setdefault("candidate_set_hash", candidate_set_hash_value)
+        if proxy_enabled:
+            world_pose = _candidate_goal_world_pose_from_source_grid(source_grid, candidate)
+            if world_pose is not None:
+                payload["candidate_goal_world_pose"] = world_pose
+                payload["planning_proxy_candidate_binding"] = "coarse_candidate_cell_center_world_pose/v1"
         return payload
 
     started = time.perf_counter()
@@ -2058,6 +2401,7 @@ def _hybrid_astar_path_cost_metadata(
                     rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
                     reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
                     turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+                    closed_key_xy_resolution_m=planner_options["closed_key_xy_resolution_m"],
                 )
             except Exception:
                 failed_indices.add(index)
@@ -2099,6 +2443,14 @@ def _hybrid_astar_path_cost_metadata(
         "hybrid_astar_candidate_eval_submitted_count": len(candidates),
         "hybrid_astar_candidate_eval_failed_count": failed_count,
         "hybrid_astar_candidate_eval_duration_s": duration_s,
+        "hybrid_astar_planning_grid_source": grid.metadata.get("planning_grid_source"),
+        "planner_grid_resolution_m": grid.metadata.get("planner_grid_resolution_m"),
+        "source_grid_resolution_m": grid.metadata.get("source_grid_resolution_m"),
+        "planning_proxy_hash": grid.metadata.get("planning_proxy_hash"),
+        "closed_key_xy_resolution_m": planner_options["closed_key_xy_resolution_m"],
+        "planning_proxy_candidate_binding": (
+            "coarse_candidate_cell_center_world_pose/v1" if proxy_enabled else "native_candidate_grid_cell/v1"
+        ),
     }
 
 
@@ -2150,6 +2502,29 @@ def _hybrid_cell_center_world(spec: Any, cell: HYBRID_CELL) -> HYBRID_WORLD_POIN
         float(spec.origin[0]) + (float(cell.x) + 0.5) * float(spec.resolution),
         float(spec.origin[1]) + (float(cell.y) + 0.5) * float(spec.resolution),
     )
+
+
+def _hybrid_astar_planning_grid(source_grid: Any, config: dict[str, Any]) -> Any:
+    if config.get("hybrid_astar_planning_grid_source") != "derived_high_res_planning_proxy/v1":
+        return source_grid
+    return build_derived_high_res_planning_proxy_grid(
+        source_grid,
+        float(config.get("planner_grid_resolution_m") or 1.0),
+    )
+
+
+def _candidate_goal_world_pose_from_source_grid(source_grid: Any, candidate: dict[str, Any]) -> list[float] | None:
+    viewpoint = candidate.get("candidate_viewpoint")
+    if not isinstance(viewpoint, (list, tuple)) or len(viewpoint) < 2:
+        return None
+    try:
+        cell = HYBRID_CELL(int(viewpoint[0]), int(viewpoint[1]))
+    except (TypeError, ValueError):
+        return None
+    if not source_grid.spec.in_bounds(cell):
+        return None
+    world = _hybrid_cell_center_world(source_grid.spec, cell)
+    return [float(world.x), float(world.y)]
 
 
 def _hybrid_path_unavailable_metadata(
@@ -2290,10 +2665,27 @@ def _contract_counts(collection: CollectionResult) -> dict[str, Any]:
         for row in trainable
         if _finite(row["info"].get("old_log_prob_recompute_abs_error")) is not None
     ]
+    trainable_by_scenario: dict[str, int] = {}
+    for row in trainable:
+        scenario_id = str(row.get("scenario_id") or row.get("info", {}).get("scenario_id") or "")
+        if scenario_id:
+            trainable_by_scenario[scenario_id] = trainable_by_scenario.get(scenario_id, 0) + 1
+    terminal_step_histogram: dict[str, int] = {}
+    for row in collection.rejections:
+        if row.get("reason") in {
+            "selected_continuous_theta_hybrid_astar_unreachable",
+            "no_selected_reachable_pose_candidate_terminal",
+            "no_hybrid_reachable_candidate_terminal",
+        }:
+            step_index = _int_or_none(row.get("step_index"))
+            bucket = str(step_index if step_index is not None else "unknown")
+            terminal_step_histogram[bucket] = terminal_step_histogram.get(bucket, 0) + 1
     return {
         "episode_count": len(collection.episodes),
         "sampled_transition_count": len(collection.transitions),
         "trainable_transition_count": len(trainable),
+        "trainable_transition_count_by_scenario": trainable_by_scenario,
+        "scenario_early_terminal_step_histogram": terminal_step_histogram,
         "mask_violation_count": sum(1 for row in trainable if row["info"]["action_mask"][int(row["action_index"])] is not True),
         "hard_risk_violation_count": sum(1 for row in trainable if row["info"].get("hard_risk_violation") is True),
         "non_finite_old_log_prob_count": sum(1 for row in trainable if _finite(row.get("old_log_prob")) is None),
@@ -2302,6 +2694,21 @@ def _contract_counts(collection: CollectionResult) -> dict[str, Any]:
         "old_log_prob_recompute_max_abs_error": max(log_errors) if log_errors else 0.0,
         "terminal_transition_count": sum(1 for row in trainable if row.get("done") is True),
         "transition_with_next_observation_count": sum(1 for row in trainable if row.get("next_observation") is not None),
+        "selected_continuous_theta_unreachable_attempt_count": sum(
+            1 for row in trainable if row.get("selected_continuous_theta_unreachable_attempted") is True
+        ),
+        "selected_continuous_theta_resample_success_count": sum(
+            1 for row in trainable if row.get("selected_theta_resampled_for_reachability") is True
+        ),
+        "selected_candidate_resample_success_count": sum(
+            1 for row in trainable if row.get("selected_candidate_resampled_for_reachability") is True
+        ),
+        "selected_pose_unreachable_terminal_count": sum(
+            1 for row in collection.rejections if row.get("reason") == "no_selected_reachable_pose_candidate_terminal"
+        ),
+        "synthetic_credit_target_selected_count_from_transition_rows": sum(
+            1 for row in trainable if row.get("synthetic_credit_target_selected") is True
+        ),
         "no_hybrid_reachable_candidate_terminal_count": sum(
             1 for row in collection.rejections if row.get("reason") == "no_hybrid_reachable_candidate_terminal"
         ),
@@ -2348,6 +2755,12 @@ def _write_outputs(
         "sampling_method": "torch.distributions.Categorical(logits=old_sampling_logits)",
         "sampling_seed": int(config["sampling_seed"]),
         "sampling_temperature": float(config["sampling_temperature"]),
+        "selected_continuous_theta_reachability_guard_enabled": bool(
+            config.get("selected_continuous_theta_reachability_guard_enabled", False)
+        ),
+        "selected_continuous_theta_unreachable_resample_policy": str(
+            config.get("selected_continuous_theta_unreachable_resample_policy") or "terminal/v1"
+        ),
         "required_scenario_count": int(config["required_scenario_count"]),
         "rollout_steps": int(config["rollout_steps"]),
         "dynamic_max_candidates_per_step": int(config["dynamic_max_candidates_per_step"]),
@@ -2374,6 +2787,22 @@ def _write_outputs(
         "report": str((output_root / REPORT_FILE).resolve()),
         "manifest": str((output_root / MANIFEST_FILE).resolve()),
     }
+    canonical_artifacts = {
+        "summary": str(artifact_path(output_root, STAGE21_1_SUMMARY).resolve()),
+        "episodes": str(artifact_path(output_root, STAGE21_1_EPISODES).resolve()),
+        "transitions": str(artifact_path(output_root, STAGE21_1_TRANSITIONS).resolve()),
+        "trainable_batch": str(artifact_path(output_root, STAGE21_1_TRAINABLE).resolve()),
+        "rejection_report": str(artifact_path(output_root, STAGE21_1_REJECTIONS).resolve()),
+    }
+    legacy_artifacts = {
+        "summary": summary["summary"],
+        "episodes": summary["episodes"],
+        "transitions": summary["transitions"],
+        "trainable_batch": summary["trainable_batch"],
+        "rejection_report": summary["rejection_report"],
+    }
+    summary["canonical_artifacts"] = canonical_artifacts
+    summary["legacy_artifacts"] = legacy_artifacts
     manifest = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "generated_at": generated_at,
@@ -2389,20 +2818,22 @@ def _write_outputs(
             "routing": summary["routing"],
             "report": summary["report"],
         },
+        "canonical_artifacts": canonical_artifacts,
+        "legacy_artifacts": legacy_artifacts,
         "model_audit": collection.model_audit,
         "summary_status": status,
         "next_required_change": route,
     }
-    _write_jsonl(output_root / EPISODES_FILE, collection.episodes)
-    _write_jsonl(output_root / TRANSITIONS_FILE, collection.transitions)
-    _write_jsonl(output_root / TRAINABLE_BATCH_FILE, collection.trainable_batch)
-    _write_jsonl(output_root / REJECTION_FILE, collection.rejections)
+    write_jsonl_artifact(output_root, STAGE21_1_EPISODES, collection.episodes)
+    write_jsonl_artifact(output_root, STAGE21_1_TRANSITIONS, collection.transitions)
+    write_jsonl_artifact(output_root, STAGE21_1_TRAINABLE, collection.trainable_batch)
+    write_jsonl_artifact(output_root, STAGE21_1_REJECTIONS, collection.rejections)
     _write_jsonl(output_root / REWARD_AUDIT_FILE, collection.reward_audit)
     _write_jsonl(output_root / SAMPLING_AUDIT_FILE, collection.sampling_audit)
     _write_json(output_root / ROUTING_FILE, routing)
-    _write_json(output_root / SUMMARY_FILE, summary)
+    write_json_artifact(output_root, STAGE21_1_SUMMARY, summary)
     _write_json(output_root / MANIFEST_FILE, manifest)
-    (output_root / REPORT_FILE).write_text(_render_report(summary), encoding="utf-8")
+    _write_text(output_root / REPORT_FILE, _render_report(summary))
     return summary
 
 
@@ -2474,6 +2905,22 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         config.get("synthetic_credit_mixture_probability", 0.35),
         "synthetic_credit_mixture_probability",
     )
+    config["selected_continuous_theta_reachability_guard_enabled"] = bool(
+        config.get("selected_continuous_theta_reachability_guard_enabled", False)
+    )
+    config["selected_continuous_theta_unreachable_resample_policy"] = str(
+        config.get("selected_continuous_theta_unreachable_resample_policy") or "terminal/v1"
+    )
+    if config["selected_continuous_theta_reachability_guard_enabled"]:
+        if config["selected_continuous_theta_unreachable_resample_policy"] != REACHABILITY_GUARD_THETA_POLICY_ID:
+            raise ConfigError(
+                "selected_continuous_theta_unreachable_resample_policy must be "
+                f"{REACHABILITY_GUARD_THETA_POLICY_ID} when the reachability guard is enabled"
+            )
+        if not config["continuous_theta_action_space_enabled"]:
+            raise ConfigError("selected_continuous_theta_reachability_guard_enabled requires continuous theta action space")
+        if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
+            raise ConfigError("selected_continuous_theta_reachability_guard_enabled requires Hybrid A* path cost")
     config["hybrid_astar_pose_path_cost_enabled"] = bool(
         config.get("hybrid_astar_pose_path_cost_enabled", False)
     )
@@ -2481,6 +2928,20 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         config.get("hybrid_astar_candidate_eval_workers", 1),
         "hybrid_astar_candidate_eval_workers",
     )
+    if config.get("hybrid_astar_planning_grid_source") is not None:
+        config["hybrid_astar_planning_grid_source"] = str(config["hybrid_astar_planning_grid_source"])
+        if config["hybrid_astar_planning_grid_source"] != "derived_high_res_planning_proxy/v1":
+            raise ConfigError("hybrid_astar_planning_grid_source must be derived_high_res_planning_proxy/v1 when provided")
+    if config.get("planner_grid_resolution_m") is not None:
+        config["planner_grid_resolution_m"] = _positive_float(
+            config.get("planner_grid_resolution_m"),
+            "planner_grid_resolution_m",
+        )
+    if config.get("hybrid_astar_closed_key_xy_resolution_m") is not None:
+        config["hybrid_astar_closed_key_xy_resolution_m"] = _positive_float(
+            config.get("hybrid_astar_closed_key_xy_resolution_m"),
+            "hybrid_astar_closed_key_xy_resolution_m",
+        )
     config["initial_theta_deg"] = float(config.get("initial_theta_deg", 0.0))
     config["hybrid_astar_theta_bin_count"] = _positive_int(
         config.get("hybrid_astar_theta_bin_count", 72),
@@ -2551,6 +3012,9 @@ def _load_high_fidelity_config(config: dict[str, Any], *, repo_root: Path) -> di
         "synthetic_source_kind",
         "hybrid_astar_pose_path_cost_enabled",
         "hybrid_astar_candidate_eval_workers",
+        "hybrid_astar_planning_grid_source",
+        "planner_grid_resolution_m",
+        "hybrid_astar_closed_key_xy_resolution_m",
         "initial_theta_deg",
         "hybrid_astar_theta_bin_count",
         "hybrid_astar_goal_position_tolerance_m",
@@ -2582,7 +3046,7 @@ def _input_rejections(config: dict[str, Any], profile: Any) -> list[str]:
     if profile.profile_version != "v3":
         reasons.append("stage21_1_requires_canonical_reward_profile_v3")
     stage21_0_summary = Path(config["stage21_0_readiness_root"]) / "xunce-stage21-0-pure-ppo-readiness-summary.json"
-    if not stage21_0_summary.is_file():
+    if not artifact_io.path_is_file(stage21_0_summary):
         reasons.append("missing_stage21_0_readiness_summary")
     else:
         payload = _read_json(stage21_0_summary)
@@ -2700,6 +3164,17 @@ def _rejection_row(
     }
 
 
+def _planning_proxy_rejection_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "hybrid_astar_planning_grid_source": metadata.get("hybrid_astar_planning_grid_source"),
+        "planner_grid_resolution_m": metadata.get("planner_grid_resolution_m"),
+        "source_grid_resolution_m": metadata.get("source_grid_resolution_m"),
+        "closed_key_xy_resolution_m": metadata.get("closed_key_xy_resolution_m"),
+        "planning_proxy_hash": metadata.get("planning_proxy_hash"),
+        "planning_proxy_candidate_binding": metadata.get("planning_proxy_candidate_binding"),
+    }
+
+
 def _render_report(summary: dict[str, Any]) -> str:
     return "\n".join(
         [
@@ -2719,20 +3194,20 @@ def _render_report(summary: dict[str, Any]) -> str:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    artifact_io.write_json(path, payload)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    artifact_io.write_jsonl(path, rows)
+
+
+def _write_text(path: Path, text: str) -> None:
+    artifact_io.write_text(path, text)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = artifact_io.read_json(path)
     except FileNotFoundError as exc:
         raise ConfigError(f"JSON file does not exist: {path}") from exc
     except json.JSONDecodeError as exc:

@@ -29,6 +29,12 @@ The job id format is:
 h{horizon}_s{seed}_sc{scenario_count}_cr{collector_rollout_steps}_er{eval_rollout_steps}_u{combo_id}
 ```
 
+The full `job_id` is the logical identity recorded in JSON/JSONL state. Physical
+phase directories may use short hash paths such as `j<hash>`, `c<hash>`, and
+`g/<hash>` to avoid Windows MAX_PATH issues in nested Stage26.1/Stage21.5
+artifacts. Wrappers may also mount Stage26.8M under a short child directory such
+as `m`.
+
 Each job advances through:
 
 ```text

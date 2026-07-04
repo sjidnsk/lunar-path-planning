@@ -687,7 +687,37 @@
     "xunce-stage26-8m-generalized-resumable-training-pipeline": {
       "script": "scripts/run_xunce_stage26_8m_generalized_resumable_training_pipeline.py",
       "default_config": "configs/xunce_stage26_8m_generalized_resumable_training_pipeline_v1.json",
-      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8m_generalized_resumable_training_pipeline_v1",
+      "default_output_root": "D:/xunce/out/s26_8m",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8n-aggressive-sample-update-sweep": {
+      "script": "scripts/run_xunce_stage26_8n_aggressive_sample_update_sweep.py",
+      "default_config": "configs/xunce_stage26_8n_aggressive_sample_update_sweep_v1.json",
+      "default_output_root": "D:/xunce/out/s26_8n",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8o-repair-aggressive-collector-trainable-sample-budget": {
+      "script": "scripts/run_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget.py",
+      "default_config": "configs/xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8o_repair_aggressive_collector_trainable_sample_budget_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8p-hybrid-astar-primitive-resolution-sweep": {
+      "script": "scripts/run_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep.py",
+      "default_config": "configs/xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep_v1.json",
+      "default_output_root": "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/outputs/path_feedback_batch_xunce_stage26_8p_hybrid_astar_primitive_resolution_sweep_v1",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8q-derived-high-res-planning-proxy-alignment": {
+      "script": "scripts/run_xunce_stage26_8q_derived_high_res_planning_proxy_alignment.py",
+      "default_config": "configs/xunce_stage26_8q_derived_high_res_planning_proxy_alignment_v1.json",
+      "default_output_root": "D:/xunce/out/s26_8q",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-io1-artifact-path-contract-and-long-path-resilience": {
+      "script": "scripts/run_xunce_stage26_io1_artifact_path_contract.py",
+      "default_config": "configs/xunce_stage26_io1_artifact_path_contract_v1.json",
+      "default_output_root": "D:/xunce/out/s26_io1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
     "xunce-stage18-research-evidence-pipeline": {

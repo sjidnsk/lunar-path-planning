@@ -66,7 +66,7 @@
 - `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
 - `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
 - `hybrid_astar_candidate_eval_workers=4` 是 Stage26 synthetic terrain policy-signal 诊断默认并行 collector 设定。
-- 当前阶段是 Stage26.8M `generalized_resumable_training_pipeline`；把 26.8D/8H/8I 的局部恢复器统一成可配置、可恢复、可审计的训练级 pipeline，状态文件放在 D 盘 output root。
+- 当前阶段是 Stage26.IO1 `artifact_path_contract_and_long_path_resilience`；用公共 long-path IO、短 artifact alias、短 D 盘 output root 治理 Windows 长路径问题，不改变 PPO、reward、Hybrid A*、candidate generation 或 synthetic terrain。
 
 ## Stage26.7C-26.7H Main-Coverable Efficiency And Eval Binding
 
@@ -82,6 +82,7 @@
 - Stage26.8F 不推进 Stage26.8D job，不运行 Stage26.1/26.2/26.3；它只读已完成 Stage26.3 pre/post artifacts，并把 H16/H20 pending job 标记为 source incomplete。
 - Stage26.8G 不改 reward、PPO、network、Hybrid A* 或 synthetic terrain；它只新增 `scenario_diversity_source=synthetic_roi_start_seed_matrix/v1` 与可审计 scenario fixture。
 - Stage26.8M 是后续长时间 PPO update-strength / sample-count 实验的首选通用可恢复 runner；它只编排 `collector -> update -> eval_pre -> eval_post -> aggregate`，状态文件放在 D 盘 output root，不改 reward、network、Hybrid A* 或 synthetic terrain。
+- Stage26.IO1 只治理 artifact IO/path contract：新实验默认写 `D:/xunce/out/<stage_short>`，Stage21.1/21.2/21.3 迁移期双写短名和旧名，历史长 root 只读兼容，不移动旧 outputs。
 
 ## Stage26.3 Synthetic Terrain Post-Update Eval
 
