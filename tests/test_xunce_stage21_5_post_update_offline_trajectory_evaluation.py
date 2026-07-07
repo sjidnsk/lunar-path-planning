@@ -307,6 +307,235 @@ def test_stage21_5_routes_post_unreachable_selected_as_regression(tmp_path: Path
     assert "post_unreachable_selected_count_nonzero" in summary["reason_codes"]
 
 
+def test_stage21_5_rejects_missing_selected_reachability_provenance_when_hard_gate_enabled(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, model_inference_rows=_model_inference_rows())
+    _write_eval_root(
+        root / "post",
+        final=0.42,
+        auc=1.12,
+        model_inference_rows=_model_inference_rows(omit_provenance=True),
+    )
+    config = _write_config(
+        root,
+        candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+    )
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == ROUTE_POST_UNREACHABLE
+    assert summary["pre_selected_reachability_provenance_invalid_count"] == 0
+    assert summary["post_selected_reachability_provenance_invalid_count"] == 2
+    assert "post_selected_reachability_provenance_invalid_count_nonzero" in summary["reason_codes"]
+
+
+def test_stage21_5_excludes_no_valid_action_terminal_from_selected_reachability_audit(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, model_inference_rows=_model_inference_rows())
+    rows = _model_inference_rows()
+    rows.append(
+        {
+            "policy": "xunce",
+            "scenario_id": "scenario-terminal",
+            "step_index": 7,
+            "true_model_inference_executed": False,
+            "inference_skipped_reason": "no_valid_action",
+            "terminal_reason": "no_valid_action",
+            "episode_termination_reason": "no_valid_action",
+            "reason_codes": ["no_valid_action"],
+        }
+    )
+    _write_eval_root(root / "post", final=0.42, auc=1.12, model_inference_rows=rows)
+    config = _write_config(
+        root,
+        candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+    )
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["post_selected_reachability_audited_count"] == 2
+    assert summary["post_selected_reachability_provenance_pass_count"] == 2
+    assert summary["post_selected_reachability_provenance_invalid_count"] == 0
+    assert "post_selected_reachability_provenance_invalid_count_nonzero" not in summary["reason_codes"]
+
+
+def test_stage21_5_does_not_exclude_executed_selected_row_with_no_valid_action_marker(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, model_inference_rows=_model_inference_rows())
+    rows = _model_inference_rows()
+    rows[0].pop("selected_candidate_reachability_provenance")
+    rows[0]["true_model_inference_executed"] = True
+    rows[0]["selected_action_index"] = 0
+    rows[0]["inference_skipped_reason"] = None
+    rows[0]["reason_codes"] = ["no_valid_action"]
+    _write_eval_root(root / "post", final=0.42, auc=1.12, model_inference_rows=rows)
+    config = _write_config(
+        root,
+        candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+    )
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["post_selected_reachability_audited_count"] == 2
+    assert summary["post_selected_reachability_provenance_invalid_count"] == 1
+    assert "post_selected_reachability_provenance_invalid_count_nonzero" in summary["reason_codes"]
+
+
+def test_stage21_5_candidate_index_mismatch_invalid_sample_includes_binding_diagnostics(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, model_inference_rows=_model_inference_rows())
+    rows = _model_inference_rows()
+    rows[0]["selected_action_index"] = 2
+    rows[0]["selected_base_candidate_index"] = 2
+    rows[0]["selected_candidate_reachability_provenance"] = _selected_reachability_provenance(
+        candidate_index=0,
+        candidate_set_hash="set-0",
+    )
+    _write_eval_root(root / "post", final=0.42, auc=1.12, model_inference_rows=rows)
+    config = _write_config(
+        root,
+        candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+    )
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == ROUTE_POST_UNREACHABLE
+    assert summary["post_selected_reachability_candidate_index_mismatch_count"] == 1
+    audit = json.loads((root / "out" / "xunce-stage21-5-selected-pose-evidence-audit.json").read_text(encoding="utf-8"))
+    post_sample = audit["post"]["invalid_samples"][0]
+    assert "selected_reachability_candidate_index_mismatch" in post_sample["reason_codes"]
+    assert post_sample["row_selected_action_index"] == 2
+    assert post_sample["row_selected_base_candidate_index"] == 2
+    assert post_sample["provenance_candidate_index"] == 0
+    assert post_sample["candidate_set_hash_match"] is True
+    assert post_sample["planner_hash_match"] is True
+
+
+def test_stage21_5_allows_selected_base_candidate_set_hash_to_match_provenance_hash(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, model_inference_rows=_model_inference_rows())
+    rows = _model_inference_rows()
+    rows[0]["candidate_set_hash"] = "expanded-set-0"
+    rows[0]["selected_base_candidate_set_hash"] = "set-0"
+    rows[0]["base_candidate_set_hash"] = "unused-base-set-0"
+    _write_eval_root(root / "post", final=0.42, auc=1.12, model_inference_rows=rows)
+    config = _write_config(
+        root,
+        candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+    )
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["post_selected_reachability_provenance_invalid_count"] == 0
+    audit = json.loads((root / "out" / "xunce-stage21-5-selected-pose-evidence-audit.json").read_text(encoding="utf-8"))
+    assert audit["post"]["selected_reachability_candidate_set_hash_mismatch_count"] == 0
+    assert audit["post"]["selected_reachability_candidate_set_hash_conflict_count"] == 1
+    assert (root / "out" / "selected_pose_audit.json").is_file()
+
+
+def test_stage21_5_rejects_selected_base_candidate_set_hash_mismatch_even_when_fallback_matches(
+    tmp_path: Path,
+) -> None:
+    root = _fixture_root(tmp_path)
+    _write_stage21_4(root / "stage21_4")
+    _write_eval_root(root / "pre", final=0.40, auc=1.10, model_inference_rows=_model_inference_rows())
+    rows = _model_inference_rows()
+    rows[0]["selected_base_candidate_set_hash"] = "wrong-selected-base-set"
+    rows[0]["candidate_set_hash"] = "set-0"
+    _write_eval_root(root / "post", final=0.42, auc=1.12, model_inference_rows=rows)
+    config = _write_config(
+        root,
+        candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+    )
+
+    summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+        config_path=config,
+        output_root=root / "out",
+        repo_root=root,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["post_selected_reachability_provenance_invalid_count"] == 1
+    audit = json.loads((root / "out" / "xunce-stage21-5-selected-pose-evidence-audit.json").read_text(encoding="utf-8"))
+    post_sample = audit["post"]["invalid_samples"][0]
+    assert "selected_reachability_candidate_set_hash_mismatch" in post_sample["reason_codes"]
+    assert post_sample["candidate_set_hash_match"] is False
+    assert post_sample["candidate_set_hash_preferred_field"] == "selected_base_candidate_set_hash"
+    assert post_sample["candidate_set_hash_preferred_value"] == "wrong-selected-base-set"
+    assert post_sample["candidate_set_hash_conflict"] is True
+
+
+def test_stage21_5_int_or_none_rejects_non_integral_or_infinite_values() -> None:
+    import scripts.run_xunce_stage21_5_post_update_offline_trajectory_evaluation as stage21_5
+
+    assert stage21_5._int_or_none(2.0) == 2
+    assert stage21_5._int_or_none(1.7) is None
+    assert stage21_5._int_or_none(float("inf")) is None
+
+
+def test_stage21_5_rejects_missing_selected_reachability_binding_fields(tmp_path: Path) -> None:
+    cases = (
+        ("candidate_set_hash", "selected_reachability_candidate_set_hash_missing"),
+        ("candidate_index", "selected_reachability_candidate_index_missing"),
+        ("candidate_theta_deg", "selected_reachability_theta_missing"),
+    )
+    for field, expected_reason in cases:
+        case_root = tmp_path / field
+        case_root.mkdir()
+        root = _fixture_root(case_root)
+        _write_stage21_4(root / "stage21_4")
+        _write_eval_root(root / "pre", final=0.40, auc=1.10, model_inference_rows=_model_inference_rows())
+        rows = _model_inference_rows()
+        rows[0]["selected_candidate_reachability_provenance"].pop(field)
+        _write_eval_root(root / "post", final=0.42, auc=1.12, model_inference_rows=rows)
+        config = _write_config(
+            root,
+            candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+        )
+
+        summary = run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
+            config_path=config,
+            output_root=root / "out",
+            repo_root=root,
+        )
+
+        assert summary["status"] == "failed"
+        assert summary["post_selected_reachability_provenance_invalid_count"] == 1
+        audit = json.loads((root / "out" / "xunce-stage21-5-selected-pose-evidence-audit.json").read_text(encoding="utf-8"))
+        assert expected_reason in audit["post"]["reason_codes"]
+        assert expected_reason in audit["post"]["invalid_samples"][0]["reason_codes"]
+
+
 def test_stage21_5_prioritizes_post_unreachable_when_pre_and_post_unreachable(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     _write_stage21_4(root / "stage21_4")
@@ -537,6 +766,7 @@ def _write_eval_root(
     unreachable_selected_count: int = 0,
     scenario_count: int = 2,
     incumbent_checkpoint_loaded: bool = True,
+    model_inference_rows: list[dict] | None = None,
 ) -> None:
     root.mkdir(parents=True, exist_ok=True)
     summary = {
@@ -588,3 +818,47 @@ def _write_eval_root(
         "\n".join(json.dumps(row) for row in rows) + "\n",
         encoding="utf-8",
     )
+    if model_inference_rows is not None:
+        (root / "xunce-exploration-coverage-model-inference.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in model_inference_rows) + "\n",
+            encoding="utf-8",
+        )
+
+
+def _model_inference_rows(*, omit_provenance: bool = False) -> list[dict]:
+    rows: list[dict] = []
+    for index, scenario_id in enumerate(("scenario-a", "scenario-b")):
+        provenance = _selected_reachability_provenance(candidate_index=0, candidate_set_hash=f"set-{index}")
+        row = {
+            "policy": "xunce",
+            "scenario_id": scenario_id,
+            "step_index": 0,
+            "true_model_inference_executed": True,
+            "selected_action_index": 0,
+            "candidate_set_hash": f"set-{index}",
+            "candidate_theta_deg": 0.0,
+            "candidate_reachability_gate_source": "hybrid_astar_pose_reachability/v1",
+            "candidate_reachability_planner_config_hash": "planner-hash",
+            "selected_reachability_planner_config_hash": "planner-hash",
+            "selected_reachability_provenance_valid": not omit_provenance,
+            "reason_codes": [],
+        }
+        if not omit_provenance:
+            row["selected_candidate_reachability_provenance"] = provenance
+        rows.append(row)
+    return rows
+
+
+def _selected_reachability_provenance(*, candidate_index: int, candidate_set_hash: str) -> dict:
+    return {
+        "schema_version": "xunce-candidate-reachability-provenance/v1",
+        "source": "hybrid_astar_pose_reachability/v1",
+        "backend": "hybrid_astar_pose_path/v1",
+        "candidate_index": candidate_index,
+        "candidate_set_hash": candidate_set_hash,
+        "candidate_theta_deg": 0.0,
+        "planner_config_hash": "planner-hash",
+        "reachable": True,
+        "path_cost": 3.0,
+        "pose_path_hash": "pose-hash",
+    }

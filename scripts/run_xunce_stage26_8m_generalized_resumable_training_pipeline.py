@@ -66,6 +66,19 @@ BOUNDARY_FIELDS = (
 )
 COLLECTOR_REUSE_NONE = "none/v1"
 COLLECTOR_REUSE_BY_HORIZON_SEED_SCENARIO_ROLLOUT = "by_horizon_seed_scenario_rollout/v1"
+PLANNER_OVERRIDE_SOURCE = "derived_high_res_planning_proxy/v1"
+PLANNER_OVERRIDE_FIELDS = (
+    "hybrid_astar_planning_grid_source",
+    "planner_grid_resolution_m",
+    "hybrid_astar_closed_key_xy_resolution_m",
+    "hybrid_astar_primitive_duration_s",
+    "hybrid_astar_goal_position_tolerance_m",
+    "hybrid_astar_goal_theta_tolerance_deg",
+    "hybrid_astar_max_iterations",
+    "hybrid_astar_integration_dt_s",
+    "hybrid_astar_max_speed_mps",
+    "hybrid_astar_max_angular_speed_degps",
+)
 
 ROUTE_INPUTS = "rerun_stage26_8m_required_inputs"
 ROUTE_RESUME_STATE = "repair_stage26_8m_resume_state_contract"
@@ -86,10 +99,20 @@ COUNT_FIELDS_REQUIRING_ZERO = (
     "explicit_unreachable_selected_provenance_count",
     "pre_unreachable_selected_count",
     "post_unreachable_selected_count",
+    "pre_selected_reachability_provenance_invalid_count",
+    "post_selected_reachability_provenance_invalid_count",
     "hard_risk_violation_count",
     "mask_violation_count",
     "path_planning_failure_count",
     "open_grid_fallback_count",
+)
+DIAGNOSTIC_COUNT_FIELDS = (
+    "pre_no_valid_action_terminal_count",
+    "post_no_valid_action_terminal_count",
+    "no_valid_action_terminal_count",
+    "pre_model_inference_skipped_terminal_count",
+    "post_model_inference_skipped_terminal_count",
+    "model_inference_skipped_terminal_count",
 )
 
 
@@ -197,6 +220,11 @@ def run_xunce_stage26_8m_generalized_resumable_training_pipeline(
         "synthetic_source_kind": config["synthetic_source_kind"],
         "action_space_type": config["action_space_type"],
         "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+        "candidate_reachability_gate_source": config["candidate_reachability_gate_source"],
+        "candidate_reachability_max_theta_proposals_per_candidate": int(
+            config["candidate_reachability_max_theta_proposals_per_candidate"]
+        ),
+        "candidate_reachability_theta_proposal_policy": config["candidate_reachability_theta_proposal_policy"],
         "max_traversable_slope_deg": float(config["max_traversable_slope_deg"]),
         "boundary_rejections": boundary_rejections,
         "input_rejections": input_rejections,
@@ -237,6 +265,12 @@ def run_xunce_stage26_8m_generalized_resumable_training_pipeline(
             "routing": str(output_root / ROUTING_FILE),
             "report": str(output_root / REPORT_FILE),
         },
+        "candidate_reachability_gate_source": config["candidate_reachability_gate_source"],
+        "candidate_reachability_max_theta_proposals_per_candidate": int(
+            config["candidate_reachability_max_theta_proposals_per_candidate"]
+        ),
+        "candidate_reachability_theta_proposal_policy": config["candidate_reachability_theta_proposal_policy"],
+        "planner_overrides": _planner_override_config(config),
     }
 
     _write_json(output_root / JOB_PLAN_FILE, {"schema_version": JOB_PLAN_SCHEMA_VERSION, "jobs": _job_plan_rows(job_rows)})
@@ -305,6 +339,11 @@ def _run_phase(row: dict[str, Any], *, config: dict[str, Any], output_root: Path
             _ensure_summary(root / stage26_3.SUMMARY_FILE, summary)
         else:  # pragma: no cover
             raise ValueError(f"unknown phase: {phase}")
+        if summary:
+            summary = dict(summary)
+            summary["stage26_8m_phase_config_hash"] = job["phase_config_hashes"][phase]
+            summary["stage26_8m_input_hash"] = job["input_hash"]
+            _write_json(_phase_summary_path(job_root, phase, job), summary)
         status = summary.get("status")
         blocking_reason = "" if summary else "summary_missing_after_execution"
     except Exception as exc:  # pragma: no cover - exercised through tests by monkeypatch
@@ -374,6 +413,12 @@ def _scan_jobs(
                     "selected_action_changed_count": int(record["summary"].get("selected_action_changed_count") or 0),
                     "main_coverage_per_100m_delta": _coverage_per_100m_delta(record["summary"]) if phase == "aggregate" else 0.0,
                     "main_final_coverage_delta": _first_float(record["summary"].get("main_final_coverage_delta"), record["summary"].get("final_coverage_delta")) if phase == "aggregate" else 0.0,
+                    "pre_no_valid_action_terminal_count": _phase_diagnostic_count(record["summary"], phase, "pre", "no_valid_action_terminal_count"),
+                    "post_no_valid_action_terminal_count": _phase_diagnostic_count(record["summary"], phase, "post", "no_valid_action_terminal_count"),
+                    "no_valid_action_terminal_count": _diagnostic_count(record["summary"], "no_valid_action_terminal_count"),
+                    "pre_model_inference_skipped_terminal_count": _phase_diagnostic_count(record["summary"], phase, "pre", "model_inference_skipped_terminal_count"),
+                    "post_model_inference_skipped_terminal_count": _phase_diagnostic_count(record["summary"], phase, "post", "model_inference_skipped_terminal_count"),
+                    "model_inference_skipped_terminal_count": _diagnostic_count(record["summary"], "model_inference_skipped_terminal_count"),
                     "coverage_denominator_source": config["coverage_denominator_source"],
                     "coverage_source": config["coverage_source"],
                     "path_cost_source": config["path_cost_source"],
@@ -418,6 +463,17 @@ def _phase_record(
         and bool(existing.get("input_hash"))
         and str(existing.get("input_hash")) != str(job["input_hash"])
     )
+    summary_hash_required = phase in {"eval_pre", "eval_post", "aggregate"} and bool(existing)
+    summary_hash_mismatch = (
+        summary_hash_required
+        and bool(summary)
+        and str(summary.get("stage26_8m_phase_config_hash") or "") != expected_config_hash
+    )
+    summary_input_hash_mismatch = (
+        summary_hash_required
+        and bool(summary)
+        and str(summary.get("stage26_8m_input_hash") or "") != str(job["input_hash"])
+    )
     existing_state_matches = (
         existing_points_to_current_root
         and bool(existing.get("config_hash"))
@@ -425,15 +481,20 @@ def _phase_record(
         and str(existing.get("config_hash")) == expected_config_hash
         and str(existing.get("input_hash")) == str(job["input_hash"])
     )
-    collector_reuse_key_reason = _collector_reuse_marker_blocking_reason(root, job, summary, existing_state_matches)
-    complete = _phase_complete(phase, root, summary, job["max_abs_approx_kl"])
-    failed = _phase_failed(phase, root, summary, job["max_abs_approx_kl"])
-    if hash_mismatch:
-        status = "failed"
-        reason = "config_hash_mismatch"
-    elif input_hash_mismatch:
-        status = "failed"
-        reason = "input_hash_mismatch"
+    stale_state_ignored = hash_mismatch or input_hash_mismatch or summary_hash_mismatch or summary_input_hash_mismatch
+    status_summary = {} if stale_state_ignored else summary
+    collector_reuse_key_reason = _collector_reuse_marker_blocking_reason(
+        root,
+        job,
+        status_summary,
+        existing_state_matches,
+    )
+    complete = _phase_complete(phase, root, status_summary, job["max_abs_approx_kl"])
+    failed = _phase_failed(phase, root, status_summary, job["max_abs_approx_kl"])
+    if stale_state_ignored:
+        status = "pending"
+        reason = "stale_resume_state_ignored"
+        status_summary = {}
     elif collector_reuse_key_reason:
         status = "failed"
         reason = collector_reuse_key_reason
@@ -453,7 +514,7 @@ def _phase_record(
         "source_root": str(root),
         "output_root": str(root),
         "summary_path": str(summary_path),
-        "summary": summary,
+        "summary": status_summary,
         "blocking_reason": reason,
         "started_at": execution.get("started_at"),
         "finished_at": execution.get("finished_at"),
@@ -573,6 +634,8 @@ def _build_collector_config(config: dict[str, Any], job: dict[str, Any], config_
             "rollout_steps": int(job["collector_rollout_steps"]),
             "action_space_type": config["action_space_type"],
             "continuous_theta_action_space_enabled": True,
+            "selected_continuous_theta_reachability_guard_enabled": True,
+            "selected_continuous_theta_unreachable_resample_policy": _selected_theta_reachability_guard_policy(),
             "synthetic_credit_feature_exposure_enabled": True,
             "synthetic_exploration_credit_enabled": True,
             "allow_synthetic_credit_behavior_policy": True,
@@ -582,7 +645,13 @@ def _build_collector_config(config: dict[str, Any], job: dict[str, Any], config_
             "stage26_8m_source_scenario_fixture_root": config["source_scenario_fixture_root"],
             "scenario_seed_base": int(job["seed"]),
             "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+            "candidate_reachability_gate_source": config["candidate_reachability_gate_source"],
+            "candidate_reachability_max_theta_proposals_per_candidate": int(
+                config["candidate_reachability_max_theta_proposals_per_candidate"]
+            ),
+            "candidate_reachability_theta_proposal_policy": config["candidate_reachability_theta_proposal_policy"],
             "max_traversable_slope_deg": float(config["max_traversable_slope_deg"]),
+            **_planner_override_config(config),
             "stage26_1_authorized": False,
             "runs_new_ppo_update": False,
             "publishes_checkpoint": False,
@@ -654,6 +723,12 @@ def _build_stage26_3_base_config(config: dict[str, Any], job: dict[str, Any], jo
             "continuous_theta_action_space_enabled": True,
             "synthetic_credit_feature_exposure_enabled": True,
             "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+            "candidate_reachability_gate_source": config["candidate_reachability_gate_source"],
+            "candidate_reachability_max_theta_proposals_per_candidate": int(
+                config["candidate_reachability_max_theta_proposals_per_candidate"]
+            ),
+            "candidate_reachability_theta_proposal_policy": config["candidate_reachability_theta_proposal_policy"],
+            **_planner_override_config(config),
             "stage21_5_timeout_seconds": 0.0,
             "stage26_3_authorized": False,
             "release_or_training_authorized": False,
@@ -681,6 +756,11 @@ def _build_stage21_5_eval_config(
         "theta_aware_candidate_viewpoints_enabled": True,
         "slope_obstacle_aware_theta_reward_enabled": True,
         "hybrid_astar_pose_path_cost_enabled": True,
+        "candidate_reachability_gate_source": config["candidate_reachability_gate_source"],
+        "candidate_reachability_max_theta_proposals_per_candidate": int(
+            config["candidate_reachability_max_theta_proposals_per_candidate"]
+        ),
+        "candidate_reachability_theta_proposal_policy": config["candidate_reachability_theta_proposal_policy"],
         "synthetic_terrain_contract_enabled": True,
         "obstacle_occlusion_enabled": True,
         "coverage_source": config["coverage_source"],
@@ -708,6 +788,7 @@ def _build_stage21_5_eval_config(
         "sensor_fov_deg": float(stage26_3_config["sensor_fov_deg"]),
         "sensor_range_cells": int(stage26_3_config["sensor_range_cells"]),
         **{field: stage26_3_config[field] for field in stage26_3.HYBRID_ASTAR_PLANNER_FIELDS},
+        **_planner_override_config(stage26_3_config),
         "default_astar_replaced": False,
         "hybrid_astar_ackermann_feasible_claimed": False,
         "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
@@ -753,6 +834,35 @@ def _write_temp_stage26_3_config(
     path = config_root / "stage26-3-base-config.json"
     _write_json(path, _build_stage26_3_base_config(config, job, job_root, repo_root))
     return path
+
+
+def _planner_override_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    if config.get("hybrid_astar_planning_grid_source") != PLANNER_OVERRIDE_SOURCE:
+        return {}
+    return {field: config[field] for field in PLANNER_OVERRIDE_FIELDS if config.get(field) is not None}
+
+
+def _selected_theta_reachability_guard_policy() -> str:
+    return str(getattr(stage26_1.stage21_1, "REACHABILITY_GUARD_THETA_POLICY_ID", "reachable_theta_proposal/v1"))
+
+
+def _validate_planner_overrides(config: dict[str, Any]) -> None:
+    source_field = "hybrid_astar_planning_grid_source"
+    source = config.get(source_field)
+    override_fields = [field for field in PLANNER_OVERRIDE_FIELDS if field != source_field and config.get(field) is not None]
+    if source is None:
+        if override_fields:
+            raise ValueError(f"{source_field} must be {PLANNER_OVERRIDE_SOURCE} when planner override fields are provided")
+    else:
+        source = str(config[source_field])
+        if source != PLANNER_OVERRIDE_SOURCE:
+            raise ValueError(f"{source_field} must be {PLANNER_OVERRIDE_SOURCE} when provided")
+        config[source_field] = source
+    for field in override_fields:
+        if field == "hybrid_astar_max_iterations":
+            config[field] = _positive_int(config[field], field)
+        else:
+            config[field] = _positive_float(config[field], field)
 
 
 def _checkpoint_for_eval(update_root: Path, *, label: str) -> Path:
@@ -884,6 +994,17 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         "synthetic_source_kind": stage26_8.SYNTHETIC_SOURCE_KIND,
         "action_space_type": stage26_8.ACTION_SPACE_TYPE,
         "hybrid_astar_candidate_eval_workers": 4,
+        "candidate_reachability_gate_source": getattr(
+            stage21_5,
+            "CANDIDATE_REACHABILITY_GATE_LEGACY",
+            "legacy_action_mask_validation/v1",
+        ),
+        "candidate_reachability_max_theta_proposals_per_candidate": 0,
+        "candidate_reachability_theta_proposal_policy": getattr(
+            stage26_1.stage21_1,
+            "CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY",
+            "candidate_viewpoint_current_step/v1",
+        ),
         "max_traversable_slope_deg": 30.0,
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
@@ -912,7 +1033,40 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     }:
         raise ValueError("collector_reuse_policy is invalid")
     config["hybrid_astar_candidate_eval_workers"] = _positive_int(config["hybrid_astar_candidate_eval_workers"], "hybrid_astar_candidate_eval_workers")
+    config["candidate_reachability_gate_source"] = str(config["candidate_reachability_gate_source"])
+    if config["candidate_reachability_gate_source"] not in {
+        getattr(stage21_5, "CANDIDATE_REACHABILITY_GATE_LEGACY", "legacy_action_mask_validation/v1"),
+        getattr(stage21_5, "CANDIDATE_REACHABILITY_GATE_SOURCE", "hybrid_astar_pose_reachability/v1"),
+    }:
+        raise ValueError("candidate_reachability_gate_source is invalid")
+    config["candidate_reachability_max_theta_proposals_per_candidate"] = int(
+        config.get("candidate_reachability_max_theta_proposals_per_candidate", 0) or 0
+    )
+    if config["candidate_reachability_max_theta_proposals_per_candidate"] < 0:
+        raise ValueError("candidate_reachability_max_theta_proposals_per_candidate must be nonnegative")
+    config["candidate_reachability_theta_proposal_policy"] = str(
+        config.get("candidate_reachability_theta_proposal_policy")
+        or getattr(
+            stage26_1.stage21_1,
+            "CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY",
+            "candidate_viewpoint_current_step/v1",
+        )
+    )
+    if config["candidate_reachability_theta_proposal_policy"] not in {
+        getattr(
+            stage26_1.stage21_1,
+            "CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY",
+            "candidate_viewpoint_current_step/v1",
+        ),
+        getattr(
+            stage26_1.stage21_1,
+            "CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR",
+            "candidate_current_bearing_sweep/v1",
+        ),
+    }:
+        raise ValueError("candidate_reachability_theta_proposal_policy is invalid")
     config["max_traversable_slope_deg"] = float(config["max_traversable_slope_deg"])
+    _validate_planner_overrides(config)
     for field in ("base_stage26_1_config", "base_stage26_2_config", "base_stage26_3_config", "source_scenario_fixture_root"):
         config[field] = str(_resolve_path(Path(str(config[field])), repo_root))
     for field in BOUNDARY_FIELDS:
@@ -1008,6 +1162,14 @@ def _efficiency_aggregate(job_rows: list[dict[str, Any]]) -> dict[str, Any]:
         row for row in changed_rows if float(row.get("main_coverage_per_100m_delta") or 0.0) < 0.0 and not row.get("binding_or_safety_failure") and not row.get("lineage_mismatch")
     ]
     total_jobs = len({row["job_id"] for row in job_rows})
+    pre_no_valid_action_terminal_count = sum(_diagnostic_count(row, "pre_no_valid_action_terminal_count") for row in job_rows)
+    post_no_valid_action_terminal_count = sum(_diagnostic_count(row, "post_no_valid_action_terminal_count") for row in job_rows)
+    pre_model_inference_skipped_terminal_count = sum(
+        _diagnostic_count(row, "pre_model_inference_skipped_terminal_count") for row in job_rows
+    )
+    post_model_inference_skipped_terminal_count = sum(
+        _diagnostic_count(row, "post_model_inference_skipped_terminal_count") for row in job_rows
+    )
     return {
         "schema_version": EFFICIENCY_AGGREGATE_SCHEMA_VERSION,
         "job_count": total_jobs,
@@ -1020,6 +1182,14 @@ def _efficiency_aggregate(job_rows: list[dict[str, Any]]) -> dict[str, Any]:
         "clean_action_changed_negative_efficiency_count": len(clean_changed_negative),
         "mean_main_coverage_per_100m_delta": _mean([row.get("main_coverage_per_100m_delta") for row in aggregate_rows]),
         "completed_job_ids": [row["job_id"] for row in aggregate_rows],
+        "pre_no_valid_action_terminal_count": pre_no_valid_action_terminal_count,
+        "post_no_valid_action_terminal_count": post_no_valid_action_terminal_count,
+        "no_valid_action_terminal_count": pre_no_valid_action_terminal_count + post_no_valid_action_terminal_count,
+        "pre_model_inference_skipped_terminal_count": pre_model_inference_skipped_terminal_count,
+        "post_model_inference_skipped_terminal_count": post_model_inference_skipped_terminal_count,
+        "model_inference_skipped_terminal_count": (
+            pre_model_inference_skipped_terminal_count + post_model_inference_skipped_terminal_count
+        ),
     }
 
 
@@ -1210,9 +1380,15 @@ def _phase_config_hash(config: dict[str, Any], job: dict[str, Any], phase: str) 
             "synthetic_source_kind",
             "action_space_type",
             "hybrid_astar_candidate_eval_workers",
+            "candidate_reachability_gate_source",
+            "candidate_reachability_max_theta_proposals_per_candidate",
+            "candidate_reachability_theta_proposal_policy",
             "max_traversable_slope_deg",
         )
     }
+    common_contracts["planner_overrides"] = _planner_override_config(config)
+    common_contracts["selected_continuous_theta_reachability_guard_enabled"] = True
+    common_contracts["selected_continuous_theta_unreachable_resample_policy"] = _selected_theta_reachability_guard_policy()
     if phase == "collector":
         payload = {
             "phase": phase,
@@ -1247,53 +1423,77 @@ def _phase_config_hash(config: dict[str, Any], job: dict[str, Any], phase: str) 
             "max_abs_approx_kl": config["max_abs_approx_kl"],
             "contracts": common_contracts,
         }
+        if phase in {"eval_pre", "eval_post", "aggregate"}:
+            payload["eval_binding_implementation_fingerprint"] = _eval_binding_implementation_fingerprint()
     return _stable_hash(payload)
 
 
 def _job_config_hash(config: dict[str, Any], job: dict[str, Any]) -> str:
+    contracts = {
+        key: config[key]
+        for key in (
+            "coverage_denominator_source",
+            "post_update_success_metric",
+            "coverage_source",
+            "path_cost_source",
+            "synthetic_source_kind",
+            "action_space_type",
+            "hybrid_astar_candidate_eval_workers",
+            "candidate_reachability_gate_source",
+            "candidate_reachability_max_theta_proposals_per_candidate",
+            "candidate_reachability_theta_proposal_policy",
+            "max_traversable_slope_deg",
+            "max_abs_approx_kl",
+            "collector_reuse_policy",
+        )
+    }
+    contracts["planner_overrides"] = _planner_override_config(config)
+    contracts["selected_continuous_theta_reachability_guard_enabled"] = True
+    contracts["selected_continuous_theta_unreachable_resample_policy"] = _selected_theta_reachability_guard_policy()
     payload = {
         "job": {key: job[key] for key in ("horizon", "seed", "scenario_count", "collector_rollout_steps", "eval_rollout_steps", "update_combo_id")},
         "combo": job["update_combo"],
-        "contracts": {
-            key: config[key]
-            for key in (
-                "coverage_denominator_source",
-                "post_update_success_metric",
-                "coverage_source",
-                "path_cost_source",
-                "synthetic_source_kind",
-                "action_space_type",
-                "hybrid_astar_candidate_eval_workers",
-                "max_traversable_slope_deg",
-                "max_abs_approx_kl",
-                "collector_reuse_policy",
-            )
-        },
+        "contracts": contracts,
     }
     return _stable_hash(payload)
 
 
 def _experiment_config_hash(config: dict[str, Any]) -> str:
-    return _stable_hash(
-        {
-            key: config[key]
-            for key in (
-                "horizons",
-                "seeds",
-                "scenario_counts",
-                "collector_rollout_steps",
-                "eval_rollout_steps",
-                "update_combos",
-                "max_abs_approx_kl",
-                "collector_reuse_policy",
-            )
-        }
-    )
+    payload = {
+        key: config[key]
+        for key in (
+            "horizons",
+            "seeds",
+            "scenario_counts",
+            "collector_rollout_steps",
+            "eval_rollout_steps",
+            "update_combos",
+            "max_abs_approx_kl",
+            "collector_reuse_policy",
+            "candidate_reachability_gate_source",
+            "candidate_reachability_max_theta_proposals_per_candidate",
+            "candidate_reachability_theta_proposal_policy",
+        )
+    }
+    payload["planner_overrides"] = _planner_override_config(config)
+    payload["selected_continuous_theta_reachability_guard_enabled"] = True
+    payload["selected_continuous_theta_unreachable_resample_policy"] = _selected_theta_reachability_guard_policy()
+    return _stable_hash(payload)
 
 
 def _input_hash(config: dict[str, Any], repo_root: Path) -> str:
     return _stable_hash(
         {
+            "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+            "candidate_reachability_max_theta_proposals_per_candidate": config.get(
+                "candidate_reachability_max_theta_proposals_per_candidate"
+            ),
+            "candidate_reachability_theta_proposal_policy": config.get(
+                "candidate_reachability_theta_proposal_policy"
+            ),
+            "planner_overrides": _planner_override_config(config),
+            "selected_continuous_theta_reachability_guard_enabled": True,
+            "selected_continuous_theta_unreachable_resample_policy": _selected_theta_reachability_guard_policy(),
             "source_scenario_fixture_root": config.get("source_scenario_fixture_root"),
             "source_scenario_fixture_fingerprint": _source_fixture_fingerprint(
                 _resolve_path(Path(str(config.get("source_scenario_fixture_root", ""))), repo_root)
@@ -1381,6 +1581,22 @@ def _file_fingerprint(path: Path) -> dict[str, Any]:
         "exists": True,
         "size": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def _module_fingerprint(module: Any) -> dict[str, Any]:
+    module_path = getattr(module, "__file__", None)
+    if not module_path:
+        return {"path": "", "exists": False}
+    return _file_fingerprint(Path(str(module_path)).resolve())
+
+
+def _eval_binding_implementation_fingerprint() -> dict[str, Any]:
+    return {
+        "stage26_8m": _file_fingerprint(Path(__file__).resolve()),
+        "high_fidelity": _module_fingerprint(hf),
+        "stage21_5": _module_fingerprint(stage21_5),
+        "stage26_3": _module_fingerprint(stage26_3),
     }
 
 
@@ -1475,7 +1691,32 @@ def _first_float(*values: Any) -> float:
 
 
 def _coverage_per_100m_delta(summary: dict[str, Any]) -> float:
-    return _first_float(summary.get("main_coverage_per_100m_delta"))
+    if summary.get("main_coverage_per_100m_delta") is not None:
+        return _first_float(summary.get("main_coverage_per_100m_delta"))
+    if _uses_main_coverable_efficiency_metric(summary):
+        return _first_float(summary.get("coverage_per_100m_delta"))
+    return 0.0
+
+
+def _uses_main_coverable_efficiency_metric(summary: Mapping[str, Any]) -> bool:
+    return (
+        summary.get("post_update_success_metric") == stage26_8.SUCCESS_METRIC
+        or summary.get("coverage_denominator_source") == stage26_8.COVERAGE_DENOMINATOR_SOURCE
+    )
+
+
+def _diagnostic_count(summary: Mapping[str, Any], field: str) -> int:
+    try:
+        parsed = int(summary.get(field) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
+
+
+def _phase_diagnostic_count(summary: Mapping[str, Any], phase: str, label: str, field: str) -> int:
+    if phase != f"eval_{label}":
+        return 0
+    return _diagnostic_count(summary, field)
 
 
 def _binding_or_safety_failure(summary: dict[str, Any]) -> bool:
@@ -1534,6 +1775,8 @@ def _render_report(summary: dict[str, Any], job_rows: list[dict[str, Any]]) -> s
         f"- pending_job_count: `{summary.get('pending_job_count')}`",
         f"- next_job_id: `{summary.get('next_job_id')}`",
         f"- next_phase: `{summary.get('next_phase')}`",
+        f"- no_valid_action_terminal_count: `{summary.get('no_valid_action_terminal_count')}`",
+        f"- model_inference_skipped_terminal_count: `{summary.get('model_inference_skipped_terminal_count')}`",
         "",
         "State is artifact-driven and lives under this D-drive output root. This stage only orchestrates existing collector/update/eval stages.",
     ]

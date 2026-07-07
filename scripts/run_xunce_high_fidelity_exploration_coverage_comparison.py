@@ -45,9 +45,12 @@ try:
         visible_cells_for_viewpoint_with_obstacles,
     )
     from xunce_hybrid_astar_candidate_path_cost import (
+        CANDIDATE_REACHABILITY_GATE_SOURCE,
+        CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
         PATH_COST_SOURCE as HYBRID_ASTAR_PATH_COST_SOURCE,
         Cell as HYBRID_CELL,
         WorldPoint as HYBRID_WORLD_POINT,
+        build_derived_high_res_planning_proxy_grid,
         build_cost_grid_from_sidecar,
         evaluate_hybrid_astar_candidate_path_cost,
     )
@@ -105,9 +108,12 @@ except ModuleNotFoundError:  # pragma: no cover
         visible_cells_for_viewpoint_with_obstacles,
     )
     from scripts.xunce_hybrid_astar_candidate_path_cost import (
+        CANDIDATE_REACHABILITY_GATE_SOURCE,
+        CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
         PATH_COST_SOURCE as HYBRID_ASTAR_PATH_COST_SOURCE,
         Cell as HYBRID_CELL,
         WorldPoint as HYBRID_WORLD_POINT,
+        build_derived_high_res_planning_proxy_grid,
         build_cost_grid_from_sidecar,
         evaluate_hybrid_astar_candidate_path_cost,
     )
@@ -144,6 +150,24 @@ except ModuleNotFoundError:  # pragma: no cover
 
 CONFIG_SCHEMA_VERSION = "xunce-high-fidelity-exploration-coverage-comparison-config/v1"
 SUMMARY_SCHEMA_VERSION = "xunce-exploration-coverage-comparison-summary/v1"
+CANDIDATE_REACHABILITY_GATE_LEGACY = "legacy_action_mask_validation/v1"
+CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY = "candidate_viewpoint_current_step/v1"
+CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR = "candidate_current_bearing_sweep/v1"
+MODEL_INFERENCE_AUDIT_EXCLUDED_TERMINALS = {
+    "candidate_generation_exhausted",
+    "no_valid_dynamic_candidates",
+    "no_valid_action",
+    "no_valid_actions",
+    "strict_action_mask_no_valid_action",
+    "empty_action_mask",
+    "no_valid_candidates",
+}
+MODEL_INFERENCE_AUDIT_FAILURE_REASONS = {
+    "model_inference_failure",
+    "model_inference_non_finite_output",
+    "model_inference_mask_violation",
+    "selected_reachability_provenance_invalid",
+}
 DEFAULT_CONFIG = "configs/xunce_high_fidelity_exploration_coverage_comparison_v1.json"
 DEFAULT_OUTPUT_ROOT = "outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_v1"
 DEFAULT_CANONICAL_PROFILE = "configs/xunce_canonical_reward_guard_profile_v2.json"
@@ -525,6 +549,36 @@ def _load_config(
         payload.get("hybrid_astar_pose_path_cost_enabled", False),
         "hybrid_astar_pose_path_cost_enabled",
     )
+    normalized["candidate_reachability_gate_source"] = _require_string(
+        payload.get("candidate_reachability_gate_source", CANDIDATE_REACHABILITY_GATE_LEGACY),
+        "candidate_reachability_gate_source",
+    )
+    if normalized["candidate_reachability_gate_source"] not in {
+        CANDIDATE_REACHABILITY_GATE_LEGACY,
+        CANDIDATE_REACHABILITY_GATE_SOURCE,
+    }:
+        raise ConfigError("candidate_reachability_gate_source is invalid")
+    if (
+        normalized["candidate_reachability_gate_source"] == CANDIDATE_REACHABILITY_GATE_SOURCE
+        and not normalized["hybrid_astar_pose_path_cost_enabled"]
+    ):
+        raise ConfigError("candidate_reachability_gate_source requires Hybrid A* path cost")
+    normalized["candidate_reachability_max_theta_proposals_per_candidate"] = _nonnegative_int(
+        payload.get("candidate_reachability_max_theta_proposals_per_candidate", 0),
+        "candidate_reachability_max_theta_proposals_per_candidate",
+    )
+    normalized["candidate_reachability_theta_proposal_policy"] = _require_string(
+        payload.get(
+            "candidate_reachability_theta_proposal_policy",
+            CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY,
+        ),
+        "candidate_reachability_theta_proposal_policy",
+    )
+    if normalized["candidate_reachability_theta_proposal_policy"] not in {
+        CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY,
+        CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR,
+    }:
+        raise ConfigError("candidate_reachability_theta_proposal_policy is invalid")
     normalized["path_cost_source"] = _require_string(
         payload.get(
             "path_cost_source",
@@ -584,6 +638,28 @@ def _load_config(
     normalized["hybrid_astar_turn_penalty_weight"] = _nonnegative_float(
         payload.get("hybrid_astar_turn_penalty_weight", 0.05),
         "hybrid_astar_turn_penalty_weight",
+    )
+    normalized["hybrid_astar_planning_grid_source"] = _require_string(
+        payload.get("hybrid_astar_planning_grid_source", "sidecar_cost_grid/v1"),
+        "hybrid_astar_planning_grid_source",
+    )
+    if normalized["hybrid_astar_planning_grid_source"] not in {
+        "sidecar_cost_grid/v1",
+        "derived_high_res_planning_proxy/v1",
+    }:
+        raise ConfigError("hybrid_astar_planning_grid_source is invalid")
+    normalized["planner_grid_resolution_m"] = (
+        _positive_float(payload.get("planner_grid_resolution_m"), "planner_grid_resolution_m")
+        if payload.get("planner_grid_resolution_m") is not None
+        else None
+    )
+    normalized["hybrid_astar_closed_key_xy_resolution_m"] = (
+        _positive_float(
+            payload.get("hybrid_astar_closed_key_xy_resolution_m"),
+            "hybrid_astar_closed_key_xy_resolution_m",
+        )
+        if payload.get("hybrid_astar_closed_key_xy_resolution_m") is not None
+        else None
     )
     canonical_profile_path = resolve_path(
         Path(str(payload.get("canonical_reward_profile", DEFAULT_CANONICAL_PROFILE))),
@@ -1675,6 +1751,8 @@ def _run_policy_episode(
     open_grid_fallback_count = 0
     model_inference_failure_count = 0
     candidate_generation_exhausted_count = 0
+    no_valid_action_terminal_count = 0
+    model_inference_skipped_terminal_count = 0
     episode_termination_reason: str | None = None
     candidate_generation_exhausted_step: int | None = None
     current_cell = start_cell
@@ -1747,6 +1825,8 @@ def _run_policy_episode(
             coverage_rate_capped_values.append(coverage_rate_capped_values[-1])
             action_indices.append(None)
             candidate_generation_exhausted_count += 1
+            if not _is_oracle_policy(policy_name):
+                model_inference_skipped_terminal_count += 1
             episode_termination_reason = "candidate_generation_exhausted"
             candidate_generation_exhausted_step = step_index
             step_row = {
@@ -1813,6 +1893,19 @@ def _run_policy_episode(
             steps.append(step_row)
             reason_codes.extend(step_reasons)
             break
+        if _candidate_reachability_hard_gate_enabled(config):
+            _apply_candidate_reachability_admission_gate(
+                candidates,
+                current_cell=cell_before,
+                current_theta_deg=current_theta_deg,
+                candidate_set_hash_value=candidate_set_hash_value,
+                step_index=step_index,
+                scenario_id=scenario_id,
+                config=config,
+                slice_row=slice_row,
+                repo_root=repo_root,
+                hybrid_astar_executor=hybrid_astar_executor,
+            )
         scenario_state = dict(scenario)
         scenario_state["coverage_rate"] = coverage_rates[-1]
         scenario_state["coverage_rate_delta"] = steps[-1]["coverage_rate_delta"] if steps else 0.0
@@ -1861,6 +1954,8 @@ def _run_policy_episode(
         oracle_rollout_executed = False
         policy_inference_kind = ORACLE_POLICY_INFERENCE_KIND if is_oracle_policy else MODEL_POLICY_INFERENCE_KIND
         model_inference_failure = False
+        inference_skipped_reason: str | None = None
+        step_terminal_reason: str | None = None
         dynamic_candidate_validation_missing = any(candidate.get("dynamic_candidate_validation_missing") is True for candidate in candidates)
         if dynamic_candidate_validation_missing:
             step_reasons.append("dynamic_candidate_validation_missing")
@@ -1882,6 +1977,11 @@ def _run_policy_episode(
         elif not model_bundle["xunce_checkpoint_loaded"] or not model_bundle["incumbent_checkpoint_loaded"]:
             step_reasons.append("true_model_inference_not_executed")
         elif not adapter["has_valid_action"]:
+            inference_skipped_reason = "no_valid_action"
+            step_terminal_reason = "no_valid_action"
+            episode_termination_reason = "no_valid_action"
+            no_valid_action_terminal_count += 1
+            model_inference_skipped_terminal_count += 1
             step_reasons.append("no_valid_action")
         else:
             try:
@@ -1922,12 +2022,28 @@ def _run_policy_episode(
             and continuous_theta_enabled(config)
             and detail_payload.get("theta_mu_rad")
         ):
-            _bind_continuous_theta_mu_to_candidate_set(
-                candidates,
-                detail_payload=detail_payload,
-                candidate_set_hash_value=candidate_set_hash_value,
-            )
-            if config.get("hybrid_astar_pose_path_cost_enabled"):
+            if _candidate_reachability_hard_gate_enabled(config):
+                _apply_continuous_theta_hybrid_reachable_eval_policy(
+                    detail_payload,
+                    candidates=candidates,
+                    action_mask=adapter["action_mask"],
+                    current_cell=cell_before,
+                    current_theta_deg=current_theta_deg,
+                    candidate_set_hash_value=candidate_set_hash_value,
+                    step_index=step_index,
+                    scenario_id=scenario_id,
+                    config=config,
+                    slice_row=slice_row,
+                    repo_root=repo_root,
+                    hybrid_astar_executor=hybrid_astar_executor,
+                )
+            else:
+                _bind_continuous_theta_mu_to_candidate_set(
+                    candidates,
+                    detail_payload=detail_payload,
+                    candidate_set_hash_value=candidate_set_hash_value,
+                )
+            if config.get("hybrid_astar_pose_path_cost_enabled") and not _candidate_reachability_hard_gate_enabled(config):
                 _enrich_candidates_with_hybrid_astar_path_cost(
                     candidates,
                     current_cell=cell_before,
@@ -1980,7 +2096,7 @@ def _run_policy_episode(
             )
             if config.get("hybrid_astar_pose_path_cost_enabled"):
                 _enrich_candidates_with_hybrid_astar_path_cost(
-                    candidates,
+                    [selected_candidate] if _candidate_reachability_hard_gate_enabled(config) else candidates,
                     current_cell=cell_before,
                     current_theta_deg=current_theta_deg,
                     candidate_set_hash_value=candidate_set_hash_value,
@@ -1993,6 +2109,14 @@ def _run_policy_episode(
                 )
         selected_cell = _cell_tuple(_candidate_cell(selected_candidate)) if selected_candidate is not None else None
         selected_cost = _candidate_cost(selected_candidate) if selected_candidate is not None else None
+        selected_reachability_provenance = (
+            selected_candidate.get("candidate_reachability_provenance")
+            if isinstance(selected_candidate, dict)
+            else None
+        )
+        selected_reachability_provenance_valid = _candidate_reachability_provenance_valid(
+            selected_reachability_provenance
+        )
         selected_risk = _finite_or_none(selected_candidate.get("risk")) if selected_candidate is not None else None
         selected_soft_risk_exposure = _finite_or_none((selected_candidate or {}).get("soft_risk_exposure"))
         if selected_soft_risk_exposure is None:
@@ -2019,12 +2143,19 @@ def _run_policy_episode(
             step_reasons.append("model_inference_mask_violation")
         if model_inference_failure:
             pass
+        elif inference_skipped_reason == "no_valid_action":
+            pass
         elif selected_candidate is None or selected_cell is None:
             path_planning_failure_count += 1
             step_reasons.append("path_planning_failure")
-        elif not _candidate_is_valid(selected_candidate):
+        elif not _candidate_is_valid(selected_candidate) or (
+            _candidate_reachability_hard_gate_enabled(config)
+            and not selected_reachability_provenance_valid
+        ):
             unreachable_selected_count += 1
             step_reasons.append("unreachable_selected_candidate")
+            if _candidate_reachability_hard_gate_enabled(config) and not selected_reachability_provenance_valid:
+                step_reasons.append("selected_reachability_provenance_invalid")
         if (scenario.get("open_grid_fallback_used") is True or (selected_candidate or {}).get("open_grid_fallback_used") is True) and not config["allow_open_grid_fallback"]:
             open_grid_fallback_count += 1
             step_reasons.append("open_grid_fallback_forbidden")
@@ -2157,6 +2288,19 @@ def _run_policy_episode(
             "selected_risk_route_derived": selected_risk_route_derived,
             "selected_planner_validation_backend": selected_planner_validation_backend,
             "selected_validation_evidence_kind": selected_validation_evidence_kind,
+            "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+            "selected_candidate_reachability_provenance": selected_reachability_provenance,
+            "selected_reachability_provenance_valid": selected_reachability_provenance_valid,
+            "selected_reachability_provenance_source": (
+                selected_reachability_provenance.get("source")
+                if isinstance(selected_reachability_provenance, dict)
+                else None
+            ),
+            "selected_reachability_planner_config_hash": (
+                selected_reachability_provenance.get("planner_config_hash")
+                if isinstance(selected_reachability_provenance, dict)
+                else None
+            ),
             "energy_cost": selected_energy,
             "coverage_rate_delta": coverage_delta,
             "cumulative_coverage_rate_delta": cumulative_delta,
@@ -2186,7 +2330,7 @@ def _run_policy_episode(
             "model_inference_failure": model_inference_failure,
             "model_inference_mask_violation": mask_violation,
             "candidate_generation_exhausted": False,
-            "terminal_reason": None,
+            "terminal_reason": step_terminal_reason,
             "executed": executed,
             "reason_codes": unique_sorted(step_reasons),
         }
@@ -2219,6 +2363,17 @@ def _run_policy_episode(
                     "selected_action_index": selected_index,
                     "candidate_viewpoint": selected_candidate.get("candidate_viewpoint"),
                     "candidate_theta_deg": selected_candidate.get("candidate_theta_deg"),
+                    "selected_base_candidate_index": (
+                        selected_candidate.get("selected_base_candidate_index")
+                        if selected_candidate.get("selected_base_candidate_index") is not None
+                        else selected_candidate.get("base_candidate_index")
+                    ),
+                    "selected_base_candidate_set_hash": (
+                        selected_candidate.get("selected_base_candidate_set_hash")
+                        if selected_candidate.get("selected_base_candidate_set_hash") is not None
+                        else selected_candidate.get("base_candidate_set_hash")
+                    ),
+                    "base_candidate_set_hash": selected_candidate.get("base_candidate_set_hash"),
                     "selected_viewpoint": selected_candidate.get("candidate_viewpoint"),
                     "selected_theta_rad": selected_candidate.get("selected_theta_rad"),
                     "selected_theta_deg": selected_candidate.get("candidate_theta_deg"),
@@ -2256,6 +2411,30 @@ def _run_policy_episode(
                     "hybrid_vs_grid_path_cost_delta": selected_candidate.get("hybrid_vs_grid_path_cost_delta"),
                     "hybrid_astar_current_pose": selected_candidate.get("hybrid_astar_current_pose"),
                     "hybrid_astar_current_pose_provenance": selected_candidate.get("hybrid_astar_current_pose_provenance"),
+                    "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+                    "candidate_reachability_provenance_schema": selected_candidate.get(
+                        "candidate_reachability_provenance_schema"
+                    ),
+                    "candidate_reachability_planner_config_hash": selected_candidate.get(
+                        "candidate_reachability_planner_config_hash"
+                    ),
+                    "selected_candidate_reachability_provenance": selected_reachability_provenance,
+                    "selected_reachability_provenance_valid": selected_reachability_provenance_valid,
+                    "selected_reachability_provenance_source": (
+                        selected_reachability_provenance.get("source")
+                        if isinstance(selected_reachability_provenance, dict)
+                        else None
+                    ),
+                    "selected_reachability_planner_config_hash": (
+                        selected_reachability_provenance.get("planner_config_hash")
+                        if isinstance(selected_reachability_provenance, dict)
+                        else None
+                    ),
+                    "hybrid_astar_planning_grid_source": selected_candidate.get("hybrid_astar_planning_grid_source"),
+                    "planner_grid_resolution_m": selected_candidate.get("planner_grid_resolution_m"),
+                    "source_grid_resolution_m": selected_candidate.get("source_grid_resolution_m"),
+                    "planning_proxy_hash": selected_candidate.get("planning_proxy_hash"),
+                    "closed_key_xy_resolution_m": selected_candidate.get("closed_key_xy_resolution_m"),
                     "point_grid_path_cost_fallback_used": bool(selected_candidate.get("point_grid_path_cost_fallback_used", False)),
                     "default_astar_replaced": bool(selected_candidate.get("default_astar_replaced", False)),
                     "hybrid_astar_ackermann_feasible_claimed": bool(
@@ -2312,6 +2491,8 @@ def _run_policy_episode(
                     "policy_inference_kind": policy_inference_kind,
                     "oracle_rollout_executed": oracle_rollout_executed,
                     "true_model_inference_executed": true_model_inference_executed,
+                    "inference_skipped_reason": inference_skipped_reason,
+                    "terminal_reason": step_terminal_reason,
                     "dynamic_candidate_validation_missing": dynamic_candidate_validation_missing,
                     "model_inference_failure_count": int(model_inference_failure),
                     "model_inference_mask_violation_count": int(mask_violation),
@@ -2357,6 +2538,8 @@ def _run_policy_episode(
         "candidate_generation_exhausted": candidate_generation_exhausted_count > 0,
         "candidate_generation_exhausted_step": candidate_generation_exhausted_step,
         "candidate_generation_exhausted_count": candidate_generation_exhausted_count,
+        "no_valid_action_terminal_count": no_valid_action_terminal_count,
+        "model_inference_skipped_terminal_count": model_inference_skipped_terminal_count,
         "model_inference_failure_count": model_inference_failure_count,
         "initial_coverage_rate": coverage_rates[0],
         "final_coverage_rate": coverage_rates[-1],
@@ -2746,6 +2929,10 @@ def _coverage_comparison_audit(
         output_root=output_root,
     )
     candidate_generation_exhausted_count = sum(int(row.get("candidate_generation_exhausted_count", 0) or 0) for row in episodes)
+    no_valid_action_terminal_count = sum(int(row.get("no_valid_action_terminal_count", 0) or 0) for row in episodes)
+    model_inference_skipped_terminal_count = sum(
+        int(row.get("model_inference_skipped_terminal_count", 0) or 0) for row in episodes
+    )
     model_inference_failure_count = sum(int(row.get("model_inference_failure_count", 0) or 0) for row in episodes)
     coverage_rate_saturation_episode_count = sum(1 for row in episodes if row.get("coverage_saturation_exceeded") is True)
     final_raw_rates = [row.get("coverage_rate_raw") for row in episodes if _finite_or_none(row.get("coverage_rate_raw")) is not None]
@@ -2846,6 +3033,8 @@ def _coverage_comparison_audit(
         "dynamic_validation_source_root": dynamic_audit["dynamic_validation_source_root"],
         "dynamic_candidate_generation_missing_count": dynamic_audit["dynamic_candidate_generation_missing_count"],
         "candidate_generation_exhausted_count": candidate_generation_exhausted_count,
+        "no_valid_action_terminal_count": no_valid_action_terminal_count,
+        "model_inference_skipped_terminal_count": model_inference_skipped_terminal_count,
         "model_inference_failure_count": model_inference_failure_count,
         "coverage_rate_saturation_episode_count": coverage_rate_saturation_episode_count,
         "max_final_coverage_rate_raw": max((float(value) for value in final_raw_rates), default=0.0),
@@ -3327,18 +3516,73 @@ def _candidate_set_hash_mismatch_count(steps: list[dict[str, Any]]) -> int:
     return sum(1 for hashes in by_key.values() if len(hashes - {""}) > 1)
 
 
+def _model_inference_row_reason_codes(row: dict[str, Any]) -> set[str]:
+    return {str(reason) for reason in row.get("reason_codes", []) if reason}
+
+
+def _model_inference_row_finite_outputs(row: dict[str, Any]) -> bool:
+    detail = row.get("detail") if isinstance(row.get("detail"), dict) else {}
+    if "finite_outputs" in detail:
+        return detail.get("finite_outputs") is True
+    return row.get("finite_outputs") is True
+
+
+def _model_inference_audit_excluded_terminal(row: dict[str, Any]) -> bool:
+    reason_codes = _model_inference_row_reason_codes(row)
+    if (
+        row.get("model_inference_failure") is True
+        or row.get("model_inference_mask_violation") is True
+        or _int_value(row.get("model_inference_failure_count")) > 0
+        or _int_value(row.get("model_inference_mask_violation_count")) > 0
+        or _int_value(row.get("selected_reachability_provenance_invalid_count")) > 0
+        or any(reason in MODEL_INFERENCE_AUDIT_FAILURE_REASONS for reason in reason_codes)
+        or any(reason.startswith("true_model_inference_failed:") for reason in reason_codes)
+    ):
+        return False
+    if row.get("true_model_inference_executed") is True and not _model_inference_row_finite_outputs(row):
+        return False
+
+    terminal_tokens = {
+        str(row.get("inference_skipped_reason") or ""),
+        str(row.get("terminal_reason") or ""),
+        str(row.get("episode_termination_reason") or ""),
+        *reason_codes,
+    }
+    return bool(terminal_tokens & MODEL_INFERENCE_AUDIT_EXCLUDED_TERMINALS)
+
+
+def _model_inference_no_valid_action_terminal(row: dict[str, Any]) -> bool:
+    reason_codes = _model_inference_row_reason_codes(row)
+    terminal_tokens = {
+        str(row.get("inference_skipped_reason") or ""),
+        str(row.get("terminal_reason") or ""),
+        str(row.get("episode_termination_reason") or ""),
+        *reason_codes,
+    }
+    return bool(
+        terminal_tokens
+        & {
+            "no_valid_action",
+            "no_valid_actions",
+            "strict_action_mask_no_valid_action",
+            "empty_action_mask",
+            "no_valid_candidates",
+        }
+    )
+
+
 def _model_inference_audit(model_bundle: dict[str, Any], inference_rows: list[dict[str, Any]]) -> dict[str, Any]:
     reason_codes = list(model_bundle["reason_codes"])
     if not model_bundle["xunce_checkpoint_loaded"] or not model_bundle["incumbent_checkpoint_loaded"]:
         reason_codes.append("true_model_inference_not_executed")
+    skipped_terminal_rows = [row for row in inference_rows if _model_inference_audit_excluded_terminal(row)]
     auditable_rows = [
         row
         for row in inference_rows
-        if row.get("inference_skipped_reason") != "candidate_generation_exhausted"
-        and "candidate_generation_exhausted" not in set(row.get("reason_codes", []))
+        if not _model_inference_audit_excluded_terminal(row)
     ]
     executed_rows = [row for row in auditable_rows if row.get("true_model_inference_executed")]
-    finite_count = sum(1 for row in auditable_rows if row.get("detail", {}).get("finite_outputs") is True)
+    finite_count = sum(1 for row in auditable_rows if _model_inference_row_finite_outputs(row))
     mask_violation_count = sum(_int_value(row.get("model_inference_mask_violation_count")) for row in inference_rows)
     model_inference_failure_count = sum(
         _int_value(row.get("model_inference_failure_count"))
@@ -3350,6 +3594,13 @@ def _model_inference_audit(model_bundle: dict[str, Any], inference_rows: list[di
         if "model_inference_failure" in set(row.get("reason_codes", []))
         and _int_value(row.get("model_inference_failure_count")) == 0
     )
+    selected_reachability_provenance_invalid_count = sum(
+        1
+        for row in auditable_rows
+        if row.get("candidate_reachability_gate_source") == CANDIDATE_REACHABILITY_GATE_SOURCE
+        and row.get("true_model_inference_executed") is True
+        and row.get("selected_reachability_provenance_valid") is not True
+    )
     if auditable_rows and len(executed_rows) != len(auditable_rows):
         reason_codes.append("true_model_inference_not_executed")
     if auditable_rows and finite_count != len(auditable_rows):
@@ -3358,11 +3609,16 @@ def _model_inference_audit(model_bundle: dict[str, Any], inference_rows: list[di
         reason_codes.append("model_inference_failure")
     if mask_violation_count:
         reason_codes.append("model_inference_mask_violation")
+    if selected_reachability_provenance_invalid_count:
+        reason_codes.append("selected_reachability_provenance_invalid")
     true_model_inference_executed = bool(
         len(executed_rows) == len(auditable_rows)
+        and finite_count == len(auditable_rows)
         and model_bundle["xunce_checkpoint_loaded"]
         and model_bundle["incumbent_checkpoint_loaded"]
         and model_inference_failure_count == 0
+        and mask_violation_count == 0
+        and selected_reachability_provenance_invalid_count == 0
     )
     return {
         "schema_version": "xunce-exploration-coverage-model-inference-audit/v1",
@@ -3374,8 +3630,13 @@ def _model_inference_audit(model_bundle: dict[str, Any], inference_rows: list[di
         "xunce_parameter_count": model_bundle["xunce_parameter_count"],
         "incumbent_parameter_count": model_bundle["incumbent_parameter_count"],
         "model_inference_finite_output_count": finite_count,
+        "model_inference_skipped_terminal_count": len(skipped_terminal_rows),
+        "no_valid_action_terminal_count": sum(
+            1 for row in skipped_terminal_rows if _model_inference_no_valid_action_terminal(row)
+        ),
         "model_inference_failure_count": model_inference_failure_count,
         "model_inference_mask_violation_count": mask_violation_count,
+        "selected_reachability_provenance_invalid_count": selected_reachability_provenance_invalid_count,
         "passed": not reason_codes,
         "reason_codes": unique_sorted(reason_codes),
     }
@@ -3499,6 +3760,8 @@ def _decision(
         diagnostic_reasons.append("dynamic_candidate_validation_no_success")
     if comparison.get("candidate_generation_exhausted_count", 0) > 0:
         diagnostic_reasons.append("candidate_generation_exhausted")
+    if comparison.get("no_valid_action_terminal_count", 0) > 0:
+        diagnostic_reasons.append("no_valid_action_terminal")
     if config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process":
         if comparison.get("dynamic_path_length_preflight_failure_count", 0) > 0:
             diagnostic_reasons.append("dynamic_validation_path_length_preflight_failed")
@@ -3634,8 +3897,18 @@ def _summary(
         "xunce_safety_regression_count": comparison["xunce_safety_regression_count"],
         "model_inference_mask_violation_count": model_inference["model_inference_mask_violation_count"],
         "model_inference_finite_output_count": model_inference["model_inference_finite_output_count"],
+        "model_inference_skipped_terminal_count": comparison["model_inference_skipped_terminal_count"],
+        "model_inference_audit_skipped_terminal_count": model_inference.get("model_inference_skipped_terminal_count", 0),
+        "no_valid_action_terminal_count": comparison["no_valid_action_terminal_count"],
+        "model_inference_audit_no_valid_action_terminal_count": model_inference.get("no_valid_action_terminal_count", 0),
         "model_inference_failure_count": model_inference["model_inference_failure_count"],
+        "selected_reachability_provenance_invalid_count": model_inference.get(
+            "selected_reachability_provenance_invalid_count",
+            0,
+        ),
+        "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
         "candidate_generation_exhausted_count": comparison["candidate_generation_exhausted_count"],
+        "dynamic_no_valid_action_terminal_count": comparison["no_valid_action_terminal_count"],
         "coverage_rate_saturation_episode_count": comparison["coverage_rate_saturation_episode_count"],
         "max_final_coverage_rate_raw": comparison["max_final_coverage_rate_raw"],
         "max_coverage_rate_saturation_excess": comparison["max_coverage_rate_saturation_excess"],
@@ -3989,6 +4262,160 @@ def _candidate_rows_for_step(
     })
 
 
+def _apply_candidate_reachability_admission_gate(
+    candidates: list[dict[str, Any]],
+    *,
+    current_cell: tuple[int, int],
+    current_theta_deg: float,
+    candidate_set_hash_value: str,
+    step_index: int,
+    scenario_id: str,
+    config: dict[str, Any],
+    slice_row: dict[str, Any],
+    repo_root: Path,
+    hybrid_astar_executor: Any | None,
+) -> None:
+    if not candidates:
+        return
+    if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
+        for candidate in candidates:
+            _apply_hybrid_astar_unavailable_candidate_fields(
+                candidate,
+                reason="candidate_reachability_gate_requires_hybrid_astar_pose_path_cost",
+                platform_contract_hash=str(config.get("platform_contract_hash") or ""),
+                max_traversable_slope_deg=float(config.get("max_traversable_slope_deg") or 30.0),
+            )
+        return
+    if continuous_theta_enabled(config):
+        _apply_continuous_theta_candidate_reachability_admission_gate(
+            candidates,
+            current_cell=current_cell,
+            current_theta_deg=current_theta_deg,
+            candidate_set_hash_value=candidate_set_hash_value,
+            step_index=step_index,
+            scenario_id=scenario_id,
+            config=config,
+            slice_row=slice_row,
+            repo_root=repo_root,
+            hybrid_astar_executor=hybrid_astar_executor,
+        )
+        return
+    if not _candidates_have_hybrid_path_cost(candidates):
+        _enrich_candidates_with_hybrid_astar_path_cost(
+            candidates,
+            current_cell=current_cell,
+            current_theta_deg=current_theta_deg,
+            candidate_set_hash_value=candidate_set_hash_value,
+            step_index=step_index,
+            scenario_id=scenario_id,
+            config=config,
+            slice_row=slice_row,
+            repo_root=repo_root,
+            hybrid_astar_executor=hybrid_astar_executor,
+        )
+    for candidate in candidates:
+        valid = (
+            candidate.get("hybrid_astar_reachable") is True
+            and _candidate_reachability_provenance_valid(candidate.get("candidate_reachability_provenance"))
+        )
+        candidate["hybrid_astar_action_mask_allowed"] = bool(valid)
+        if not valid:
+            candidate["reachable"] = False
+
+
+def _apply_continuous_theta_candidate_reachability_admission_gate(
+    candidates: list[dict[str, Any]],
+    *,
+    current_cell: tuple[int, int],
+    current_theta_deg: float,
+    candidate_set_hash_value: str,
+    step_index: int,
+    scenario_id: str,
+    config: dict[str, Any],
+    slice_row: dict[str, Any],
+    repo_root: Path,
+    hybrid_astar_executor: Any | None,
+) -> None:
+    theta_step_deg = float(config.get("theta_step_deg", 45.0) or 45.0)
+    flat_probes: list[dict[str, Any]] = []
+    candidate_probe_indices: list[list[int]] = []
+    for index, candidate in enumerate(candidates):
+        cell = _cell_tuple(_candidate_cell(candidate))
+        if cell is None:
+            candidate_probe_indices.append([])
+            continue
+        proposals = _continuous_theta_eval_proposal_degs(
+            candidate,
+            current_cell=current_cell,
+            current_theta_deg=float(current_theta_deg),
+            theta_step_deg=theta_step_deg,
+            proposal_policy=str(
+                config.get("candidate_reachability_theta_proposal_policy")
+                or CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY
+            ),
+        )
+        max_proposals = int(config.get("candidate_reachability_max_theta_proposals_per_candidate") or 0)
+        if max_proposals > 0:
+            proposals = proposals[:max_proposals]
+        local_indices: list[int] = []
+        for theta_deg in proposals:
+            probe = dict(candidate)
+            probe["candidate_index"] = int(index)
+            probe["candidate_set_hash"] = str(candidate_set_hash_value)
+            probe["candidate_theta_deg"] = float(theta_deg)
+            probe["candidate_theta_rad"] = float(normalize_theta_rad(math.radians(float(theta_deg))))
+            probe["candidate_viewpoint"] = [int(cell[0]), int(cell[1]), float(theta_deg)]
+            local_indices.append(len(flat_probes))
+            flat_probes.append(probe)
+        candidate_probe_indices.append(local_indices)
+    if flat_probes:
+        _enrich_candidates_with_hybrid_astar_path_cost(
+            flat_probes,
+            current_cell=current_cell,
+            current_theta_deg=current_theta_deg,
+            candidate_set_hash_value=str(candidate_set_hash_value),
+            step_index=step_index,
+            scenario_id=scenario_id,
+            config=config,
+            slice_row=slice_row,
+            repo_root=repo_root,
+            hybrid_astar_executor=hybrid_astar_executor,
+        )
+    for candidate_index, probe_indices in enumerate(candidate_probe_indices):
+        reachable_probes = [
+            probe_index
+            for probe_index in probe_indices
+            if flat_probes[probe_index].get("hybrid_astar_reachable") is True
+            and _finite_or_none(flat_probes[probe_index].get("hybrid_astar_path_cost")) is not None
+            and _candidate_reachability_provenance_valid(
+                flat_probes[probe_index].get("candidate_reachability_provenance")
+            )
+        ]
+        if reachable_probes:
+            best_probe = min(
+                reachable_probes,
+                key=lambda probe_index: (
+                    float(flat_probes[probe_index].get("hybrid_astar_path_cost")),
+                    probe_index,
+                ),
+            )
+            _copy_continuous_theta_eval_probe_to_candidate(
+                candidates[candidate_index],
+                flat_probes[best_probe],
+                selected_index=candidate_index,
+                candidate_set_hash_value=str(candidate_set_hash_value),
+            )
+            candidates[candidate_index]["hybrid_astar_action_mask_allowed"] = True
+            candidates[candidate_index]["reachable"] = True
+            continue
+        _apply_hybrid_astar_unavailable_candidate_fields(
+            candidates[candidate_index],
+            reason="no_hybrid_astar_pose_reachable_candidate_for_action_mask",
+            platform_contract_hash=str(config.get("platform_contract_hash") or ""),
+            max_traversable_slope_deg=float(config.get("max_traversable_slope_deg") or 30.0),
+        )
+
+
 def _apply_synthetic_credit_feature_exposure_to_adapter(
     adapter: dict[str, Any],
     *,
@@ -4264,10 +4691,16 @@ def _apply_continuous_theta_hybrid_reachable_eval_policy(
         return
     usable_count = min(len(logits), len(candidates))
     mask_values = list(action_mask) if isinstance(action_mask, (list, tuple)) else []
+    hard_gate_required = _candidate_reachability_hard_gate_enabled(config or {})
     reachable_mask: list[bool] = []
     for index in range(usable_count):
         action_allowed = bool(mask_values[index]) if index < len(mask_values) else True
-        reachable_mask.append(action_allowed and candidates[index].get("hybrid_astar_reachable") is True)
+        candidate_reachable = candidates[index].get("hybrid_astar_reachable") is True
+        if hard_gate_required:
+            candidate_reachable = candidate_reachable and _candidate_reachability_provenance_valid(
+                candidates[index].get("candidate_reachability_provenance")
+            )
+        reachable_mask.append(action_allowed and candidate_reachable)
     if not any(reachable_mask):
         proposal = _continuous_theta_reachable_eval_proposal(
             detail_payload,
@@ -4361,14 +4794,19 @@ def _continuous_theta_reachable_eval_proposal(
             continue
         policy_theta_rad = _finite_or_none(theta_values[index]) if index < len(theta_values) else None
         policy_theta_deg = math.degrees(float(policy_theta_rad)) if policy_theta_rad is not None else None
-        proposals = _unique_continuous_theta_eval_proposals(
-            [
-                policy_theta_deg,
-                current_theta_deg,
-                float(current_theta_deg) + theta_step_deg,
-                float(current_theta_deg) - theta_step_deg,
-            ]
+        proposals = _continuous_theta_eval_proposal_degs(
+            {**candidate, "candidate_theta_deg": policy_theta_deg},
+            current_cell=current_cell,
+            current_theta_deg=float(current_theta_deg),
+            theta_step_deg=theta_step_deg,
+            proposal_policy=str(
+                config.get("candidate_reachability_theta_proposal_policy")
+                or CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY
+            ),
         )
+        max_proposals = int(config.get("candidate_reachability_max_theta_proposals_per_candidate") or 0)
+        if max_proposals > 0:
+            proposals = proposals[:max_proposals]
         local_indices: list[int] = []
         for theta_deg in proposals:
             probe = dict(candidate)
@@ -4396,6 +4834,7 @@ def _continuous_theta_reachable_eval_proposal(
     )
     mask_values = list(action_mask) if isinstance(action_mask, (list, tuple)) else []
     usable_count = min(len(logits), len(candidates))
+    hard_gate_required = _candidate_reachability_hard_gate_enabled(config)
     best_score: tuple[float, float, int, int] | None = None
     best_selection: tuple[int, int] | None = None
     for candidate_index, probe_indices in enumerate(candidate_probe_indices):
@@ -4409,7 +4848,12 @@ def _continuous_theta_reachable_eval_proposal(
             for probe_index in probe_indices
             if flat_probes[probe_index].get("hybrid_astar_reachable") is True
             and _finite_or_none(flat_probes[probe_index].get("hybrid_astar_path_cost")) is not None
-            and str(flat_probes[probe_index].get("hybrid_astar_pose_path_hash") or "").strip()
+            and (
+                not hard_gate_required
+                or _candidate_reachability_provenance_valid(
+                    flat_probes[probe_index].get("candidate_reachability_provenance")
+                )
+            )
         ]
         if not reachable_probes:
             continue
@@ -4456,11 +4900,20 @@ def _copy_continuous_theta_eval_probe_to_candidate(
         "hybrid_astar_trajectory_kind",
         "hybrid_astar_reachable",
         "hybrid_astar_failure_reason",
+        "candidate_reachability_gate_source",
+        "candidate_reachability_provenance_schema",
+        "candidate_reachability_planner_config_hash",
+        "candidate_reachability_provenance",
         "legacy_grid_astar_path_cost",
         "hybrid_vs_grid_path_cost_delta",
         "point_grid_path_cost_fallback_used",
         "default_astar_replaced",
         "hybrid_astar_ackermann_feasible_claimed",
+        "hybrid_astar_planning_grid_source",
+        "planner_grid_resolution_m",
+        "source_grid_resolution_m",
+        "planning_proxy_hash",
+        "closed_key_xy_resolution_m",
         "platform_contract_hash",
         "max_traversable_slope_deg",
         "hybrid_astar_current_pose",
@@ -4492,6 +4945,60 @@ def _unique_continuous_theta_eval_proposals(values: list[Any]) -> list[float]:
     return result
 
 
+def _continuous_theta_eval_proposal_degs(
+    candidate: dict[str, Any],
+    *,
+    current_cell: tuple[int, int] | None,
+    current_theta_deg: float,
+    theta_step_deg: float,
+    proposal_policy: str,
+) -> list[float]:
+    viewpoint = candidate.get("candidate_viewpoint")
+    viewpoint_theta = (
+        _finite_or_none(viewpoint[2])
+        if isinstance(viewpoint, (list, tuple)) and len(viewpoint) >= 3
+        else None
+    )
+    base = float(current_theta_deg)
+    step = float(theta_step_deg) if math.isfinite(float(theta_step_deg)) and float(theta_step_deg) > 0.0 else 45.0
+    if proposal_policy == CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR:
+        bearing = _candidate_bearing_theta_deg(candidate, current_cell=current_cell)
+        return _unique_continuous_theta_eval_proposals(
+            [
+                candidate.get("candidate_theta_deg"),
+                viewpoint_theta,
+                base,
+                bearing,
+                None if bearing is None else bearing + step,
+                None if bearing is None else bearing - step,
+                base + step,
+                base - step,
+            ]
+        )
+    return _unique_continuous_theta_eval_proposals(
+        [
+            candidate.get("candidate_theta_deg"),
+            viewpoint_theta,
+            base,
+            base + step,
+            base - step,
+        ]
+    )
+
+
+def _candidate_bearing_theta_deg(candidate: dict[str, Any], *, current_cell: tuple[int, int] | None) -> float | None:
+    if current_cell is None:
+        return None
+    cell = _cell_tuple(_candidate_cell(candidate))
+    if cell is None:
+        return None
+    dx = float(cell[0]) - float(current_cell[0])
+    dy = float(cell[1]) - float(current_cell[1])
+    if abs(dx) <= 1.0e-9 and abs(dy) <= 1.0e-9:
+        return None
+    return float(math.degrees(math.atan2(dy, dx)) % 360.0)
+
+
 def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> tuple[int, dict[str, Any] | None, str | None]:
     (
         index,
@@ -4520,10 +5027,102 @@ def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> 
             rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
             reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
             turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+            closed_key_xy_resolution_m=planner_options["closed_key_xy_resolution_m"],
         )
         return int(index), row, None
     except Exception as exc:  # pragma: no cover - worker failures are represented per candidate.
         return int(index), None, f"{type(exc).__name__}:{exc}"
+
+
+def _evaluate_hybrid_astar_candidate_path_cost_batch_worker(args: tuple[Any, ...]) -> list[tuple[int, dict[str, Any] | None, str | None]]:
+    (
+        grid,
+        current_pose,
+        indexed_payloads,
+        platform_hash,
+        max_slope,
+        planner_options,
+    ) = args
+    rows: list[tuple[int, dict[str, Any] | None, str | None]] = []
+    for index, payload in indexed_payloads:
+        rows.append(
+            _evaluate_hybrid_astar_candidate_path_cost_worker(
+                (
+                    index,
+                    grid,
+                    current_pose,
+                    payload,
+                    platform_hash,
+                    max_slope,
+                    planner_options,
+                )
+            )
+        )
+    return rows
+
+
+def _indexed_chunks(items: list[tuple[int, dict[str, Any]]], chunk_count: int) -> list[list[tuple[int, dict[str, Any]]]]:
+    if not items:
+        return []
+    count = max(1, int(chunk_count))
+    chunks: list[list[tuple[int, dict[str, Any]]]] = [[] for _ in range(min(count, len(items)))]
+    for offset, item in enumerate(items):
+        chunks[offset % len(chunks)].append(item)
+    return [chunk for chunk in chunks if chunk]
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        parsed = int(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return parsed
+
+
+def _canonical_action_mask_slot(candidate: dict[str, Any], enumerate_index: int) -> int:
+    for field in ("selected_base_candidate_index", "base_candidate_index", "candidate_index"):
+        parsed = _optional_int(candidate.get(field))
+        if parsed is not None:
+            return int(parsed)
+    return int(enumerate_index)
+
+
+def _canonical_candidate_set_hash(candidate: dict[str, Any], fallback_candidate_set_hash: str | None) -> str | None:
+    for field in ("base_candidate_set_hash", "candidate_set_hash"):
+        value = candidate.get(field)
+        if value is not None and str(value):
+            return str(value)
+    return str(fallback_candidate_set_hash) if fallback_candidate_set_hash is not None else None
+
+
+def _canonical_reachability_provenance_binding(
+    candidate: dict[str, Any],
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    provenance = row.get("candidate_reachability_provenance")
+    if not isinstance(provenance, dict):
+        return None
+    payload = dict(provenance)
+    fallback_index = _optional_int(row.get("candidate_index"))
+    payload["candidate_index"] = _canonical_action_mask_slot(
+        candidate,
+        int(fallback_index) if fallback_index is not None else 0,
+    )
+    payload["candidate_set_hash"] = _canonical_candidate_set_hash(
+        candidate,
+        row.get("candidate_set_hash"),
+    )
+    return payload
 
 
 def _enrich_candidates_with_hybrid_astar_path_cost(
@@ -4557,8 +5156,9 @@ def _enrich_candidates_with_hybrid_astar_path_cost(
         return
     try:
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-        grid = build_cost_grid_from_sidecar(sidecar)
-        current_world = _hybrid_cell_center_world(grid.spec, HYBRID_CELL(int(current_cell[0]), int(current_cell[1])))
+        source_grid = build_cost_grid_from_sidecar(sidecar)
+        grid = _hybrid_astar_planning_grid(source_grid, config)
+        current_world = _hybrid_cell_center_world(source_grid.spec, HYBRID_CELL(int(current_cell[0]), int(current_cell[1])))
     except Exception:
         for candidate in candidates:
             _apply_hybrid_astar_unavailable_candidate_fields(
@@ -4590,45 +5190,57 @@ def _enrich_candidates_with_hybrid_astar_path_cost(
         "rotation_cost_weight": float(config.get("hybrid_astar_rotation_cost_weight", 0.2)),
         "reverse_penalty_weight": float(config.get("hybrid_astar_reverse_penalty_weight", 0.5)),
         "turn_penalty_weight": float(config.get("hybrid_astar_turn_penalty_weight", 0.05)),
+        "closed_key_xy_resolution_m": (
+            float(config["hybrid_astar_closed_key_xy_resolution_m"])
+            if config.get("hybrid_astar_closed_key_xy_resolution_m") is not None
+            else None
+        ),
     }
+    proxy_enabled = grid.metadata.get("planning_grid_source") == "derived_high_res_planning_proxy/v1"
 
     def payload_for(index: int, candidate: dict[str, Any]) -> dict[str, Any]:
         payload = dict(candidate)
         payload.setdefault("scenario_id", scenario_id)
         payload.setdefault("step_index", step_index)
-        payload.setdefault("candidate_index", index)
-        payload.setdefault("candidate_set_hash", candidate_set_hash_value)
+        payload["candidate_index"] = _canonical_action_mask_slot(candidate, index)
+        payload["candidate_set_hash"] = _canonical_candidate_set_hash(candidate, candidate_set_hash_value)
+        if proxy_enabled:
+            world_pose = _candidate_goal_world_pose_from_source_grid(source_grid, candidate)
+            if world_pose is not None:
+                payload["candidate_goal_world_pose"] = world_pose
+                payload["planning_proxy_candidate_binding"] = "coarse_candidate_cell_center_world_pose/v1"
         return payload
 
     rows_by_index: dict[int, dict[str, Any]] = {}
     failed_indices: set[int] = set()
     if hybrid_astar_executor is not None and len(candidates) > 1:
+        indexed_payloads = [(index, payload_for(index, candidate)) for index, candidate in enumerate(candidates)]
         futures = {
             hybrid_astar_executor.submit(
-                _evaluate_hybrid_astar_candidate_path_cost_worker,
+                _evaluate_hybrid_astar_candidate_path_cost_batch_worker,
                 (
-                    index,
                     grid,
                     current_pose,
-                    payload_for(index, candidate),
+                    chunk,
                     platform_hash,
                     float(max_slope),
                     planner_options,
                 ),
-            ): index
-            for index, candidate in enumerate(candidates)
+            ): chunk
+            for chunk in _indexed_chunks(indexed_payloads, int(config.get("hybrid_astar_candidate_eval_workers", 1) or 1))
         }
         for future in as_completed(futures):
-            index = futures[future]
+            chunk = futures[future]
             try:
-                row_index, row, error = future.result()
+                results = future.result()
             except Exception:
-                failed_indices.add(index)
+                failed_indices.update(int(index) for index, _payload in chunk)
                 continue
-            if error is not None or row is None:
-                failed_indices.add(int(row_index))
-            else:
-                rows_by_index[int(row_index)] = row
+            for row_index, row, error in results:
+                if error is not None or row is None:
+                    failed_indices.add(int(row_index))
+                else:
+                    rows_by_index[int(row_index)] = row
     else:
         for index, candidate in enumerate(candidates):
             payload = payload_for(index, candidate)
@@ -4650,6 +5262,7 @@ def _enrich_candidates_with_hybrid_astar_path_cost(
                     rotation_cost_weight=float(planner_options["rotation_cost_weight"]),
                     reverse_penalty_weight=float(planner_options["reverse_penalty_weight"]),
                     turn_penalty_weight=float(planner_options["turn_penalty_weight"]),
+                    closed_key_xy_resolution_m=planner_options["closed_key_xy_resolution_m"],
                 )
             except Exception:
                 failed_indices.add(index)
@@ -4689,11 +5302,20 @@ def _apply_hybrid_astar_candidate_fields(
     candidate["hybrid_astar_trajectory_kind"] = row.get("hybrid_astar_trajectory_kind")
     candidate["hybrid_astar_reachable"] = row.get("hybrid_astar_reachable") is True
     candidate["hybrid_astar_failure_reason"] = row.get("hybrid_astar_failure_reason")
+    candidate["candidate_reachability_gate_source"] = row.get("candidate_reachability_gate_source")
+    candidate["candidate_reachability_provenance_schema"] = row.get("candidate_reachability_provenance_schema")
+    candidate["candidate_reachability_planner_config_hash"] = row.get("candidate_reachability_planner_config_hash")
+    candidate["candidate_reachability_provenance"] = _canonical_reachability_provenance_binding(candidate, row)
     candidate["legacy_grid_astar_path_cost"] = legacy_grid_cost
     candidate["hybrid_vs_grid_path_cost_delta"] = row.get("hybrid_vs_grid_path_cost_delta")
     candidate["point_grid_path_cost_fallback_used"] = False
     candidate["default_astar_replaced"] = False
     candidate["hybrid_astar_ackermann_feasible_claimed"] = False
+    candidate["hybrid_astar_planning_grid_source"] = row.get("hybrid_astar_planning_grid_source")
+    candidate["planner_grid_resolution_m"] = row.get("planner_grid_resolution_m")
+    candidate["source_grid_resolution_m"] = row.get("source_grid_resolution_m")
+    candidate["planning_proxy_hash"] = row.get("planning_proxy_hash")
+    candidate["closed_key_xy_resolution_m"] = row.get("closed_key_xy_resolution_m")
     candidate["platform_contract_hash"] = platform_contract_hash
     candidate["max_traversable_slope_deg"] = max_traversable_slope_deg
     candidate["hybrid_astar_current_pose"] = list(current_pose)
@@ -4703,7 +5325,10 @@ def _apply_hybrid_astar_candidate_fields(
         candidate["reachable"] = candidate["hybrid_astar_reachable"]
     else:
         candidate["reachable"] = False
-    candidate["hybrid_astar_action_mask_allowed"] = candidate["hybrid_astar_reachable"]
+    candidate["hybrid_astar_action_mask_allowed"] = (
+        candidate["hybrid_astar_reachable"]
+        and _candidate_reachability_provenance_valid(candidate.get("candidate_reachability_provenance"))
+    )
 
 
 def _apply_hybrid_astar_unavailable_candidate_fields(
@@ -4719,11 +5344,20 @@ def _apply_hybrid_astar_unavailable_candidate_fields(
     candidate["hybrid_astar_trajectory_kind"] = "hybrid_astar_pose_path"
     candidate["hybrid_astar_reachable"] = False
     candidate["hybrid_astar_failure_reason"] = reason
+    candidate["candidate_reachability_gate_source"] = CANDIDATE_REACHABILITY_GATE_SOURCE
+    candidate["candidate_reachability_provenance_schema"] = CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION
+    candidate["candidate_reachability_planner_config_hash"] = None
+    candidate["candidate_reachability_provenance"] = None
     candidate["legacy_grid_astar_path_cost"] = _candidate_cost(candidate)
     candidate["hybrid_vs_grid_path_cost_delta"] = None
     candidate["point_grid_path_cost_fallback_used"] = False
     candidate["default_astar_replaced"] = False
     candidate["hybrid_astar_ackermann_feasible_claimed"] = False
+    candidate["hybrid_astar_planning_grid_source"] = None
+    candidate["planner_grid_resolution_m"] = None
+    candidate["source_grid_resolution_m"] = None
+    candidate["planning_proxy_hash"] = None
+    candidate["closed_key_xy_resolution_m"] = None
     candidate["platform_contract_hash"] = platform_contract_hash
     candidate["max_traversable_slope_deg"] = max_traversable_slope_deg
     candidate["hybrid_astar_action_mask_allowed"] = False
@@ -4735,6 +5369,50 @@ def _hybrid_cell_center_world(spec: Any, cell: HYBRID_CELL) -> HYBRID_WORLD_POIN
     return HYBRID_WORLD_POINT(
         float(origin[0]) + (float(cell.x) + 0.5) * float(spec.resolution),
         float(origin[1]) + (float(cell.y) + 0.5) * float(spec.resolution),
+    )
+
+
+def _hybrid_astar_planning_grid(source_grid: Any, config: dict[str, Any]) -> Any:
+    if config.get("hybrid_astar_planning_grid_source") != "derived_high_res_planning_proxy/v1":
+        return source_grid
+    return build_derived_high_res_planning_proxy_grid(
+        source_grid,
+        float(config.get("planner_grid_resolution_m") or 1.0),
+    )
+
+
+def _candidate_goal_world_pose_from_source_grid(source_grid: Any, candidate: dict[str, Any]) -> list[float] | None:
+    viewpoint = candidate.get("candidate_viewpoint")
+    if not isinstance(viewpoint, (list, tuple)) or len(viewpoint) < 2:
+        cell = _cell_tuple(_candidate_cell(candidate))
+        if cell is None:
+            return None
+        viewpoint = [cell[0], cell[1]]
+    try:
+        cell = HYBRID_CELL(int(viewpoint[0]), int(viewpoint[1]))
+    except (TypeError, ValueError):
+        return None
+    if not source_grid.spec.in_bounds(cell):
+        return None
+    world = _hybrid_cell_center_world(source_grid.spec, cell)
+    return [float(world.x), float(world.y)]
+
+
+def _candidate_reachability_hard_gate_enabled(config: dict[str, Any]) -> bool:
+    return str(config.get("candidate_reachability_gate_source") or "") == CANDIDATE_REACHABILITY_GATE_SOURCE
+
+
+def _candidate_reachability_provenance_valid(provenance: Any) -> bool:
+    if not isinstance(provenance, dict):
+        return False
+    return (
+        provenance.get("schema_version") == CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION
+        and provenance.get("source") == CANDIDATE_REACHABILITY_GATE_SOURCE
+        and provenance.get("backend") == HYBRID_ASTAR_PATH_COST_SOURCE
+        and provenance.get("reachable") is True
+        and _finite_or_none(provenance.get("path_cost")) is not None
+        and bool(str(provenance.get("pose_path_hash") or "").strip())
+        and bool(str(provenance.get("planner_config_hash") or "").strip())
     )
 
 
@@ -4903,6 +5581,21 @@ def _candidate_metric_audit_rows(
                 "hybrid_astar_pose_path_hash": candidate.get("hybrid_astar_pose_path_hash"),
                 "hybrid_astar_trajectory_kind": candidate.get("hybrid_astar_trajectory_kind"),
                 "hybrid_astar_failure_reason": candidate.get("hybrid_astar_failure_reason"),
+                "candidate_reachability_gate_source": candidate.get("candidate_reachability_gate_source"),
+                "candidate_reachability_provenance_schema": candidate.get("candidate_reachability_provenance_schema"),
+                "candidate_reachability_planner_config_hash": candidate.get(
+                    "candidate_reachability_planner_config_hash"
+                ),
+                "candidate_reachability_provenance_valid": _candidate_reachability_provenance_valid(
+                    candidate.get("candidate_reachability_provenance")
+                ),
+                "candidate_reachability_provenance_omitted": candidate.get("candidate_reachability_provenance")
+                is None,
+                "hybrid_astar_planning_grid_source": candidate.get("hybrid_astar_planning_grid_source"),
+                "planner_grid_resolution_m": candidate.get("planner_grid_resolution_m"),
+                "source_grid_resolution_m": candidate.get("source_grid_resolution_m"),
+                "planning_proxy_hash": candidate.get("planning_proxy_hash"),
+                "closed_key_xy_resolution_m": candidate.get("closed_key_xy_resolution_m"),
                 "legacy_grid_astar_path_cost": candidate.get("legacy_grid_astar_path_cost"),
                 "hybrid_vs_grid_path_cost_delta": candidate.get("hybrid_vs_grid_path_cost_delta"),
                 "point_grid_path_cost_fallback_used": candidate.get("point_grid_path_cost_fallback_used"),
@@ -5863,6 +6556,8 @@ def _render_report(summary: dict[str, Any]) -> str:
             f"- reason_codes: `{summary['reason_codes']}`",
             f"- true_model_inference_executed: `{summary['true_model_inference_executed']}`",
             f"- proxy_selection_used: `{summary['proxy_selection_used']}`",
+            f"- no_valid_action_terminal_count: `{summary.get('no_valid_action_terminal_count')}`",
+            f"- model_inference_skipped_terminal_count: `{summary.get('model_inference_skipped_terminal_count')}`",
             f"- scenario_count: `{summary['scenario_count']}`",
             f"- rollout_steps: `{summary['rollout_steps']}`",
             f"- xunce_coverage_advantage_established: `{summary['xunce_coverage_advantage_established']}`",

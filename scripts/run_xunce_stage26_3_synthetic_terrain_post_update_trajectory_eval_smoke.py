@@ -114,6 +114,10 @@ REQUIRED_INFERENCE_FIELDS = (
     "default_astar_replaced",
     "hybrid_astar_ackermann_feasible_claimed",
 )
+INFERENCE_BINDING_EXCLUDED_TERMINALS = {
+    "candidate_generation_exhausted",
+    "no_valid_action",
+}
 
 
 def main() -> int:
@@ -209,6 +213,11 @@ def run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
         "coverage_denominator_mode": config.get("coverage_denominator_mode"),
         "coverage_denominator_source": config.get("coverage_denominator_source"),
         "post_update_success_metric": config.get("post_update_success_metric"),
+        "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+        "candidate_reachability_max_theta_proposals_per_candidate": config.get(
+            "candidate_reachability_max_theta_proposals_per_candidate"
+        ),
+        "candidate_reachability_theta_proposal_policy": config.get("candidate_reachability_theta_proposal_policy"),
         "synthetic_terrain_model_id": SYNTHETIC_MODEL_ID,
         "synthetic_terrain_hash": stage26_2_summary.get("synthetic_terrain_hash") or config.get("synthetic_terrain_hash"),
         "synthetic_source_kind": SYNTHETIC_SOURCE_KIND,
@@ -278,6 +287,17 @@ def _run_stage21_5(
         "theta_aware_candidate_viewpoints_enabled": True,
         "slope_obstacle_aware_theta_reward_enabled": True,
         "hybrid_astar_pose_path_cost_enabled": True,
+        "candidate_reachability_gate_source": str(
+            config.get("candidate_reachability_gate_source")
+            or getattr(stage21_5, "CANDIDATE_REACHABILITY_GATE_LEGACY", "legacy_action_mask_validation/v1")
+        ),
+        "candidate_reachability_max_theta_proposals_per_candidate": int(
+            config.get("candidate_reachability_max_theta_proposals_per_candidate", 0) or 0
+        ),
+        "candidate_reachability_theta_proposal_policy": str(
+            config.get("candidate_reachability_theta_proposal_policy")
+            or "candidate_viewpoint_current_step/v1"
+        ),
         "synthetic_terrain_contract_enabled": True,
         "obstacle_occlusion_enabled": True,
         "coverage_source": COVERAGE_SOURCE,
@@ -305,6 +325,7 @@ def _run_stage21_5(
         "dynamic_max_candidates_per_step": int(config["dynamic_max_candidates_per_step"]),
         "dynamic_proposal_pool_limit_per_step": int(config["dynamic_proposal_pool_limit_per_step"]),
         **{field: config[field] for field in HYBRID_ASTAR_PLANNER_FIELDS},
+        **_planner_reachability_override_config(config),
         "default_astar_replaced": False,
         "hybrid_astar_ackermann_feasible_claimed": False,
         "hybrid_astar_candidate_eval_workers": int(config.get("hybrid_astar_candidate_eval_workers", 1)),
@@ -639,6 +660,10 @@ def _stage21_5_execution_rejections(stage21_5_summary: dict[str, Any]) -> list[s
         reasons.append("pre_unreachable_selected_count_nonzero")
     if int(stage21_5_summary.get("post_unreachable_selected_count") or 0) > 0:
         reasons.append("post_unreachable_selected_count_nonzero")
+    if int(stage21_5_summary.get("pre_selected_reachability_provenance_invalid_count") or 0) > 0:
+        reasons.append("pre_selected_reachability_provenance_invalid_count_nonzero")
+    if int(stage21_5_summary.get("post_selected_reachability_provenance_invalid_count") or 0) > 0:
+        reasons.append("post_selected_reachability_provenance_invalid_count_nonzero")
     return _unique(reasons)
 
 
@@ -649,6 +674,8 @@ def _binding_failed(action_audit: dict[str, Any]) -> bool:
         or int(action_audit.get("explicit_unreachable_selected_provenance_count") or 0) > 0
         or int(action_audit.get("pre_unreachable_selected_count") or 0) > 0
         or int(action_audit.get("post_unreachable_selected_count") or 0) > 0
+        or int(action_audit.get("pre_selected_reachability_provenance_invalid_count") or 0) > 0
+        or int(action_audit.get("post_selected_reachability_provenance_invalid_count") or 0) > 0
         or int(action_audit.get("coverage_source_mismatch_count") or 0) > 0
         or int(action_audit.get("path_cost_source_mismatch_count") or 0) > 0
         or int(action_audit.get("hybrid_path_contract_mismatch_count") or 0) > 0
@@ -661,7 +688,8 @@ def _binding_failed(action_audit: dict[str, Any]) -> bool:
 
 
 def _summary_counts(action_audit: dict[str, Any], delta_audit: dict[str, Any], stage21_5_summary: dict[str, Any]) -> dict[str, Any]:
-    return {
+    coverage_per_100m_delta = _first_finite(delta_audit.get("coverage_per_100m_delta"), 0.0)
+    counts = {
         "strong_state_join_available_count": int(action_audit.get("strong_state_join_available_count") or 0),
         "pre_duplicate_strong_key_count": int(action_audit.get("pre_duplicate_strong_key_count") or 0),
         "post_duplicate_strong_key_count": int(action_audit.get("post_duplicate_strong_key_count") or 0),
@@ -675,6 +703,18 @@ def _summary_counts(action_audit: dict[str, Any], delta_audit: dict[str, Any], s
         "explicit_unreachable_selected_provenance_count": int(action_audit.get("explicit_unreachable_selected_provenance_count") or 0),
         "pre_unreachable_selected_count": int(action_audit.get("pre_unreachable_selected_count") or 0),
         "post_unreachable_selected_count": int(action_audit.get("post_unreachable_selected_count") or 0),
+        "pre_selected_reachability_provenance_invalid_count": int(
+            stage21_5_summary.get("pre_selected_reachability_provenance_invalid_count") or 0
+        ),
+        "post_selected_reachability_provenance_invalid_count": int(
+            stage21_5_summary.get("post_selected_reachability_provenance_invalid_count") or 0
+        ),
+        "pre_selected_reachability_provenance_pass_count": int(
+            stage21_5_summary.get("pre_selected_reachability_provenance_pass_count") or 0
+        ),
+        "post_selected_reachability_provenance_pass_count": int(
+            stage21_5_summary.get("post_selected_reachability_provenance_pass_count") or 0
+        ),
         "synthetic_contract_mismatch_count": int(action_audit.get("synthetic_contract_mismatch_count") or 0),
         "physical_obstacle_payload_count": int(action_audit.get("physical_obstacle_payload_count") or 0),
         "grid_fallback_count": int(action_audit.get("grid_fallback_count") or 0),
@@ -691,7 +731,7 @@ def _summary_counts(action_audit: dict[str, Any], delta_audit: dict[str, Any], s
         "coverage_auc_delta": _first_finite(delta_audit.get("coverage_auc_delta"), 0.0),
         "hybrid_astar_path_cost_delta": _first_finite(delta_audit.get("hybrid_astar_path_cost_delta"), 0.0),
         "path_cost_delta": _first_finite(delta_audit.get("path_cost_delta"), 0.0),
-        "coverage_per_100m_delta": _first_finite(delta_audit.get("coverage_per_100m_delta"), 0.0),
+        "coverage_per_100m_delta": coverage_per_100m_delta,
         "synthetic_contract_mismatch_count": int(action_audit.get("synthetic_contract_mismatch_count") or 0),
         "hard_risk_violation_count": int(stage21_5_summary.get("post_hard_risk_violation_count") or 0),
         "mask_violation_count": int(stage21_5_summary.get("post_mask_violation_count") or 0),
@@ -700,6 +740,9 @@ def _summary_counts(action_audit: dict[str, Any], delta_audit: dict[str, Any], s
         "scenario_regression_count": int(stage21_5_summary.get("scenario_regression_count") or 0),
         "sample_count_too_low_for_performance_claim": bool(stage21_5_summary.get("sample_count_too_low_for_performance_claim", True)),
     }
+    if _uses_main_coverable_efficiency_metric(stage21_5_summary):
+        counts["main_coverage_per_100m_delta"] = coverage_per_100m_delta
+    return counts
 
 
 def _route_blocking_reasons(route: str, action_audit: dict[str, Any], stage21_5_summary: dict[str, Any]) -> list[str]:
@@ -847,6 +890,41 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
             config[field] = _positive_int(payload.get(field, _default_hybrid_value(field)), field)
         else:
             config[field] = _positive_float(payload.get(field, _default_hybrid_value(field)), field)
+    config["candidate_reachability_gate_source"] = str(
+        payload.get("candidate_reachability_gate_source")
+        or getattr(stage21_5, "CANDIDATE_REACHABILITY_GATE_LEGACY", "legacy_action_mask_validation/v1")
+    )
+    if config["candidate_reachability_gate_source"] not in {
+        getattr(stage21_5, "CANDIDATE_REACHABILITY_GATE_LEGACY", "legacy_action_mask_validation/v1"),
+        getattr(stage21_5, "CANDIDATE_REACHABILITY_GATE_SOURCE", "hybrid_astar_pose_reachability/v1"),
+    }:
+        raise ValueError("candidate_reachability_gate_source is invalid")
+    config["candidate_reachability_max_theta_proposals_per_candidate"] = int(
+        payload.get("candidate_reachability_max_theta_proposals_per_candidate", 0) or 0
+    )
+    if config["candidate_reachability_max_theta_proposals_per_candidate"] < 0:
+        raise ValueError("candidate_reachability_max_theta_proposals_per_candidate must be nonnegative")
+    config["candidate_reachability_theta_proposal_policy"] = str(
+        payload.get("candidate_reachability_theta_proposal_policy")
+        or "candidate_viewpoint_current_step/v1"
+    )
+    if config["candidate_reachability_theta_proposal_policy"] not in {
+        "candidate_viewpoint_current_step/v1",
+        "candidate_current_bearing_sweep/v1",
+    }:
+        raise ValueError("candidate_reachability_theta_proposal_policy is invalid")
+    if payload.get("hybrid_astar_planning_grid_source") is not None:
+        config["hybrid_astar_planning_grid_source"] = str(payload["hybrid_astar_planning_grid_source"])
+    if payload.get("planner_grid_resolution_m") is not None:
+        config["planner_grid_resolution_m"] = _positive_float(
+            payload.get("planner_grid_resolution_m"),
+            "planner_grid_resolution_m",
+        )
+    if payload.get("hybrid_astar_closed_key_xy_resolution_m") is not None:
+        config["hybrid_astar_closed_key_xy_resolution_m"] = _positive_float(
+            payload.get("hybrid_astar_closed_key_xy_resolution_m"),
+            "hybrid_astar_closed_key_xy_resolution_m",
+        )
     config["min_mean_abs_probability_delta_for_signal"] = _positive_float(
         payload.get("min_mean_abs_probability_delta_for_signal", 1.0e-5),
         "min_mean_abs_probability_delta_for_signal",
@@ -872,6 +950,22 @@ def _default_hybrid_value(field: str) -> float | int:
         "hybrid_astar_turn_penalty_weight": 0.05,
     }
     return defaults[field]
+
+
+def _planner_reachability_override_config(config: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "hybrid_astar_planning_grid_source",
+        "planner_grid_resolution_m",
+        "hybrid_astar_closed_key_xy_resolution_m",
+        "hybrid_astar_primitive_duration_s",
+        "hybrid_astar_goal_position_tolerance_m",
+        "hybrid_astar_goal_theta_tolerance_deg",
+        "hybrid_astar_max_iterations",
+        "hybrid_astar_integration_dt_s",
+        "hybrid_astar_max_speed_mps",
+        "hybrid_astar_max_angular_speed_degps",
+    )
+    return {field: config[field] for field in fields if config.get(field) is not None}
 
 
 def _stage26_1_summary(stage26_2_summary: dict[str, Any]) -> dict[str, Any]:
@@ -936,7 +1030,25 @@ def _base_strong_key(row: dict[str, Any]) -> str | None:
 
 
 def _xunce_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [row for row in rows if row.get("policy") is None or row.get("policy") == "xunce"]
+    return [
+        row
+        for row in rows
+        if (row.get("policy") is None or row.get("policy") == "xunce")
+        and not _inference_binding_excluded_terminal(row)
+    ]
+
+
+def _inference_binding_excluded_terminal(row: dict[str, Any]) -> bool:
+    skipped_reason = str(row.get("inference_skipped_reason") or "")
+    if skipped_reason not in INFERENCE_BINDING_EXCLUDED_TERMINALS:
+        return False
+    if row.get("true_model_inference_executed") is True:
+        return False
+    if row.get("selected_action_index") is not None:
+        return False
+    if skipped_reason == "no_valid_action" and row.get("has_valid_action") is not None and row.get("has_valid_action") is not False:
+        return False
+    return True
 
 
 def _missing_required_fields(row: dict[str, Any]) -> list[str]:
@@ -1075,6 +1187,8 @@ def _render_report(summary: dict[str, Any]) -> str:
             f"- final_coverage_delta: {summary['final_coverage_delta']}",
             f"- coverage_auc_delta: {summary['coverage_auc_delta']}",
             f"- hybrid_astar_path_cost_delta: {summary['hybrid_astar_path_cost_delta']}",
+            f"- pre_selected_reachability_provenance_invalid_count: {summary['pre_selected_reachability_provenance_invalid_count']}",
+            f"- post_selected_reachability_provenance_invalid_count: {summary['post_selected_reachability_provenance_invalid_count']}",
             "",
             "This is a bounded offline smoke. It does not publish checkpoints, replace the default policy, connect an executor, or start canary traffic.",
             "",

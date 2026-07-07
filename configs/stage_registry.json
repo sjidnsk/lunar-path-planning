@@ -714,6 +714,18 @@
       "default_output_root": "D:/xunce/out/s26_8q",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage26-8r-pose-gate-repair": {
+      "script": "scripts/run_xunce_stage26_8r_pose_gate_repair.py",
+      "default_config": "configs/xunce_stage26_8r_pose_gate_repair_v1.json",
+      "default_output_root": "D:/xunce/out/s26_8r",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-8s-terminal-aware-sample-expansion": {
+      "script": "scripts/run_xunce_stage26_8s_terminal_aware_sample_expansion.py",
+      "default_config": "configs/xunce_stage26_8s_terminal_aware_sample_expansion_v1.json",
+      "default_output_root": "D:/xunce/out/s26_8s",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage26-9-synthetic-terrain-long-horizon-efficiency-pilot": {
       "script": "scripts/run_xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot.py",
       "default_config": "configs/xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot_v1.json",

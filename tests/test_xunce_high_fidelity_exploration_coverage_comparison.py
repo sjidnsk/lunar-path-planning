@@ -283,6 +283,86 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertEqual(candidate["path_cost"], 12.5)
         self.assertEqual(candidate["path_cost_source"], "hybrid_astar_pose_path/v1")
 
+    def test_selected_only_hybrid_astar_enrichment_preserves_selected_action_slot(self) -> None:
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as hf
+
+        sidecar_path = self.expansion_root / "scenario_000.sidecar.json"
+        selected_candidate = {
+            "cell": [3, 3],
+            "candidate_viewpoint": [3, 3, 90.0],
+            "candidate_theta_deg": 90.0,
+            "selected_base_candidate_index": 2,
+            "base_candidate_index": 2,
+            "base_candidate_set_hash": "base-candidate-set",
+            "reachable": False,
+            "path_cost": None,
+        }
+        original = hf.evaluate_hybrid_astar_candidate_path_cost
+
+        def fake_evaluate(*, candidate, **kwargs):
+            provenance = {
+                "schema_version": "xunce-candidate-reachability-provenance/v1",
+                "source": "hybrid_astar_pose_reachability/v1",
+                "backend": "hybrid_astar_pose_path/v1",
+                "candidate_index": candidate.get("candidate_index"),
+                "candidate_set_hash": candidate.get("candidate_set_hash"),
+                "candidate_viewpoint": candidate.get("candidate_viewpoint"),
+                "candidate_theta_deg": candidate.get("candidate_theta_deg"),
+                "planner_config_hash": "planner-hash",
+                "reachable": True,
+                "path_cost": 3.0,
+                "pose_path_hash": "pose-hash",
+            }
+            return {
+                "candidate_reachability_gate_source": "hybrid_astar_pose_reachability/v1",
+                "candidate_reachability_provenance_schema": "xunce-candidate-reachability-provenance/v1",
+                "candidate_reachability_planner_config_hash": "planner-hash",
+                "candidate_reachability_provenance": provenance,
+                "hybrid_astar_reachable": True,
+                "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
+                "hybrid_astar_path_cost": 3.0,
+                "hybrid_astar_pose_path_hash": "pose-hash",
+                "hybrid_astar_failure_reason": None,
+                "legacy_grid_astar_path_cost": 2.5,
+                "hybrid_vs_grid_path_cost_delta": 0.5,
+            }
+
+        hf.evaluate_hybrid_astar_candidate_path_cost = fake_evaluate
+        try:
+            hf._enrich_candidates_with_hybrid_astar_path_cost(
+                [selected_candidate],
+                current_cell=(0, 0),
+                current_theta_deg=0.0,
+                candidate_set_hash_value="fallback-candidate-set",
+                step_index=0,
+                scenario_id="scenario_000",
+                config={"platform_contract_hash": "platform-hash"},
+                slice_row={"sidecar": str(sidecar_path)},
+                repo_root=self.repo_root,
+            )
+        finally:
+            hf.evaluate_hybrid_astar_candidate_path_cost = original
+
+        provenance = selected_candidate["candidate_reachability_provenance"]
+        self.assertEqual(provenance["candidate_index"], 2)
+        self.assertEqual(provenance["candidate_set_hash"], "base-candidate-set")
+
+    def test_canonical_action_mask_slot_rejects_non_integral_or_infinite_values(self) -> None:
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as hf
+
+        self.assertEqual(
+            hf._canonical_action_mask_slot({"selected_base_candidate_index": 2.0}, 9),
+            2,
+        )
+        self.assertEqual(
+            hf._canonical_action_mask_slot({"selected_base_candidate_index": 1.7, "base_candidate_index": 3}, 9),
+            3,
+        )
+        self.assertEqual(
+            hf._canonical_action_mask_slot({"selected_base_candidate_index": float("inf")}, 9),
+            9,
+        )
+
     def test_hybrid_astar_path_cost_enabled_enriches_model_inference_rows(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,
@@ -322,6 +402,9 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             synthetic_terrain_contract_enabled=True,
             synthetic_terrain_hash="synthetic-hash",
             synthetic_source_kind="synthetic_terrain_obstacle_proxy/v1",
+            candidate_reachability_gate_source="hybrid_astar_pose_reachability/v1",
+            candidate_reachability_max_theta_proposals_per_candidate=3,
+            candidate_reachability_theta_proposal_policy="candidate_current_bearing_sweep/v1",
         )
 
         summary = run_xunce_high_fidelity_exploration_coverage_comparison(
@@ -347,11 +430,22 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertFalse(first["default_astar_replaced"])
         self.assertFalse(first["hybrid_astar_ackermann_feasible_claimed"])
         self.assertEqual(first["platform_contract_hash"], "platform-hash")
+        self.assertIn("selected_base_candidate_set_hash", first)
+        self.assertIn("base_candidate_set_hash", first)
         self.assertEqual(
             first["xunce_batch_feature_semantic_map"]["feature_contract_id"],
             "synthetic_credit_candidate_features/v1",
         )
         self.assertTrue(first["synthetic_credit_feature_rows"])
+        rows_with_provenance = [
+            row
+            for row in inference_rows
+            if row["policy"] == "xunce" and isinstance(row.get("selected_candidate_reachability_provenance"), dict)
+        ]
+        self.assertTrue(rows_with_provenance)
+        for row in rows_with_provenance:
+            provenance = row["selected_candidate_reachability_provenance"]
+            self.assertEqual(provenance["candidate_index"], row["selected_action_index"])
         episodes = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
         self.assertTrue(episodes)
         xunce_episode = next(row for row in episodes if row["policy"] == "xunce")
@@ -1460,6 +1554,131 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
             self.assertEqual(episode["candidate_generation_exhausted_step"], 0)
             self.assertEqual(episode["candidate_generation_exhausted_count"], 1)
 
+    def test_model_inference_audit_excludes_no_valid_action_terminal_skip(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        model_bundle = {
+            "reason_codes": [],
+            "xunce_checkpoint_loaded": True,
+            "incumbent_checkpoint_loaded": True,
+            "xunce_parameter_count": 3,
+            "incumbent_parameter_count": 2,
+        }
+        audit = module._model_inference_audit(
+            model_bundle,
+            [
+                {
+                    "true_model_inference_executed": True,
+                    "detail": {"finite_outputs": True},
+                    "model_inference_failure_count": 0,
+                    "model_inference_mask_violation_count": 0,
+                    "reason_codes": [],
+                },
+                {
+                    "true_model_inference_executed": False,
+                    "inference_skipped_reason": "no_valid_action",
+                    "terminal_reason": "no_valid_action",
+                    "detail": {"finite_outputs": False},
+                    "model_inference_failure_count": 0,
+                    "model_inference_mask_violation_count": 0,
+                    "reason_codes": ["no_valid_action", "path_planning_failure"],
+                },
+            ],
+        )
+
+        self.assertTrue(audit["true_model_inference_executed"])
+        self.assertEqual(audit["no_valid_action_terminal_count"], 1)
+        self.assertEqual(audit["model_inference_skipped_terminal_count"], 1)
+        self.assertNotIn("true_model_inference_not_executed", audit["reason_codes"])
+        self.assertNotIn("model_inference_non_finite_output", audit["reason_codes"])
+
+    def test_no_valid_action_terminal_does_not_count_as_path_planning_or_runner_failure(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        original_dynamic_builder = module.build_dynamic_frontier_nbv_candidates
+
+        def masked_dynamic_candidates(**kwargs):
+            scenario_id = str(kwargs["scenario"].get("scenario_id", "scenario_000"))
+            rows = []
+            for action_index in range(2):
+                row = {
+                    "scenario_id": scenario_id,
+                    "roi_group": "roi_0",
+                    "proposal_id": f"{scenario_id}:masked:{action_index}",
+                    "action_index": action_index,
+                    "cell": [10 + action_index, 10],
+                    "reachable": False,
+                    "planner_reachable": False,
+                    "path_cost": 5.0 + action_index,
+                    "path_length": 5.0 + action_index,
+                    "risk": 0.1,
+                    "energy_cost": 2.0,
+                    "expected_coverage_rate_delta": 0.02,
+                    "expected_new_coverage_area": 1.0,
+                    "information_gain": 0.1,
+                    "value": 0.2,
+                    "open_grid_fallback_used": False,
+                    "proposal_only": False,
+                    "proposal_validated_by_path_feedback": True,
+                    "path_feedback_validation_source": "in_process_path_planner_astar_batch",
+                    "planner_validation_backend": "in_process_path_planner_astar_batch",
+                    "validation_evidence_kind": "full_adapter_evidence",
+                    "frontier_candidate_source": "frontier_boundary",
+                    "candidate_generation_source": module.DYNAMIC_FRONTIER_NBV_GENERATION_SOURCE,
+                    "failure_reason": "strict_action_mask_no_valid_action",
+                }
+                rows.append(row)
+            proposals = [dict(row, proposal_only=True, proposal_validated_by_path_feedback=False) for row in rows]
+            return rows, proposals, [dict(row) for row in rows]
+
+        module.build_dynamic_frontier_nbv_candidates = masked_dynamic_candidates
+        try:
+            self._update_config(
+                required_scenario_count=1,
+                rollout_steps=2,
+                candidate_refresh_mode="dynamic_frontier_nbv_in_process",
+                coverage_metric_mode="path_line_plus_endpoint",
+                include_oracle_baselines=False,
+                dynamic_validation_work_root=str(self.temp_dir / "_xunce_dynamic_validation_work"),
+                dynamic_validation_max_path_length=1000,
+            )
+            summary = module.run_xunce_high_fidelity_exploration_coverage_comparison(
+                config_path=self.config_path,
+                output_root=self.output_root,
+                repo_root=self.repo_root,
+            )
+        finally:
+            module.build_dynamic_frontier_nbv_candidates = original_dynamic_builder
+
+        self.assertEqual(summary["path_planning_failure_count"], 0)
+        self.assertGreaterEqual(summary["no_valid_action_terminal_count"], 1)
+        self.assertGreaterEqual(summary["model_inference_skipped_terminal_count"], 1)
+        self.assertNotEqual(summary["next_required_change"], "fix_xunce_coverage_comparison_runner")
+        self.assertNotIn("true_model_inference_not_executed", summary["reason_codes"])
+        self.assertNotIn("model_inference_non_finite_output", summary["reason_codes"])
+
+        steps = self._read_jsonl(self.output_root / "xunce-exploration-coverage-steps.jsonl")
+        self.assertTrue(steps)
+        for row in steps:
+            self.assertFalse(row["executed"])
+            self.assertEqual(row["terminal_reason"], "no_valid_action")
+            self.assertIn("no_valid_action", row["reason_codes"])
+            self.assertNotIn("path_planning_failure", row["reason_codes"])
+
+        inference_rows = self._read_jsonl(self.output_root / "xunce-exploration-coverage-model-inference.jsonl")
+        self.assertTrue(inference_rows)
+        for row in inference_rows:
+            self.assertEqual(row["inference_skipped_reason"], "no_valid_action")
+            self.assertEqual(row["terminal_reason"], "no_valid_action")
+            self.assertFalse(row["true_model_inference_executed"])
+            self.assertFalse(row["model_inference_failure_count"])
+
+        episodes = self._read_jsonl(self.output_root / "xunce-exploration-coverage-episodes.jsonl")
+        self.assertTrue(episodes)
+        for episode in episodes:
+            self.assertEqual(episode["episode_termination_reason"], "no_valid_action")
+            self.assertEqual(episode["no_valid_action_terminal_count"], 1)
+
     def test_model_inference_failure_is_separate_from_candidate_exhaustion(self) -> None:
         from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
 
@@ -1483,6 +1702,32 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
         self.assertGreater(summary["model_inference_failure_count"], 0)
         self.assertEqual(summary["candidate_generation_exhausted_count"], 0)
         self.assertIn("model_inference_failure", summary["reason_codes"])
+
+    def test_executed_non_finite_model_output_remains_inference_failure(self) -> None:
+        from scripts import run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        model_bundle = {
+            "reason_codes": [],
+            "xunce_checkpoint_loaded": True,
+            "incumbent_checkpoint_loaded": True,
+            "xunce_parameter_count": 3,
+            "incumbent_parameter_count": 2,
+        }
+        audit = module._model_inference_audit(
+            model_bundle,
+            [
+                {
+                    "true_model_inference_executed": True,
+                    "detail": {"finite_outputs": False},
+                    "model_inference_failure_count": 0,
+                    "model_inference_mask_violation_count": 0,
+                    "reason_codes": [],
+                }
+            ],
+        )
+
+        self.assertFalse(audit["true_model_inference_executed"])
+        self.assertIn("model_inference_non_finite_output", audit["reason_codes"])
 
     def test_coverage_rate_reports_raw_capped_and_saturation_fields(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (

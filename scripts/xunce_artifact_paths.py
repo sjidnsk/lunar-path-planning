@@ -57,6 +57,11 @@ STAGE21_5_SCENARIO_DELTA = ArtifactName(
     "scenario_delta.jsonl",
     ("xunce-stage21-5-scenario-trajectory-delta.jsonl",),
 )
+STAGE21_5_SELECTED_POSE_EVIDENCE_AUDIT = ArtifactName(
+    "stage21_5_selected_pose_evidence_audit",
+    "selected_pose_audit.json",
+    ("xunce-stage21-5-selected-pose-evidence-audit.json",),
+)
 STAGE21_5_ROUTING = ArtifactName("stage21_5_routing", "routing.json", ("xunce-stage21-5-next-stage-routing.json",))
 STAGE21_5_MANIFEST = ArtifactName("stage21_5_manifest", "manifest.json", ("xunce-stage21-5-manifest.json",))
 

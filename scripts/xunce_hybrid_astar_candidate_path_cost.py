@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import sys
@@ -18,6 +19,8 @@ from path_planner.search import AStarPlanner, HybridAStarPlanner, Pose2D, PosePl
 
 
 PATH_COST_SOURCE = "hybrid_astar_pose_path/v1"
+CANDIDATE_REACHABILITY_GATE_SOURCE = "hybrid_astar_pose_reachability/v1"
+CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION = "xunce-candidate-reachability-provenance/v1"
 
 
 def evaluate_hybrid_astar_candidate_path_cost(
@@ -64,41 +67,91 @@ def evaluate_hybrid_astar_candidate_path_cost(
         goal_world = WorldPoint(float(goal_world_pose[0]), float(goal_world_pose[1]))
         goal_cell = grid.spec.world_to_cell(goal_world)
     goal_pose = Pose2D(goal_world.x, goal_world.y, math.radians(float(theta_deg)))
-    request = PosePlanRequest(
-        start=Pose2D(float(pose[0]), float(pose[1]), float(pose[2])),
-        goal=goal_pose,
-        theta_bin_count=int(theta_bin_count),
-        position_tolerance_m=(
+    requested_closed_key_xy_resolution_m = (
+        float(closed_key_xy_resolution_m)
+        if closed_key_xy_resolution_m is not None and float(closed_key_xy_resolution_m) > 0.0
+        else None
+    )
+    request_kwargs = {
+        "start": Pose2D(float(pose[0]), float(pose[1]), float(pose[2])),
+        "goal": goal_pose,
+        "theta_bin_count": int(theta_bin_count),
+        "position_tolerance_m": (
             float(goal_position_tolerance_m)
             if goal_position_tolerance_m is not None and float(goal_position_tolerance_m) > 0.0
             else max(0.5, float(grid.spec.resolution) * 0.5)
         ),
-        theta_tolerance_rad=math.radians(float(goal_theta_tolerance_deg)),
-        max_iterations=int(max_iterations),
-        primitive_duration_s=float(primitive_duration_s),
-        integration_dt_s=float(integration_dt_s),
-        max_speed_mps=float(max_speed_mps),
-        max_angular_speed_radps=math.radians(float(max_angular_speed_degps)),
-        footprint_length_m=float(footprint_length_m),
-        footprint_width_m=float(footprint_width_m),
-        footprint_safety_margin_m=float(footprint_safety_margin_m),
-        rotation_cost_weight=float(rotation_cost_weight),
-        reverse_penalty_weight=float(reverse_penalty_weight),
-        turn_penalty_weight=float(turn_penalty_weight),
-        closed_key_xy_resolution_m=(
-            float(closed_key_xy_resolution_m)
-            if closed_key_xy_resolution_m is not None and float(closed_key_xy_resolution_m) > 0.0
-            else None
-        ),
-    )
+        "theta_tolerance_rad": math.radians(float(goal_theta_tolerance_deg)),
+        "max_iterations": int(max_iterations),
+        "primitive_duration_s": float(primitive_duration_s),
+        "integration_dt_s": float(integration_dt_s),
+        "max_speed_mps": float(max_speed_mps),
+        "max_angular_speed_radps": math.radians(float(max_angular_speed_degps)),
+        "footprint_length_m": float(footprint_length_m),
+        "footprint_width_m": float(footprint_width_m),
+        "footprint_safety_margin_m": float(footprint_safety_margin_m),
+        "rotation_cost_weight": float(rotation_cost_weight),
+        "reverse_penalty_weight": float(reverse_penalty_weight),
+        "turn_penalty_weight": float(turn_penalty_weight),
+    }
+    if _pose_plan_request_supports_closed_key_xy_resolution():
+        request_kwargs["closed_key_xy_resolution_m"] = requested_closed_key_xy_resolution_m
+    request = PosePlanRequest(**request_kwargs)
     hybrid = HybridAStarPlanner().plan(grid, request)
     start_cell = grid.spec.world_to_cell(WorldPoint(float(pose[0]), float(pose[1])))
     legacy = AStarPlanner().plan(grid, PlanRequest(start=start_cell, goal=goal_cell))
     breakdown = hybrid.cost_breakdown.to_dict()
     hybrid_cost = float(hybrid.total_cost) if hybrid.success else None
     legacy_cost = float(legacy.total_cost) if legacy.success else None
+    pose_path_hash = _pose_path_hash(hybrid.pose_path)
+    applied_closed_key_xy_resolution_m = _request_closed_key_xy_resolution_m(request)
+    planner_config_hash = _planner_config_hash(
+        grid,
+        request,
+        requested_closed_key_xy_resolution_m=requested_closed_key_xy_resolution_m,
+    )
+    provenance = {
+        "schema_version": CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
+        "source": CANDIDATE_REACHABILITY_GATE_SOURCE,
+        "backend": PATH_COST_SOURCE,
+        "candidate_index": candidate.get("candidate_index"),
+        "candidate_set_hash": candidate.get("candidate_set_hash"),
+        "candidate_viewpoint": candidate.get("candidate_viewpoint"),
+        "candidate_theta_deg": theta_deg,
+        "current_pose": [float(pose[0]), float(pose[1]), float(pose[2])],
+        "goal_pose": [float(goal_world.x), float(goal_world.y), math.radians(float(theta_deg))],
+        "goal_cell": [int(goal_cell.x), int(goal_cell.y)],
+        "goal_world_pose": [float(goal_world.x), float(goal_world.y)],
+        "planner_config_hash": planner_config_hash,
+        "planner_grid_source": grid.metadata.get("planning_grid_source"),
+        "planner_grid_resolution_m": grid.metadata.get("planner_grid_resolution_m"),
+        "source_grid_resolution_m": grid.metadata.get("source_grid_resolution_m"),
+        "planning_proxy_hash": grid.metadata.get("planning_proxy_hash"),
+        "closed_key_xy_resolution_m": applied_closed_key_xy_resolution_m,
+        "requested_closed_key_xy_resolution_m": requested_closed_key_xy_resolution_m,
+        "goal_position_tolerance_m": request.position_tolerance_m,
+        "goal_theta_tolerance_deg": math.degrees(request.theta_tolerance_rad),
+        "theta_bin_count": request.theta_bin_count,
+        "primitive_duration_s": request.primitive_duration_s,
+        "integration_dt_s": request.integration_dt_s,
+        "max_speed_mps": request.max_speed_mps,
+        "max_angular_speed_degps": math.degrees(request.max_angular_speed_radps),
+        "platform_contract_hash": platform_contract_hash,
+        "max_traversable_slope_deg": float(max_traversable_slope_deg),
+        "reachable": bool(hybrid.success),
+        "path_cost": hybrid_cost,
+        "pose_path_hash": pose_path_hash,
+        "failure_reason": hybrid.failure_reason.value if hybrid.failure_reason else None,
+        "trajectory_kind": hybrid.to_route_dict(grid.spec)["trajectory_kind"],
+        "legacy_grid_astar_reachable": bool(legacy.success),
+        "legacy_grid_astar_path_cost": legacy_cost,
+    }
     return {
         **base,
+        "candidate_reachability_gate_source": CANDIDATE_REACHABILITY_GATE_SOURCE,
+        "candidate_reachability_provenance_schema": CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
+        "candidate_reachability_planner_config_hash": planner_config_hash,
+        "candidate_reachability_provenance": provenance,
         "candidate_pose_contract_valid": True,
         "hybrid_astar_reachable": bool(hybrid.success),
         "hybrid_astar_trajectory_kind": hybrid.to_route_dict(grid.spec)["trajectory_kind"],
@@ -109,7 +162,7 @@ def evaluate_hybrid_astar_candidate_path_cost(
         "hybrid_astar_turn_penalty": breakdown["turn_penalty"],
         "hybrid_astar_slope_cost": breakdown["slope_cost"],
         "hybrid_astar_clearance_cost": breakdown["clearance_cost"],
-        "hybrid_astar_pose_path_hash": _pose_path_hash(hybrid.pose_path),
+        "hybrid_astar_pose_path_hash": pose_path_hash,
         "hybrid_astar_failure_reason": hybrid.failure_reason.value if hybrid.failure_reason else None,
         "hybrid_astar_expanded_pose_count": int(hybrid.expanded_count),
         "hybrid_astar_pose_path_count": len(hybrid.pose_path),
@@ -120,7 +173,8 @@ def evaluate_hybrid_astar_candidate_path_cost(
         "planner_grid_resolution_m": grid.metadata.get("planner_grid_resolution_m"),
         "source_grid_resolution_m": grid.metadata.get("source_grid_resolution_m"),
         "planning_proxy_hash": grid.metadata.get("planning_proxy_hash"),
-        "closed_key_xy_resolution_m": request.closed_key_xy_resolution_m,
+        "closed_key_xy_resolution_m": applied_closed_key_xy_resolution_m,
+        "requested_closed_key_xy_resolution_m": requested_closed_key_xy_resolution_m,
         "candidate_goal_world_pose": list(goal_world_pose) if goal_world_pose is not None else None,
         "legacy_grid_astar_reachable": bool(legacy.success),
         "legacy_grid_astar_path_cost": legacy_cost,
@@ -267,6 +321,10 @@ def _base_row(candidate: dict[str, Any], platform_contract_hash: str, max_traver
 
 def _failed_contract(reason: str) -> dict[str, Any]:
     return {
+        "candidate_reachability_gate_source": CANDIDATE_REACHABILITY_GATE_SOURCE,
+        "candidate_reachability_provenance_schema": CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
+        "candidate_reachability_planner_config_hash": None,
+        "candidate_reachability_provenance": None,
         "candidate_pose_contract_valid": False,
         "hybrid_astar_reachable": False,
         "hybrid_astar_trajectory_kind": "hybrid_astar_pose_path",
@@ -352,6 +410,53 @@ def _pose_path_hash(poses: tuple[Pose2D, ...]) -> str | None:
     ]
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _planner_config_hash(
+    grid: CostGrid,
+    request: PosePlanRequest,
+    *,
+    requested_closed_key_xy_resolution_m: float | None = None,
+) -> str:
+    payload = {
+        "source": CANDIDATE_REACHABILITY_GATE_SOURCE,
+        "backend": PATH_COST_SOURCE,
+        "grid": {
+            "planning_grid_source": grid.metadata.get("planning_grid_source"),
+            "planner_grid_resolution_m": grid.metadata.get("planner_grid_resolution_m"),
+            "source_grid_resolution_m": grid.metadata.get("source_grid_resolution_m"),
+            "planning_proxy_hash": grid.metadata.get("planning_proxy_hash"),
+        },
+        "request": {
+            "theta_bin_count": request.theta_bin_count,
+            "position_tolerance_m": request.position_tolerance_m,
+            "theta_tolerance_rad": request.theta_tolerance_rad,
+            "max_iterations": request.max_iterations,
+            "primitive_duration_s": request.primitive_duration_s,
+            "integration_dt_s": request.integration_dt_s,
+            "max_speed_mps": request.max_speed_mps,
+            "max_angular_speed_radps": request.max_angular_speed_radps,
+            "footprint_length_m": request.footprint_length_m,
+            "footprint_width_m": request.footprint_width_m,
+            "footprint_safety_margin_m": request.footprint_safety_margin_m,
+            "rotation_cost_weight": request.rotation_cost_weight,
+            "reverse_penalty_weight": request.reverse_penalty_weight,
+            "turn_penalty_weight": request.turn_penalty_weight,
+            "closed_key_xy_resolution_m": _request_closed_key_xy_resolution_m(request),
+            "requested_closed_key_xy_resolution_m": requested_closed_key_xy_resolution_m,
+        },
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _pose_plan_request_supports_closed_key_xy_resolution() -> bool:
+    return "closed_key_xy_resolution_m" in inspect.signature(PosePlanRequest).parameters
+
+
+def _request_closed_key_xy_resolution_m(request: PosePlanRequest) -> float | None:
+    value = getattr(request, "closed_key_xy_resolution_m", None)
+    return float(value) if value is not None else None
 
 
 def _cost_grid_content_hash(grid: CostGrid) -> str:

@@ -35,6 +35,22 @@ DEFAULT_STAGE26_8G_ROOT = (
     "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/"
     "outputs/path_feedback_batch_xunce_stage26_8g_repair_synthetic_scenario_diversity_v1"
 )
+DEFAULT_STAGE26_8Q_RECOMMENDED_CONFIG = (
+    "D:/CodexDownloads/lunar-path-planning/stage26_synthetic_terrain_augmentation/"
+    "outputs/path_feedback_batch_xunce_stage26_8q_derived_high_res_planning_proxy_alignment_v1/"
+    "xunce-stage26-8q-recommended-stage26-8n-config.json"
+)
+DEFAULT_STAGE26_8R_RECOMMENDED_CONFIG = (
+    "D:/xunce/out/s26_8r/xunce-stage26-8r-recommended-stage26-8n-config.json"
+)
+DEFAULT_STAGE26_8S_RECOMMENDED_CONFIG = (
+    "D:/xunce/out/s26_8s/xunce-stage26-8s-recommended-stage26-8n-config.json"
+)
+STAGE26_8Q_RECOMMENDED_SCHEMA_VERSION = "xunce-stage26-8q-recommended-stage26-8n-config/v1"
+STAGE26_8Q_RECOMMENDED_COMBO_ID = "aligned_1m_proxy"
+STAGE26_8R_RECOMMENDED_SCHEMA_VERSION = "xunce-stage26-8r-recommended-stage26-8n-config/v1"
+STAGE26_8S_RECOMMENDED_SCHEMA_VERSION = "xunce-stage26-8s-recommended-stage26-8n-config/v1"
+STAGE26_8S_RECOMMENDED_STAGE_ID = "xunce-stage26-8s-terminal-aware-sample-expansion"
 
 SUMMARY_FILE = "xunce-stage26-8n-summary.json"
 AGGRESSIVE_CONFIG_FILE = "xunce-stage26-8n-aggressive-config.json"
@@ -49,6 +65,7 @@ MANIFEST_FILE = "xunce-stage26-8n-manifest.json"
 
 ROUTE_INPUTS = "rerun_stage26_8n_required_inputs"
 ROUTE_EXPAND_SAMPLE = "expand_stage26_8n_aggressive_sample_budget"
+ROUTE_NO_POSE_REACHABLE = "no_hybrid_astar_pose_reachable_candidate_for_action_mask"
 ROUTE_COLLECTOR = "repair_stage26_8n_collector_binding_or_safety"
 ROUTE_UPDATE = "repair_stage26_8n_update_stability"
 ROUTE_REDUCE = "reduce_stage26_8n_aggressive_update_strength"
@@ -61,6 +78,17 @@ ROUTE_RESUME = "resume_stage26_8d_seed_horizon_jobs_with_diverse_scenarios"
 ROUTE_STAGE26_9 = "run_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot"
 ROUTE_BOUNDARY = "resolve_stage26_8n_boundary_rejections"
 
+EFFICIENCY_ZERO_COUNT_FIELDS = (
+    "synthetic_inference_required_field_missing_count",
+    "hybrid_path_missing_provenance_count",
+    "hybrid_path_contract_mismatch_count",
+    "explicit_unreachable_selected_provenance_count",
+    "pre_unreachable_selected_count",
+    "post_unreachable_selected_count",
+    "pre_selected_reachability_provenance_invalid_count",
+    "post_selected_reachability_provenance_invalid_count",
+)
+
 STAGE26_8I_REQUIRED_ROUTE = "increase_stage26_synthetic_update_strength_or_sample_count"
 BOUNDARY_FIELDS = (
     "release_or_training_authorized",
@@ -68,6 +96,15 @@ BOUNDARY_FIELDS = (
     "replaces_default_policy",
     "connects_real_executor",
     "starts_online_canary",
+)
+STAGE26_8Q_PLANNER_OVERRIDE_FIELDS = tuple(stage26_8m.PLANNER_OVERRIDE_FIELDS)
+STAGE26_8Q_REQUIRED_PLANNER_OVERRIDE_FIELDS = (
+    "hybrid_astar_planning_grid_source",
+    "planner_grid_resolution_m",
+    "hybrid_astar_closed_key_xy_resolution_m",
+    "hybrid_astar_primitive_duration_s",
+    "hybrid_astar_goal_position_tolerance_m",
+    "hybrid_astar_goal_theta_tolerance_deg",
 )
 
 
@@ -98,9 +135,49 @@ def run_xunce_stage26_8n_aggressive_sample_update_sweep(
     artifact_io.make_dirs(output_root)
 
     stage26_8i_summary = _read_json_if_exists(Path(config["stage26_8i_root"]) / "xunce-stage26-8i-summary.json")
+    stage26_8q_recommended_config_path = Path(config["stage26_8q_recommended_config_path"])
+    stage26_8q_recommended_config, stage26_8q_recommended_read_error = _read_stage26_8q_recommended_if_exists(
+        stage26_8q_recommended_config_path
+    )
+    stage26_8q_recommended_rejections = _stage26_8q_recommended_input_rejections(
+        stage26_8q_recommended_config,
+        stage26_8q_recommended_config_path,
+        int(config["min_trainable_transition_count"]),
+        read_error=stage26_8q_recommended_read_error,
+    )
+    stage26_8r_recommended_config_path = Path(config["stage26_8r_recommended_config_path"])
+    stage26_8s_recommended_config_path = Path(config["stage26_8s_recommended_config_path"])
+    stage26_8s_recommended_config_exists = artifact_io.path_is_file(stage26_8s_recommended_config_path)
+    stage26_8s_recommended_config, stage26_8s_recommended_read_error = _read_stage26_8s_recommended_if_exists(
+        stage26_8s_recommended_config_path
+    )
+    stage26_8s_recommended_rejections = _stage26_8s_recommended_input_rejections(
+        stage26_8s_recommended_config,
+        stage26_8s_recommended_config_path,
+        int(config["min_trainable_transition_count"]),
+        read_error=stage26_8s_recommended_read_error,
+    )
+    stage26_8s_recommended_valid = stage26_8s_recommended_config_exists and not stage26_8s_recommended_rejections
+    stage26_8r_recommended_config: dict[str, Any] = {}
+    stage26_8r_recommended_rejections: list[str] = []
+    if not stage26_8s_recommended_config_exists:
+        stage26_8r_recommended_config, stage26_8r_recommended_read_error = _read_stage26_8r_recommended_if_exists(
+            stage26_8r_recommended_config_path
+        )
+        stage26_8r_recommended_rejections = _stage26_8r_recommended_input_rejections(
+            stage26_8r_recommended_config,
+            stage26_8r_recommended_config_path,
+            int(config["min_trainable_transition_count"]),
+            read_error=stage26_8r_recommended_read_error,
+        )
+    pose_sample_recommendation = stage26_8s_recommended_config if stage26_8s_recommended_valid else stage26_8r_recommended_config
+    stage26_8q_planner_overrides = _stage26_8q_planner_overrides(stage26_8q_recommended_config)
     boundary_rejections = _boundary_rejections(config)
     input_rejections = _input_rejections(stage26_8i_summary, Path(config["source_scenario_fixture_root"]))
-    aggressive_config = _build_stage26_8m_config(config)
+    input_rejections.extend(stage26_8q_recommended_rejections)
+    input_rejections.extend(stage26_8s_recommended_rejections)
+    input_rejections.extend(stage26_8r_recommended_rejections)
+    aggressive_config = _build_stage26_8m_config(config, stage26_8q_planner_overrides, pose_sample_recommendation)
     aggressive_config_path = output_root / AGGRESSIVE_CONFIG_FILE
     _write_json(aggressive_config_path, aggressive_config)
 
@@ -149,11 +226,46 @@ def run_xunce_stage26_8n_aggressive_sample_update_sweep(
         "stage26_8i_root": config["stage26_8i_root"],
         "stage26_8i_status": stage26_8i_summary.get("status"),
         "stage26_8i_next_required_change": stage26_8i_summary.get("next_required_change"),
+        "stage26_8q_recommended_config_path": config["stage26_8q_recommended_config_path"],
+        "stage26_8q_recommended_combo_id": stage26_8q_recommended_config.get("recommended_combo_id"),
+        "stage26_8q_aligned_trainable_transition_count": _int_or_none(
+            stage26_8q_recommended_config.get("aligned_trainable_transition_count")
+        ),
+        "stage26_8q_planning_proxy_source": stage26_8q_planner_overrides.get("hybrid_astar_planning_grid_source"),
+        "stage26_8q_planner_overrides": stage26_8q_planner_overrides,
+        "stage26_8r_recommended_config_path": config["stage26_8r_recommended_config_path"],
+        "stage26_8r_recommended_combo_id": stage26_8r_recommended_config.get("recommended_combo_id"),
+        "stage26_8r_trainable_transition_count": _int_or_none(
+            stage26_8r_recommended_config.get("trainable_transition_count")
+        ),
+        "stage26_8s_recommended_config_path": config["stage26_8s_recommended_config_path"],
+        "stage26_8s_recommended_scenario_count": _int_or_none(
+            stage26_8s_recommended_config.get("recommended_scenario_count")
+        ),
+        "stage26_8s_trainable_transition_count": _int_or_none(
+            stage26_8s_recommended_config.get("trainable_transition_count")
+        ),
+        "stage26_8s_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": _int_or_none(
+            stage26_8s_recommended_config.get("no_hybrid_astar_pose_reachable_candidate_for_action_mask_count")
+        ),
+        "stage26_8s_selected_pose_unreachable_terminal_count": _int_or_none(
+            stage26_8s_recommended_config.get("selected_pose_unreachable_terminal_count")
+        ),
         "stage26_8m_root": str(stage26_8m_root),
         "stage26_8m_status": stage26_8m_summary.get("status"),
         "stage26_8m_next_required_change": stage26_8m_summary.get("next_required_change"),
+        "run_stage26_8m": bool(config["run_stage26_8m"]),
+        "stage26_8m_read_only_job_state_stale_risk": not bool(config["run_stage26_8m"]),
         "trainable_transition_count": collector_audit.get("trainable_transition_count", 0),
         "synthetic_credit_target_selected_count": collector_audit.get("synthetic_credit_target_selected_count", 0),
+        "no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": collector_audit.get(
+            "no_hybrid_astar_pose_reachable_candidate_for_action_mask_count",
+            0,
+        ),
+        "rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": collector_audit.get(
+            "rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count",
+            0,
+        ),
         "min_trainable_transition_count": int(config["min_trainable_transition_count"]),
         "combo_count": len(update_rows),
         "stable_combo_count": eval_selection_audit["stable_combo_count"],
@@ -170,6 +282,40 @@ def run_xunce_stage26_8n_aggressive_sample_update_sweep(
         "main_coverage_per_100m_delta": efficiency_audit.get("main_coverage_per_100m_delta", 0.0),
         "hybrid_astar_path_cost_delta": efficiency_audit.get("hybrid_astar_path_cost_delta", 0.0),
         "hybrid_astar_path_cost_delta_is_diagnostic_only": True,
+        "synthetic_inference_required_field_missing_count": efficiency_audit.get(
+            "synthetic_inference_required_field_missing_count",
+            0,
+        ),
+        "hybrid_path_missing_provenance_count": efficiency_audit.get(
+            "hybrid_path_missing_provenance_count",
+            0,
+        ),
+        "hybrid_path_contract_mismatch_count": efficiency_audit.get(
+            "hybrid_path_contract_mismatch_count",
+            0,
+        ),
+        "explicit_unreachable_selected_provenance_count": efficiency_audit.get(
+            "explicit_unreachable_selected_provenance_count",
+            0,
+        ),
+        "pre_unreachable_selected_count": efficiency_audit.get("pre_unreachable_selected_count", 0),
+        "post_unreachable_selected_count": efficiency_audit.get("post_unreachable_selected_count", 0),
+        "pre_selected_reachability_provenance_invalid_count": efficiency_audit.get(
+            "pre_selected_reachability_provenance_invalid_count",
+            0,
+        ),
+        "post_selected_reachability_provenance_invalid_count": efficiency_audit.get(
+            "post_selected_reachability_provenance_invalid_count",
+            0,
+        ),
+        "pre_selected_reachability_provenance_pass_count": efficiency_audit.get(
+            "pre_selected_reachability_provenance_pass_count",
+            0,
+        ),
+        "post_selected_reachability_provenance_pass_count": efficiency_audit.get(
+            "post_selected_reachability_provenance_pass_count",
+            0,
+        ),
         "coverage_denominator_source": config["coverage_denominator_source"],
         "post_update_success_metric": config["post_update_success_metric"],
         "coverage_source": config["coverage_source"],
@@ -177,6 +323,14 @@ def run_xunce_stage26_8n_aggressive_sample_update_sweep(
         "synthetic_source_kind": config["synthetic_source_kind"],
         "action_space_type": config["action_space_type"],
         "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+        "candidate_reachability_gate_source": aggressive_config.get("candidate_reachability_gate_source"),
+        "hybrid_astar_max_iterations": aggressive_config.get("hybrid_astar_max_iterations"),
+        "candidate_reachability_max_theta_proposals_per_candidate": aggressive_config.get(
+            "candidate_reachability_max_theta_proposals_per_candidate"
+        ),
+        "candidate_reachability_theta_proposal_policy": aggressive_config.get(
+            "candidate_reachability_theta_proposal_policy"
+        ),
         "max_traversable_slope_deg": float(config["max_traversable_slope_deg"]),
         "max_abs_approx_kl": float(config["max_abs_approx_kl"]),
         "boundary_rejections": boundary_rejections,
@@ -208,6 +362,39 @@ def run_xunce_stage26_8n_aggressive_sample_update_sweep(
         "summary": str(output_root / SUMMARY_FILE),
         "aggressive_config": str(aggressive_config_path),
         "stage26_8m_root": str(stage26_8m_root),
+        "stage26_8q_recommended_config_path": config["stage26_8q_recommended_config_path"],
+        "stage26_8q_recommended_combo_id": stage26_8q_recommended_config.get("recommended_combo_id"),
+        "stage26_8q_aligned_trainable_transition_count": _int_or_none(
+            stage26_8q_recommended_config.get("aligned_trainable_transition_count")
+        ),
+        "stage26_8q_planning_proxy_source": stage26_8q_planner_overrides.get("hybrid_astar_planning_grid_source"),
+        "stage26_8q_planner_overrides": stage26_8q_planner_overrides,
+        "stage26_8r_recommended_config_path": config["stage26_8r_recommended_config_path"],
+        "stage26_8r_recommended_combo_id": stage26_8r_recommended_config.get("recommended_combo_id"),
+        "stage26_8r_trainable_transition_count": _int_or_none(
+            stage26_8r_recommended_config.get("trainable_transition_count")
+        ),
+        "stage26_8s_recommended_config_path": config["stage26_8s_recommended_config_path"],
+        "stage26_8s_recommended_scenario_count": _int_or_none(
+            stage26_8s_recommended_config.get("recommended_scenario_count")
+        ),
+        "stage26_8s_trainable_transition_count": _int_or_none(
+            stage26_8s_recommended_config.get("trainable_transition_count")
+        ),
+        "stage26_8s_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": _int_or_none(
+            stage26_8s_recommended_config.get("no_hybrid_astar_pose_reachable_candidate_for_action_mask_count")
+        ),
+        "stage26_8s_selected_pose_unreachable_terminal_count": _int_or_none(
+            stage26_8s_recommended_config.get("selected_pose_unreachable_terminal_count")
+        ),
+        "candidate_reachability_gate_source": aggressive_config.get("candidate_reachability_gate_source"),
+        "hybrid_astar_max_iterations": aggressive_config.get("hybrid_astar_max_iterations"),
+        "candidate_reachability_max_theta_proposals_per_candidate": aggressive_config.get(
+            "candidate_reachability_max_theta_proposals_per_candidate"
+        ),
+        "candidate_reachability_theta_proposal_policy": aggressive_config.get(
+            "candidate_reachability_theta_proposal_policy"
+        ),
         "shared_collector_audit": str(output_root / SHARED_COLLECTOR_AUDIT_FILE),
         "update_sweep_results": str(output_root / UPDATE_SWEEP_FILE),
         "eval_selection_audit": str(output_root / EVAL_SELECTION_AUDIT_FILE),
@@ -279,8 +466,14 @@ def _run_controlled_stage26_8m(config: dict[str, Any], config_path: Path, output
     return aggregate
 
 
-def _build_stage26_8m_config(config: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _build_stage26_8m_config(
+    config: dict[str, Any],
+    planner_overrides: dict[str, Any] | None = None,
+    pose_gate_recommendation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    pose_gate_recommendation = pose_gate_recommendation or {}
+    scenario_count = _int_or_none(pose_gate_recommendation.get("recommended_scenario_count"))
+    payload = {
         "schema_version": stage26_8m.CONFIG_SCHEMA_VERSION,
         "stage_id": stage26_8m.STAGE_ID,
         "run_mode": "run_next",
@@ -292,7 +485,7 @@ def _build_stage26_8m_config(config: dict[str, Any]) -> dict[str, Any]:
         "source_scenario_fixture_root": config["source_scenario_fixture_root"],
         "horizons": [16],
         "seeds": [260801],
-        "scenario_counts": [6],
+        "scenario_counts": [scenario_count] if scenario_count is not None else [6],
         "collector_rollout_steps": [20],
         "eval_rollout_steps": [20],
         "update_combos": config["update_combos"],
@@ -305,7 +498,27 @@ def _build_stage26_8m_config(config: dict[str, Any]) -> dict[str, Any]:
         "path_cost_source": config["path_cost_source"],
         "synthetic_source_kind": config["synthetic_source_kind"],
         "action_space_type": config["action_space_type"],
+        "candidate_reachability_gate_source": getattr(
+            stage26_8m.stage21_5,
+            "CANDIDATE_REACHABILITY_GATE_SOURCE",
+            "hybrid_astar_pose_reachability/v1",
+        ),
         "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+        "hybrid_astar_max_iterations": int(
+            pose_gate_recommendation.get("hybrid_astar_max_iterations", config["hybrid_astar_max_iterations"])
+        ),
+        "candidate_reachability_max_theta_proposals_per_candidate": int(
+            pose_gate_recommendation.get(
+                "candidate_reachability_max_theta_proposals_per_candidate",
+                config["candidate_reachability_max_theta_proposals_per_candidate"],
+            )
+        ),
+        "candidate_reachability_theta_proposal_policy": str(
+            pose_gate_recommendation.get(
+                "candidate_reachability_theta_proposal_policy",
+                config["candidate_reachability_theta_proposal_policy"],
+            )
+        ),
         "max_traversable_slope_deg": float(config["max_traversable_slope_deg"]),
         "release_or_training_authorized": False,
         "publishes_checkpoint": False,
@@ -314,6 +527,24 @@ def _build_stage26_8m_config(config: dict[str, Any]) -> dict[str, Any]:
         "starts_online_canary": False,
         "canary_traffic_fraction": 0.0,
     }
+    payload.update(planner_overrides or {})
+    if pose_gate_recommendation:
+        payload["hybrid_astar_max_iterations"] = int(
+            pose_gate_recommendation.get("hybrid_astar_max_iterations", payload["hybrid_astar_max_iterations"])
+        )
+        payload["candidate_reachability_max_theta_proposals_per_candidate"] = int(
+            pose_gate_recommendation.get(
+                "candidate_reachability_max_theta_proposals_per_candidate",
+                payload["candidate_reachability_max_theta_proposals_per_candidate"],
+            )
+        )
+        payload["candidate_reachability_theta_proposal_policy"] = str(
+            pose_gate_recommendation.get(
+                "candidate_reachability_theta_proposal_policy",
+                payload["candidate_reachability_theta_proposal_policy"],
+            )
+        )
+    return payload
 
 
 def _shared_collector_audit(job_rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -331,6 +562,14 @@ def _shared_collector_audit(job_rows: list[dict[str, Any]]) -> dict[str, Any]:
         "collector_blocking_reasons": _dedupe([str(row.get("blocking_reason")) for row in failed_rows if row.get("blocking_reason")]),
         "trainable_transition_count": int(summary.get("trainable_transition_count") or summary.get("batch_row_count") or 0),
         "synthetic_credit_target_selected_count": int(summary.get("synthetic_credit_target_selected_count") or 0),
+        "no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": int(
+            summary.get("stage21_1_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count")
+            or summary.get("rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count")
+            or 0
+        ),
+        "rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": int(
+            summary.get("rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count") or 0
+        ),
         "collector_status": summary.get("status"),
         "binding_or_safety_failure": any(row.get("binding_or_safety_failure") for row in collector_rows),
     }
@@ -447,6 +686,19 @@ def _efficiency_audit(job_rows: list[dict[str, Any]]) -> dict[str, Any]:
         "main_coverage_auc_delta": _first_float(best.get("main_coverage_auc_delta"), best.get("coverage_auc_delta"), default=0.0),
         "main_coverage_per_100m_delta": _first_float(best.get("main_coverage_per_100m_delta"), best.get("coverage_per_100m_delta"), default=0.0),
         "hybrid_astar_path_cost_delta": _first_float(best.get("hybrid_astar_path_cost_delta"), default=0.0),
+        **{field: int(best.get(field) or 0) for field in EFFICIENCY_ZERO_COUNT_FIELDS},
+        "pre_selected_reachability_provenance_invalid_count": int(
+            best.get("pre_selected_reachability_provenance_invalid_count") or 0
+        ),
+        "post_selected_reachability_provenance_invalid_count": int(
+            best.get("post_selected_reachability_provenance_invalid_count") or 0
+        ),
+        "pre_selected_reachability_provenance_pass_count": int(
+            best.get("pre_selected_reachability_provenance_pass_count") or 0
+        ),
+        "post_selected_reachability_provenance_pass_count": int(
+            best.get("post_selected_reachability_provenance_pass_count") or 0
+        ),
     }
 
 
@@ -519,6 +771,9 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
     defaults = {
         "stage26_8i_root": DEFAULT_STAGE26_8I_ROOT,
         "source_scenario_fixture_root": DEFAULT_STAGE26_8G_ROOT,
+        "stage26_8q_recommended_config_path": DEFAULT_STAGE26_8Q_RECOMMENDED_CONFIG,
+        "stage26_8r_recommended_config_path": DEFAULT_STAGE26_8R_RECOMMENDED_CONFIG,
+        "stage26_8s_recommended_config_path": DEFAULT_STAGE26_8S_RECOMMENDED_CONFIG,
         "run_stage26_8m": True,
         "min_trainable_transition_count": 100,
         "max_stable_eval_count": 2,
@@ -535,6 +790,9 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
         "action_space_type": "hybrid_discrete_xy_continuous_theta/v1",
         "hybrid_astar_candidate_eval_workers": 4,
+        "hybrid_astar_max_iterations": 50,
+        "candidate_reachability_max_theta_proposals_per_candidate": 1,
+        "candidate_reachability_theta_proposal_policy": "candidate_viewpoint_current_step/v1",
         "max_traversable_slope_deg": 30.0,
         "publishes_checkpoint": False,
         "replaces_default_policy": False,
@@ -543,16 +801,44 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         "canary_traffic_fraction": 0.0,
     }
     config = defaults | payload
-    for field in ("stage26_8i_root", "source_scenario_fixture_root", "base_stage26_1_config", "base_stage26_2_config", "base_stage26_3_config"):
+    for field in (
+        "stage26_8i_root",
+        "source_scenario_fixture_root",
+        "stage26_8q_recommended_config_path",
+        "stage26_8r_recommended_config_path",
+        "stage26_8s_recommended_config_path",
+        "base_stage26_1_config",
+        "base_stage26_2_config",
+        "base_stage26_3_config",
+    ):
         config[field] = str(_resolve_path(Path(str(config[field])), repo_root))
-    config["min_trainable_transition_count"] = int(config["min_trainable_transition_count"])
-    config["max_stable_eval_count"] = int(config["max_stable_eval_count"])
+    config["min_trainable_transition_count"] = _positive_int(
+        config["min_trainable_transition_count"],
+        "min_trainable_transition_count",
+    )
+    config["max_stable_eval_count"] = _positive_int(config["max_stable_eval_count"], "max_stable_eval_count")
     config["max_abs_approx_kl"] = float(config["max_abs_approx_kl"])
     if not math.isfinite(config["max_abs_approx_kl"]) or config["max_abs_approx_kl"] > 1.5:
         raise ValueError("max_abs_approx_kl must be finite and must not exceed 1.5")
     config["update_combos"] = _update_combos(config["update_combos"])
     config["run_stage26_8m"] = bool(config["run_stage26_8m"])
     config["hybrid_astar_candidate_eval_workers"] = int(config["hybrid_astar_candidate_eval_workers"])
+    config["hybrid_astar_max_iterations"] = int(config["hybrid_astar_max_iterations"])
+    if config["hybrid_astar_max_iterations"] <= 0:
+        raise ValueError("hybrid_astar_max_iterations must be positive")
+    config["candidate_reachability_max_theta_proposals_per_candidate"] = int(
+        config.get("candidate_reachability_max_theta_proposals_per_candidate", 1)
+    )
+    if config["candidate_reachability_max_theta_proposals_per_candidate"] <= 0:
+        raise ValueError("candidate_reachability_max_theta_proposals_per_candidate must be positive")
+    config["candidate_reachability_theta_proposal_policy"] = str(
+        config.get("candidate_reachability_theta_proposal_policy") or "candidate_viewpoint_current_step/v1"
+    )
+    if config["candidate_reachability_theta_proposal_policy"] not in {
+        "candidate_viewpoint_current_step/v1",
+        "candidate_current_bearing_sweep/v1",
+    }:
+        raise ValueError("candidate_reachability_theta_proposal_policy is invalid")
     config["max_traversable_slope_deg"] = float(config["max_traversable_slope_deg"])
     for field in BOUNDARY_FIELDS:
         config[field] = bool(config.get(field, False))
@@ -598,6 +884,202 @@ def _input_rejections(stage26_8i_summary: dict[str, Any], stage26_8g_root: Path)
     if not artifact_io.path_exists(stage26_8g_root):
         reasons.append("source_scenario_fixture_root_missing")
     return reasons
+
+
+def _stage26_8q_recommended_input_rejections(
+    recommended: dict[str, Any],
+    recommended_path: Path,
+    min_trainable_transition_count: int,
+    *,
+    read_error: str | None = None,
+) -> list[str]:
+    if not artifact_io.path_is_file(recommended_path):
+        return ["stage26_8q_recommended_config_missing"]
+    if read_error:
+        return [read_error]
+
+    reasons: list[str] = []
+    if recommended.get("schema_version") != STAGE26_8Q_RECOMMENDED_SCHEMA_VERSION:
+        reasons.append("stage26_8q_recommended_schema_version_mismatch")
+    if recommended.get("recommended_combo_id") != STAGE26_8Q_RECOMMENDED_COMBO_ID:
+        reasons.append("stage26_8q_recommended_combo_id_mismatch")
+
+    recommended_min = _int_or_none(recommended.get("min_trainable_transition_count"))
+    required_trainable_count = max(min_trainable_transition_count, recommended_min or 0)
+    aligned_count = _int_or_none(recommended.get("aligned_trainable_transition_count"))
+    if aligned_count is None or aligned_count < required_trainable_count:
+        reasons.append("stage26_8q_aligned_trainable_transition_count_below_min")
+
+    for field in BOUNDARY_FIELDS:
+        if bool(recommended.get(field, False)):
+            reasons.append(f"stage26_8q_recommended_{field}_not_false")
+
+    canary_fraction = _finite(recommended.get("canary_traffic_fraction", 0.0))
+    if canary_fraction is None or canary_fraction != 0.0:
+        reasons.append("stage26_8q_recommended_canary_traffic_fraction_not_zero")
+
+    if recommended.get("hybrid_astar_planning_grid_source") != stage26_8m.PLANNER_OVERRIDE_SOURCE:
+        reasons.append("stage26_8q_recommended_planning_grid_source_mismatch")
+
+    for field in STAGE26_8Q_REQUIRED_PLANNER_OVERRIDE_FIELDS:
+        if field == "hybrid_astar_planning_grid_source":
+            continue
+        value = _finite(recommended.get(field))
+        if value is None or value <= 0.0:
+            reasons.append(f"stage26_8q_recommended_{field}_invalid")
+
+    for field in STAGE26_8Q_PLANNER_OVERRIDE_FIELDS:
+        if field in STAGE26_8Q_REQUIRED_PLANNER_OVERRIDE_FIELDS or field == "hybrid_astar_planning_grid_source":
+            continue
+        if recommended.get(field) is None:
+            continue
+        value = _finite(recommended.get(field))
+        if value is None or value <= 0.0:
+            reasons.append(f"stage26_8q_recommended_{field}_invalid")
+
+    return _dedupe(reasons)
+
+
+def _stage26_8q_planner_overrides(recommended: dict[str, Any]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    for field in STAGE26_8Q_PLANNER_OVERRIDE_FIELDS:
+        if recommended.get(field) is None:
+            continue
+        if field == "hybrid_astar_planning_grid_source":
+            overrides[field] = str(recommended[field])
+        else:
+            parsed = _finite(recommended[field])
+            overrides[field] = parsed if parsed is not None else recommended[field]
+    return overrides
+
+
+def _stage26_8r_recommended_input_rejections(
+    recommended: dict[str, Any],
+    recommended_path: Path,
+    min_trainable_transition_count: int,
+    *,
+    read_error: str | None = None,
+) -> list[str]:
+    if not artifact_io.path_is_file(recommended_path):
+        return ["stage26_8r_recommended_config_missing"]
+    if read_error:
+        return [read_error]
+
+    reasons: list[str] = []
+    if recommended.get("schema_version") != STAGE26_8R_RECOMMENDED_SCHEMA_VERSION:
+        reasons.append("stage26_8r_recommended_schema_version_mismatch")
+    if recommended.get("candidate_reachability_gate_source") != "hybrid_astar_pose_reachability/v1":
+        reasons.append("stage26_8r_recommended_gate_source_mismatch")
+    policy = str(recommended.get("candidate_reachability_theta_proposal_policy") or "")
+    if policy not in {"candidate_viewpoint_current_step/v1", "candidate_current_bearing_sweep/v1"}:
+        reasons.append("stage26_8r_recommended_theta_proposal_policy_invalid")
+    cap = _int_or_none(recommended.get("candidate_reachability_max_theta_proposals_per_candidate"))
+    if cap is None or cap <= 0:
+        reasons.append("stage26_8r_recommended_theta_proposal_cap_invalid")
+    iterations = _int_or_none(recommended.get("hybrid_astar_max_iterations"))
+    if iterations is None or iterations <= 0:
+        reasons.append("stage26_8r_recommended_hybrid_astar_max_iterations_invalid")
+    recommended_min = _int_or_none(recommended.get("min_trainable_transition_count"))
+    required_trainable_count = max(min_trainable_transition_count, recommended_min or 0)
+    trainable = _int_or_none(recommended.get("trainable_transition_count"))
+    if trainable is None or trainable < required_trainable_count:
+        reasons.append("stage26_8r_recommended_trainable_transition_count_below_min")
+    if _int_or_none(recommended.get("no_hybrid_astar_pose_reachable_candidate_for_action_mask_count")) != 0:
+        reasons.append("stage26_8r_recommended_pose_gate_empty_count_nonzero")
+    if _int_or_none(recommended.get("selected_pose_unreachable_terminal_count")) != 0:
+        reasons.append("stage26_8r_recommended_selected_pose_unreachable_terminal_count_nonzero")
+    for field in BOUNDARY_FIELDS:
+        if bool(recommended.get(field, False)):
+            reasons.append(f"stage26_8r_recommended_{field}_not_false")
+    canary_fraction = _finite(recommended.get("canary_traffic_fraction", 0.0))
+    if canary_fraction is None or canary_fraction != 0.0:
+        reasons.append("stage26_8r_recommended_canary_traffic_fraction_not_zero")
+    return _dedupe(reasons)
+
+
+def _stage26_8s_recommended_input_rejections(
+    recommended: dict[str, Any],
+    recommended_path: Path,
+    min_trainable_transition_count: int,
+    *,
+    read_error: str | None = None,
+) -> list[str]:
+    if not artifact_io.path_is_file(recommended_path):
+        return []
+    if read_error:
+        return [read_error]
+
+    reasons: list[str] = []
+    if recommended.get("schema_version") != STAGE26_8S_RECOMMENDED_SCHEMA_VERSION:
+        reasons.append("stage26_8s_recommended_schema_version_mismatch")
+    if recommended.get("stage_id") != STAGE26_8S_RECOMMENDED_STAGE_ID:
+        reasons.append("stage26_8s_recommended_stage_id_mismatch")
+
+    scenario_count = _int_or_none(recommended.get("recommended_scenario_count"))
+    if scenario_count is None or scenario_count <= 0:
+        reasons.append("stage26_8s_recommended_scenario_count_invalid")
+
+    if recommended.get("candidate_reachability_gate_source") != "hybrid_astar_pose_reachability/v1":
+        reasons.append("stage26_8s_recommended_gate_source_mismatch")
+    policy = str(recommended.get("candidate_reachability_theta_proposal_policy") or "")
+    if policy not in {"candidate_viewpoint_current_step/v1", "candidate_current_bearing_sweep/v1"}:
+        reasons.append("stage26_8s_recommended_theta_proposal_policy_invalid")
+    cap = _int_or_none(recommended.get("candidate_reachability_max_theta_proposals_per_candidate"))
+    if cap is None or cap <= 0:
+        reasons.append("stage26_8s_recommended_theta_proposal_cap_invalid")
+    iterations = _int_or_none(recommended.get("hybrid_astar_max_iterations"))
+    if iterations is None or iterations <= 0:
+        reasons.append("stage26_8s_recommended_hybrid_astar_max_iterations_invalid")
+
+    recommended_min = _int_or_none(recommended.get("min_trainable_transition_count"))
+    required_trainable_count = max(min_trainable_transition_count, recommended_min or 0)
+    trainable = _int_or_none(recommended.get("trainable_transition_count"))
+    if trainable is None or trainable < required_trainable_count:
+        reasons.append("stage26_8s_recommended_trainable_transition_count_below_min")
+
+    terminal_count = _int_or_none(
+        recommended.get("no_hybrid_astar_pose_reachable_candidate_for_action_mask_count")
+    )
+    if terminal_count is None or terminal_count < 0:
+        reasons.append("stage26_8s_recommended_pose_gate_terminal_count_invalid")
+
+    if _int_or_none(recommended.get("selected_pose_unreachable_terminal_count")) != 0:
+        reasons.append("stage26_8s_recommended_selected_pose_unreachable_terminal_count_nonzero")
+
+    for field in BOUNDARY_FIELDS:
+        if bool(recommended.get(field, False)):
+            reasons.append(f"stage26_8s_recommended_{field}_not_false")
+    canary_fraction = _finite(recommended.get("canary_traffic_fraction", 0.0))
+    if canary_fraction is None or canary_fraction != 0.0:
+        reasons.append("stage26_8s_recommended_canary_traffic_fraction_not_zero")
+    return _dedupe(reasons)
+
+
+def _read_stage26_8q_recommended_if_exists(path: Path) -> tuple[dict[str, Any], str | None]:
+    if not artifact_io.path_is_file(path):
+        return {}, None
+    try:
+        return _read_json(path), None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return {}, "stage26_8q_recommended_config_unreadable"
+
+
+def _read_stage26_8r_recommended_if_exists(path: Path) -> tuple[dict[str, Any], str | None]:
+    if not artifact_io.path_is_file(path):
+        return {}, None
+    try:
+        return _read_json(path), None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return {}, "stage26_8r_recommended_config_unreadable"
+
+
+def _read_stage26_8s_recommended_if_exists(path: Path) -> tuple[dict[str, Any], str | None]:
+    if not artifact_io.path_is_file(path):
+        return {}, None
+    try:
+        return _read_json(path), None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return {}, "stage26_8s_recommended_config_unreadable"
 
 
 def _boundary_rejections(config: dict[str, Any]) -> list[str]:
@@ -695,6 +1177,20 @@ def _finite(value: Any) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _positive_int(value: Any, name: str) -> int:
+    number = _int_or_none(value)
+    if number is None or number <= 0:
+        raise ValueError(f"{name} must be positive")
+    return number
+
+
 def _first_float(*values: Any, default: float | None = None) -> float | None:
     for value in values:
         parsed = _finite(value)
@@ -737,9 +1233,29 @@ def _render_report(summary: dict[str, Any]) -> str:
             f"- status: `{summary['status']}`",
             f"- next_required_change: `{summary['next_required_change']}`",
             f"- trainable_transition_count: `{summary.get('trainable_transition_count')}`",
+            f"- stage26_8q_recommended_config_path: `{summary.get('stage26_8q_recommended_config_path')}`",
+            f"- stage26_8q_recommended_combo_id: `{summary.get('stage26_8q_recommended_combo_id')}`",
+            f"- stage26_8q_aligned_trainable_transition_count: `{summary.get('stage26_8q_aligned_trainable_transition_count')}`",
+            f"- stage26_8q_planning_proxy_source: `{summary.get('stage26_8q_planning_proxy_source')}`",
+            f"- stage26_8q_planner_overrides: `{json.dumps(summary.get('stage26_8q_planner_overrides') or {}, sort_keys=True)}`",
+            f"- stage26_8r_recommended_config_path: `{summary.get('stage26_8r_recommended_config_path')}`",
+            f"- stage26_8r_recommended_combo_id: `{summary.get('stage26_8r_recommended_combo_id')}`",
+            f"- stage26_8r_trainable_transition_count: `{summary.get('stage26_8r_trainable_transition_count')}`",
+            f"- stage26_8s_recommended_config_path: `{summary.get('stage26_8s_recommended_config_path')}`",
+            f"- stage26_8s_recommended_scenario_count: `{summary.get('stage26_8s_recommended_scenario_count')}`",
+            f"- stage26_8s_trainable_transition_count: `{summary.get('stage26_8s_trainable_transition_count')}`",
+            f"- stage26_8s_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count: `{summary.get('stage26_8s_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count')}`",
+            f"- stage26_8s_selected_pose_unreachable_terminal_count: `{summary.get('stage26_8s_selected_pose_unreachable_terminal_count')}`",
+            f"- candidate_reachability_gate_source: `{summary.get('candidate_reachability_gate_source')}`",
+            f"- hybrid_astar_max_iterations: `{summary.get('hybrid_astar_max_iterations')}`",
+            f"- candidate_reachability_max_theta_proposals_per_candidate: `{summary.get('candidate_reachability_max_theta_proposals_per_candidate')}`",
+            f"- candidate_reachability_theta_proposal_policy: `{summary.get('candidate_reachability_theta_proposal_policy')}`",
+            f"- no_hybrid_astar_pose_reachable_candidate_for_action_mask_count: `{summary.get('no_hybrid_astar_pose_reachable_candidate_for_action_mask_count')}`",
             f"- stable_combo_count: `{summary.get('stable_combo_count')}`",
             f"- selected_action_changed_count: `{summary.get('selected_action_changed_count')}`",
             f"- main_coverage_per_100m_delta: `{summary.get('main_coverage_per_100m_delta')}`",
+            f"- pre_selected_reachability_provenance_invalid_count: `{summary.get('pre_selected_reachability_provenance_invalid_count')}`",
+            f"- post_selected_reachability_provenance_invalid_count: `{summary.get('post_selected_reachability_provenance_invalid_count')}`",
             "",
             "This stage uses Stage26.8M for resumable orchestration. Hybrid A* path cost remains diagnostic only.",
         ]

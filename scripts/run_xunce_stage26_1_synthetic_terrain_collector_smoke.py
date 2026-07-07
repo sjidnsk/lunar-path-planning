@@ -181,6 +181,11 @@ def run_xunce_stage26_1_synthetic_terrain_collector_smoke(
         "synthetic_source_kind": SYNTHETIC_SOURCE_KIND,
         "coverage_source": COVERAGE_SOURCE,
         "path_cost_source": PATH_COST_SOURCE,
+        "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+        "candidate_reachability_max_theta_proposals_per_candidate": int(
+            config["candidate_reachability_max_theta_proposals_per_candidate"]
+        ),
+        "candidate_reachability_theta_proposal_policy": config.get("candidate_reachability_theta_proposal_policy"),
         "max_traversable_slope_deg": float(config["max_traversable_slope_deg"]),
         "platform_contract_id": config.get("platform_contract_id"),
         "platform_contract_hash": config.get("platform_contract_hash"),
@@ -274,6 +279,7 @@ def _run_stage21_1(
             "sensor_range_cells": int(config["sensor_range_cells"]),
             "slope_obstacle_aware_theta_reward_enabled": True,
             "hybrid_astar_pose_path_cost_enabled": True,
+            "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
             "hybrid_astar_goal_position_tolerance_m": float(config["hybrid_astar_goal_position_tolerance_m"]),
             "hybrid_astar_goal_theta_tolerance_deg": float(config["hybrid_astar_goal_theta_tolerance_deg"]),
             "hybrid_astar_primitive_duration_s": float(config["hybrid_astar_primitive_duration_s"]),
@@ -282,6 +288,12 @@ def _run_stage21_1(
             "hybrid_astar_max_angular_speed_degps": float(config["hybrid_astar_max_angular_speed_degps"]),
             "hybrid_astar_max_iterations": int(config["hybrid_astar_max_iterations"]),
             "hybrid_astar_candidate_eval_workers": int(config["hybrid_astar_candidate_eval_workers"]),
+            "candidate_reachability_max_theta_proposals_per_candidate": int(
+                config["candidate_reachability_max_theta_proposals_per_candidate"]
+            ),
+            "candidate_reachability_theta_proposal_policy": config.get(
+                "candidate_reachability_theta_proposal_policy"
+            ),
             "hybrid_astar_planning_grid_source": config.get("hybrid_astar_planning_grid_source"),
             "planner_grid_resolution_m": config.get("planner_grid_resolution_m"),
             "hybrid_astar_closed_key_xy_resolution_m": config.get("hybrid_astar_closed_key_xy_resolution_m"),
@@ -721,6 +733,15 @@ def _contract_audit(
         "rejection_no_hybrid_reachable_candidate_terminal_count": sum(
             1 for row in rejections if row.get("reason") == "no_hybrid_reachable_candidate_terminal"
         ),
+        "stage21_1_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": int(
+            stage21_1_summary.get("no_hybrid_astar_pose_reachable_candidate_for_action_mask_count") or 0
+        ),
+        "rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": sum(
+            1
+            for row in rejections
+            if row.get("reason")
+            == getattr(stage21_1, "NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON", "no_hybrid_astar_pose_reachable_candidate_for_action_mask")
+        ),
         "rejection_no_selected_reachable_pose_candidate_terminal_count": sum(
             1 for row in rejections if row.get("reason") == "no_selected_reachable_pose_candidate_terminal"
         ),
@@ -760,7 +781,10 @@ def _route(
         if (
             "no_hybrid_reachable_candidate_terminal" in stage21_1_reasons
             or "no_selected_reachable_pose_candidate_terminal" in stage21_1_reasons
+            or getattr(stage21_1, "NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON", "no_hybrid_astar_pose_reachable_candidate_for_action_mask")
+            in stage21_1_reasons
             or audit.get("rejection_no_hybrid_reachable_candidate_terminal_count", 0) > 0
+            or audit.get("rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count", 0) > 0
             or audit.get("rejection_no_selected_reachable_pose_candidate_terminal_count", 0) > 0
         ) and audit["synthetic_transition_contract_missing_count"] == 0:
             return "failed", ROUTE_TERMINAL_REACHABILITY, "stage21_1_terminal_reachability_contract_failed"
@@ -827,6 +851,8 @@ def _route_blockers(
         "mask_violation_count",
         "path_planning_failure_count",
         "open_grid_fallback_count",
+        "stage21_1_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count",
+        "rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count",
     ):
         if audit.get(key, 0):
             reasons.append(key.removesuffix("_count"))
@@ -861,6 +887,8 @@ def _summary_counts(audit: dict[str, Any]) -> dict[str, Any]:
         "open_grid_fallback_count",
         "stage21_1_no_hybrid_reachable_candidate_terminal_count",
         "rejection_no_hybrid_reachable_candidate_terminal_count",
+        "stage21_1_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count",
+        "rejection_no_hybrid_astar_pose_reachable_candidate_for_action_mask_count",
         "stage21_1_selected_continuous_theta_unreachable_attempt_count",
         "stage21_1_selected_continuous_theta_resample_success_count",
         "stage21_1_selected_candidate_resample_success_count",
@@ -973,6 +1001,41 @@ def _load_config(path: Path, repo_root: Path) -> dict[str, Any]:
         config.get("hybrid_astar_candidate_eval_workers", 1),
         "hybrid_astar_candidate_eval_workers",
     )
+    config["candidate_reachability_max_theta_proposals_per_candidate"] = int(
+        config.get("candidate_reachability_max_theta_proposals_per_candidate", 0) or 0
+    )
+    if config["candidate_reachability_max_theta_proposals_per_candidate"] < 0:
+        raise ConfigError("candidate_reachability_max_theta_proposals_per_candidate must be nonnegative")
+    config["candidate_reachability_theta_proposal_policy"] = str(
+        config.get("candidate_reachability_theta_proposal_policy")
+        or getattr(
+            stage21_1,
+            "CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY",
+            "candidate_viewpoint_current_step/v1",
+        )
+    )
+    if config["candidate_reachability_theta_proposal_policy"] not in {
+        getattr(
+            stage21_1,
+            "CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY",
+            "candidate_viewpoint_current_step/v1",
+        ),
+        getattr(
+            stage21_1,
+            "CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR",
+            "candidate_current_bearing_sweep/v1",
+        ),
+    }:
+        raise ConfigError("candidate_reachability_theta_proposal_policy is invalid")
+    config["candidate_reachability_gate_source"] = str(
+        config.get("candidate_reachability_gate_source")
+        or getattr(stage21_1, "CANDIDATE_REACHABILITY_GATE_LEGACY", "legacy_action_mask_validation/v1")
+    )
+    if config["candidate_reachability_gate_source"] not in {
+        getattr(stage21_1, "CANDIDATE_REACHABILITY_GATE_LEGACY", "legacy_action_mask_validation/v1"),
+        getattr(stage21_1, "CANDIDATE_REACHABILITY_GATE_SOURCE", "hybrid_astar_pose_reachability/v1"),
+    }:
+        raise ConfigError("candidate_reachability_gate_source is invalid")
     if config.get("hybrid_astar_planning_grid_source") is not None:
         config["hybrid_astar_planning_grid_source"] = str(config["hybrid_astar_planning_grid_source"])
     if config.get("planner_grid_resolution_m") is not None:

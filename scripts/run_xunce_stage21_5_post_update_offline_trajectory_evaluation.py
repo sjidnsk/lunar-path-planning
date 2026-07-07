@@ -17,6 +17,11 @@ from run_xunce_high_fidelity_exploration_coverage_comparison import (  # noqa: E
     run_xunce_high_fidelity_exploration_coverage_comparison,
 )
 import xunce_artifact_io as artifact_io
+from xunce_hybrid_astar_candidate_path_cost import (  # noqa: E402
+    CANDIDATE_REACHABILITY_GATE_SOURCE,
+    CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
+    PATH_COST_SOURCE as HYBRID_ASTAR_PATH_COST_SOURCE,
+)
 from xunce_artifact_paths import (
     STAGE21_1_SUMMARY,
     STAGE21_3_SUMMARY,
@@ -28,7 +33,9 @@ from xunce_artifact_paths import (
     STAGE21_5_RESULTS,
     STAGE21_5_ROUTING,
     STAGE21_5_SCENARIO_DELTA,
+    STAGE21_5_SELECTED_POSE_EVIDENCE_AUDIT,
     STAGE21_5_SUMMARY,
+    artifact_path,
     read_json_artifact,
     write_json_artifact,
     write_jsonl_artifact,
@@ -39,6 +46,11 @@ CONFIG_SCHEMA_VERSION = "xunce-stage21-5-post-update-offline-trajectory-evaluati
 SUMMARY_SCHEMA_VERSION = "xunce-stage21-5-post-update-evaluation-summary/v1"
 ROUTING_SCHEMA_VERSION = "xunce-stage21-5-next-stage-routing/v1"
 MANIFEST_SCHEMA_VERSION = "xunce-stage21-5-manifest/v1"
+CANDIDATE_REACHABILITY_GATE_LEGACY = "legacy_action_mask_validation/v1"
+SELECTED_POSE_EVIDENCE_AUDIT_EXCLUDED_TERMINALS = {
+    "candidate_generation_exhausted",
+    "no_valid_action",
+}
 
 DEFAULT_CONFIG = "configs/xunce_stage21_5_post_update_offline_trajectory_evaluation_v1.json"
 DEFAULT_OUTPUT_ROOT = (
@@ -139,6 +151,8 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
     post_eval_summary: dict[str, Any] = {}
     pre_episodes: list[dict[str, Any]] = []
     post_episodes: list[dict[str, Any]] = []
+    pre_evidence_audit: dict[str, Any] = _empty_selected_pose_evidence_audit("pre")
+    post_evidence_audit: dict[str, Any] = _empty_selected_pose_evidence_audit("post")
 
     if not boundary_reasons and not input_reasons:
         stage21_4_root = Path(config["stage21_4_tiny_ppo_update_smoke_root"])
@@ -174,9 +188,12 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
             )
         pre_eval_summary, pre_episodes = _read_evaluation_root(pre_root)
         post_eval_summary, post_episodes = _read_evaluation_root(post_root)
+        pre_evidence_audit = _selected_pose_evidence_audit(pre_root, label="pre", config=config)
+        post_evidence_audit = _selected_pose_evidence_audit(post_root, label="post", config=config)
 
     execution_reasons = _evaluation_execution_rejections(pre_eval_summary, post_eval_summary, pre_episodes, post_episodes, config)
     execution_reasons.extend(_episode_alignment_rejections(pre_episodes, post_episodes, config))
+    execution_reasons.extend(_selected_pose_evidence_rejections(pre_evidence_audit, post_evidence_audit))
     pre_metrics = _policy_metrics(pre_eval_summary, pre_episodes, policy_name="xunce")
     post_metrics = _policy_metrics(post_eval_summary, post_episodes, policy_name="xunce")
     delta = _trajectory_delta(pre_metrics, post_metrics)
@@ -193,7 +210,19 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
     elif "post_unreachable_selected_count_nonzero" in execution_reasons:
         status = "failed"
         route = ROUTE_POST_UNREACHABLE
+    elif "post_selected_reachability_provenance_invalid_count_nonzero" in execution_reasons:
+        status = "failed"
+        route = ROUTE_POST_UNREACHABLE
+    elif "post_selected_reachability_provenance_missing" in execution_reasons:
+        status = "failed"
+        route = ROUTE_POST_UNREACHABLE
     elif "pre_unreachable_selected_count_nonzero" in execution_reasons:
+        status = "failed"
+        route = ROUTE_PRE_UNREACHABLE
+    elif "pre_selected_reachability_provenance_invalid_count_nonzero" in execution_reasons:
+        status = "failed"
+        route = ROUTE_PRE_UNREACHABLE
+    elif "pre_selected_reachability_provenance_missing" in execution_reasons:
         status = "failed"
         route = ROUTE_PRE_UNREACHABLE
     elif execution_reasons:
@@ -221,6 +250,8 @@ def run_xunce_stage21_5_post_update_offline_trajectory_evaluation(
         post_metrics=post_metrics,
         delta=delta,
         scenario_delta_rows=scenario_delta_rows,
+        pre_evidence_audit=pre_evidence_audit,
+        post_evidence_audit=post_evidence_audit,
         status=status,
         route=route,
         blocking_reason_codes=blocking,
@@ -253,6 +284,24 @@ def _run_high_fidelity_eval(
         else None,
         "emit_candidate_metric_audit": bool(config["emit_candidate_metric_audit"]),
     }
+    for key in (
+        "hybrid_astar_pose_path_cost_enabled",
+        "candidate_reachability_gate_source",
+        "candidate_reachability_max_theta_proposals_per_candidate",
+        "candidate_reachability_theta_proposal_policy",
+        "hybrid_astar_planning_grid_source",
+        "planner_grid_resolution_m",
+        "hybrid_astar_closed_key_xy_resolution_m",
+        "hybrid_astar_goal_position_tolerance_m",
+        "hybrid_astar_goal_theta_tolerance_deg",
+        "hybrid_astar_max_iterations",
+        "hybrid_astar_primitive_duration_s",
+        "hybrid_astar_integration_dt_s",
+        "hybrid_astar_max_speed_mps",
+        "hybrid_astar_max_angular_speed_degps",
+    ):
+        if key in config:
+            overrides[key] = config.get(key)
     run_xunce_high_fidelity_exploration_coverage_comparison(
         config_path=Path(config["high_fidelity_config"]),
         output_root=output_root,
@@ -554,6 +603,231 @@ def _evaluation_execution_rejections(
     return reasons
 
 
+def _empty_selected_pose_evidence_audit(label: str) -> dict[str, Any]:
+    return {
+        "schema_version": "xunce-stage21-5-selected-pose-evidence-audit/v1",
+        "label": label,
+        "candidate_reachability_gate_source": CANDIDATE_REACHABILITY_GATE_LEGACY,
+        "model_inference_row_count": 0,
+        "selected_reachability_audited_count": 0,
+        "selected_reachability_provenance_pass_count": 0,
+        "selected_reachability_provenance_invalid_count": 0,
+        "selected_reachability_provenance_missing_count": 0,
+        "selected_reachability_provenance_source_mismatch_count": 0,
+        "selected_reachability_planner_hash_mismatch_count": 0,
+        "selected_reachability_candidate_set_hash_mismatch_count": 0,
+        "selected_reachability_candidate_set_hash_conflict_count": 0,
+        "selected_reachability_candidate_index_mismatch_count": 0,
+        "selected_reachability_unreachable_count": 0,
+        "reason_codes": [],
+        "invalid_samples": [],
+    }
+
+
+def _selected_pose_evidence_audit(root: Path, *, label: str, config: dict[str, Any]) -> dict[str, Any]:
+    rows = _read_jsonl(root / "xunce-exploration-coverage-model-inference.jsonl")
+    gate_source = str(config.get("candidate_reachability_gate_source") or CANDIDATE_REACHABILITY_GATE_LEGACY)
+    audit = _empty_selected_pose_evidence_audit(label)
+    audit["candidate_reachability_gate_source"] = gate_source
+    audit["model_inference_row_count"] = len(rows)
+    if gate_source != CANDIDATE_REACHABILITY_GATE_SOURCE:
+        return audit
+    xunce_rows = [
+        row
+        for row in rows
+        if row.get("policy") == "xunce" and not _selected_pose_evidence_audit_excluded_terminal(row)
+    ]
+    audit["selected_reachability_audited_count"] = len(xunce_rows)
+    reason_counts: dict[str, int] = {}
+    invalid_samples: list[dict[str, Any]] = []
+    candidate_set_hash_conflict_count = 0
+    for row in xunce_rows:
+        if _selected_candidate_set_hash_conflict(row):
+            candidate_set_hash_conflict_count += 1
+        row_reasons = _selected_pose_evidence_row_reasons(row)
+        if row_reasons:
+            audit["selected_reachability_provenance_invalid_count"] += 1
+            for reason in row_reasons:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            if len(invalid_samples) < 5:
+                invalid_samples.append(_selected_pose_evidence_invalid_sample(row, row_reasons))
+        else:
+            audit["selected_reachability_provenance_pass_count"] += 1
+    audit["selected_reachability_provenance_missing_count"] = reason_counts.get("selected_reachability_provenance_missing", 0)
+    audit["selected_reachability_provenance_source_mismatch_count"] = reason_counts.get(
+        "selected_reachability_provenance_source_mismatch",
+        0,
+    )
+    audit["selected_reachability_planner_hash_mismatch_count"] = reason_counts.get(
+        "selected_reachability_planner_hash_mismatch",
+        0,
+    )
+    audit["selected_reachability_candidate_set_hash_mismatch_count"] = reason_counts.get(
+        "selected_reachability_candidate_set_hash_mismatch",
+        0,
+    )
+    audit["selected_reachability_candidate_set_hash_conflict_count"] = candidate_set_hash_conflict_count
+    audit["selected_reachability_candidate_index_mismatch_count"] = reason_counts.get(
+        "selected_reachability_candidate_index_mismatch",
+        0,
+    )
+    audit["selected_reachability_unreachable_count"] = reason_counts.get(
+        "selected_reachability_provenance_unreachable",
+        0,
+    )
+    audit["reason_codes"] = _unique_sorted(list(reason_counts))
+    audit["invalid_samples"] = invalid_samples
+    return audit
+
+
+def _selected_pose_evidence_audit_excluded_terminal(row: dict[str, Any]) -> bool:
+    skipped_reason = str(row.get("inference_skipped_reason") or "")
+    if skipped_reason not in SELECTED_POSE_EVIDENCE_AUDIT_EXCLUDED_TERMINALS:
+        return False
+    if row.get("true_model_inference_executed") is True:
+        return False
+    if row.get("selected_action_index") is not None:
+        return False
+    if skipped_reason == "no_valid_action" and row.get("has_valid_action") is not None and row.get("has_valid_action") is not False:
+        return False
+    return True
+
+
+def _selected_pose_evidence_invalid_sample(row: dict[str, Any], row_reasons: list[str]) -> dict[str, Any]:
+    provenance = row.get("selected_candidate_reachability_provenance")
+    selected_base = row.get("selected_base_candidate_index")
+    if selected_base is None:
+        selected_base = row.get("base_candidate_index")
+    preferred_hash_field, preferred_hash_value = _selected_candidate_set_hash_binding(row)
+    return {
+        "scenario_id": row.get("scenario_id"),
+        "step_index": row.get("step_index"),
+        "selected_action_index": row.get("selected_action_index"),
+        "row_selected_action_index": _int_or_none(row.get("selected_action_index")),
+        "row_selected_base_candidate_index": _int_or_none(selected_base),
+        "row_selected_base_candidate_set_hash": row.get("selected_base_candidate_set_hash"),
+        "row_base_candidate_set_hash": row.get("base_candidate_set_hash"),
+        "provenance_candidate_index": _int_or_none(provenance.get("candidate_index"))
+        if isinstance(provenance, dict)
+        else None,
+        "candidate_set_hash_match": _candidate_set_hash_match(row, provenance),
+        "candidate_set_hash_preferred_field": preferred_hash_field,
+        "candidate_set_hash_preferred_value": preferred_hash_value,
+        "candidate_set_hash_conflict": _selected_candidate_set_hash_conflict(row),
+        "planner_hash_match": _planner_hash_match(row, provenance),
+        "reason_codes": row_reasons,
+    }
+
+
+def _candidate_set_hash_match(row: dict[str, Any], provenance: Any) -> bool | None:
+    if not isinstance(provenance, dict):
+        return None
+    provenance_hash = provenance.get("candidate_set_hash")
+    _, row_hash = _selected_candidate_set_hash_binding(row)
+    if row_hash is None or provenance_hash is None or not str(provenance_hash):
+        return None
+    return row_hash == str(provenance_hash)
+
+
+def _selected_candidate_set_hash_binding(row: dict[str, Any]) -> tuple[str | None, str | None]:
+    for field in ("selected_base_candidate_set_hash", "base_candidate_set_hash", "candidate_set_hash"):
+        value = row.get(field)
+        if value is None:
+            continue
+        text = str(value)
+        if text:
+            return field, text
+    return None, None
+
+
+def _selected_candidate_set_hash_conflict(row: dict[str, Any]) -> bool:
+    values: list[str] = []
+    for field in ("selected_base_candidate_set_hash", "base_candidate_set_hash", "candidate_set_hash"):
+        value = row.get(field)
+        if value is None:
+            continue
+        text = str(value)
+        if text and text not in values:
+            values.append(text)
+    return len(values) > 1
+
+
+def _planner_hash_match(row: dict[str, Any], provenance: Any) -> bool | None:
+    if not isinstance(provenance, dict):
+        return None
+    provenance_hash = provenance.get("planner_config_hash")
+    if provenance_hash is None:
+        return None
+    row_hashes = [
+        str(row[field])
+        for field in ("selected_reachability_planner_config_hash", "candidate_reachability_planner_config_hash")
+        if row.get(field) is not None
+    ]
+    if not row_hashes:
+        return None
+    return all(row_hash == str(provenance_hash) for row_hash in row_hashes)
+
+
+def _selected_pose_evidence_row_reasons(row: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    provenance = row.get("selected_candidate_reachability_provenance")
+    if not isinstance(provenance, dict):
+        return ["selected_reachability_provenance_missing"]
+    if provenance.get("schema_version") != CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION:
+        reasons.append("selected_reachability_provenance_schema_mismatch")
+    if provenance.get("source") != CANDIDATE_REACHABILITY_GATE_SOURCE:
+        reasons.append("selected_reachability_provenance_source_mismatch")
+    if provenance.get("backend") != HYBRID_ASTAR_PATH_COST_SOURCE:
+        reasons.append("selected_reachability_provenance_backend_mismatch")
+    if provenance.get("reachable") is not True:
+        reasons.append("selected_reachability_provenance_unreachable")
+    if _finite(provenance.get("path_cost")) is None:
+        reasons.append("selected_reachability_provenance_path_cost_missing")
+    if not str(provenance.get("pose_path_hash") or "").strip():
+        reasons.append("selected_reachability_provenance_pose_path_hash_missing")
+    planner_hash = str(provenance.get("planner_config_hash") or "")
+    if not planner_hash:
+        reasons.append("selected_reachability_provenance_planner_hash_missing")
+    for field in ("selected_reachability_planner_config_hash", "candidate_reachability_planner_config_hash"):
+        row_hash = row.get(field)
+        if row_hash is not None and str(row_hash) != planner_hash:
+            reasons.append("selected_reachability_planner_hash_mismatch")
+            break
+    provenance_candidate_set_hash = provenance.get("candidate_set_hash")
+    if provenance_candidate_set_hash is None or not str(provenance_candidate_set_hash):
+        reasons.append("selected_reachability_candidate_set_hash_missing")
+    elif _selected_candidate_set_hash_binding(row)[1] is not None and not _candidate_set_hash_match(row, provenance):
+        reasons.append("selected_reachability_candidate_set_hash_mismatch")
+    row_action_index = _int_or_none(row.get("selected_action_index"))
+    provenance_candidate_index = _int_or_none(provenance.get("candidate_index"))
+    if provenance_candidate_index is None:
+        reasons.append("selected_reachability_candidate_index_missing")
+    elif row_action_index is not None and row_action_index != provenance_candidate_index:
+        reasons.append("selected_reachability_candidate_index_mismatch")
+    row_theta = _finite(row.get("candidate_theta_deg"))
+    provenance_theta = _finite(provenance.get("candidate_theta_deg"))
+    if provenance_theta is None:
+        reasons.append("selected_reachability_theta_missing")
+    elif row_theta is not None and abs(row_theta - provenance_theta) > 1.0e-6:
+        reasons.append("selected_reachability_theta_mismatch")
+    return _unique_sorted(reasons)
+
+
+def _selected_pose_evidence_rejections(
+    pre_audit: dict[str, Any],
+    post_audit: dict[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    for label, audit in (("pre", pre_audit), ("post", post_audit)):
+        if audit.get("candidate_reachability_gate_source") != CANDIDATE_REACHABILITY_GATE_SOURCE:
+            continue
+        if _int_value(audit.get("selected_reachability_audited_count")) <= 0:
+            reasons.append(f"{label}_selected_reachability_provenance_missing")
+        if _int_value(audit.get("selected_reachability_provenance_invalid_count")) > 0:
+            reasons.append(f"{label}_selected_reachability_provenance_invalid_count_nonzero")
+    return reasons
+
+
 def _episode_alignment_rejections(pre_episodes: list[dict[str, Any]], post_episodes: list[dict[str, Any]], config: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     pre_rows = _xunce_episode_map(pre_episodes)
@@ -642,6 +916,8 @@ def _write_outputs(
     post_metrics: dict[str, Any],
     delta: dict[str, Any],
     scenario_delta_rows: list[dict[str, Any]],
+    pre_evidence_audit: dict[str, Any],
+    post_evidence_audit: dict[str, Any],
     status: str,
     route: str,
     blocking_reason_codes: list[str],
@@ -654,6 +930,7 @@ def _write_outputs(
         "routing": output_root / ROUTING_FILE,
         "report": output_root / REPORT_FILE,
         "manifest": output_root / MANIFEST_FILE,
+        "selected_pose_evidence_audit": artifact_path(output_root, STAGE21_5_SELECTED_POSE_EVIDENCE_AUDIT),
     }
     results = {
         "schema_version": "xunce-stage21-5-policy-evaluation-results/v1",
@@ -665,6 +942,29 @@ def _write_outputs(
     write_json_artifact(output_root, STAGE21_5_RESULTS, results)
     write_json_artifact(output_root, STAGE21_5_DELTA, delta)
     write_jsonl_artifact(output_root, STAGE21_5_SCENARIO_DELTA, scenario_delta_rows)
+    selected_pose_evidence_audit = {
+        "schema_version": "xunce-stage21-5-selected-pose-evidence-audit-bundle/v1",
+        "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+        "pre": pre_evidence_audit,
+        "post": post_evidence_audit,
+        "pre_selected_reachability_provenance_invalid_count": pre_evidence_audit.get(
+            "selected_reachability_provenance_invalid_count",
+            0,
+        ),
+        "post_selected_reachability_provenance_invalid_count": post_evidence_audit.get(
+            "selected_reachability_provenance_invalid_count",
+            0,
+        ),
+        "pre_selected_reachability_candidate_index_mismatch_count": pre_evidence_audit.get(
+            "selected_reachability_candidate_index_mismatch_count",
+            0,
+        ),
+        "post_selected_reachability_candidate_index_mismatch_count": post_evidence_audit.get(
+            "selected_reachability_candidate_index_mismatch_count",
+            0,
+        ),
+    }
+    write_json_artifact(output_root, STAGE21_5_SELECTED_POSE_EVIDENCE_AUDIT, selected_pose_evidence_audit)
     routing = {
         "schema_version": ROUTING_SCHEMA_VERSION,
         "status": status,
@@ -708,6 +1008,40 @@ def _write_outputs(
         "coverage_per_100m_delta": delta.get("coverage_per_100m_mean_delta"),
         "post_update_success_metric": config.get("post_update_success_metric", SUCCESS_METRIC_DEFAULT),
         "continuous_theta_head_init_seed": config.get("continuous_theta_head_init_seed"),
+        "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+        "selected_pose_evidence_audit": str(paths["selected_pose_evidence_audit"]),
+        "pre_selected_reachability_audited_count": pre_evidence_audit.get(
+            "selected_reachability_audited_count",
+            0,
+        ),
+        "post_selected_reachability_audited_count": post_evidence_audit.get(
+            "selected_reachability_audited_count",
+            0,
+        ),
+        "pre_selected_reachability_provenance_pass_count": pre_evidence_audit.get(
+            "selected_reachability_provenance_pass_count",
+            0,
+        ),
+        "post_selected_reachability_provenance_pass_count": post_evidence_audit.get(
+            "selected_reachability_provenance_pass_count",
+            0,
+        ),
+        "pre_selected_reachability_provenance_invalid_count": pre_evidence_audit.get(
+            "selected_reachability_provenance_invalid_count",
+            0,
+        ),
+        "post_selected_reachability_provenance_invalid_count": post_evidence_audit.get(
+            "selected_reachability_provenance_invalid_count",
+            0,
+        ),
+        "pre_selected_reachability_candidate_index_mismatch_count": pre_evidence_audit.get(
+            "selected_reachability_candidate_index_mismatch_count",
+            0,
+        ),
+        "post_selected_reachability_candidate_index_mismatch_count": post_evidence_audit.get(
+            "selected_reachability_candidate_index_mismatch_count",
+            0,
+        ),
         "soft_risk_exposure_total_delta": delta.get("soft_risk_exposure_total_mean_delta"),
         "post_hard_risk_violation_count": post_metrics.get("hard_risk_violation_count", 0),
         "pre_unreachable_selected_count": pre_metrics.get("unreachable_selected_count", 0),
@@ -745,6 +1079,7 @@ def _write_outputs(
         "artifacts": {key: str(path) for key, path in paths.items()},
         "pre_evaluation_root": str(pre_root),
         "post_evaluation_root": str(post_root),
+        "selected_pose_evidence_audit": str(paths["selected_pose_evidence_audit"]),
     }
     write_json_artifact(output_root, STAGE21_5_MANIFEST, manifest)
     return summary
@@ -764,6 +1099,8 @@ def _report_markdown(summary: dict[str, Any]) -> str:
             f"- coverage_per_100m_delta: `{summary['coverage_per_100m_delta']}`",
             f"- post_update_success_metric: `{summary['post_update_success_metric']}`",
             f"- post_hard_risk_violation_count: `{summary['post_hard_risk_violation_count']}`",
+            f"- pre_selected_reachability_provenance_invalid_count: `{summary['pre_selected_reachability_provenance_invalid_count']}`",
+            f"- post_selected_reachability_provenance_invalid_count: `{summary['post_selected_reachability_provenance_invalid_count']}`",
             f"- scenario_regression_count: `{summary['scenario_regression_count']}`",
             f"- scenario_safety_boundary_regression_count: `{summary['scenario_safety_boundary_regression_count']}`",
             "",
@@ -834,6 +1171,50 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
         config.get("hybrid_astar_candidate_eval_workers", 1),
         "hybrid_astar_candidate_eval_workers",
     )
+    config["candidate_reachability_gate_source"] = str(
+        config.get("candidate_reachability_gate_source") or CANDIDATE_REACHABILITY_GATE_LEGACY
+    )
+    if config["candidate_reachability_gate_source"] not in {
+        CANDIDATE_REACHABILITY_GATE_LEGACY,
+        CANDIDATE_REACHABILITY_GATE_SOURCE,
+    }:
+        raise ConfigError("candidate_reachability_gate_source is invalid")
+    config["candidate_reachability_max_theta_proposals_per_candidate"] = _nonnegative_int(
+        config.get("candidate_reachability_max_theta_proposals_per_candidate", 0),
+        "candidate_reachability_max_theta_proposals_per_candidate",
+    )
+    config["candidate_reachability_theta_proposal_policy"] = str(
+        config.get("candidate_reachability_theta_proposal_policy") or "candidate_viewpoint_current_step/v1"
+    )
+    if config["candidate_reachability_theta_proposal_policy"] not in {
+        "candidate_viewpoint_current_step/v1",
+        "candidate_current_bearing_sweep/v1",
+    }:
+        raise ConfigError("candidate_reachability_theta_proposal_policy is invalid")
+    if config.get("hybrid_astar_pose_path_cost_enabled") is not None:
+        config["hybrid_astar_pose_path_cost_enabled"] = bool(config.get("hybrid_astar_pose_path_cost_enabled"))
+    if config.get("hybrid_astar_planning_grid_source") is not None:
+        config["hybrid_astar_planning_grid_source"] = str(config["hybrid_astar_planning_grid_source"])
+    for key in (
+        "planner_grid_resolution_m",
+        "hybrid_astar_closed_key_xy_resolution_m",
+        "hybrid_astar_goal_position_tolerance_m",
+        "hybrid_astar_goal_theta_tolerance_deg",
+        "hybrid_astar_primitive_duration_s",
+        "hybrid_astar_integration_dt_s",
+        "hybrid_astar_max_speed_mps",
+        "hybrid_astar_max_angular_speed_degps",
+    ):
+        if config.get(key) is not None:
+            numeric = _finite(config.get(key))
+            if numeric is None or numeric <= 0.0:
+                raise ConfigError(f"{key} must be a positive finite number")
+            config[key] = float(numeric)
+    if config.get("hybrid_astar_max_iterations") is not None:
+        config["hybrid_astar_max_iterations"] = _positive_int(
+            config.get("hybrid_astar_max_iterations"),
+            "hybrid_astar_max_iterations",
+        )
     config["emit_candidate_metric_audit"] = bool(config.get("emit_candidate_metric_audit", True))
     config["min_post_update_coverage_delta"] = _nonnegative_float(
         config.get("min_post_update_coverage_delta", 0.0),
@@ -876,6 +1257,18 @@ def _positive_int(value: Any, name: str) -> int:
     return numeric
 
 
+def _nonnegative_int(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(f"{name} must be a non-negative integer")
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{name} must be a non-negative integer") from exc
+    if numeric < 0:
+        raise ConfigError(f"{name} must be a non-negative integer")
+    return numeric
+
+
 def _nonnegative_float(value: Any, name: str) -> float:
     numeric = _finite(value)
     if numeric is None or numeric < 0.0:
@@ -914,6 +1307,24 @@ def _int_value(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        return int(value)
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        parsed = int(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return parsed
 
 
 def _unique_sorted(values: list[str]) -> list[str]:

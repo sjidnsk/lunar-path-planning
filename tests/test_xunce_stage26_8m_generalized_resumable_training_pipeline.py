@@ -185,7 +185,7 @@ def test_collector_reuse_policy_update_config_points_to_shared_collector(
     assert Path(captured_update_config["stage26_1_root"]) == Path(job["collector_root"])
 
 
-def test_collector_reuse_policy_rejects_stale_input_hash(tmp_path: Path) -> None:
+def test_collector_reuse_policy_ignores_stale_input_hash_and_reruns_current_root(tmp_path: Path) -> None:
     config_path = _write_config(
         tmp_path,
         {"collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1"},
@@ -216,9 +216,12 @@ def test_collector_reuse_policy_rejects_stale_input_hash(tmp_path: Path) -> None
         repo_root=_repo_root(),
         run_mode_override="aggregate_only",
     )
+    rows = _read_jsonl(output_root / stage26_8m.JOB_STATE_FILE)
 
-    assert summary["next_required_change"] == stage26_8m.ROUTE_RESUME_STATE
-    assert "input_hash_mismatch" in summary["resume_state_rejections"]
+    assert summary["next_required_change"] == stage26_8m.ROUTE_CONTINUE
+    assert summary["resume_state_rejections"] == []
+    assert _state(rows, "collector")["status"] == "pending"
+    assert _state(rows, "collector")["blocking_reason"] == "stale_resume_state_ignored"
 
 
 def test_collector_reuse_policy_ignores_stale_state_for_old_root(tmp_path: Path) -> None:
@@ -301,6 +304,276 @@ def test_collector_reuse_policy_collector_hash_ignores_update_combo_change(tmp_p
 
     assert summary["resume_state_rejections"] == []
     assert _state(rows, "collector")["status"] == "complete"
+
+
+def test_planner_overrides_enter_generated_stage26_1_collector_config(tmp_path: Path) -> None:
+    overrides = _planner_overrides()
+    config = stage26_8m._load_config(_write_config(tmp_path, overrides), _repo_root())
+    job = stage26_8m._expand_jobs(config, tmp_path / "out", _repo_root())[0]
+
+    generated = stage26_8m._build_collector_config(config, job, tmp_path / "cfg", _repo_root())
+
+    assert tuple(stage26_8m.PLANNER_OVERRIDE_FIELDS) == tuple(overrides)
+    for field, expected in overrides.items():
+        assert generated[field] == expected
+
+
+def test_planner_overrides_enter_stage26_3_eval_base_config(tmp_path: Path) -> None:
+    overrides = _planner_overrides()
+    config = stage26_8m._load_config(_write_config(tmp_path, overrides), _repo_root())
+    job = stage26_8m._expand_jobs(config, tmp_path / "out", _repo_root())[0]
+
+    generated = stage26_8m._build_stage26_3_base_config(config, job, tmp_path / "out" / "job", _repo_root())
+
+    for field, expected in overrides.items():
+        assert generated[field] == expected
+
+
+def test_planner_proxy_resolution_requires_planning_grid_source(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="hybrid_astar_planning_grid_source"):
+        stage26_8m._load_config(_write_config(tmp_path, {"planner_grid_resolution_m": 1.0}), _repo_root())
+
+
+def test_planner_override_rejects_invalid_planning_grid_source(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="hybrid_astar_planning_grid_source"):
+        stage26_8m._load_config(
+            _write_config(tmp_path, {"hybrid_astar_planning_grid_source": "sidecar_cost_grid/v1"}),
+            _repo_root(),
+        )
+
+
+def test_update_config_does_not_consume_planner_overrides(tmp_path: Path) -> None:
+    config = stage26_8m._load_config(_write_config(tmp_path, _planner_overrides()), _repo_root())
+    job = stage26_8m._expand_jobs(config, tmp_path / "out", _repo_root())[0]
+
+    generated = stage26_8m._build_update_config(config, job, tmp_path / "out" / "job", _repo_root())
+
+    assert not any(field in generated for field in stage26_8m.PLANNER_OVERRIDE_FIELDS)
+    assert "candidate_reachability_gate_source" not in generated
+    assert "candidate_reachability_theta_proposal_policy" not in generated
+
+
+def test_candidate_reachability_gate_source_enters_generated_collector_and_eval_configs(tmp_path: Path) -> None:
+    config = stage26_8m._load_config(
+        _write_config(
+            tmp_path,
+            {
+                "candidate_reachability_gate_source": "hybrid_astar_pose_reachability/v1",
+                "candidate_reachability_max_theta_proposals_per_candidate": 1,
+                "candidate_reachability_theta_proposal_policy": "candidate_current_bearing_sweep/v1",
+                **_planner_overrides(),
+            },
+        ),
+        _repo_root(),
+    )
+    output_root = tmp_path / "out"
+    job = stage26_8m._expand_jobs(config, output_root, _repo_root())[0]
+    job_root = output_root / "job"
+    config_root = job_root / "configs"
+    config_root.mkdir(parents=True)
+
+    collector = stage26_8m._build_collector_config(config, job, config_root, _repo_root())
+    stage26_3_config = stage26_8m._build_stage26_3_base_config(config, job, job_root, _repo_root())
+    stage21_5_config = stage26_8m._build_stage21_5_eval_config(config, job, job_root, config_root, _repo_root())
+
+    assert collector["candidate_reachability_gate_source"] == "hybrid_astar_pose_reachability/v1"
+    assert collector["candidate_reachability_max_theta_proposals_per_candidate"] == 1
+    assert collector["candidate_reachability_theta_proposal_policy"] == "candidate_current_bearing_sweep/v1"
+    assert collector["selected_continuous_theta_reachability_guard_enabled"] is True
+    assert collector["selected_continuous_theta_unreachable_resample_policy"] == "reachable_theta_proposal/v1"
+    assert stage26_3_config["candidate_reachability_gate_source"] == "hybrid_astar_pose_reachability/v1"
+    assert stage26_3_config["candidate_reachability_theta_proposal_policy"] == "candidate_current_bearing_sweep/v1"
+    assert stage21_5_config["candidate_reachability_gate_source"] == "hybrid_astar_pose_reachability/v1"
+    assert stage21_5_config["candidate_reachability_theta_proposal_policy"] == "candidate_current_bearing_sweep/v1"
+
+
+def test_input_hash_changes_when_candidate_reachability_gate_source_changes(tmp_path: Path) -> None:
+    legacy_config = stage26_8m._load_config(
+        _write_config(tmp_path, {"collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1"}),
+        _repo_root(),
+    )
+    hard_gate_config = stage26_8m._load_config(
+        _write_config(
+            tmp_path,
+            {
+                "collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1",
+                "candidate_reachability_gate_source": "hybrid_astar_pose_reachability/v1",
+            },
+        ),
+        _repo_root(),
+    )
+    output_root = tmp_path / "out"
+    legacy_job = stage26_8m._expand_jobs(legacy_config, output_root, _repo_root())[0]
+    hard_gate_job = stage26_8m._expand_jobs(hard_gate_config, output_root, _repo_root())[0]
+
+    assert stage26_8m._input_hash(legacy_config, _repo_root()) != stage26_8m._input_hash(
+        hard_gate_config,
+        _repo_root(),
+    )
+    assert legacy_job["phase_config_hashes"]["collector"] != hard_gate_job["phase_config_hashes"]["collector"]
+
+
+def test_input_hash_changes_when_candidate_theta_proposal_policy_changes(tmp_path: Path) -> None:
+    legacy_config = stage26_8m._load_config(
+        _write_config(
+            tmp_path,
+            {
+                "collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1",
+                "candidate_reachability_gate_source": "hybrid_astar_pose_reachability/v1",
+                "candidate_reachability_max_theta_proposals_per_candidate": 3,
+                "candidate_reachability_theta_proposal_policy": "candidate_viewpoint_current_step/v1",
+            },
+        ),
+        _repo_root(),
+    )
+    repair_config = stage26_8m._load_config(
+        _write_config(
+            tmp_path,
+            {
+                "collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1",
+                "candidate_reachability_gate_source": "hybrid_astar_pose_reachability/v1",
+                "candidate_reachability_max_theta_proposals_per_candidate": 3,
+                "candidate_reachability_theta_proposal_policy": "candidate_current_bearing_sweep/v1",
+            },
+        ),
+        _repo_root(),
+    )
+    output_root = tmp_path / "out"
+    legacy_job = stage26_8m._expand_jobs(legacy_config, output_root, _repo_root())[0]
+    repair_job = stage26_8m._expand_jobs(repair_config, output_root, _repo_root())[0]
+
+    assert stage26_8m._input_hash(legacy_config, _repo_root()) != stage26_8m._input_hash(
+        repair_config,
+        _repo_root(),
+    )
+    assert legacy_job["phase_config_hashes"]["collector"] != repair_job["phase_config_hashes"]["collector"]
+
+
+def test_input_hash_changes_when_planner_proxy_override_changes(tmp_path: Path) -> None:
+    base_config = stage26_8m._load_config(
+        _write_config(
+            tmp_path,
+            {
+                "collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1",
+                **_planner_overrides(planner_grid_resolution_m=1.0),
+            },
+        ),
+        _repo_root(),
+    )
+    changed_config = stage26_8m._load_config(
+        _write_config(
+            tmp_path,
+            {
+                "collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1",
+                **_planner_overrides(planner_grid_resolution_m=0.5),
+            },
+        ),
+        _repo_root(),
+    )
+    output_root = tmp_path / "out"
+    base_job = stage26_8m._expand_jobs(base_config, output_root, _repo_root())[0]
+    changed_job = stage26_8m._expand_jobs(changed_config, output_root, _repo_root())[0]
+
+    assert stage26_8m._input_hash(base_config, _repo_root()) != stage26_8m._input_hash(changed_config, _repo_root())
+    assert base_job["phase_config_hashes"]["collector"] != changed_job["phase_config_hashes"]["collector"]
+
+
+def test_eval_binding_implementation_fingerprint_changes_only_eval_phase_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = stage26_8m._load_config(_write_config(tmp_path, {}), _repo_root())
+    job = stage26_8m._expand_jobs(config, tmp_path / "out", _repo_root())[0]
+    original_hashes = dict(job["phase_config_hashes"])
+
+    monkeypatch.setattr(
+        stage26_8m,
+        "_eval_binding_implementation_fingerprint",
+        lambda: {"test_eval_binding_implementation_fingerprint": "changed"},
+    )
+    changed_job = stage26_8m._expand_jobs(config, tmp_path / "out", _repo_root())[0]
+    changed_hashes = changed_job["phase_config_hashes"]
+
+    assert changed_hashes["collector"] == original_hashes["collector"]
+    assert changed_hashes["update"] == original_hashes["update"]
+    assert changed_hashes["eval_pre"] != original_hashes["eval_pre"]
+    assert changed_hashes["eval_post"] != original_hashes["eval_post"]
+    assert changed_hashes["aggregate"] != original_hashes["aggregate"]
+
+
+def test_eval_summary_without_phase_hash_marker_stays_pending_when_resume_state_exists(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path, {"run_mode": "aggregate_only"})
+    config = stage26_8m._load_config(config_path, _repo_root())
+    output_root = tmp_path / "out"
+    job = stage26_8m._expand_jobs(config, output_root, _repo_root())[0]
+    job_root = stage26_8m._job_output_root(output_root, job)
+    _write_collector_complete(job_root / "collector")
+    _write_update_complete(job_root / "update")
+    _write_eval_complete(job_root / "eval" / "pre")
+    _write_jsonl(
+        output_root / stage26_8m.JOB_STATE_FILE,
+        [
+            {
+                "schema_version": stage26_8m.JOB_STATE_SCHEMA_VERSION,
+                "job_id": job["job_id"],
+                "phase": "eval_pre",
+                "status": "pending",
+                "output_root": str(job_root / "eval" / "pre"),
+                "summary_path": str(job_root / "eval" / "pre" / stage26_8m.hf.SUMMARY_FILE),
+                "config_hash": job["phase_config_hashes"]["eval_pre"],
+                "input_hash": job["input_hash"],
+            }
+        ],
+    )
+
+    stage26_8m.run_xunce_stage26_8m_generalized_resumable_training_pipeline(
+        config_path=config_path,
+        output_root=output_root,
+        repo_root=_repo_root(),
+    )
+    rows = _read_jsonl(output_root / stage26_8m.JOB_STATE_FILE)
+
+    assert _state(rows, "eval_pre")["status"] == "pending"
+    assert _state(rows, "eval_pre")["blocking_reason"] == "stale_resume_state_ignored"
+
+
+def test_collector_reuse_marker_rejects_planner_proxy_override_change(tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+    old_config = stage26_8m._load_config(
+        _write_config(
+            tmp_path,
+            {
+                "collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1",
+                **_planner_overrides(planner_grid_resolution_m=1.0),
+            },
+        ),
+        _repo_root(),
+    )
+    old_job = stage26_8m._expand_jobs(old_config, output_root, _repo_root())[0]
+    new_config_path = _write_config(
+        tmp_path,
+        {
+            "collector_reuse_policy": "by_horizon_seed_scenario_rollout/v1",
+            **_planner_overrides(planner_grid_resolution_m=0.5),
+        },
+    )
+    new_config = stage26_8m._load_config(new_config_path, _repo_root())
+    new_job = stage26_8m._expand_jobs(new_config, output_root, _repo_root())[0]
+    collector_root = Path(new_job["collector_root"])
+    _write_collector_complete(collector_root)
+    _write_collector_reuse_marker(collector_root, old_job)
+
+    summary = stage26_8m.run_xunce_stage26_8m_generalized_resumable_training_pipeline(
+        config_path=new_config_path,
+        output_root=output_root,
+        repo_root=_repo_root(),
+        run_mode_override="aggregate_only",
+    )
+    rows = _read_jsonl(output_root / stage26_8m.JOB_STATE_FILE)
+
+    assert _state(rows, "collector")["status"] == "failed"
+    assert _state(rows, "collector")["blocking_reason"] == "collector_reuse_key_mismatch"
+    assert summary["next_required_change"] == stage26_8m.ROUTE_RESUME_STATE
 
 
 def test_input_hash_changes_when_fixture_catalog_changes(tmp_path: Path) -> None:
@@ -530,6 +803,28 @@ def test_action_changed_nonnegative_efficiency_routes_resume_queue(tmp_path: Pat
     assert summary["next_required_change"] == stage26_8m.ROUTE_RESUME_DIVERSE
 
 
+def test_legacy_aggregate_coverage_per_100m_delta_falls_back_to_main_metric(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path, {"run_mode": "aggregate_only"})
+    config = stage26_8m._load_config(config_path, _repo_root())
+    job = stage26_8m._expand_jobs(config, tmp_path / "out", _repo_root())[0]
+    job_root = stage26_8m._job_output_root(tmp_path / "out", job)
+    _write_complete_job(job_root, changed=1, per100=2.5)
+    aggregate_path = job_root / "aggregate" / stage26_8m.stage26_3.SUMMARY_FILE
+    aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    aggregate.pop("main_coverage_per_100m_delta")
+    _write_json(aggregate_path, aggregate)
+
+    summary = stage26_8m.run_xunce_stage26_8m_generalized_resumable_training_pipeline(
+        config_path=config_path,
+        output_root=tmp_path / "out",
+        repo_root=_repo_root(),
+    )
+
+    assert summary["mean_main_coverage_per_100m_delta"] == 2.5
+    assert summary["positive_efficiency_job_count"] == 1
+    assert summary["next_required_change"] == stage26_8m.ROUTE_STAGE26_9
+
+
 def test_majority_positive_routes_stage26_9(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path, {"run_mode": "aggregate_only", "seeds": [260801, 260802, 260803]})
     config = stage26_8m._load_config(config_path, _repo_root())
@@ -601,6 +896,23 @@ def _combo(combo_id: str) -> dict:
         "entropy_coefficient": 0.005,
         "loss_scale": 0.25,
     }
+
+
+def _planner_overrides(**updates: object) -> dict:
+    values = {
+        "hybrid_astar_planning_grid_source": "derived_high_res_planning_proxy/v1",
+        "planner_grid_resolution_m": 1.0,
+        "hybrid_astar_closed_key_xy_resolution_m": 1.0,
+        "hybrid_astar_primitive_duration_s": 1.25,
+        "hybrid_astar_goal_position_tolerance_m": 1.5,
+        "hybrid_astar_goal_theta_tolerance_deg": 4.0,
+        "hybrid_astar_max_iterations": 5000,
+        "hybrid_astar_integration_dt_s": 0.2,
+        "hybrid_astar_max_speed_mps": 2.5,
+        "hybrid_astar_max_angular_speed_degps": 35.0,
+    }
+    values.update(updates)
+    return values
 
 
 def _write_complete_job(job_root: Path, *, changed: int, per100: float) -> None:

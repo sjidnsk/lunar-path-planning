@@ -1,0 +1,43 @@
+{
+  "schema_version": "xunce-stage26-8r-pose-gate-repair-config/v1",
+  "stage_id": "xunce-stage26-8r-pose-gate-repair",
+  "stage26_8n_root": "D:/xunce/out/s26_8n",
+  "min_trainable_transition_count": 100,
+  "repair_combos": [
+    {
+      "combo_id": "baseline_readonly",
+      "candidate_reachability_theta_proposal_policy": "candidate_viewpoint_current_step/v1",
+      "candidate_reachability_max_theta_proposals_per_candidate": 1,
+      "hybrid_astar_max_iterations": 50
+    },
+    {
+      "combo_id": "theta3_iter50",
+      "candidate_reachability_theta_proposal_policy": "candidate_current_bearing_sweep/v1",
+      "candidate_reachability_max_theta_proposals_per_candidate": 3,
+      "hybrid_astar_max_iterations": 50
+    },
+    {
+      "combo_id": "theta3_iter100",
+      "candidate_reachability_theta_proposal_policy": "candidate_current_bearing_sweep/v1",
+      "candidate_reachability_max_theta_proposals_per_candidate": 3,
+      "hybrid_astar_max_iterations": 100
+    },
+    {
+      "combo_id": "theta5_iter100",
+      "candidate_reachability_theta_proposal_policy": "candidate_current_bearing_sweep/v1",
+      "candidate_reachability_max_theta_proposals_per_candidate": 5,
+      "hybrid_astar_max_iterations": 100
+    },
+    {
+      "combo_id": "theta5_iter200",
+      "candidate_reachability_theta_proposal_policy": "candidate_current_bearing_sweep/v1",
+      "candidate_reachability_max_theta_proposals_per_candidate": 5,
+      "hybrid_astar_max_iterations": 200
+    }
+  ],
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

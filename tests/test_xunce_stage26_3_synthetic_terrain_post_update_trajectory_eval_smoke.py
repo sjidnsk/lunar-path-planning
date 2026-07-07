@@ -95,6 +95,50 @@ def test_stage26_3_routes_binding_repair_when_synthetic_fields_are_missing(tmp_p
     assert summary["synthetic_inference_required_field_missing_count"] > 0
 
 
+def test_stage26_3_excludes_no_valid_action_terminal_from_synthetic_inference_binding(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
+
+    stage26_2 = _write_stage26_2_root(tmp_path)
+    _patch_stage21_5(monkeypatch, s26, mode="no_valid_action_terminal")
+    config = _write_config(tmp_path, stage26_2)
+
+    summary = s26.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage26_synthetic_credit_assignment"
+    assert summary["synthetic_inference_required_field_missing_count"] == 0
+    assert summary["post_strong_key_unavailable_count"] == 0
+    assert summary["strong_state_join_available_count"] == 2
+
+
+def test_stage26_3_does_not_exclude_executed_selected_row_with_no_valid_action_marker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke as s26
+
+    stage26_2 = _write_stage26_2_root(tmp_path)
+    _patch_stage21_5(monkeypatch, s26, mode="executed_selected_no_valid_marker_missing_synthetic")
+    config = _write_config(tmp_path, stage26_2)
+
+    summary = s26.run_xunce_stage26_3_synthetic_terrain_post_update_trajectory_eval_smoke(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage26_3_synthetic_inference_binding"
+    assert summary["synthetic_inference_required_field_missing_count"] > 0
+
+
 def test_stage26_3_distinguishes_explicit_unreachable_from_missing_hybrid_provenance(
     tmp_path: Path,
     monkeypatch,
@@ -281,6 +325,7 @@ def test_stage26_3_efficiency_metric_routes_multi_seed_when_auc_is_negative(tmp_
     assert summary["next_required_change"] == "run_stage26_8_synthetic_terrain_multi_seed_ppo_pilot"
     assert summary["coverage_auc_delta"] < 0
     assert summary["coverage_per_100m_delta"] > 0
+    assert summary["main_coverage_per_100m_delta"] == summary["coverage_per_100m_delta"]
     assert summary["post_update_success_metric"] == "main_coverable_coverage_efficiency/v1"
     assert stage21_5_config["post_update_success_metric"] == "main_coverable_coverage_efficiency/v1"
 
@@ -332,6 +377,17 @@ def _patch_stage21_5(monkeypatch, s26, *, mode: str = "changed_and_improved") ->
             post_rows = [_inference_row(0, 45, physical_payload=True), _inference_row(1, 45)]
         elif mode == "unchanged":
             post_rows = [_inference_row(0, 0), _inference_row(1, 45)]
+        elif mode == "no_valid_action_terminal":
+            post_rows = [
+                _inference_row(0, 45, probs=[0.3, 0.7]),
+                _inference_row(1, 45, probs=[0.4, 0.6]),
+                _no_valid_action_terminal_row(),
+            ]
+        elif mode == "executed_selected_no_valid_marker_missing_synthetic":
+            post_rows = [
+                _inference_row(0, 45, omit_synthetic=True, reason_codes=["no_valid_action"]),
+                _inference_row(1, 45),
+            ]
         else:
             post_rows = [_inference_row(0, 45, probs=[0.3, 0.7]), _inference_row(1, 45, probs=[0.4, 0.6])]
         _write_jsonl(pre_root / s26.MODEL_INFERENCE_FILE, pre_rows)
@@ -390,6 +446,7 @@ def _inference_row(
     physical_payload: bool = False,
     probs: list[float] | None = None,
     explicit_unreachable: bool = False,
+    reason_codes: list[str] | None = None,
 ) -> dict:
     row = {
         "schema_version": "xunce-exploration-coverage-model-inference/v1",
@@ -424,6 +481,7 @@ def _inference_row(
         "physical_obstacle_cells_written": False,
         "action_probs": probs or ([0.6, 0.4] if selected_theta == 0 else [0.4, 0.6]),
         "logits": [0.1, 0.2],
+        "reason_codes": reason_codes or [],
     }
     if omit_synthetic:
         for key in (
@@ -443,6 +501,32 @@ def _inference_row(
         row["hybrid_astar_failure_reason"] = "selected_continuous_theta_hybrid_astar_unreachable"
         row["hybrid_vs_grid_path_cost_delta"] = None
     return row
+
+
+def _no_valid_action_terminal_row() -> dict:
+    return {
+        "schema_version": "xunce-exploration-coverage-model-inference/v1",
+        "policy": "xunce",
+        "scenario_id": "scenario-terminal",
+        "step_index": 7,
+        "current_cell": [7, 0],
+        "covered_cells_hash": "covered-terminal",
+        "candidate_set_hash": "candidate-set-terminal",
+        "true_model_inference_executed": False,
+        "inference_skipped_reason": "no_valid_action",
+        "terminal_reason": "no_valid_action",
+        "reason_codes": ["no_valid_action"],
+        "coverage_source": "endpoint_theta_slope_obstacle_los/v1",
+        "path_cost_source": "hybrid_astar_pose_path/v1",
+        "synthetic_terrain_hash": SYNTHETIC_HASH,
+        "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+        "platform_contract_hash": "platform-hash",
+        "synthetic_los_blocker_cells_used": True,
+        "synthetic_hard_obstacle_cells_used": True,
+        "physical_obstacle_cells_written": False,
+        "default_astar_replaced": False,
+        "hybrid_astar_ackermann_feasible_claimed": False,
+    }
 
 
 def _write_stage26_2_root(
