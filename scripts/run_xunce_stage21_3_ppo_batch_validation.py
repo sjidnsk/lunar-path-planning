@@ -45,6 +45,11 @@ HYBRID_ASTAR_PATH_COST_SOURCE = "hybrid_astar_pose_path/v1"
 CONTINUOUS_THETA_ACTION_SPACE = "hybrid_discrete_xy_continuous_theta/v1"
 SLOPE_OBSTACLE_MAX_TRAVERSABLE_SLOPE_DEG = 30.0
 REACHABILITY_GUARD_BEHAVIOR_POLICY_ID = "continuous_theta_reachability_guard_policy/v1"
+NONBLOCKING_REWARD_REASON_CODES = (
+    "terminal_incomplete_below_99pct_target",
+    "dead_end_penalty_applied",
+    "coverage_per_cost_component_inactive_without_coverage_gain",
+)
 
 
 CONFIG_SCHEMA_VERSION = "xunce-stage21-3-ppo-batch-validation-config/v1"
@@ -390,6 +395,11 @@ def _build_batch(
                 "reward_profile_version": reward_row.get("profile_version"),
                 "reward_profile_hash": reward_row.get("profile_hash"),
                 "reward_components": reward_row.get("components"),
+                "terminal_reason": reward_row.get("terminal_reason"),
+                "next_action_mask_true_count": reward_row.get("next_action_mask_true_count"),
+                "next_action_mask_zero": reward_row.get("next_action_mask_zero"),
+                "next_grid_action_mask_true_count": reward_row.get("next_grid_action_mask_true_count"),
+                "dead_end_attribution_source": reward_row.get("dead_end_attribution_source"),
                 "theta_aware_reward_contract": reward_row.get("theta_aware_reward_contract"),
                 "coverage_source": reward_row.get("coverage_source"),
                 "candidate_viewpoint": reward_row.get("candidate_viewpoint"),
@@ -540,6 +550,7 @@ def _lineage_audit(
     reward_trainable_false_count = 0
     hard_risk_reward_rejection_count = 0
     reward_reason_code_nonempty_count = 0
+    nonblocking_reward_reason_code_count = 0
     profile_hashes = set()
     for transition_id in common_ids:
         transition = transition_by_id[transition_id]
@@ -557,6 +568,9 @@ def _lineage_audit(
         reason_codes = reward.get("reason_codes") if isinstance(reward.get("reason_codes"), list) else []
         if reason_codes:
             reward_reason_code_nonempty_count += 1
+        nonblocking_reward_reason_code_count += sum(
+            1 for code in reason_codes if str(code) in NONBLOCKING_REWARD_REASON_CODES
+        )
         if "hard_risk_rejected" in reason_codes:
             hard_risk_reward_rejection_count += 1
         if reward.get("profile_hash"):
@@ -585,6 +599,8 @@ def _lineage_audit(
         "transition_trainable_false_count": transition_trainable_false_count,
         "reward_trainable_false_count": reward_trainable_false_count,
         "reward_reason_code_nonempty_count": reward_reason_code_nonempty_count,
+        "nonblocking_reward_reason_codes": list(NONBLOCKING_REWARD_REASON_CODES),
+        "nonblocking_reward_reason_code_count": nonblocking_reward_reason_code_count,
         "hard_risk_reward_rejection_count": hard_risk_reward_rejection_count,
         "reward_profile_hash_count": len(profile_hashes),
         "reward_profile_hashes": sorted(profile_hashes),
@@ -806,6 +822,8 @@ def _write_outputs(
         "done_mismatch_count": lineage.get("done_mismatch_count", 0),
         "transition_trainable_false_count": lineage.get("transition_trainable_false_count", 0),
         "reward_trainable_false_count": lineage.get("reward_trainable_false_count", 0),
+        "nonblocking_reward_reason_codes": lineage.get("nonblocking_reward_reason_codes", []),
+        "nonblocking_reward_reason_code_count": lineage.get("nonblocking_reward_reason_code_count", 0),
         "hard_risk_reward_rejection_count": lineage.get("hard_risk_reward_rejection_count", 0),
         "episode_audit": lineage.get("episode_audit", {}),
         "train_transition_count": len(splits.get("train_transition_ids", [])),

@@ -351,6 +351,39 @@ def test_stage21_2_requires_stage21_1_passed(tmp_path: Path) -> None:
     assert "stage21_1_collector_not_passed" in summary["blocking_reason_codes"]
 
 
+def test_stage21_2_accepts_stage26_10_terminal_aware_v3_reward_profile(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_2_coverage_first_ppo_reward_contract import (
+        run_xunce_stage21_2_coverage_first_ppo_reward_contract,
+    )
+
+    collector_root = _write_stage21_1_root(tmp_path, final_coverage=0.5, dead_end_action_mask_zero=True)
+    config = _write_config(
+        tmp_path,
+        collector_root,
+        coverage_first_reward_profile="configs/xunce_stage26_10_terminal_aware_ppo_reward_profile_v3.json",
+    )
+
+    summary = run_xunce_stage21_2_coverage_first_ppo_reward_contract(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+    rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-2-reward-contract-evaluation.jsonl")
+
+    assert summary["status"] == "passed"
+    assert summary["profile_version"] == "stage26-10-terminal-aware-v3"
+    assert summary["terminal_aware_reward_profile_hash"] == summary["profile_hash"]
+    assert summary["collector_canonical_reward_profile_hash"] == "interim-v3"
+    assert summary["reward_trainable_false_count"] == 0
+    assert rows[0]["trainable"] is True
+    assert rows[0]["components"]["incomplete_terminal_penalty_component"] < 0.0
+    assert rows[0]["components"]["dead_end_penalty_component"] == -2.0
+    assert "terminal_incomplete_below_99pct_target" in rows[0]["reason_codes"]
+    assert "dead_end_penalty_applied" in rows[0]["reason_codes"]
+    assert rows[0]["terminal_reason"] == "no_hybrid_astar_pose_reachable_candidate_for_action_mask"
+    assert rows[0]["dead_end_attribution_source"] == "next_state_action_mask_all_false/v1"
+
+
 def _write_stage21_1_root(
     tmp_path: Path,
     *,
@@ -364,6 +397,7 @@ def _write_stage21_1_root(
     hybrid_path_cost_contract: bool = False,
     hybrid_astar_path_cost: float = 2.5,
     hybrid_ackermann_feasible_claimed: bool = False,
+    dead_end_action_mask_zero: bool = False,
 ) -> Path:
     root = tmp_path / "stage21_1"
     root.mkdir()
@@ -396,6 +430,16 @@ def _write_stage21_1_root(
             "hard_risk_violation": False,
         },
     }
+    if dead_end_action_mask_zero:
+        transition["info"].update(
+            {
+                "terminal_reason": "no_hybrid_astar_pose_reachable_candidate_for_action_mask",
+                "next_action_mask_true_count": 0,
+                "next_action_mask_zero": True,
+                "next_grid_action_mask_true_count": 2,
+                "dead_end_attribution_source": "next_state_action_mask_all_false/v1",
+            }
+        )
     if theta_reward_contract:
         transition["info"].update(
             {

@@ -19,6 +19,20 @@ EXPECTED_COMPONENTS = {
     "hard_risk_component",
 }
 
+EXPECTED_V3_COMPONENTS = {
+    "coverage_gain_component",
+    "coverage_progress_component",
+    "coverage_per_cost_component",
+    "path_cost_component",
+    "soft_risk_component",
+    "terminal_final_coverage_component",
+    "success_99pct_bonus_component",
+    "incomplete_terminal_penalty_component",
+    "dead_end_penalty_component",
+    "failure_component",
+    "hard_risk_component",
+}
+
 
 def _profile_path() -> Path:
     return REPO_ROOT / "configs" / "xunce_stage21_coverage_first_ppo_reward_profile_v1.json"
@@ -26,6 +40,10 @@ def _profile_path() -> Path:
 
 def _profile_v2_path() -> Path:
     return REPO_ROOT / "configs" / "xunce_stage21_coverage_constrained_ppo_reward_profile_v2.json"
+
+
+def _profile_v3_path() -> Path:
+    return REPO_ROOT / "configs" / "xunce_stage26_10_terminal_aware_ppo_reward_profile_v3.json"
 
 
 def test_stage21_coverage_first_profile_hash_is_stable(tmp_path: Path) -> None:
@@ -255,3 +273,113 @@ def test_stage21_coverage_constrained_v2_hard_risk_rejected_before_reward() -> N
     assert result.components["coverage_gain_component"] == 0.0
     assert result.components["coverage_per_cost_component"] == 0.0
     assert result.reward <= 0.0
+
+
+def test_stage26_10_terminal_aware_v3_hash_and_component_set(tmp_path: Path) -> None:
+    from model_explorer.policy.coverage_first_reward import coverage_first_profile_hash, load_coverage_first_reward_profile
+
+    profile_a = load_coverage_first_reward_profile(_profile_v3_path())
+    payload = json.loads(_profile_v3_path().read_text(encoding="utf-8"))
+    reordered = {
+        "component_source_map": dict(reversed(list(payload["component_source_map"].items()))),
+        "terminal_policy": dict(reversed(list(payload["terminal_policy"].items()))),
+        "hard_risk_policy": dict(reversed(list(payload["hard_risk_policy"].items()))),
+        "reward_policy": dict(reversed(list(payload["reward_policy"].items()))),
+        "risk_policy": dict(reversed(list(payload["risk_policy"].items()))),
+        "normalizers": dict(reversed(list(payload["normalizers"].items()))),
+        "weights": dict(reversed(list(payload["weights"].items()))),
+        "mission_budget_route_when_below_target": payload["mission_budget_route_when_below_target"],
+        "horizon_steps": payload["horizon_steps"],
+        "coverage_cap_rate": payload["coverage_cap_rate"],
+        "target_final_coverage_rate": payload["target_final_coverage_rate"],
+        "profile_version": payload["profile_version"],
+        "profile_id": payload["profile_id"],
+        "schema_version": payload["schema_version"],
+    }
+    path = tmp_path / "reordered-v3.json"
+    path.write_text(json.dumps(reordered, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    profile_b = load_coverage_first_reward_profile(path)
+
+    assert profile_a.profile_hash == profile_b.profile_hash
+    assert coverage_first_profile_hash(profile_a) == profile_a.profile_hash
+    assert profile_a.profile_version == "stage26-10-terminal-aware-v3"
+    assert set(profile_a.component_keys) == EXPECTED_V3_COMPONENTS
+
+
+def test_stage26_10_terminal_aware_v3_success_incomplete_and_dead_end_terms() -> None:
+    from model_explorer.policy.coverage_first_reward import compute_coverage_first_reward_components, load_coverage_first_reward_profile
+
+    profile = load_coverage_first_reward_profile(_profile_v3_path())
+    success = compute_coverage_first_reward_components(
+        {
+            "coverage_rate_delta": 0.02,
+            "coverage_progress_rate": 0.995,
+            "final_coverage_rate": 0.995,
+            "coverage_per_cost": 0.05,
+            "path_cost_m": 10.0,
+            "soft_risk_exposure": 1.0,
+            "done": True,
+        },
+        profile,
+    )
+    incomplete = compute_coverage_first_reward_components(
+        {
+            "coverage_rate_delta": 0.02,
+            "coverage_progress_rate": 0.5,
+            "final_coverage_rate": 0.5,
+            "coverage_per_cost": 0.05,
+            "path_cost_m": 10.0,
+            "soft_risk_exposure": 1.0,
+            "done": True,
+        },
+        profile,
+    )
+    dead_end = compute_coverage_first_reward_components(
+        {
+            "coverage_rate_delta": 0.02,
+            "coverage_progress_rate": 0.5,
+            "final_coverage_rate": 0.5,
+            "coverage_per_cost": 0.05,
+            "path_cost_m": 10.0,
+            "soft_risk_exposure": 1.0,
+            "done": True,
+            "dead_end_action_mask_zero": True,
+        },
+        profile,
+    )
+
+    assert set(success.components) == EXPECTED_V3_COMPONENTS
+    assert success.components["success_99pct_bonus_component"] > 0.0
+    assert success.components["incomplete_terminal_penalty_component"] == 0.0
+    assert incomplete.components["success_99pct_bonus_component"] == 0.0
+    assert -1.0 <= incomplete.components["incomplete_terminal_penalty_component"] < 0.0
+    assert dead_end.components["dead_end_penalty_component"] == -2.0
+    assert "terminal_incomplete_below_99pct_target" in incomplete.reason_codes
+    assert "dead_end_penalty_applied" in dead_end.reason_codes
+
+
+def test_stage26_10_terminal_aware_v3_hard_risk_still_clamps_positive_reward() -> None:
+    from model_explorer.policy.coverage_first_reward import compute_coverage_first_reward_components, load_coverage_first_reward_profile
+
+    result = compute_coverage_first_reward_components(
+        {
+            "coverage_rate_delta": 1.0,
+            "coverage_progress_rate": 1.0,
+            "final_coverage_rate": 1.0,
+            "coverage_per_cost": 10.0,
+            "path_cost_m": 0.0,
+            "soft_risk_exposure": 0.0,
+            "done": True,
+            "dead_end_action_mask_zero": True,
+            "path_allowed_by_risk": False,
+        },
+        load_coverage_first_reward_profile(_profile_v3_path()),
+    )
+
+    assert result.trainable is False
+    assert result.reward <= 0.0
+    assert result.components["coverage_gain_component"] == 0.0
+    assert result.components["coverage_per_cost_component"] == 0.0
+    assert result.components["dead_end_penalty_component"] == 0.0
+    assert "dead_end_penalty_applied" not in result.reason_codes

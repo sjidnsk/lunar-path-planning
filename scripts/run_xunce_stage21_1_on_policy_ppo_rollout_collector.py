@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
 import time
+from contextlib import nullcontext
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import torch
 
@@ -27,6 +29,8 @@ import run_xunce_high_fidelity_exploration_coverage_comparison as hf
 import run_xunce_high_fidelity_real_map_comparison as real_map
 from xunce_obstacle_aware_theta_sensor_coverage import obstacle_aware_theta_coverage_hash
 from xunce_hybrid_astar_candidate_path_cost import (
+    CANDIDATE_REACHABILITY_GATE_SOURCE,
+    CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
     PATH_COST_SOURCE as HYBRID_ASTAR_PATH_COST_SOURCE,
     Cell as HYBRID_CELL,
     WorldPoint as HYBRID_WORLD_POINT,
@@ -90,6 +94,10 @@ MANIFEST_FILE = "xunce-stage21-1-manifest.json"
 
 REACHABILITY_GUARD_BEHAVIOR_POLICY_ID = "continuous_theta_reachability_guard_policy/v1"
 REACHABILITY_GUARD_THETA_POLICY_ID = "reachable_theta_proposal/v1"
+CANDIDATE_REACHABILITY_GATE_LEGACY = "legacy_action_mask_validation/v1"
+NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON = "no_hybrid_astar_pose_reachable_candidate_for_action_mask"
+CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY = "candidate_viewpoint_current_step/v1"
+CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR = "candidate_current_bearing_sweep/v1"
 
 ROUTE_BOUNDARY = "resolve_stage21_1_on_policy_collector_boundary_rejections"
 ROUTE_INPUTS = "repair_stage21_1_on_policy_collector_inputs"
@@ -201,6 +209,7 @@ def run_xunce_stage21_1_on_policy_ppo_rollout_collector(
     terminal_no_reachable_reasons = {
         "no_hybrid_reachable_candidate_terminal",
         "no_selected_reachable_pose_candidate_terminal",
+        NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON,
     }
     terminal_no_reachable_allowed = (
         any(reason in collection.reason_codes for reason in terminal_no_reachable_reasons)
@@ -291,31 +300,39 @@ def _collect_rollouts(
     validation_cache: dict[str, list[dict[str, Any]]] = {}
     reason_codes: list[str] = list(source.get("read_reason_codes") or [])
 
-    for scenario_index, scenario in enumerate(scenarios[: int(hf_config["required_scenario_count"])]):
-        if not isinstance(scenario, dict):
-            continue
-        episode = _collect_episode(
-            scenario=scenario,
-            scenario_index=scenario_index,
-            source=source,
-            slice_by_id=slice_by_id,
-            obstacle_source_linkage=obstacle_source_by_scenario.get(str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))),
-            hf_config=hf_config,
-            config=config,
-            profile=profile,
-            model=model,
-            xunce_config=xunce_config,
-            repo_root=repo_root,
-            output_root=output_root,
-            validation_cache=validation_cache,
-        )
-        episodes.append(episode["episode"])
-        transitions.extend(episode["transitions"])
-        trainable_batch.extend(episode["trainable_batch"])
-        rejections.extend(episode["rejections"])
-        reward_audit.extend(episode["reward_audit"])
-        sampling_audit.extend(episode["sampling_audit"])
-        reason_codes.extend(episode["reason_codes"])
+    worker_count = int(hf_config.get("hybrid_astar_candidate_eval_workers", 1))
+    executor_context = (
+        ProcessPoolExecutor(max_workers=worker_count)
+        if bool(hf_config.get("hybrid_astar_pose_path_cost_enabled")) and worker_count > 1
+        else nullcontext(None)
+    )
+    with executor_context as hybrid_astar_executor:
+        for scenario_index, scenario in enumerate(scenarios[: int(hf_config["required_scenario_count"])]):
+            if not isinstance(scenario, dict):
+                continue
+            episode = _collect_episode(
+                scenario=scenario,
+                scenario_index=scenario_index,
+                source=source,
+                slice_by_id=slice_by_id,
+                obstacle_source_linkage=obstacle_source_by_scenario.get(str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))),
+                hf_config=hf_config,
+                config=config,
+                profile=profile,
+                model=model,
+                xunce_config=xunce_config,
+                repo_root=repo_root,
+                output_root=output_root,
+                validation_cache=validation_cache,
+                hybrid_astar_executor=hybrid_astar_executor,
+            )
+            episodes.append(episode["episode"])
+            transitions.extend(episode["transitions"])
+            trainable_batch.extend(episode["trainable_batch"])
+            rejections.extend(episode["rejections"])
+            reward_audit.extend(episode["reward_audit"])
+            sampling_audit.extend(episode["sampling_audit"])
+            reason_codes.extend(episode["reason_codes"])
 
     model_audit = {
         "xunce_checkpoint_audit": checkpoint_audit,
@@ -351,6 +368,7 @@ def _collect_episode(
     repo_root: Path,
     output_root: Path,
     validation_cache: dict[str, list[dict[str, Any]]],
+    hybrid_astar_executor: Any | None = None,
 ) -> dict[str, Any]:
     scenario_id = str(scenario.get("scenario_id", f"scenario-{scenario_index:04d}"))
     slice_row = slice_by_id.get(scenario_id, {})
@@ -439,6 +457,7 @@ def _collect_episode(
             scenario_index + step_index,
             xunce_config,
         )
+        grid_action_mask = tuple(bool(value) for value in adapter["action_mask"])
         observation_payload = _observation_to_dict(adapter["incumbent_observation"])
         observation_payload["candidate_cells"] = candidate_observation_cells(candidates)
         observation_payload.update(theta_metadata(candidates))
@@ -485,6 +504,7 @@ def _collect_episode(
                 config=hf_config,
                 slice_row=slice_row,
                 platform_contract_hash=slope_theta_metadata.get("platform_contract_hash"),
+                hybrid_astar_executor=hybrid_astar_executor,
             )
         )
         continuous_hybrid_probe_metadata = (
@@ -496,12 +516,13 @@ def _collect_episode(
                 config=hf_config,
                 slice_row=slice_row,
                 platform_contract_hash=slope_theta_metadata.get("platform_contract_hash"),
+                hybrid_astar_executor=hybrid_astar_executor,
+                action_mask=grid_action_mask,
             )
             if continuous_theta_enabled(config)
             else {}
         )
         observation_payload.update(hybrid_path_metadata)
-        action_mask = tuple(bool(value) for value in adapter["action_mask"])
         hard_risk_clean_mask = _hard_risk_clean_mask(
             candidates,
             allow_open_grid_fallback=bool(hf_config["allow_open_grid_fallback"]),
@@ -511,6 +532,21 @@ def _collect_episode(
             if continuous_theta_enabled(config)
             else _hybrid_astar_reachable_mask(hybrid_path_metadata, candidate_count=len(candidates))
         )
+        candidate_reachability_provenance_mask = _candidate_reachability_provenance_mask(
+            continuous_hybrid_probe_metadata if continuous_theta_enabled(config) else hybrid_path_metadata,
+            candidate_count=len(candidates),
+        )
+        candidate_reachability_hard_gate_enabled = _candidate_reachability_hard_gate_enabled(config)
+        action_mask = _candidate_reachability_action_mask(
+            grid_action_mask,
+            candidate_reachability_provenance_mask,
+            enabled=candidate_reachability_hard_gate_enabled,
+        )
+        _replace_observation_action_mask(observation_payload, action_mask)
+        if action_mask != grid_action_mask:
+            _replace_xunce_batch_action_mask(adapter["xunce_batch"], action_mask)
+            adapter["action_mask"] = action_mask
+            adapter["has_valid_action"] = any(action_mask)
         sampling_mask = tuple(
             bool(valid) and bool(clean) and bool(hybrid_reachable)
             for valid, clean, hybrid_reachable in zip(action_mask, hard_risk_clean_mask, hybrid_reachable_mask)
@@ -572,6 +608,12 @@ def _collect_episode(
             planning_proxy_rejection_fields = _planning_proxy_rejection_fields(
                 continuous_hybrid_probe_metadata or hybrid_path_metadata
             )
+            terminal_reason = _no_sampling_candidate_reason(
+                grid_action_mask=grid_action_mask,
+                action_mask=action_mask,
+                hard_risk_clean_mask=hard_risk_clean_mask,
+                hybrid_reachable_mask=hybrid_reachable_mask,
+            )
             if pending is not None:
                 _finalize_pending(
                     pending,
@@ -580,13 +622,11 @@ def _collect_episode(
                     done=True,
                     next_observation=observation_payload,
                     next_xunce_batch=xunce_batch_payload,
+                    terminal_reason=terminal_reason,
+                    next_action_mask=action_mask,
+                    next_grid_action_mask=grid_action_mask,
                 )
                 pending = None
-            terminal_reason = _no_sampling_candidate_reason(
-                action_mask=action_mask,
-                hard_risk_clean_mask=hard_risk_clean_mask,
-                hybrid_reachable_mask=hybrid_reachable_mask,
-            )
             reason_codes.append(terminal_reason)
             rejections.append(
                 _rejection_row(
@@ -595,14 +635,34 @@ def _collect_episode(
                     terminal_reason,
                     candidate_set_hash_value=candidate_set_hash_value,
                     covered_cells_hash_value=covered_hash,
+                    grid_action_mask=list(grid_action_mask),
                     action_mask=list(action_mask),
                     hard_risk_clean_mask=list(hard_risk_clean_mask),
                     hybrid_astar_reachable_mask=list(hybrid_reachable_mask),
+                    candidate_reachability_provenance_mask=list(candidate_reachability_provenance_mask),
+                    candidate_reachability_gate_source=config["candidate_reachability_gate_source"],
                     sampling_mask=list(sampling_mask),
+                    grid_action_mask_true_count=sum(1 for value in grid_action_mask if value),
                     action_mask_true_count=sum(1 for value in action_mask if value),
                     hard_risk_clean_mask_true_count=sum(1 for value in hard_risk_clean_mask if value),
                     hybrid_astar_reachable_count=sum(1 for value in hybrid_reachable_mask if value),
+                    candidate_reachability_provenance_pass_count=sum(
+                        1 for value in candidate_reachability_provenance_mask if value
+                    ),
                     sampling_mask_true_count=sum(1 for value in sampling_mask if value),
+                    **_candidate_reachability_rejection_evidence(
+                        candidates=candidates,
+                        grid_action_mask=grid_action_mask,
+                        action_mask=action_mask,
+                        hard_risk_clean_mask=hard_risk_clean_mask,
+                        sampling_mask=sampling_mask,
+                        candidate_reachability_provenance_mask=candidate_reachability_provenance_mask,
+                        metadata=continuous_hybrid_probe_metadata if continuous_theta_enabled(config) else hybrid_path_metadata,
+                        candidate_reachability_max_theta_proposals_per_candidate=int(
+                            config.get("candidate_reachability_max_theta_proposals_per_candidate", 0)
+                        ),
+                        hybrid_astar_max_iterations=int(config.get("hybrid_astar_max_iterations", 0)),
+                    ),
                     **planning_proxy_rejection_fields,
                 )
             )
@@ -616,6 +676,8 @@ def _collect_episode(
                 done=False,
                 next_observation=observation_payload,
                 next_xunce_batch=xunce_batch_payload,
+                next_action_mask=action_mask,
+                next_grid_action_mask=grid_action_mask,
             )
             pending = None
 
@@ -733,6 +795,7 @@ def _collect_episode(
                 config=hf_config,
                 slice_row=slice_row,
                 platform_contract_hash=slope_theta_metadata.get("platform_contract_hash"),
+                hybrid_astar_executor=hybrid_astar_executor,
             )
             observation_payload.update(hybrid_path_metadata)
             selected_candidate = _apply_selected_hybrid_path_cost(selected_candidate, selected_index, hybrid_path_metadata)
@@ -752,6 +815,7 @@ def _collect_episode(
         selected_cost = hf._candidate_cost(selected_candidate) if selected_candidate is not None else None
         selected_hard_risk_violation = bool(selected_candidate is not None and _candidate_hard_risk_violation(selected_candidate, allow_open_grid_fallback=bool(hf_config["allow_open_grid_fallback"])))
         mask_violation = hf._mask_violation(action_mask, selected_index)
+        selected_reachability_provenance = _selected_candidate_reachability_provenance(selected_candidate)
         if selected_hard_risk_violation:
             hard_risk_violation_count += 1
         if (
@@ -788,6 +852,11 @@ def _collect_episode(
                     candidate_set_hash_value=candidate_set_hash_value,
                     covered_cells_hash_value=covered_hash,
                     action_index=selected_index,
+                    grid_action_mask=list(grid_action_mask),
+                    action_mask=list(action_mask),
+                    candidate_reachability_provenance_mask=list(candidate_reachability_provenance_mask),
+                    candidate_reachability_gate_source=config["candidate_reachability_gate_source"],
+                    selected_candidate_reachability_provenance=selected_reachability_provenance,
                     mask_violation=mask_violation,
                     selected_hard_risk_violation=selected_hard_risk_violation,
                     selected_hybrid_astar_failure_reason=(
@@ -819,6 +888,44 @@ def _collect_episode(
                     selected_pose_reachability_guard_failed=detail.get("selected_pose_reachability_guard_failed"),
                     selected_pose_reachability_guard_failure_reason=detail.get(
                         "selected_pose_reachability_guard_failure_reason"
+                    ),
+                    selected_candidate_probe_evidence=_selected_candidate_probe_evidence(
+                        selected_index,
+                        candidates=candidates,
+                        grid_action_mask=grid_action_mask,
+                        action_mask=action_mask,
+                        hard_risk_clean_mask=hard_risk_clean_mask,
+                        sampling_mask=sampling_mask,
+                        candidate_reachability_provenance_mask=candidate_reachability_provenance_mask,
+                        metadata=continuous_hybrid_probe_metadata if continuous_theta_enabled(config) else hybrid_path_metadata,
+                    ),
+                    selected_final_pose_path_hash=(
+                        selected_candidate.get("hybrid_astar_pose_path_hash")
+                        if isinstance(selected_candidate, dict)
+                        else None
+                    ),
+                    selected_final_planner_config_hash=(
+                        selected_candidate.get("candidate_reachability_planner_config_hash")
+                        if isinstance(selected_candidate, dict)
+                        else None
+                    ),
+                    selected_final_hybrid_astar_reachable=(
+                        selected_candidate.get("hybrid_astar_reachable")
+                        if isinstance(selected_candidate, dict)
+                        else None
+                    ),
+                    **_candidate_reachability_rejection_evidence(
+                        candidates=candidates,
+                        grid_action_mask=grid_action_mask,
+                        action_mask=action_mask,
+                        hard_risk_clean_mask=hard_risk_clean_mask,
+                        sampling_mask=sampling_mask,
+                        candidate_reachability_provenance_mask=candidate_reachability_provenance_mask,
+                        metadata=continuous_hybrid_probe_metadata if continuous_theta_enabled(config) else hybrid_path_metadata,
+                        candidate_reachability_max_theta_proposals_per_candidate=int(
+                            config.get("candidate_reachability_max_theta_proposals_per_candidate", 0)
+                        ),
+                        hybrid_astar_max_iterations=int(config.get("hybrid_astar_max_iterations", 0)),
                     ),
                     **planning_proxy_rejection_fields,
                 )
@@ -937,6 +1044,18 @@ def _collect_episode(
             ),
             "base_candidate_set_hash": candidate_set_hash_value,
             "action_sample_hash": selected_candidate.get("action_sample_hash"),
+            "candidate_reachability_gate_source": config["candidate_reachability_gate_source"],
+            "selected_candidate_reachability_provenance": selected_reachability_provenance,
+            "selected_reachability_provenance_source": (
+                selected_reachability_provenance.get("source")
+                if isinstance(selected_reachability_provenance, dict)
+                else None
+            ),
+            "selected_reachability_planner_config_hash": (
+                selected_reachability_provenance.get("planner_config_hash")
+                if isinstance(selected_reachability_provenance, dict)
+                else None
+            ),
             "old_log_prob": float(detail["old_log_prob"]),
             "old_value": float(detail["old_value"]),
             "reward": float(reward_result["reward"]),
@@ -961,6 +1080,18 @@ def _collect_episode(
                 "selected_theta_deg": selected_candidate.get("candidate_theta_deg"),
                 "base_candidate_set_hash": candidate_set_hash_value,
                 "action_sample_hash": selected_candidate.get("action_sample_hash"),
+                "candidate_reachability_gate_source": config["candidate_reachability_gate_source"],
+                "selected_candidate_reachability_provenance": selected_reachability_provenance,
+                "selected_reachability_provenance_source": (
+                    selected_reachability_provenance.get("source")
+                    if isinstance(selected_reachability_provenance, dict)
+                    else None
+                ),
+                "selected_reachability_planner_config_hash": (
+                    selected_reachability_provenance.get("planner_config_hash")
+                    if isinstance(selected_reachability_provenance, dict)
+                    else None
+                ),
                 "old_point_log_prob": detail.get("old_point_log_prob"),
                 "old_theta_log_prob": detail.get("old_theta_log_prob"),
                 "old_policy_point_log_prob": detail.get("old_policy_point_log_prob"),
@@ -1030,7 +1161,9 @@ def _collect_episode(
                 "candidate_set_id": candidate_set_id,
                 "candidate_set_hash": candidate_set_hash_value,
                 "covered_cells_hash": covered_hash,
+                "grid_action_mask": list(grid_action_mask),
                 "action_mask": list(action_mask),
+                "candidate_reachability_provenance_mask": list(candidate_reachability_provenance_mask),
                 "sampling_mask": list(sampling_mask),
                 "hard_risk_clean_mask": list(hard_risk_clean_mask),
                 "sampling_seed": int(config["sampling_seed"]),
@@ -1127,6 +1260,8 @@ def _collect_episode(
             }
         )
 
+    if terminal_reason is None:
+        terminal_reason = "rollout_steps_exhausted"
     if pending is not None:
         _finalize_pending(
             pending,
@@ -1135,9 +1270,8 @@ def _collect_episode(
             done=True,
             next_observation=None,
             next_xunce_batch=None,
+            terminal_reason=terminal_reason,
         )
-    if terminal_reason is None:
-        terminal_reason = "rollout_steps_exhausted"
     episode = {
         "schema_version": "xunce-stage21-1-ppo-rollout-episode/v1",
         "scenario_id": scenario_id,
@@ -1997,6 +2131,9 @@ def _apply_selected_hybrid_path_cost(
         ("hybrid_astar_trajectory_kind", "hybrid_astar_trajectory_kinds"),
         ("hybrid_astar_reachable", "hybrid_astar_reachable_flags"),
         ("hybrid_astar_failure_reason", "hybrid_astar_failure_reasons"),
+        ("candidate_reachability_gate_source", "candidate_reachability_gate_sources"),
+        ("candidate_reachability_planner_config_hash", "candidate_reachability_planner_config_hashes"),
+        ("candidate_reachability_provenance", "candidate_reachability_provenances"),
         ("legacy_grid_astar_path_cost", "legacy_grid_astar_path_costs"),
         ("hybrid_vs_grid_path_cost_delta", "hybrid_vs_grid_path_cost_deltas"),
         ("default_astar_replaced", "default_astar_replaced_flags"),
@@ -2023,15 +2160,24 @@ def _continuous_theta_reachability_probe_metadata(
     config: dict[str, Any],
     slice_row: dict[str, Any],
     platform_contract_hash: str | None,
+    hybrid_astar_executor: Any | None = None,
+    action_mask: Sequence[bool] | None = None,
 ) -> dict[str, Any]:
     if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
         return {}
     theta_step_deg = float(config.get("theta_step_deg", 45.0) or 45.0)
     probe_candidates, proposal_sets = _continuous_theta_probe_candidate_sets(
         candidates,
+        current_cell=current_cell,
         current_theta_deg=current_theta_deg,
         theta_step_deg=theta_step_deg,
         candidate_set_hash_value=candidate_set_hash_value,
+        action_mask=action_mask,
+        max_proposals_per_candidate=int(config.get("candidate_reachability_max_theta_proposals_per_candidate") or 0),
+        proposal_policy=str(
+            config.get("candidate_reachability_theta_proposal_policy")
+            or CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY
+        ),
     )
     flat_metadata = _hybrid_astar_path_cost_metadata(
         probe_candidates,
@@ -2041,11 +2187,18 @@ def _continuous_theta_reachability_probe_metadata(
         config=config,
         slice_row=slice_row,
         platform_contract_hash=platform_contract_hash,
+        hybrid_astar_executor=hybrid_astar_executor,
     )
     metadata = _aggregate_continuous_theta_probe_metadata(flat_metadata, proposal_sets)
     metadata["hybrid_astar_reachability_probe_theta_deg"] = float(current_theta_deg)
-    metadata["hybrid_astar_reachability_probe_provenance"] = (
-        "continuous_theta_multi_proposal_probe/v1"
+    metadata["hybrid_astar_reachability_probe_provenance"] = "continuous_theta_multi_proposal_probe/v1"
+    metadata["candidate_reachability_theta_proposal_policy"] = str(
+        config.get("candidate_reachability_theta_proposal_policy")
+        or CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY
+    )
+    metadata["candidate_reachability_probe_config_hash"] = _candidate_reachability_probe_config_hash(
+        config,
+        theta_step_deg=theta_step_deg,
     )
     return metadata
 
@@ -2072,18 +2225,29 @@ def _continuous_theta_probe_candidates(
 def _continuous_theta_probe_candidate_sets(
     candidates: list[dict[str, Any]],
     *,
+    current_cell: tuple[int, int] | None = None,
     current_theta_deg: float,
     theta_step_deg: float,
     candidate_set_hash_value: str,
+    action_mask: Sequence[bool] | None = None,
+    max_proposals_per_candidate: int = 0,
+    proposal_policy: str = CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY,
 ) -> tuple[list[dict[str, Any]], list[list[float]]]:
     probe_candidates: list[dict[str, Any]] = []
     proposal_sets: list[list[float]] = []
     for index, candidate in enumerate(candidates):
+        if action_mask is not None and index < len(action_mask) and not bool(action_mask[index]):
+            proposal_sets.append([])
+            continue
         proposals = _continuous_theta_proposal_degs(
             candidate,
+            current_cell=current_cell,
             current_theta_deg=current_theta_deg,
             theta_step_deg=theta_step_deg,
+            proposal_policy=proposal_policy,
         )
+        if max_proposals_per_candidate > 0:
+            proposals = proposals[:max_proposals_per_candidate]
         proposal_sets.append(proposals)
         cell = hf._cell_tuple(hf._candidate_cell(candidate))
         for theta_deg in proposals:
@@ -2100,8 +2264,10 @@ def _continuous_theta_probe_candidate_sets(
 def _continuous_theta_proposal_degs(
     candidate: dict[str, Any],
     *,
+    current_cell: tuple[int, int] | None = None,
     current_theta_deg: float,
     theta_step_deg: float,
+    proposal_policy: str = CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY,
 ) -> list[float]:
     viewpoint = candidate.get("candidate_viewpoint")
     viewpoint_theta = None
@@ -2109,6 +2275,20 @@ def _continuous_theta_proposal_degs(
         viewpoint_theta = _finite(viewpoint[2])
     base = float(current_theta_deg)
     step = float(theta_step_deg) if math.isfinite(float(theta_step_deg)) and float(theta_step_deg) > 0.0 else 45.0
+    if proposal_policy == CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR:
+        bearing = _candidate_bearing_theta_deg(candidate, current_cell=current_cell)
+        return _unique_theta_degs(
+            [
+                candidate.get("candidate_theta_deg"),
+                viewpoint_theta,
+                base,
+                bearing,
+                None if bearing is None else bearing + step,
+                None if bearing is None else bearing - step,
+                base + step,
+                base - step,
+            ]
+        )
     return _unique_theta_degs(
         [
             candidate.get("candidate_theta_deg"),
@@ -2120,6 +2300,23 @@ def _continuous_theta_proposal_degs(
     )
 
 
+def _candidate_bearing_theta_deg(
+    candidate: dict[str, Any],
+    *,
+    current_cell: tuple[int, int] | None,
+) -> float | None:
+    if current_cell is None:
+        return None
+    cell = hf._cell_tuple(hf._candidate_cell(candidate))
+    if cell is None:
+        return None
+    dx = float(cell[0]) - float(current_cell[0])
+    dy = float(cell[1]) - float(current_cell[1])
+    if abs(dx) <= 1.0e-9 and abs(dy) <= 1.0e-9:
+        return None
+    return float(math.degrees(math.atan2(dy, dx)) % 360.0)
+
+
 def _aggregate_continuous_theta_probe_metadata(
     flat_metadata: dict[str, Any],
     proposal_sets: list[list[float]],
@@ -2128,6 +2325,11 @@ def _aggregate_continuous_theta_probe_metadata(
     reachable_sets: list[list[float]] = []
     reachable_flags_by_candidate: list[list[bool]] = []
     costs_by_candidate: list[list[float | None]] = []
+    failure_reasons_by_candidate: list[list[Any]] = []
+    planner_hashes_by_candidate: list[list[Any]] = []
+    pose_path_hashes_by_candidate: list[list[Any]] = []
+    provenance_valid_flags_by_candidate: list[list[bool]] = []
+    probe_records_by_candidate: list[list[dict[str, Any]]] = []
     offset = 0
     for proposals in proposal_sets:
         count = len(proposals)
@@ -2139,10 +2341,35 @@ def _aggregate_continuous_theta_probe_metadata(
             for flat_index in indices
         ]
         costs = [_finite(_flat_value(flat_metadata.get("hybrid_astar_path_costs"), flat_index)) for flat_index in indices]
+        failure_reasons = [_flat_value(flat_metadata.get("hybrid_astar_failure_reasons"), flat_index) for flat_index in indices]
+        planner_hashes = [
+            _flat_value(flat_metadata.get("candidate_reachability_planner_config_hashes"), flat_index)
+            for flat_index in indices
+        ]
+        pose_hashes = [_flat_value(flat_metadata.get("hybrid_astar_pose_path_hashes"), flat_index) for flat_index in indices]
+        provenances = [_flat_value(flat_metadata.get("candidate_reachability_provenances"), flat_index) for flat_index in indices]
+        provenance_valid_flags = [_candidate_reachability_provenance_valid(provenance) for provenance in provenances]
+        probe_records = [
+            {
+                "theta_deg": float(proposals[local]),
+                "reachable": bool(flags[local]),
+                "path_cost": costs[local],
+                "failure_reason": failure_reasons[local],
+                "planner_config_hash": planner_hashes[local],
+                "pose_path_hash": pose_hashes[local],
+                "candidate_reachability_provenance_valid": bool(provenance_valid_flags[local]),
+            }
+            for local in range(count)
+        ]
         reachable_offsets = [local for local, flag in enumerate(flags) if flag]
         reachable_sets.append([float(proposals[local]) for local in reachable_offsets])
         reachable_flags_by_candidate.append(flags)
         costs_by_candidate.append(costs)
+        failure_reasons_by_candidate.append(failure_reasons)
+        planner_hashes_by_candidate.append(planner_hashes)
+        pose_path_hashes_by_candidate.append(pose_hashes)
+        provenance_valid_flags_by_candidate.append(provenance_valid_flags)
+        probe_records_by_candidate.append(probe_records)
         if reachable_offsets:
             best_local = min(
                 reachable_offsets,
@@ -2163,6 +2390,15 @@ def _aggregate_continuous_theta_probe_metadata(
         "hybrid_astar_path_costs": [_flat_value(flat_metadata.get("hybrid_astar_path_costs"), index) for index in best_indices],
         "hybrid_astar_pose_path_hashes": [
             _flat_value(flat_metadata.get("hybrid_astar_pose_path_hashes"), index) for index in best_indices
+        ],
+        "candidate_reachability_gate_sources": [
+            _flat_value(flat_metadata.get("candidate_reachability_gate_sources"), index) for index in best_indices
+        ],
+        "candidate_reachability_planner_config_hashes": [
+            _flat_value(flat_metadata.get("candidate_reachability_planner_config_hashes"), index) for index in best_indices
+        ],
+        "candidate_reachability_provenances": [
+            _flat_value(flat_metadata.get("candidate_reachability_provenances"), index) for index in best_indices
         ],
         "hybrid_astar_trajectory_kinds": [
             _flat_value(flat_metadata.get("hybrid_astar_trajectory_kinds"), index) for index in best_indices
@@ -2199,6 +2435,11 @@ def _aggregate_continuous_theta_probe_metadata(
         "hybrid_astar_reachable_theta_degs_by_candidate": reachable_sets,
         "hybrid_astar_theta_probe_reachable_flags_by_candidate": reachable_flags_by_candidate,
         "hybrid_astar_theta_probe_path_costs_by_candidate": costs_by_candidate,
+        "hybrid_astar_theta_probe_failure_reasons_by_candidate": failure_reasons_by_candidate,
+        "hybrid_astar_theta_probe_planner_config_hashes_by_candidate": planner_hashes_by_candidate,
+        "hybrid_astar_theta_probe_pose_path_hashes_by_candidate": pose_path_hashes_by_candidate,
+        "hybrid_astar_theta_probe_provenance_valid_flags_by_candidate": provenance_valid_flags_by_candidate,
+        "hybrid_astar_theta_probe_records_by_candidate": probe_records_by_candidate,
     }
     return metadata
 
@@ -2213,6 +2454,29 @@ def _unique_theta_degs(values: list[Any]) -> list[float]:
         if not any(abs(((normalized - existing + 180.0) % 360.0) - 180.0) <= 1.0e-6 for existing in result):
             result.append(normalized)
     return result
+
+
+def _candidate_reachability_probe_config_hash(config: dict[str, Any], *, theta_step_deg: float) -> str:
+    payload = {
+        "candidate_reachability_gate_source": config.get("candidate_reachability_gate_source"),
+        "candidate_reachability_theta_proposal_policy": config.get("candidate_reachability_theta_proposal_policy"),
+        "candidate_reachability_max_theta_proposals_per_candidate": int(
+            config.get("candidate_reachability_max_theta_proposals_per_candidate") or 0
+        ),
+        "theta_step_deg": float(theta_step_deg),
+        "hybrid_astar_planning_grid_source": config.get("hybrid_astar_planning_grid_source"),
+        "planner_grid_resolution_m": config.get("planner_grid_resolution_m"),
+        "hybrid_astar_closed_key_xy_resolution_m": config.get("hybrid_astar_closed_key_xy_resolution_m"),
+        "hybrid_astar_goal_position_tolerance_m": config.get("hybrid_astar_goal_position_tolerance_m"),
+        "hybrid_astar_goal_theta_tolerance_deg": config.get("hybrid_astar_goal_theta_tolerance_deg"),
+        "hybrid_astar_max_iterations": config.get("hybrid_astar_max_iterations"),
+        "hybrid_astar_primitive_duration_s": config.get("hybrid_astar_primitive_duration_s"),
+        "hybrid_astar_integration_dt_s": config.get("hybrid_astar_integration_dt_s"),
+        "hybrid_astar_max_speed_mps": config.get("hybrid_astar_max_speed_mps"),
+        "hybrid_astar_max_angular_speed_degps": config.get("hybrid_astar_max_angular_speed_degps"),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _flat_value(values: Any, index: int) -> Any:
@@ -2260,6 +2524,43 @@ def _evaluate_hybrid_astar_candidate_path_cost_worker(args: tuple[Any, ...]) -> 
         return int(index), None, f"{type(exc).__name__}:{exc}"
 
 
+def _evaluate_hybrid_astar_candidate_path_cost_batch_worker(args: tuple[Any, ...]) -> list[tuple[int, dict[str, Any] | None, str | None]]:
+    (
+        grid,
+        current_pose,
+        indexed_payloads,
+        platform_hash,
+        max_slope,
+        planner_options,
+    ) = args
+    rows: list[tuple[int, dict[str, Any] | None, str | None]] = []
+    for index, payload in indexed_payloads:
+        rows.append(
+            _evaluate_hybrid_astar_candidate_path_cost_worker(
+                (
+                    index,
+                    grid,
+                    current_pose,
+                    payload,
+                    platform_hash,
+                    max_slope,
+                    planner_options,
+                )
+            )
+        )
+    return rows
+
+
+def _indexed_chunks(items: list[tuple[int, dict[str, Any]]], chunk_count: int) -> list[list[tuple[int, dict[str, Any]]]]:
+    if not items:
+        return []
+    count = max(1, int(chunk_count))
+    chunks: list[list[tuple[int, dict[str, Any]]]] = [[] for _ in range(min(count, len(items)))]
+    for offset, item in enumerate(items):
+        chunks[offset % len(chunks)].append(item)
+    return [chunk for chunk in chunks if chunk]
+
+
 def _hybrid_astar_failed_candidate_row(candidate: dict[str, Any], *, reason: str) -> dict[str, Any]:
     return {
         "path_cost_source_recommendation": HYBRID_ASTAR_PATH_COST_SOURCE,
@@ -2284,6 +2585,7 @@ def _hybrid_astar_path_cost_metadata(
     config: dict[str, Any],
     slice_row: dict[str, Any],
     platform_contract_hash: str | None,
+    hybrid_astar_executor: Any | None = None,
 ) -> dict[str, Any]:
     if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
         return {}
@@ -2354,33 +2656,35 @@ def _hybrid_astar_path_cost_metadata(
     rows_by_index: dict[int, dict[str, Any]] = {}
     failed_indices: set[int] = set()
     if parallel_enabled:
-        with ProcessPoolExecutor(max_workers=worker_effective) as executor:
+        executor_context = nullcontext(hybrid_astar_executor) if hybrid_astar_executor is not None else ProcessPoolExecutor(max_workers=worker_effective)
+        with executor_context as executor:
+            indexed_payloads = [(index, payload_for(index, candidate)) for index, candidate in enumerate(candidates)]
             futures = {
                 executor.submit(
-                    _evaluate_hybrid_astar_candidate_path_cost_worker,
+                    _evaluate_hybrid_astar_candidate_path_cost_batch_worker,
                     (
-                        index,
                         grid,
                         current_pose,
-                        payload_for(index, candidate),
+                        chunk,
                         platform_hash,
                         max_slope,
                         planner_options,
                     ),
-                ): index
-                for index, candidate in enumerate(candidates)
+                ): chunk
+                for chunk in _indexed_chunks(indexed_payloads, worker_effective)
             }
             for future in as_completed(futures):
-                index = futures[future]
+                chunk = futures[future]
                 try:
-                    row_index, row, error = future.result()
+                    results = future.result()
                 except Exception:
-                    failed_indices.add(index)
+                    failed_indices.update(int(index) for index, _payload in chunk)
                     continue
-                if error is not None or row is None:
-                    failed_indices.add(int(row_index))
-                else:
-                    rows_by_index[int(row_index)] = row
+                for row_index, row, error in results:
+                    if error is not None or row is None:
+                        failed_indices.add(int(row_index))
+                    else:
+                        rows_by_index[int(row_index)] = row
     else:
         for index, candidate in enumerate(candidates):
             try:
@@ -2423,6 +2727,11 @@ def _hybrid_astar_path_cost_metadata(
         "path_cost_sources": path_sources,
         "hybrid_astar_path_costs": [row.get("hybrid_astar_path_cost") for row in rows],
         "hybrid_astar_pose_path_hashes": [row.get("hybrid_astar_pose_path_hash") for row in rows],
+        "candidate_reachability_gate_sources": [row.get("candidate_reachability_gate_source") for row in rows],
+        "candidate_reachability_planner_config_hashes": [
+            row.get("candidate_reachability_planner_config_hash") for row in rows
+        ],
+        "candidate_reachability_provenances": [row.get("candidate_reachability_provenance") for row in rows],
         "hybrid_astar_trajectory_kinds": [row.get("hybrid_astar_trajectory_kind") for row in rows],
         "hybrid_astar_reachable_flags": [row.get("hybrid_astar_reachable") is True for row in rows],
         "hybrid_astar_failure_reasons": [row.get("hybrid_astar_failure_reason") for row in rows],
@@ -2443,6 +2752,7 @@ def _hybrid_astar_path_cost_metadata(
         "hybrid_astar_candidate_eval_submitted_count": len(candidates),
         "hybrid_astar_candidate_eval_failed_count": failed_count,
         "hybrid_astar_candidate_eval_duration_s": duration_s,
+        "hybrid_astar_max_iterations": planner_options["max_iterations"],
         "hybrid_astar_planning_grid_source": grid.metadata.get("planning_grid_source"),
         "planner_grid_resolution_m": grid.metadata.get("planner_grid_resolution_m"),
         "source_grid_resolution_m": grid.metadata.get("source_grid_resolution_m"),
@@ -2479,13 +2789,77 @@ def _hybrid_astar_reachable_mask(metadata: dict[str, Any], *, candidate_count: i
     return tuple(mask)
 
 
+def _candidate_reachability_hard_gate_enabled(config: dict[str, Any]) -> bool:
+    return str(config.get("candidate_reachability_gate_source") or "") == CANDIDATE_REACHABILITY_GATE_SOURCE
+
+
+def _candidate_reachability_action_mask(
+    grid_action_mask: tuple[bool, ...],
+    provenance_mask: tuple[bool, ...],
+    *,
+    enabled: bool,
+) -> tuple[bool, ...]:
+    if not enabled:
+        return grid_action_mask
+    return tuple(
+        bool(valid) and index < len(provenance_mask) and bool(provenance_mask[index])
+        for index, valid in enumerate(grid_action_mask)
+    )
+
+
+def _replace_xunce_batch_action_mask(xunce_batch: dict[str, torch.Tensor], action_mask: tuple[bool, ...]) -> None:
+    current = xunce_batch.get("action_mask")
+    replacement = torch.tensor([list(action_mask)], dtype=torch.bool)
+    if isinstance(current, torch.Tensor):
+        replacement = replacement.to(device=current.device)
+    xunce_batch["action_mask"] = replacement
+
+
+def _replace_observation_action_mask(observation_payload: dict[str, Any], action_mask: Sequence[bool]) -> None:
+    observation_payload["action_mask"] = [bool(value) for value in action_mask]
+
+
+def _candidate_reachability_provenance_mask(metadata: dict[str, Any], *, candidate_count: int) -> tuple[bool, ...]:
+    flags = _hybrid_astar_reachable_mask(metadata, candidate_count=candidate_count)
+    provenances = metadata.get("candidate_reachability_provenances")
+    if not isinstance(provenances, list) or len(provenances) != candidate_count:
+        return tuple(False for _ in range(candidate_count))
+    return tuple(flags[index] and _candidate_reachability_provenance_valid(provenance) for index, provenance in enumerate(provenances))
+
+
+def _candidate_reachability_provenance_valid(provenance: Any) -> bool:
+    if not isinstance(provenance, dict):
+        return False
+    return (
+        provenance.get("schema_version") == CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION
+        and provenance.get("source") == CANDIDATE_REACHABILITY_GATE_SOURCE
+        and provenance.get("backend") == HYBRID_ASTAR_PATH_COST_SOURCE
+        and provenance.get("reachable") is True
+        and _finite(provenance.get("path_cost")) is not None
+        and bool(str(provenance.get("pose_path_hash") or "").strip())
+        and bool(str(provenance.get("planner_config_hash") or "").strip())
+    )
+
+
+def _selected_candidate_reachability_provenance(candidate: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict):
+        return None
+    provenance = candidate.get("candidate_reachability_provenance")
+    return dict(provenance) if isinstance(provenance, dict) else None
+
+
 def _no_sampling_candidate_reason(
     *,
+    grid_action_mask: tuple[bool, ...] | None = None,
     action_mask: tuple[bool, ...],
     hard_risk_clean_mask: tuple[bool, ...],
     hybrid_reachable_mask: tuple[bool, ...],
 ) -> str:
     if not any(action_mask):
+        if grid_action_mask is not None and any(grid_action_mask) and not any(
+            bool(valid) and bool(reachable) for valid, reachable in zip(grid_action_mask, hybrid_reachable_mask)
+        ):
+            return NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON
         return "no_action_mask_candidate"
     if not any(bool(valid) and bool(clean) for valid, clean in zip(action_mask, hard_risk_clean_mask)):
         return "no_hard_risk_clean_candidate"
@@ -2624,12 +2998,27 @@ def _finalize_pending(
     done: bool,
     next_observation: dict[str, Any] | None,
     next_xunce_batch: dict[str, Any] | None,
+    terminal_reason: str | None = None,
+    next_action_mask: Sequence[bool] | None = None,
+    next_grid_action_mask: Sequence[bool] | None = None,
 ) -> None:
     if pending is None:
         return
     pending["done"] = bool(done)
     pending["next_observation"] = next_observation
     pending["next_xunce_batch"] = next_xunce_batch
+    info = pending.get("info")
+    if isinstance(info, dict):
+        if terminal_reason:
+            info["terminal_reason"] = terminal_reason
+        if next_action_mask is not None:
+            next_true_count = sum(1 for value in next_action_mask if bool(value))
+            info["next_action_mask_true_count"] = next_true_count
+            info["next_action_mask_zero"] = next_true_count == 0
+            if next_true_count == 0:
+                info["dead_end_attribution_source"] = "next_state_action_mask_all_false/v1"
+        if next_grid_action_mask is not None:
+            info["next_grid_action_mask_true_count"] = sum(1 for value in next_grid_action_mask if bool(value))
     transitions.append(pending)
     if pending.get("trainable") is True:
         trainable_batch.append(pending)
@@ -2676,6 +3065,7 @@ def _contract_counts(collection: CollectionResult) -> dict[str, Any]:
             "selected_continuous_theta_hybrid_astar_unreachable",
             "no_selected_reachable_pose_candidate_terminal",
             "no_hybrid_reachable_candidate_terminal",
+            NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON,
         }:
             step_index = _int_or_none(row.get("step_index"))
             bucket = str(step_index if step_index is not None else "unknown")
@@ -2705,6 +3095,9 @@ def _contract_counts(collection: CollectionResult) -> dict[str, Any]:
         ),
         "selected_pose_unreachable_terminal_count": sum(
             1 for row in collection.rejections if row.get("reason") == "no_selected_reachable_pose_candidate_terminal"
+        ),
+        "no_hybrid_astar_pose_reachable_candidate_for_action_mask_count": sum(
+            1 for row in collection.rejections if row.get("reason") == NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON
         ),
         "synthetic_credit_target_selected_count_from_transition_rows": sum(
             1 for row in trainable if row.get("synthetic_credit_target_selected") is True
@@ -2761,6 +3154,8 @@ def _write_outputs(
         "selected_continuous_theta_unreachable_resample_policy": str(
             config.get("selected_continuous_theta_unreachable_resample_policy") or "terminal/v1"
         ),
+        "candidate_reachability_gate_source": str(config.get("candidate_reachability_gate_source")),
+        "candidate_reachability_hard_gate_enabled": _candidate_reachability_hard_gate_enabled(config),
         "required_scenario_count": int(config["required_scenario_count"]),
         "rollout_steps": int(config["rollout_steps"]),
         "dynamic_max_candidates_per_step": int(config["dynamic_max_candidates_per_step"]),
@@ -2924,10 +3319,42 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["hybrid_astar_pose_path_cost_enabled"] = bool(
         config.get("hybrid_astar_pose_path_cost_enabled", False)
     )
+    config["candidate_reachability_gate_source"] = str(
+        config.get("candidate_reachability_gate_source") or CANDIDATE_REACHABILITY_GATE_LEGACY
+    )
+    if config["candidate_reachability_gate_source"] not in {
+        CANDIDATE_REACHABILITY_GATE_LEGACY,
+        CANDIDATE_REACHABILITY_GATE_SOURCE,
+    }:
+        raise ConfigError("candidate_reachability_gate_source is invalid")
+    if (
+        config["candidate_reachability_gate_source"] == CANDIDATE_REACHABILITY_GATE_SOURCE
+        and not bool(config.get("hybrid_astar_pose_path_cost_enabled", False))
+    ):
+        raise ConfigError("candidate_reachability_gate_source requires Hybrid A* path cost")
     config["hybrid_astar_candidate_eval_workers"] = _positive_int(
         config.get("hybrid_astar_candidate_eval_workers", 1),
         "hybrid_astar_candidate_eval_workers",
     )
+    config["candidate_reachability_max_theta_proposals_per_candidate"] = int(
+        config.get("candidate_reachability_max_theta_proposals_per_candidate", 0) or 0
+    )
+    if config["candidate_reachability_max_theta_proposals_per_candidate"] < 0:
+        raise ConfigError("candidate_reachability_max_theta_proposals_per_candidate must be nonnegative")
+    config["candidate_reachability_theta_proposal_policy"] = str(
+        config.get("candidate_reachability_theta_proposal_policy")
+        or CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY
+    )
+    if config["candidate_reachability_theta_proposal_policy"] not in {
+        CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_LEGACY,
+        CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR,
+    }:
+        raise ConfigError("candidate_reachability_theta_proposal_policy is invalid")
+    if config["candidate_reachability_theta_proposal_policy"] == CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR:
+        if not config["continuous_theta_action_space_enabled"]:
+            raise ConfigError("candidate_reachability_theta_proposal_policy repair mode requires continuous theta action space")
+        if not bool(config.get("hybrid_astar_pose_path_cost_enabled", False)):
+            raise ConfigError("candidate_reachability_theta_proposal_policy repair mode requires Hybrid A* path cost")
     if config.get("hybrid_astar_planning_grid_source") is not None:
         config["hybrid_astar_planning_grid_source"] = str(config["hybrid_astar_planning_grid_source"])
         if config["hybrid_astar_planning_grid_source"] != "derived_high_res_planning_proxy/v1":
@@ -3011,6 +3438,9 @@ def _load_high_fidelity_config(config: dict[str, Any], *, repo_root: Path) -> di
         "synthetic_terrain_hash",
         "synthetic_source_kind",
         "hybrid_astar_pose_path_cost_enabled",
+        "candidate_reachability_gate_source",
+        "candidate_reachability_max_theta_proposals_per_candidate",
+        "candidate_reachability_theta_proposal_policy",
         "hybrid_astar_candidate_eval_workers",
         "hybrid_astar_planning_grid_source",
         "planner_grid_resolution_m",
@@ -3173,6 +3603,105 @@ def _planning_proxy_rejection_fields(metadata: dict[str, Any]) -> dict[str, Any]
         "planning_proxy_hash": metadata.get("planning_proxy_hash"),
         "planning_proxy_candidate_binding": metadata.get("planning_proxy_candidate_binding"),
     }
+
+
+def _candidate_reachability_rejection_evidence(
+    *,
+    candidates: list[dict[str, Any]],
+    grid_action_mask: Sequence[bool],
+    action_mask: Sequence[bool] | None = None,
+    hard_risk_clean_mask: Sequence[bool] | None = None,
+    sampling_mask: Sequence[bool] | None = None,
+    candidate_reachability_provenance_mask: Sequence[bool] | None = None,
+    metadata: dict[str, Any],
+    candidate_reachability_max_theta_proposals_per_candidate: int | None = None,
+    hybrid_astar_max_iterations: int | None = None,
+) -> dict[str, Any]:
+    probe_records = metadata.get("hybrid_astar_theta_probe_records_by_candidate")
+    proposals = metadata.get("hybrid_astar_theta_proposals_deg_by_candidate")
+    reachable_theta = metadata.get("hybrid_astar_reachable_theta_degs_by_candidate")
+    if not isinstance(probe_records, list):
+        probe_records = []
+    if not isinstance(proposals, list):
+        proposals = []
+    if not isinstance(reachable_theta, list):
+        reachable_theta = []
+    rows: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
+        grid_allowed = index < len(grid_action_mask) and bool(grid_action_mask[index])
+        if not grid_allowed:
+            continue
+        cell = hf._cell_tuple(hf._candidate_cell(candidate))
+        rows.append(
+            {
+                "candidate_index": int(index),
+                "candidate_cell": [int(cell[0]), int(cell[1])] if cell is not None else None,
+                "candidate_theta_deg": _finite(candidate.get("candidate_theta_deg")),
+                "candidate_viewpoint": candidate.get("candidate_viewpoint"),
+                "grid_action_allowed": True,
+                "action_mask_allowed": _sequence_bool(action_mask, index),
+                "hard_risk_clean": _sequence_bool(hard_risk_clean_mask, index),
+                "sampling_allowed": _sequence_bool(sampling_mask, index),
+                "provenance_pass": _sequence_bool(candidate_reachability_provenance_mask, index),
+                "theta_proposals_deg": _flat_value(proposals, index) or [],
+                "reachable_theta_degs": _flat_value(reachable_theta, index) or [],
+                "theta_probe_records": _flat_value(probe_records, index) or [],
+            }
+        )
+    return {
+        "candidate_reachability_theta_proposal_policy": metadata.get(
+            "candidate_reachability_theta_proposal_policy"
+        ),
+        "candidate_reachability_max_theta_proposals_per_candidate": (
+            candidate_reachability_max_theta_proposals_per_candidate
+            if candidate_reachability_max_theta_proposals_per_candidate is not None
+            else metadata.get("candidate_reachability_max_theta_proposals_per_candidate")
+        ),
+        "candidate_reachability_probe_config_hash": metadata.get("candidate_reachability_probe_config_hash"),
+        "hybrid_astar_max_iterations": (
+            hybrid_astar_max_iterations
+            if hybrid_astar_max_iterations is not None
+            else metadata.get("hybrid_astar_max_iterations")
+        ),
+        "candidate_reachability_probe_evidence_schema": "xunce-stage21-1-candidate-reachability-probe-evidence/v1",
+        "candidate_reachability_probe_evidence": rows,
+    }
+
+
+def _sequence_bool(values: Sequence[bool] | None, index: int) -> bool | None:
+    if values is None or index >= len(values):
+        return None
+    return bool(values[index])
+
+
+def _selected_candidate_probe_evidence(
+    selected_index: int,
+    *,
+    candidates: list[dict[str, Any]],
+    grid_action_mask: Sequence[bool],
+    action_mask: Sequence[bool] | None = None,
+    hard_risk_clean_mask: Sequence[bool] | None = None,
+    sampling_mask: Sequence[bool] | None = None,
+    candidate_reachability_provenance_mask: Sequence[bool] | None = None,
+    metadata: dict[str, Any],
+) -> dict[str, Any] | None:
+    if selected_index < 0 or selected_index >= len(candidates):
+        return None
+    evidence = _candidate_reachability_rejection_evidence(
+        candidates=candidates,
+        grid_action_mask=tuple(index == selected_index for index in range(len(candidates)))
+        if selected_index >= len(grid_action_mask) or not bool(grid_action_mask[selected_index])
+        else grid_action_mask,
+        action_mask=action_mask,
+        hard_risk_clean_mask=hard_risk_clean_mask,
+        sampling_mask=sampling_mask,
+        candidate_reachability_provenance_mask=candidate_reachability_provenance_mask,
+        metadata=metadata,
+    )
+    for row in evidence.get("candidate_reachability_probe_evidence", []):
+        if row.get("candidate_index") == selected_index:
+            return row
+    return None
 
 
 def _render_report(summary: dict[str, Any]) -> str:

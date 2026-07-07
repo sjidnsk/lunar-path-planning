@@ -714,6 +714,18 @@
       "default_output_root": "D:/xunce/out/s26_8q",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
+    "xunce-stage26-9-synthetic-terrain-long-horizon-efficiency-pilot": {
+      "script": "scripts/run_xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot.py",
+      "default_config": "configs/xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot_v1.json",
+      "default_output_root": "D:/xunce/out/s26_9",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
+    "xunce-stage26-10-terminal-aware-reward-shaping": {
+      "script": "scripts/run_xunce_stage26_10_terminal_aware_reward_shaping.py",
+      "default_config": "configs/xunce_stage26_10_terminal_aware_reward_shaping_v1.json",
+      "default_output_root": "D:/xunce/out/s26_10",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-stage26-io1-artifact-path-contract-and-long-path-resilience": {
       "script": "scripts/run_xunce_stage26_io1_artifact_path_contract.py",
       "default_config": "configs/xunce_stage26_io1_artifact_path_contract_v1.json",

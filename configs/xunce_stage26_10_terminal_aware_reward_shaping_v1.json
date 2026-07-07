@@ -1,0 +1,14 @@
+{
+  "schema_version": "xunce-stage26-10-terminal-aware-reward-shaping-config/v1",
+  "stage_id": "xunce-stage26-10-terminal-aware-reward-shaping",
+  "base_stage26_1_config": "configs/xunce_stage26_1_synthetic_terrain_collector_smoke_v1.json",
+  "base_stage26_9_config": "configs/xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot_v1.json",
+  "terminal_aware_reward_profile": "configs/xunce_stage26_10_terminal_aware_ppo_reward_profile_v3.json",
+  "run_stage26_9": true,
+  "release_or_training_authorized": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

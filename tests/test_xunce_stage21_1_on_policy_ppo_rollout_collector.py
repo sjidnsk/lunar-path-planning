@@ -14,6 +14,239 @@ if MODEL_EXPLORER_SRC not in sys.path:
     sys.path.insert(0, MODEL_EXPLORER_SRC)
 
 
+def test_stage21_1_candidate_reachability_gate_blocks_grid_only_candidate() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    action_mask = runner._candidate_reachability_action_mask(
+        (True, True),
+        (True, False),
+        enabled=True,
+    )
+
+    assert action_mask == (True, False)
+    assert runner._no_sampling_candidate_reason(
+        grid_action_mask=(True, True),
+        action_mask=(False, False),
+        hard_risk_clean_mask=(True, True),
+        hybrid_reachable_mask=(False, False),
+    ) == runner.NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON
+
+
+def test_stage21_1_candidate_reachability_gate_preserves_mask_length_when_provenance_short() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    action_mask = runner._candidate_reachability_action_mask(
+        (True, True, True),
+        (True,),
+        enabled=True,
+    )
+
+    assert action_mask == (True, False, False)
+
+
+def test_stage21_1_candidate_reachability_provenance_mask_requires_hybrid_pose_source() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    valid = _reachability_provenance()
+    metadata = {
+        "path_cost_sources": [runner.HYBRID_ASTAR_PATH_COST_SOURCE, runner.HYBRID_ASTAR_PATH_COST_SOURCE],
+        "hybrid_astar_reachable_flags": [True, True],
+        "hybrid_astar_path_costs": [3.0, 4.0],
+        "hybrid_astar_pose_path_hashes": ["hash-a", "hash-b"],
+        "hybrid_astar_trajectory_kinds": ["hybrid_astar_pose_path", "hybrid_astar_pose_path"],
+        "candidate_reachability_provenances": [
+            valid,
+            {**valid, "source": "grid_astar_reachability/v1"},
+        ],
+    }
+
+    assert runner._candidate_reachability_provenance_mask(metadata, candidate_count=2) == (True, False)
+
+
+def test_stage21_1_replaces_xunce_batch_action_mask_on_same_device() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    batch = {"action_mask": torch.tensor([[True, True]], dtype=torch.bool)}
+
+    runner._replace_xunce_batch_action_mask(batch, (True, False))
+
+    assert batch["action_mask"].tolist() == [[True, False]]
+    assert batch["action_mask"].device.type == "cpu"
+
+
+def test_stage21_1_replaces_observation_action_mask_after_reachability_gate() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    observation = {"action_mask": [True, True], "candidate_cells": [[0, 0], [1, 0]]}
+
+    runner._replace_observation_action_mask(observation, (True, False))
+
+    assert observation["action_mask"] == [True, False]
+    assert observation["candidate_cells"] == [[0, 0], [1, 0]]
+
+
+def test_stage21_1_finalize_pending_attributes_next_action_mask_dead_end_to_previous_transition() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    pending = {
+        "transition_id": "s1:step-0:sample-0",
+        "scenario_id": "s1",
+        "done": False,
+        "trainable": True,
+        "info": {"action_mask": [True], "terminal_reason": None},
+    }
+    transitions: list[dict] = []
+    trainable_batch: list[dict] = []
+
+    runner._finalize_pending(
+        pending,
+        transitions,
+        trainable_batch,
+        done=True,
+        next_observation={"action_mask": [False, False]},
+        next_xunce_batch={"action_mask": {"shape": [1, 2], "dtype": "bool", "values": [[False, False]]}},
+        terminal_reason=runner.NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON,
+        next_action_mask=(False, False),
+        next_grid_action_mask=(True, True),
+    )
+
+    row = trainable_batch[0]
+    assert row["done"] is True
+    assert row["info"]["terminal_reason"] == runner.NO_HYBRID_POSE_REACHABLE_ACTION_MASK_REASON
+    assert row["info"]["next_action_mask_true_count"] == 0
+    assert row["info"]["next_action_mask_zero"] is True
+    assert row["info"]["next_grid_action_mask_true_count"] == 2
+    assert row["info"]["dead_end_attribution_source"] == "next_state_action_mask_all_false/v1"
+
+
+def test_stage21_1_finalize_pending_does_not_mark_dead_end_when_next_action_mask_has_candidate() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    pending = {
+        "transition_id": "s1:step-0:sample-0",
+        "scenario_id": "s1",
+        "done": False,
+        "trainable": True,
+        "info": {"action_mask": [True]},
+    }
+    transitions: list[dict] = []
+    trainable_batch: list[dict] = []
+
+    runner._finalize_pending(
+        pending,
+        transitions,
+        trainable_batch,
+        done=True,
+        next_observation={"action_mask": [True, False]},
+        next_xunce_batch={"action_mask": {"shape": [1, 2], "dtype": "bool", "values": [[True, False]]}},
+        terminal_reason="no_hard_risk_clean_candidate",
+        next_action_mask=(True, False),
+        next_grid_action_mask=(True, True),
+    )
+
+    info = trainable_batch[0]["info"]
+    assert info["next_action_mask_true_count"] == 1
+    assert info["next_action_mask_zero"] is False
+    assert "dead_end_attribution_source" not in info
+
+
+def test_stage21_1_continuous_theta_probe_sets_prefilter_grid_mask_and_cap() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    probes, proposal_sets = runner._continuous_theta_probe_candidate_sets(
+        [
+            {"cell": [1, 0], "candidate_theta_deg": 10.0},
+            {"cell": [2, 0], "candidate_theta_deg": 20.0},
+        ],
+        current_theta_deg=0.0,
+        theta_step_deg=45.0,
+        candidate_set_hash_value="candidate-set",
+        action_mask=[True, False],
+        max_proposals_per_candidate=1,
+    )
+
+    assert proposal_sets == [[10.0], []]
+    assert len(probes) == 1
+    assert probes[0]["candidate_viewpoint"] == [1, 0, 10.0]
+
+
+def test_stage21_1_bearing_sweep_theta_policy_is_stable_and_capped() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    probes, proposal_sets = runner._continuous_theta_probe_candidate_sets(
+        [{"cell": [2, 1], "candidate_theta_deg": 0.0, "candidate_viewpoint": [2, 1, 90.0]}],
+        current_cell=(0, 0),
+        current_theta_deg=45.0,
+        theta_step_deg=45.0,
+        candidate_set_hash_value="candidate-set",
+        max_proposals_per_candidate=5,
+        proposal_policy=runner.CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR,
+    )
+
+    assert proposal_sets == [[0.0, 90.0, 45.0, 26.56505117707799, 71.56505117707799]]
+    assert [probe["candidate_viewpoint"][2] for probe in probes] == [
+        0.0,
+        90.0,
+        45.0,
+        26.56505117707799,
+        71.56505117707799,
+    ]
+
+
+def test_stage21_1_rejection_evidence_includes_grid_allowed_probe_records() -> None:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    evidence = runner._candidate_reachability_rejection_evidence(
+        candidates=[
+            {"cell": [1, 0], "candidate_theta_deg": 0.0},
+            {"cell": [2, 0], "candidate_theta_deg": 90.0},
+        ],
+        grid_action_mask=[True, False],
+        metadata={
+            "candidate_reachability_theta_proposal_policy": runner.CANDIDATE_REACHABILITY_THETA_PROPOSAL_POLICY_REPAIR,
+            "candidate_reachability_max_theta_proposals_per_candidate": 5,
+            "candidate_reachability_probe_config_hash": "probe-config-hash",
+            "hybrid_astar_max_iterations": 100,
+            "hybrid_astar_theta_proposals_deg_by_candidate": [[0.0, 45.0], [90.0]],
+            "hybrid_astar_reachable_theta_degs_by_candidate": [[], [90.0]],
+            "hybrid_astar_theta_probe_records_by_candidate": [
+                [
+                    {
+                        "theta_deg": 0.0,
+                        "reachable": False,
+                        "failure_reason": "search_exhausted",
+                        "planner_config_hash": "planner-hash",
+                    }
+                ],
+                [{"theta_deg": 90.0, "reachable": True}],
+            ],
+        },
+        action_mask=[False, False],
+        hard_risk_clean_mask=[True, True],
+        sampling_mask=[False, False],
+        candidate_reachability_provenance_mask=[False, True],
+    )
+
+    assert evidence["candidate_reachability_theta_proposal_policy"] == "candidate_current_bearing_sweep/v1"
+    assert evidence["candidate_reachability_max_theta_proposals_per_candidate"] == 5
+    assert evidence["candidate_reachability_probe_config_hash"] == "probe-config-hash"
+    assert evidence["hybrid_astar_max_iterations"] == 100
+    assert evidence["candidate_reachability_probe_evidence_schema"] == (
+        "xunce-stage21-1-candidate-reachability-probe-evidence/v1"
+    )
+    assert len(evidence["candidate_reachability_probe_evidence"]) == 1
+    row = evidence["candidate_reachability_probe_evidence"][0]
+    assert row["candidate_index"] == 0
+    assert row["candidate_cell"] == [1, 0]
+    assert row["grid_action_allowed"] is True
+    assert row["action_mask_allowed"] is False
+    assert row["hard_risk_clean"] is True
+    assert row["sampling_allowed"] is False
+    assert row["provenance_pass"] is False
+    assert row["theta_proposals_deg"] == [0.0, 45.0]
+    assert row["theta_probe_records"][0]["failure_reason"] == "search_exhausted"
+
+
 def test_stage21_1_writes_passed_collector_artifacts(tmp_path: Path, monkeypatch) -> None:
     from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
 
@@ -394,7 +627,7 @@ def test_hybrid_astar_path_cost_metadata_parallelizes_and_restores_candidate_ord
             return False
 
         def submit(self, fn, args):
-            submitted.append(int(args[0]))
+            submitted.append([int(index) for index, _payload in args[2]])
             return FakeFuture(fn(args))
 
     def fake_evaluate(**kwargs):
@@ -431,7 +664,7 @@ def test_hybrid_astar_path_cost_metadata_parallelizes_and_restores_candidate_ord
         platform_contract_hash="platform-hash",
     )
 
-    assert submitted == [0, 1]
+    assert submitted == [[0], [1]]
     assert metadata["hybrid_astar_path_costs"] == [20.0, 21.0]
     assert metadata["hybrid_astar_pose_path_hashes"] == ["parallel-pose-path-0", "parallel-pose-path-1"]
     assert metadata["hybrid_astar_candidate_eval_parallel_enabled"] is True
@@ -594,4 +827,20 @@ def _transition() -> dict:
             "old_log_prob_recompute_abs_error": 0.0,
             "hard_risk_violation": False,
         },
+    }
+
+
+def _reachability_provenance() -> dict:
+    from scripts import run_xunce_stage21_1_on_policy_ppo_rollout_collector as runner
+
+    return {
+        "schema_version": runner.CANDIDATE_REACHABILITY_PROVENANCE_SCHEMA_VERSION,
+        "source": runner.CANDIDATE_REACHABILITY_GATE_SOURCE,
+        "backend": runner.HYBRID_ASTAR_PATH_COST_SOURCE,
+        "candidate_index": 0,
+        "candidate_set_hash": "candidate-set",
+        "planner_config_hash": "planner-hash",
+        "reachable": True,
+        "path_cost": 3.0,
+        "pose_path_hash": "pose-hash",
     }

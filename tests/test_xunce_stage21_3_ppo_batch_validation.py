@@ -38,6 +38,53 @@ def test_stage21_3_validates_batch_and_routes_to_stage21_4(tmp_path: Path) -> No
     assert all("advantage_normalization_scope" in row for row in rows)
 
 
+def test_stage21_3_accepts_terminal_aware_v3_nonblocking_reward_reason_codes(tmp_path: Path) -> None:
+    from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
+
+    stage21_1, stage21_2 = _write_roots(tmp_path)
+    reward_path = stage21_2 / "xunce-stage21-2-reward-contract-evaluation.jsonl"
+    rewards = _read_jsonl(reward_path)
+    for reward in rewards:
+        reward["profile_version"] = "stage26-10-terminal-aware-v3"
+        reward["profile_hash"] = "terminal-aware-hash"
+        reward["components"] = {
+            "incomplete_terminal_penalty_component": -0.5,
+            "dead_end_penalty_component": -2.0,
+        }
+        reward["reason_codes"] = ["terminal_incomplete_below_99pct_target", "dead_end_penalty_applied"]
+        reward["terminal_reason"] = "no_hybrid_astar_pose_reachable_candidate_for_action_mask"
+        reward["dead_end_attribution_source"] = "next_state_action_mask_all_false/v1"
+    _write_jsonl(reward_path, rewards)
+    summary_path = stage21_2 / "xunce-stage21-2-coverage-first-reward-summary.json"
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary_payload["profile_hash"] = "terminal-aware-hash"
+    summary_payload["profile_version"] = "stage26-10-terminal-aware-v3"
+    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False), encoding="utf-8")
+    config = _write_config(tmp_path, stage21_1, stage21_2)
+
+    summary = run_xunce_stage21_3_ppo_batch_validation(
+        config_path=config,
+        output_root=tmp_path / "out",
+        repo_root=REPO_ROOT,
+    )
+    batch_rows = _read_jsonl(tmp_path / "out" / "xunce-stage21-3-ppo-trainable-batch.jsonl")
+
+    assert summary["status"] == "passed"
+    assert summary["reward_trainable_false_count"] == 0
+    assert summary["nonblocking_reward_reason_codes"] == [
+        "terminal_incomplete_below_99pct_target",
+        "dead_end_penalty_applied",
+        "coverage_per_cost_component_inactive_without_coverage_gain",
+    ]
+    assert summary["nonblocking_reward_reason_code_count"] == 4
+    assert summary["hard_risk_reward_rejection_count"] == 0
+    assert batch_rows[0]["reward_reason_codes"] == [
+        "terminal_incomplete_below_99pct_target",
+        "dead_end_penalty_applied",
+    ]
+    assert batch_rows[0]["reward_components"]["dead_end_penalty_component"] == -2.0
+
+
 def test_stage21_3_boundary_flag_hard_fails(tmp_path: Path) -> None:
     from scripts.run_xunce_stage21_3_ppo_batch_validation import run_xunce_stage21_3_ppo_batch_validation
 

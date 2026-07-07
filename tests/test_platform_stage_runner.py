@@ -115,6 +115,8 @@ SUPPORTED_STAGE_IDS = {
     "xunce-stage26-8o-repair-aggressive-collector-trainable-sample-budget",
     "xunce-stage26-8p-hybrid-astar-primitive-resolution-sweep",
     "xunce-stage26-8q-derived-high-res-planning-proxy-alignment",
+    "xunce-stage26-9-synthetic-terrain-long-horizon-efficiency-pilot",
+    "xunce-stage26-10-terminal-aware-reward-shaping",
     "xunce-stage26-io1-artifact-path-contract-and-long-path-resilience",
     "xunce-stage26-io2-remaining-runner-long-path-migration",
     "xunce-stage18i-evidence-closure-audit",

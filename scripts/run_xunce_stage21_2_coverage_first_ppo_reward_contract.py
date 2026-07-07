@@ -228,6 +228,8 @@ def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, co
             "hard_risk_flags": [] if not info.get("hard_risk_violation") else ["hard_risk_violation"],
             "hard_risk_violation_count": 1 if info.get("hard_risk_violation") else 0,
             "open_grid_fallback_used": False,
+            "dead_end_action_mask_zero": info.get("next_action_mask_zero") is True,
+            "terminal_reason": info.get("terminal_reason"),
         }
         result = compute_coverage_first_reward_components(metrics, profile)
         rows.append(
@@ -242,6 +244,11 @@ def _evaluate_transitions(transitions: list[dict[str, Any]], *, profile: Any, co
                 "components": result.components,
                 "trainable": result.trainable and bool(row.get("trainable", False)),
                 "reason_codes": result.reason_codes,
+                "terminal_reason": info.get("terminal_reason"),
+                "next_action_mask_true_count": info.get("next_action_mask_true_count"),
+                "next_action_mask_zero": info.get("next_action_mask_zero"),
+                "next_grid_action_mask_true_count": info.get("next_grid_action_mask_true_count"),
+                "dead_end_attribution_source": info.get("dead_end_attribution_source"),
                 "theta_aware_reward_contract": bool(theta_contract_active),
                 "slope_obstacle_aware_theta_reward_contract_required": bool(slope_obstacle_reward_enabled),
                 "slope_obstacle_aware_theta_reward_contract": bool(
@@ -322,6 +329,7 @@ def _profile_audit(profile: Any, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "observed_component_set_count": len(component_sets),
         "all_rewards_finite": all(value is not None for value in reward_values),
         "all_profile_hashes_match": all(row.get("profile_hash") == profile.profile_hash for row in rows),
+        "reward_trainable_false_count": sum(1 for row in rows if row.get("trainable") is not True),
         "hard_risk_positive_reward_count": sum(
             1
             for row in rows
@@ -425,17 +433,22 @@ def _write_outputs(
         "profile_id": profile.profile_id,
         "profile_version": profile.profile_version,
         "profile_hash": profile.profile_hash,
+        "terminal_aware_reward_profile_hash": profile.profile_hash
+        if str(profile.profile_version) == "stage26-10-terminal-aware-v3"
+        else None,
         "target_final_coverage_rate": profile.target_final_coverage_rate,
         "horizon_steps": profile.horizon_steps,
         "stage21_1_collector_root": config["stage21_1_collector_root"],
         "stage21_1_status": stage21_1_summary.get("status"),
         "stage21_1_profile_hash": stage21_1_summary.get("profile_hash"),
+        "collector_canonical_reward_profile_hash": stage21_1_summary.get("profile_hash"),
         "reward_evaluation_row_count": len(rows),
         "episode_count": len(episodes),
         "best_final_coverage_rate": best_final,
         "all_rewards_finite": profile_audit["all_rewards_finite"],
         "all_profile_hashes_match": profile_audit["all_profile_hashes_match"],
         "hard_risk_positive_reward_count": profile_audit["hard_risk_positive_reward_count"],
+        "reward_trainable_false_count": profile_audit["reward_trainable_false_count"],
         "soft_risk_deduplication_applied_count": profile_audit["soft_risk_deduplication_applied_count"],
         "theta_aware_reward_contract_required": bool(config.get("require_theta_aware_reward_contract", False)),
         "theta_aware_reward_contract_count": profile_audit["theta_aware_reward_contract_count"],
@@ -560,7 +573,11 @@ def _input_rejections(config: dict[str, Any], profile: Any) -> list[str]:
         reasons.append("missing_stage21_1_trainable_batch")
     if episodes_path is None:
         reasons.append("missing_stage21_1_episodes")
-    if profile.profile_version not in {"stage21-coverage-first-v1", "stage21-coverage-constrained-v2"}:
+    if profile.profile_version not in {
+        "stage21-coverage-first-v1",
+        "stage21-coverage-constrained-v2",
+        "stage26-10-terminal-aware-v3",
+    }:
         reasons.append("stage21_2_requires_supported_coverage_reward_profile")
     return reasons
 
