@@ -134,6 +134,7 @@ sensor_fov_deg = 90.0
 sensor_direction = target_theta
 observation_origin = target_pose
 coverage_update_mode = endpoint_observation_only
+los_model = two_dimensional_grid_line_of_sight/v1
 ```
 
 At each PPO step, the policy selects a target frontier cell and a continuous `target_theta`. The planner attempts to reach the target pose. If the pose is valid and executed, the environment observes from that endpoint pose only:
@@ -151,6 +152,27 @@ Line-of-sight blockers include hard obstacle cells and slope-blocked cells when 
 ```text
 max_traversable_slope_deg = 30.0
 ```
+
+The v1 LOS model is a 2D grid line-of-sight model, not a 3D DEM ray-casting model. For every candidate visible cell from the range and FOV test, the environment checks the grid line segment from the endpoint cell center to the target cell center. A cell is visible only when no intermediate line cell is a LOS blocker.
+
+Recommended implementation semantics:
+
+```text
+los_blocker_cell =
+  hard_obstacle_cell
+  OR slope_blocked_cell
+
+slope_blocked_cell =
+  slope_deg > max_traversable_slope_deg
+
+los_visible(target_cell) =
+  target_cell is not a los_blocker_cell
+  AND no intermediate grid-line cell is a los_blocker_cell
+```
+
+The line cells may be generated with a deterministic Bresenham-style integer grid traversal. The endpoint cell itself does not block its own observation. If the target cell is a blocker, it is not counted as newly covered free terrain and it also blocks cells behind it.
+
+Height is still part of the observed high-resolution map, but v1 does not perform continuous 3D height-profile visibility interpolation. Terrain height may be used to derive slope-blocked cells; full 3D DEM LOS is reserved for a later version.
 
 All currently unknown high-resolution cells satisfying this predicate become observed. For v1:
 
