@@ -35,6 +35,32 @@ class XunceHighFidelityExplorationCoverageComparisonTests(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_dir)
 
+    def test_obstacle_aware_prefilter_drops_zero_new_visible_candidates(self) -> None:
+        import scripts.run_xunce_high_fidelity_exploration_coverage_comparison as module
+
+        kept, audit = module._filter_zero_obstacle_aware_candidates(
+            [
+                {"cell": [2, 0], "candidate_theta_deg": 0, "path_cost": 1.0},
+                {"cell": [4, 0], "candidate_theta_deg": 0, "path_cost": 1.0},
+            ],
+            current_cell=(0, 0),
+            covered_cells={(x, y) for x in range(-3, 4) for y in range(-3, 4)},
+            config={
+                "theta_aware_candidate_viewpoints_enabled": True,
+                "slope_obstacle_aware_theta_reward_enabled": True,
+                "obstacle_occlusion_enabled": True,
+                "coverage_radius_cells": 1,
+                "coverage_metric_mode": "path_line_plus_endpoint",
+                "sensor_range_cells": 1,
+                "sensor_fov_deg": 90,
+            },
+            obstacle_source_linkage=None,
+        )
+
+        self.assertEqual([row["cell"] for row in kept], [[4, 0]])
+        self.assertEqual(audit["obstacle_aware_prefilter_drop_count"], 1)
+        self.assertEqual(audit["obstacle_aware_new_visible_cell_counts"], [0, 2])
+
     def test_runs_true_checkpoint_coverage_rollout_without_proxy_selection(self) -> None:
         from scripts.run_xunce_high_fidelity_exploration_coverage_comparison import (
             run_xunce_high_fidelity_exploration_coverage_comparison,

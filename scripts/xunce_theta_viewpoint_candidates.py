@@ -50,12 +50,15 @@ def expand_theta_aware_candidates(
 ) -> dict[str, Any]:
     theta_config = theta_candidate_config(config)
     expanded: list[dict[str, Any]] = []
+    raw_viewpoint_count = 0
+    zero_new_visible_drop_count = 0
     for base_index, candidate in enumerate(candidates):
         cell = _cell_tuple(candidate.get("cell") or candidate.get("candidate_cell"))
         if cell is None:
             continue
         base_action_index = _int_or_none(candidate.get("action_index"))
         for theta in theta_config["theta_values"]:
+            raw_viewpoint_count += 1
             visible = visible_cells_for_viewpoint(
                 cell,
                 theta_deg=float(theta),
@@ -63,6 +66,9 @@ def expand_theta_aware_candidates(
                 sensor_fov_deg=float(theta_config["sensor_fov_deg"]),
             )
             new_count = len(visible - covered_cells)
+            if new_count <= 0:
+                zero_new_visible_drop_count += 1
+                continue
             row = dict(candidate)
             row.setdefault("base_expected_new_coverage_cell_count", candidate.get("expected_new_coverage_cell_count"))
             row.setdefault("base_expected_coverage_rate_delta", candidate.get("expected_coverage_rate_delta"))
@@ -99,6 +105,8 @@ def expand_theta_aware_candidates(
         "candidates": expanded,
         "base_candidate_count": len(candidates),
         "viewpoint_candidate_count": len(expanded),
+        "raw_viewpoint_candidate_count": raw_viewpoint_count,
+        "zero_new_visible_viewpoint_drop_count": zero_new_visible_drop_count,
         "theta_value_count": len(theta_config["theta_values"]),
         "theta_values": theta_config["theta_values"],
         "candidate_set_hash": theta_viewpoint_candidate_set_hash(expanded),

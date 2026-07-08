@@ -422,6 +422,22 @@ def _collect_episode(
             validation_cache=validation_cache,
         )
         candidates = candidate_batch["candidates"]
+        obstacle_prefilter_audit: dict[str, Any] = {}
+        candidates, obstacle_prefilter_audit = hf._filter_zero_obstacle_aware_candidates(
+            candidates,
+            current_cell=cell_before,
+            covered_cells=covered_cells,
+            config=hf_config,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
+        if obstacle_prefilter_audit.get("obstacle_aware_prefilter_enabled") is True:
+            candidate_batch = dict(candidate_batch)
+            candidate_batch["candidates"] = candidates
+            candidate_batch["obstacle_aware_prefilter_audit"] = obstacle_prefilter_audit
+            candidate_batch["dynamic_validated_candidate_count"] = len(candidates)
+            filtered_hash = hf.candidate_set_hash(candidates)
+            candidate_batch["candidate_set_hash"] = filtered_hash
+            candidate_batch["candidate_set_id"] = f"{scenario_id}:step-{step_index}:obstacle-prefilter:{filtered_hash[:16]}"
         candidate_set_hash_value = candidate_batch["candidate_set_hash"]
         candidate_set_id = candidate_batch["candidate_set_id"]
         covered_hash = hf.covered_cells_hash(covered_cells)
@@ -1186,6 +1202,7 @@ def _collect_episode(
                 "candidate_generation_source": candidate_batch["candidate_generation_source"],
                 "dynamic_proposal_count": candidate_batch["dynamic_proposal_count"],
                 "dynamic_validated_candidate_count": candidate_batch["dynamic_validated_candidate_count"],
+                "obstacle_aware_prefilter_drop_count": obstacle_prefilter_audit.get("obstacle_aware_prefilter_drop_count", 0),
             },
         }
         pending = transition
@@ -3160,6 +3177,7 @@ def _write_outputs(
         "rollout_steps": int(config["rollout_steps"]),
         "dynamic_max_candidates_per_step": int(config["dynamic_max_candidates_per_step"]),
         "dynamic_proposal_pool_limit_per_step": int(config["dynamic_proposal_pool_limit_per_step"]),
+        "dynamic_path_validation_candidate_budget": int(config["dynamic_path_validation_candidate_budget"]),
         "min_trainable_transition_count": int(config["min_trainable_transition_count"]),
         "blocking_reason_codes": _unique(blocking_reason_codes),
         "reason_codes": _unique(blocking_reason_codes + collection.reason_codes),
@@ -3263,6 +3281,11 @@ def _load_config(path: Path, *, repo_root: Path) -> dict[str, Any]:
     config["dynamic_proposal_pool_limit_per_step"] = _positive_int(
         config.get("dynamic_proposal_pool_limit_per_step", 288),
         "dynamic_proposal_pool_limit_per_step",
+    )
+    default_validation_budget = 48 if int(config["dynamic_max_candidates_per_step"]) >= 36 else 12
+    config["dynamic_path_validation_candidate_budget"] = _positive_int(
+        config.get("dynamic_path_validation_candidate_budget", default_validation_budget),
+        "dynamic_path_validation_candidate_budget",
     )
     config["min_trainable_transition_count"] = _nonnegative_int(
         config.get("min_trainable_transition_count", 1),
@@ -3416,6 +3439,7 @@ def _load_high_fidelity_config(config: dict[str, Any], *, repo_root: Path) -> di
         "rollout_steps": config["rollout_steps"],
         "dynamic_max_candidates_per_step": config["dynamic_max_candidates_per_step"],
         "dynamic_proposal_pool_limit_per_step": config["dynamic_proposal_pool_limit_per_step"],
+        "dynamic_path_validation_candidate_budget": config["dynamic_path_validation_candidate_budget"],
         "dynamic_validation_work_root": config["dynamic_validation_work_root"],
         "include_oracle_baselines": False,
         "include_canonical_reward_rerank_oracle": False,

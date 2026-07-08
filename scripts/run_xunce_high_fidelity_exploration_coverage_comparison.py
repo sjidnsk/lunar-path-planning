@@ -775,6 +775,11 @@ def _load_config(
         payload.get("dynamic_max_candidates_per_step", 6),
         "dynamic_max_candidates_per_step",
     )
+    default_validation_budget = 48 if int(normalized["dynamic_max_candidates_per_step"]) >= 36 else 12
+    normalized["dynamic_path_validation_candidate_budget"] = _positive_int(
+        payload.get("dynamic_path_validation_candidate_budget", default_validation_budget),
+        "dynamic_path_validation_candidate_budget",
+    )
     normalized["dynamic_min_frontier_candidates_per_step"] = _positive_int(
         payload.get("dynamic_min_frontier_candidates_per_step", 1),
         "dynamic_min_frontier_candidates_per_step",
@@ -1780,6 +1785,22 @@ def _run_policy_episode(
             hybrid_astar_executor=hybrid_astar_executor,
         )
         candidates = candidate_batch["candidates"]
+        obstacle_prefilter_audit: dict[str, Any] = {}
+        candidates, obstacle_prefilter_audit = _filter_zero_obstacle_aware_candidates(
+            candidates,
+            current_cell=cell_before,
+            covered_cells=covered_cells,
+            config=config,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
+        if obstacle_prefilter_audit.get("obstacle_aware_prefilter_enabled") is True:
+            candidate_batch = dict(candidate_batch)
+            candidate_batch["candidates"] = candidates
+            candidate_batch["obstacle_aware_prefilter_audit"] = obstacle_prefilter_audit
+            candidate_batch["dynamic_validated_candidate_count"] = len(candidates)
+            filtered_hash = candidate_set_hash(candidates)
+            candidate_batch["candidate_set_hash"] = filtered_hash
+            candidate_batch["candidate_set_id"] = f"{scenario_id}:step-{step_index}:obstacle-prefilter:{filtered_hash[:16]}"
         candidate_set_id = candidate_batch["candidate_set_id"]
         candidate_set_hash_value = candidate_batch["candidate_set_hash"]
         covered_hash = covered_cells_hash(covered_cells)
@@ -1848,6 +1869,7 @@ def _run_policy_episode(
                 "state_conditioned_candidate_generation": bool(config.get("state_conditioned_candidate_generation", True)),
                 "dynamic_proposal_count": candidate_batch["dynamic_proposal_count"],
                 "dynamic_validated_candidate_count": 0,
+                "obstacle_aware_prefilter_drop_count": obstacle_prefilter_audit.get("obstacle_aware_prefilter_drop_count", 0),
                 "dynamic_validation_cache_hit": candidate_batch["dynamic_validation_cache_hit"],
                 "path_feedback_validation_source_counts": candidate_batch["path_feedback_validation_source_counts"],
                 "frontier_candidate_source_counts": candidate_batch["frontier_candidate_source_counts"],
@@ -2266,6 +2288,7 @@ def _run_policy_episode(
             and config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process",
             "dynamic_proposal_count": candidate_batch["dynamic_proposal_count"],
             "dynamic_validated_candidate_count": candidate_batch["dynamic_validated_candidate_count"],
+            "obstacle_aware_prefilter_drop_count": obstacle_prefilter_audit.get("obstacle_aware_prefilter_drop_count", 0),
             "dynamic_validation_cache_hit": candidate_batch["dynamic_validation_cache_hit"],
             "path_feedback_validation_source_counts": candidate_batch["path_feedback_validation_source_counts"],
             "frontier_candidate_source_counts": candidate_batch["frontier_candidate_source_counts"],
@@ -2991,8 +3014,10 @@ def _coverage_comparison_audit(
         "dynamic_validation_work_root": dynamic_audit["dynamic_validation_work_root"],
         "dynamic_validation_work_root_path_length": dynamic_audit["dynamic_validation_work_root_path_length"],
         "dynamic_validation_max_path_length": dynamic_audit["dynamic_validation_max_path_length"],
+        "dynamic_path_validation_candidate_budget": dynamic_audit["dynamic_path_validation_candidate_budget"],
         "dynamic_proposal_count": dynamic_audit["dynamic_proposal_count"],
         "dynamic_validation_attempt_count": dynamic_audit["dynamic_validation_attempt_count"],
+        "path_validation_attempt_count": dynamic_audit["path_validation_attempt_count"],
         "dynamic_validation_success_count": dynamic_audit["dynamic_validation_success_count"],
         "dynamic_validation_failure_count": dynamic_audit["dynamic_validation_failure_count"],
         "dynamic_validation_cache_hit_count": dynamic_audit["dynamic_validation_cache_hit_count"],
@@ -3011,6 +3036,8 @@ def _coverage_comparison_audit(
         "adapter_error_message_samples": dynamic_audit["adapter_error_message_samples"],
         "planner_validation_backend_counts": dynamic_audit["planner_validation_backend_counts"],
         "validation_evidence_kind_counts": dynamic_audit["validation_evidence_kind_counts"],
+        "prefilter_reject_reason_counts": dynamic_audit["prefilter_reject_reason_counts"],
+        "valid_cells_source_counts": dynamic_audit["valid_cells_source_counts"],
         "dynamic_validation_full_adapter_evidence_passed": dynamic_audit["dynamic_validation_full_adapter_evidence_passed"],
         "dynamic_planner_validation_backend_counts": dynamic_audit["planner_validation_backend_counts"],
         "dynamic_sidecar_grid_astar_fallback_count": dynamic_audit["sidecar_grid_astar_fallback_count"],
@@ -3087,6 +3114,7 @@ def _dynamic_validation_audit(
 ) -> dict[str, Any]:
     generation_executed = config["candidate_refresh_mode"] == "dynamic_frontier_nbv_in_process"
     validation_attempts = len(dynamic_validation_rows)
+    path_validation_attempts = sum(1 for row in dynamic_validation_rows if row.get("path_validation_attempted") is True)
     validation_success = sum(1 for row in dynamic_validation_rows if row.get("proposal_validated_by_path_feedback") is True and row.get("proposal_only") is False)
     contract_sidecar_missing = sum(
         1
@@ -3182,8 +3210,10 @@ def _dynamic_validation_audit(
         "dynamic_validation_work_root": str(dynamic_work_root),
         "dynamic_validation_work_root_path_length": len(str(dynamic_work_root.resolve())) if str(dynamic_work_root) else 0,
         "dynamic_validation_max_path_length": int(config.get("dynamic_validation_max_path_length", 180)),
+        "dynamic_path_validation_candidate_budget": int(config.get("dynamic_path_validation_candidate_budget", 0) or 0),
         "dynamic_proposal_count": len(dynamic_proposals),
         "dynamic_validation_attempt_count": validation_attempts,
+        "path_validation_attempt_count": path_validation_attempts,
         "dynamic_validation_success_count": validation_success,
         "dynamic_validation_failure_count": max(0, validation_attempts - validation_success),
         "dynamic_validation_cache_hit_count": sum(1 for row in dynamic_validation_rows if row.get("dynamic_validation_cache_hit") is True),
@@ -3210,6 +3240,8 @@ def _dynamic_validation_audit(
         "candidate_generation_exhausted_count": candidate_generation_exhausted,
         "state_conditioned_candidate_generation": bool(config.get("state_conditioned_candidate_generation", True)) and generation_executed,
         "path_feedback_validation_source_counts": _count_by_field(dynamic_validation_rows, "path_feedback_validation_source"),
+        "prefilter_reject_reason_counts": _count_by_field(dynamic_validation_rows, "candidate_prefilter_reject_reason"),
+        "valid_cells_source_counts": _count_by_field(dynamic_validation_rows, "valid_cells_source"),
         "frontier_candidate_source_counts": _count_by_field(dynamic_validation_rows, "frontier_candidate_source"),
         "candidate_generation_algorithm_source_counts": _count_by_field(dynamic_validation_rows, "candidate_generation_algorithm_source"),
         "coverage_frontier_candidate_count": sum(1 for row in dynamic_validation_rows if row.get("frontier_candidate_source") == "coverage_frontier_boundary"),
@@ -3223,7 +3255,7 @@ def _dynamic_validation_audit(
         "validated_pareto_frontier_count": sum(1 for row in formal_validation_rows if row.get("candidate_selection_role") == "pareto_frontier"),
         "validated_low_cost_candidate_count": sum(1 for row in formal_validation_rows if row.get("candidate_selection_role") == "low_cost"),
         "validated_efficiency_candidate_count": sum(1 for row in formal_validation_rows if row.get("candidate_selection_role") == "coverage_efficiency"),
-        "prevalidation_proposal_drop_count": max(0, len(dynamic_proposals) - validation_attempts),
+        "prevalidation_proposal_drop_count": max(0, len(dynamic_proposals) - path_validation_attempts),
         "postvalidation_candidate_drop_count": max(0, validation_success - sum(int(row.get("dynamic_validated_candidate_count", 0) or 0) for row in steps)),
         "risk_source_counts": _count_by_field(dynamic_validation_rows, "risk_source"),
         "formal_risk_source_counts": _count_by_field(formal_validation_rows, "risk_source"),
@@ -6130,6 +6162,64 @@ def _candidate_coverage_cells(
         radius=int(config["coverage_radius_cells"]),
         mode=str(config["coverage_metric_mode"]),
     )
+
+
+def _filter_zero_obstacle_aware_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    current_cell: tuple[int, int],
+    covered_cells: set[tuple[int, int]],
+    config: dict[str, Any],
+    obstacle_source_linkage: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    enabled = bool(config.get("slope_obstacle_aware_theta_reward_enabled", False)) and bool(
+        config.get("obstacle_occlusion_enabled", False)
+    )
+    if not enabled:
+        return list(candidates), {
+            "obstacle_aware_prefilter_enabled": False,
+            "obstacle_aware_prefilter_drop_count": 0,
+            "obstacle_aware_new_visible_cell_counts": [],
+        }
+    has_theta = any(candidate.get("candidate_theta_deg") is not None for candidate in candidates)
+    if not has_theta:
+        return list(candidates), {
+            "obstacle_aware_prefilter_enabled": False,
+            "obstacle_aware_prefilter_drop_count": 0,
+            "obstacle_aware_new_visible_cell_counts": [],
+            "obstacle_aware_prefilter_reason": "theta_candidate_fields_missing",
+        }
+
+    kept: list[dict[str, Any]] = []
+    counts: list[int | None] = []
+    kept_counts: list[int] = []
+    for candidate in candidates:
+        cell = _cell_tuple(_candidate_cell(candidate))
+        if cell is None or candidate.get("candidate_theta_deg") is None:
+            counts.append(None)
+            continue
+        footprint = _candidate_coverage_cells(
+            start=current_cell,
+            end=cell,
+            candidate=candidate,
+            config=config,
+            obstacle_source_linkage=obstacle_source_linkage,
+        )
+        new_count = len(footprint - covered_cells)
+        counts.append(int(new_count))
+        if new_count <= 0:
+            continue
+        row = dict(candidate)
+        row["obstacle_aware_new_visible_cell_count"] = int(new_count)
+        kept.append(row)
+        kept_counts.append(int(new_count))
+    return kept, {
+        "obstacle_aware_prefilter_enabled": True,
+        "obstacle_aware_prefilter_drop_count": max(0, len(candidates) - len(kept)),
+        "obstacle_aware_prefilter_kept_count": len(kept),
+        "obstacle_aware_new_visible_cell_counts": counts,
+        "kept_obstacle_aware_new_visible_cell_counts": kept_counts,
+    }
 
 
 def _candidate_obstacle_audit(

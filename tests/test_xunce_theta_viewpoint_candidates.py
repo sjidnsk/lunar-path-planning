@@ -60,3 +60,25 @@ def test_candidate_set_hash_includes_theta_and_sensor_model() -> None:
     ]
 
     assert theta_viewpoint_candidate_set_hash(first) != theta_viewpoint_candidate_set_hash(second)
+
+
+def test_theta_expansion_drops_zero_new_visible_viewpoints() -> None:
+    first = expand_theta_aware_candidates(
+        [{"cell": [2, 0], "action_index": 0, "path_cost": 2.0, "risk": 1.0}],
+        current_cell=[0, 0],
+        covered_cells={(x, y) for x in range(-5, 6) for y in range(-5, 6)},
+        config={
+            "theta_aware_candidate_viewpoints_enabled": True,
+            "theta_bin_count": 8,
+            "theta_step_deg": 45,
+            "sensor_range_cells": 2,
+            "sensor_fov_deg": 90,
+            "coverage_denominator_cells": 100,
+        },
+        base_candidate_set_hash="base-hash",
+    )
+
+    assert first["candidates"] == []
+    assert first["zero_new_visible_viewpoint_drop_count"] == 8
+    assert first["viewpoint_candidate_count"] == 0
+    assert first["raw_viewpoint_candidate_count"] == 8

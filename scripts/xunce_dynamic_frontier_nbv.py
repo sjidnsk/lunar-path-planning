@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,16 @@ ROI_WEIGHTS = {
 }
 
 
+@dataclass
+class ValidCellsContext:
+    valid_cells: set[tuple[int, int]]
+    proposal_cells: set[tuple[int, int]]
+    passable_cells: set[tuple[int, int]] | None
+    valid_cells_source: str
+    valid_cells_count: int
+    all_bounds_fallback_used: bool = False
+
+
 def build_dynamic_frontier_nbv_candidates(
     *,
     scenario: dict[str, Any],
@@ -66,15 +77,24 @@ def build_dynamic_frontier_nbv_candidates(
     contract_path = _resolve_existing_path(slice_row.get("contract"), repo_root)
     sidecar_path = _resolve_existing_path(slice_row.get("sidecar"), repo_root)
     bounds = _grid_bounds(scenario, slice_row, current_cell)
-    valid_cells = _roi_valid_cells(
+    valid_context = _valid_cells_context(
         scenario=scenario,
         slice_row=slice_row,
         bounds=bounds,
         repo_root=repo_root,
         sidecar_path=sidecar_path,
     )
-    if not valid_cells:
-        valid_cells = {(x, y) for x in range(bounds[0], bounds[2] + 1) for y in range(bounds[1], bounds[3] + 1)}
+    if not valid_context.valid_cells:
+        return [], [], [
+            _prefilter_failure_row(
+                scenario=scenario,
+                slice_row=slice_row,
+                current_cell=current_cell,
+                step_index=step_index,
+                reason="valid_cells_source_missing",
+                valid_context=valid_context,
+            )
+        ]
     proposal_rows = _proposal_rows(
         scenario=scenario,
         slice_row=slice_row,
@@ -85,10 +105,11 @@ def build_dynamic_frontier_nbv_candidates(
         repo_root=repo_root,
         sidecar_path=sidecar_path,
         bounds=bounds,
-        valid_cells=valid_cells,
+        valid_context=valid_context,
     )
     if not proposal_rows:
         return [], [], []
+    validation_candidates = [row for row in proposal_rows if row.get("path_validation_attempted") is True]
 
     if contract_path is None or sidecar_path is None:
         validation_rows = [
@@ -101,14 +122,31 @@ def build_dynamic_frontier_nbv_candidates(
             for proposal in proposal_rows
         ]
         return [], proposal_rows, validation_rows
+    if not validation_candidates:
+        enriched_failures = [
+            _enrich_validated_candidate(
+                row,
+                current_cell=current_cell,
+                covered_cells=covered_cells,
+                config=config,
+                scenario=scenario,
+                slice_row=slice_row,
+                valid_cells=valid_context.valid_cells,
+                step_index=step_index,
+                roi_group=_roi_group(scenario, slice_row),
+            )
+            for row in proposal_rows
+        ]
+        return [], proposal_rows, enriched_failures
 
     cache_key = _validation_cache_key(
         scenario_id=str(scenario.get("scenario_id", "scenario")),
         current_cell=current_cell,
-        proposals=proposal_rows,
+        proposals=validation_candidates,
         contract_path=contract_path,
         sidecar_path=sidecar_path,
         config=config,
+        valid_context=valid_context,
     )
     cache_enabled = bool(config.get("dynamic_validation_cache_enabled", True))
     cache_hit = cache_enabled and cache_key in validation_cache
@@ -123,14 +161,14 @@ def build_dynamic_frontier_nbv_candidates(
             validation_cache["__route_cache__"] = route_cache
         validation_rows = validate_candidate_cells(
             scenario=scenario,
-            proposal_rows=proposal_rows,
+            proposal_rows=validation_candidates,
             contract_path=contract_path,
             sidecar_path=sidecar_path,
             current_cell=current_cell,
             repo_root=repo_root,
             output_work_root=validation_work_root,
             validation_mode=str(config.get("dynamic_candidate_validation_mode", BATCH_ASTAR_VALIDATION_MODE)),
-            top_k=len(proposal_rows),
+            top_k=len(validation_candidates),
             allow_open_grid_fallback=bool(config.get("allow_open_grid_fallback", False)),
             debug_validation_artifacts=bool(config.get("debug_validation_artifacts", False)),
             max_validation_path_length=int(config.get("dynamic_validation_max_path_length", 180)),
@@ -141,6 +179,7 @@ def build_dynamic_frontier_nbv_candidates(
         validation_rows = [dict(row, dynamic_validation_cache_hit=False) for row in validation_rows]
         if cache_enabled:
             validation_cache[cache_key] = [dict(row, dynamic_validation_cache_hit=False) for row in validation_rows]
+    validation_rows = _merge_validation_rows_with_prefilter_rows(proposal_rows, validation_rows)
 
     enriched = [
         _enrich_validated_candidate(
@@ -150,7 +189,7 @@ def build_dynamic_frontier_nbv_candidates(
             config=config,
             scenario=scenario,
             slice_row=slice_row,
-            valid_cells=valid_cells,
+            valid_cells=valid_context.valid_cells,
             step_index=step_index,
             roi_group=_roi_group(scenario, slice_row),
         )
@@ -201,25 +240,47 @@ def _proposal_rows(
     sidecar_path: Path | None,
     bounds: tuple[int, int, int, int] | None = None,
     valid_cells: set[tuple[int, int]] | None = None,
+    valid_context: ValidCellsContext | None = None,
 ) -> list[dict[str, Any]]:
     bounds = bounds or _grid_bounds(scenario, slice_row, current_cell)
     roi_group = resolve_roi_group(scenario, slice_row)
-    valid_cells = set(valid_cells or _roi_valid_cells(
-        scenario=scenario,
-        slice_row=slice_row,
-        bounds=bounds,
-        repo_root=repo_root,
-        sidecar_path=sidecar_path,
-    ))
+    if valid_context is None:
+        valid_context = _valid_cells_context(
+            scenario=scenario,
+            slice_row=slice_row,
+            bounds=bounds,
+            repo_root=repo_root,
+            sidecar_path=sidecar_path,
+        )
+    if valid_cells is not None:
+        valid_context = ValidCellsContext(
+            valid_cells=set(valid_cells),
+            proposal_cells=set(valid_cells),
+            passable_cells=set(valid_cells),
+            valid_cells_source="caller_valid_cells/v1",
+            valid_cells_count=len(valid_cells),
+            all_bounds_fallback_used=False,
+        )
+    valid_cells = set(valid_context.valid_cells)
     if not valid_cells:
-        valid_cells = {(x, y) for x in range(bounds[0], bounds[2] + 1) for y in range(bounds[1], bounds[3] + 1)}
+        return []
+    validation_budget = _path_validation_candidate_budget(config)
+    raw_budget = int(config.get("dynamic_proposal_pool_limit_per_step", 48))
+    distances, current_anchor, current_anchor_reason = _cheap_distance_map(current_cell, valid_cells, bounds)
     rows: list[dict[str, Any]] = []
     proposal_index = 0
+    seen_cells: set[tuple[int, int]] = set()
 
-    for cell in _coverage_frontier_cells(current_cell, covered_cells, config, bounds, valid_cells):
-        rows.append(
-            _proposal(
-                SOURCE_COVERAGE_FRONTIER,
+    def append_cells(source: str, cells: list[tuple[int, int]]) -> None:
+        nonlocal proposal_index
+        for cell in cells:
+            if len(rows) >= raw_budget:
+                return
+            if cell in seen_cells:
+                continue
+            seen_cells.add(cell)
+            row = _proposal(
+                source,
                 cell,
                 current_cell,
                 covered_cells,
@@ -231,23 +292,46 @@ def _proposal_rows(
                 valid_cells,
                 roi_group,
             )
-        )
-        proposal_index += 1
+            rows.append(
+                _prefilter_proposal_row(
+                    row,
+                    current_cell=current_cell,
+                    valid_context=valid_context,
+                    distances=distances,
+                    current_anchor=current_anchor,
+                    current_anchor_reason=current_anchor_reason,
+                )
+            )
+            proposal_index += 1
 
-    for source, cell in _undercovered_component_proposals(current_cell, covered_cells, config, bounds, valid_cells):
-        rows.append(_proposal(source, cell, current_cell, covered_cells, step_index, proposal_index, config, scenario, slice_row, valid_cells, roi_group))
-        proposal_index += 1
+    append_cells(
+        SOURCE_COVERAGE_FRONTIER,
+        _coverage_frontier_cells(current_cell, covered_cells, config, bounds, valid_context.proposal_cells),
+    )
+    if _accepted_prefilter_count(rows) < validation_budget and len(rows) < raw_budget:
+        for source, cell in _undercovered_component_proposals(
+            current_cell,
+            covered_cells,
+            config,
+            bounds,
+            valid_cells,
+            include_centroid=bool(config.get("dynamic_undercovered_centroid_enabled", False)),
+        ):
+            append_cells(source, [cell])
+            if len(rows) >= raw_budget:
+                break
+            if _accepted_prefilter_count(rows) >= validation_budget:
+                break
+    if (
+        bool(config.get("dynamic_low_cost_bridge_enabled", False))
+        and _accepted_prefilter_count(rows) < validation_budget
+        and len(rows) < raw_budget
+    ):
+        append_cells(SOURCE_LOW_COST_BRIDGE, _low_cost_bridge_cells(current_cell, covered_cells, config, bounds, valid_cells, distances))
+    if _accepted_prefilter_count(rows) < validation_budget and len(rows) < raw_budget:
+        append_cells(SOURCE_CONSERVATIVE_LOCAL, _conservative_local_cells(current_cell, covered_cells, bounds, valid_cells))
 
-    for cell in _low_cost_bridge_cells(current_cell, covered_cells, config, bounds, valid_cells):
-        rows.append(_proposal(SOURCE_LOW_COST_BRIDGE, cell, current_cell, covered_cells, step_index, proposal_index, config, scenario, slice_row, valid_cells, roi_group))
-        proposal_index += 1
-
-    for cell in _conservative_local_cells(current_cell, covered_cells, bounds, valid_cells):
-        rows.append(_proposal(SOURCE_CONSERVATIVE_LOCAL, cell, current_cell, covered_cells, step_index, proposal_index, config, scenario, slice_row, valid_cells, roi_group))
-        proposal_index += 1
-
-    rows = _dedupe_rows(rows)
-    return _limit_rows_by_family(rows, int(config.get("dynamic_proposal_pool_limit_per_step", 48)))
+    return _mark_path_validation_budget(rows, validation_budget)
 
 
 def _coverage_frontier_cells(
@@ -272,6 +356,12 @@ def _coverage_frontier_cells(
     if not frontier:
         # If the current coverage memory is sparse, seed from nearest uncovered ROI cells.
         frontier = set(sorted(uncovered, key=lambda cell: (_manhattan(current_cell, cell), cell[0], cell[1]))[:32])
+    target = max(1, int(config.get("dynamic_proposal_pool_limit_per_step", 48)))
+    if len(frontier) < target:
+        for cell in sorted(uncovered - frontier, key=lambda item: (_manhattan(current_cell, item), item[0], item[1])):
+            frontier.add(cell)
+            if len(frontier) >= target:
+                break
     radius = int(config.get("coverage_radius_cells", 1))
     return sorted(
         frontier,
@@ -284,12 +374,71 @@ def _coverage_frontier_cells(
     )
 
 
+def _accepted_prefilter_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if row.get("candidate_prefilter_reject_reason") is None)
+
+
+def _path_validation_candidate_budget(config: dict[str, Any]) -> int:
+    explicit = _positive_int(config.get("dynamic_path_validation_candidate_budget"))
+    if explicit is not None:
+        return explicit
+    final_count = _positive_int(config.get("dynamic_max_candidates_per_step")) or 6
+    if final_count >= 36:
+        return 48
+    if final_count >= 6:
+        return 12
+    return max(final_count * 2, final_count)
+
+
+def _mark_path_validation_budget(rows: list[dict[str, Any]], validation_budget: int) -> list[dict[str, Any]]:
+    ordered = sorted(rows, key=_prefilter_sort_key)
+    attempted_cells: set[tuple[int, int]] = set()
+    for row in ordered:
+        if len(attempted_cells) >= validation_budget:
+            break
+        if row.get("candidate_prefilter_reject_reason") is not None:
+            continue
+        cell = _cell_tuple(row.get("cell"))
+        if cell is None:
+            continue
+        attempted_cells.add(cell)
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        cell = _cell_tuple(row.get("cell"))
+        payload = dict(row)
+        attempted = cell in attempted_cells if cell is not None else False
+        payload["path_validation_attempted"] = bool(attempted)
+        if not attempted and payload.get("candidate_prefilter_reject_reason") is None:
+            payload["candidate_prefilter_reject_reason"] = "path_validation_budget_exceeded"
+            payload["path_feedback_validation_source"] = "path_validation_budget_exceeded"
+            payload["failure_reason"] = "path_validation_budget_exceeded"
+            payload["planner_reachable"] = False
+            payload["reachable"] = False
+            payload["validation_diagnostic_flags"] = ["path_validation_budget_exceeded"]
+        result.append(payload)
+    return result
+
+
+def _prefilter_sort_key(row: dict[str, Any]) -> tuple[int, float, int, float, float, tuple[int, int]]:
+    rejected = 1 if row.get("candidate_prefilter_reject_reason") is not None else 0
+    return (
+        rejected,
+        -_float_default(row.get("candidate_quality")),
+        SOURCE_PRIORITY.get(str(row.get("frontier_candidate_source")), 99),
+        _float_or_large(row.get("cheap_distance")),
+        _float_default(row.get("coverage_overlap_ratio")),
+        _cell_tuple(row.get("cell")) or (1_000_000, 1_000_000),
+    )
+
+
 def _undercovered_component_proposals(
     current_cell: tuple[int, int],
     covered_cells: set[tuple[int, int]],
     config: dict[str, Any],
     bounds: tuple[int, int, int, int],
     valid_cells: set[tuple[int, int]],
+    *,
+    include_centroid: bool = False,
 ) -> list[tuple[str, tuple[int, int]]]:
     uncovered = valid_cells - covered_cells
     if not uncovered:
@@ -305,12 +454,14 @@ def _undercovered_component_proposals(
         ),
     )[:max(0, max_components)]
     rows: list[tuple[str, tuple[int, int]]] = []
+    boundary_limit = max(1, int(config.get("dynamic_undercovered_boundary_candidates_per_component", 16)))
     for component in components:
         centroid = _nearest_component_cell_to_centroid(component)
-        boundary = _nearest_component_boundary_cell(component, current_cell, bounds)
-        if centroid is not None:
+        if include_centroid and centroid is not None:
             rows.append((SOURCE_UNDERCOVERED_CENTROID, centroid))
-        if boundary is not None and boundary != centroid:
+        for boundary in _component_boundary_cells(component, current_cell, bounds)[:boundary_limit]:
+            if include_centroid and boundary == centroid:
+                continue
             rows.append((SOURCE_UNDERCOVERED_BOUNDARY, boundary))
     return rows
 
@@ -321,6 +472,7 @@ def _low_cost_bridge_cells(
     config: dict[str, Any],
     bounds: tuple[int, int, int, int],
     valid_cells: set[tuple[int, int]],
+    cheap_distances: dict[tuple[int, int], int] | None = None,
 ) -> list[tuple[int, int]]:
     radius = int(config.get("coverage_radius_cells", 1))
     uncovered = valid_cells - covered_cells
@@ -329,7 +481,8 @@ def _low_cost_bridge_cells(
         coverage_gain = len((_coverage_cells(current_cell, cell, radius, str(config.get("coverage_metric_mode", "path_line_plus_endpoint"))) & valid_cells) - covered_cells)
         if coverage_gain <= 0:
             continue
-        distance = max(_manhattan(current_cell, cell), 1)
+        cheap_distance = (cheap_distances or {}).get(cell)
+        distance = max(int(cheap_distance), 1) if cheap_distance is not None else max(_manhattan(current_cell, cell), 1)
         candidates.append((-(coverage_gain / distance), distance, cell[0], cell[1], cell))
     candidates.sort()
     return [row[-1] for row in candidates[: max(1, int(config.get("dynamic_min_efficiency_candidates_per_step", 1)) * 4)] if _in_bounds(row[-1], bounds)]
@@ -393,6 +546,23 @@ def _nearest_component_boundary_cell(
     return min(boundary, key=lambda cell: (_manhattan(current_cell, cell), cell[0], cell[1]))
 
 
+def _component_boundary_cells(
+    component: set[tuple[int, int]],
+    current_cell: tuple[int, int],
+    bounds: tuple[int, int, int, int],
+) -> list[tuple[int, int]]:
+    if not component:
+        return []
+    boundary = [
+        cell
+        for cell in component
+        if any(neighbor not in component or not _in_bounds(neighbor, bounds) for neighbor in _neighbors4(cell))
+    ]
+    if not boundary:
+        boundary = list(component)
+    return sorted(boundary, key=lambda cell: (_manhattan(current_cell, cell), cell[0], cell[1]))
+
+
 def _roi_valid_cells(
     *,
     scenario: dict[str, Any],
@@ -401,7 +571,61 @@ def _roi_valid_cells(
     repo_root: Path,
     sidecar_path: Path | None,
 ) -> set[tuple[int, int]]:
-    del scenario
+    return _valid_cells_context(
+        scenario=scenario,
+        slice_row=slice_row,
+        bounds=bounds,
+        repo_root=repo_root,
+        sidecar_path=sidecar_path,
+    ).valid_cells
+
+
+def _valid_cells_context(
+    *,
+    scenario: dict[str, Any],
+    slice_row: dict[str, Any],
+    bounds: tuple[int, int, int, int],
+    repo_root: Path,
+    sidecar_path: Path | None,
+) -> ValidCellsContext:
+    del scenario, repo_root
+    passable_cells = _sidecar_passable_cells(sidecar_path, bounds)
+    roi_cells = _roi_cells_from_slice(slice_row, bounds)
+    if passable_cells is not None and roi_cells:
+        valid = passable_cells & roi_cells
+        return ValidCellsContext(
+            valid_cells=valid,
+            proposal_cells=set(roi_cells),
+            passable_cells=passable_cells,
+            valid_cells_source="sidecar_passable_mask_and_roi_valid_cells/v1",
+            valid_cells_count=len(valid),
+        )
+    if passable_cells is not None:
+        return ValidCellsContext(
+            valid_cells=set(passable_cells),
+            proposal_cells=set(passable_cells),
+            passable_cells=passable_cells,
+            valid_cells_source="sidecar_passable_mask/v1",
+            valid_cells_count=len(passable_cells),
+        )
+    if roi_cells:
+        return ValidCellsContext(
+            valid_cells=set(roi_cells),
+            proposal_cells=set(roi_cells),
+            passable_cells=set(roi_cells),
+            valid_cells_source="roi_valid_cells/v1",
+            valid_cells_count=len(roi_cells),
+        )
+    return ValidCellsContext(
+        valid_cells=set(),
+        proposal_cells=set(),
+        passable_cells=None,
+        valid_cells_source="missing",
+        valid_cells_count=0,
+    )
+
+
+def _sidecar_passable_cells(sidecar_path: Path | None, bounds: tuple[int, int, int, int]) -> set[tuple[int, int]] | None:
     if sidecar_path is not None and sidecar_path.is_file():
         try:
             sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -415,16 +639,18 @@ def _roi_valid_cells(
                         cell = (int(x), int(y))
                         if bool(value) and _in_bounds(cell, bounds):
                             cells.add(cell)
-                if cells:
-                    return cells
+                return cells
         except (OSError, json.JSONDecodeError):
-            pass
+            return None
+    return None
+
+
+def _roi_cells_from_slice(slice_row: dict[str, Any], bounds: tuple[int, int, int, int]) -> set[tuple[int, int]]:
     roi_cells = slice_row.get("roi_valid_cells")
     if isinstance(roi_cells, list):
         parsed = {_cell_tuple(cell) for cell in roi_cells}
         parsed.discard(None)
         return {cell for cell in parsed if cell is not None and _in_bounds(cell, bounds)}
-    del repo_root
     return set()
 
 
@@ -546,6 +772,209 @@ def _proposal(
         "coverage_validated_by_path_feedback": False,
         "coverage_validation_source": "offline_geometric_counterfactual_not_path_feedback",
         **metrics,
+    }
+
+
+def _prefilter_proposal_row(
+    row: dict[str, Any],
+    *,
+    current_cell: tuple[int, int],
+    valid_context: ValidCellsContext,
+    distances: dict[tuple[int, int], int],
+    current_anchor: tuple[int, int] | None,
+    current_anchor_reason: str | None,
+) -> dict[str, Any]:
+    cell = _cell_tuple(row.get("cell"))
+    endpoint_passable = bool(cell is not None and _endpoint_passable(cell, valid_context))
+    known_free = bool(cell is not None and cell in valid_context.valid_cells)
+    same_component = bool(cell is not None and cell in distances)
+    cheap_distance = distances.get(cell) if cell is not None else None
+    expected_new = _finite_float(row.get("expected_new_coverage_cell_count"))
+    reason = None
+    if current_anchor is None:
+        reason = current_anchor_reason or "current_cell_not_known_free"
+    elif cell is None:
+        reason = "invalid_candidate_cell"
+    elif not endpoint_passable:
+        reason = "candidate_endpoint_not_passable"
+    elif not known_free:
+        reason = "candidate_endpoint_not_known_free"
+    elif not same_component:
+        reason = "candidate_not_same_component_as_current"
+    elif cheap_distance is None:
+        reason = "cheap_distance_missing"
+    elif expected_new is None or expected_new <= 0.0:
+        reason = "expected_new_coverage_cell_count_zero"
+    quality = _candidate_quality(row, cheap_distance=cheap_distance)
+    payload = dict(row)
+    payload.update(
+        {
+            "valid_cells_source": valid_context.valid_cells_source,
+            "valid_cells_count": int(valid_context.valid_cells_count),
+            "all_bounds_fallback_used": False,
+            "candidate_endpoint_passable": endpoint_passable,
+            "candidate_known_free": known_free,
+            "candidate_same_component_as_current": same_component,
+            "cheap_distance": float(cheap_distance) if cheap_distance is not None else None,
+            "cheap_distance_source": "sidecar_passable_mask_bfs_8_neighbor_no_corner_cutting/v1",
+            "current_cell_known_free": current_cell in valid_context.valid_cells,
+            "current_cell_anchor": list(current_anchor) if current_anchor is not None else None,
+            "current_cell_anchor_reason": current_anchor_reason,
+            "candidate_prefilter_reject_reason": reason,
+            "candidate_quality": quality,
+            "path_validation_attempted": False,
+        }
+    )
+    if reason is not None:
+        payload.update(
+            {
+                "proposal_only": True,
+                "proposal_validated_by_path_feedback": False,
+                "path_feedback_validation_source": reason,
+                "failure_reason": reason,
+                "planner_reachable": False,
+                "reachable": False,
+                "open_grid_fallback_used": False,
+                "validation_diagnostic_flags": [reason],
+            }
+        )
+    return payload
+
+
+def _candidate_quality(row: dict[str, Any], *, cheap_distance: int | None) -> float:
+    coverage = _float_default(row.get("expected_new_coverage_cell_count"))
+    distance = max(float(cheap_distance if cheap_distance is not None else _float_or_large(row.get("relative_distance"))), 1.0)
+    roi_value = _float_default(row.get("value"))
+    roi_delta = _float_default(row.get("roi_weighted_coverage_delta"))
+    revisit_penalty = _float_default(row.get("revisit_penalty"))
+    local_risk = _float_default(row.get("risk"), 0.0)
+    source = str(row.get("frontier_candidate_source"))
+    frontier_priority = 2.0 if source == SOURCE_COVERAGE_FRONTIER else 0.75 if source == SOURCE_UNDERCOVERED_BOUNDARY else 0.25
+    return float(coverage + (coverage / distance) + roi_value + roi_delta + frontier_priority - revisit_penalty - (0.01 * distance) - (0.05 * local_risk))
+
+
+def _endpoint_passable(cell: tuple[int, int], valid_context: ValidCellsContext) -> bool:
+    if valid_context.passable_cells is None:
+        return cell in valid_context.valid_cells
+    return cell in valid_context.passable_cells
+
+
+def _cheap_distance_map(
+    current_cell: tuple[int, int],
+    valid_cells: set[tuple[int, int]],
+    bounds: tuple[int, int, int, int],
+) -> tuple[dict[tuple[int, int], int], tuple[int, int] | None, str | None]:
+    if current_cell in valid_cells:
+        anchor = current_cell
+        reason = "current_cell_known_free"
+    elif valid_cells:
+        anchor = min(valid_cells, key=lambda cell: (_manhattan(current_cell, cell), cell[0], cell[1]))
+        reason = "nearest_known_free_anchor"
+    else:
+        return {}, None, "current_cell_not_known_free"
+    distances = {anchor: 0}
+    queue = [anchor]
+    index = 0
+    while index < len(queue):
+        cell = queue[index]
+        index += 1
+        base_distance = distances[cell]
+        for neighbor in _neighbors8_no_corner_cutting(cell, valid_cells, bounds):
+            if neighbor in distances:
+                continue
+            distances[neighbor] = base_distance + 1
+            queue.append(neighbor)
+    return distances, anchor, reason
+
+
+def _neighbors8_no_corner_cutting(
+    cell: tuple[int, int],
+    valid_cells: set[tuple[int, int]],
+    bounds: tuple[int, int, int, int],
+) -> list[tuple[int, int]]:
+    rows: list[tuple[int, int]] = []
+    x, y = cell
+    for dx, dy in DIRECTIONS_8:
+        neighbor = (x + dx, y + dy)
+        if neighbor not in valid_cells or not _in_bounds(neighbor, bounds):
+            continue
+        if dx != 0 and dy != 0 and ((x + dx, y) not in valid_cells or (x, y + dy) not in valid_cells):
+            continue
+        rows.append(neighbor)
+    return rows
+
+
+def _merge_validation_rows_with_prefilter_rows(
+    proposal_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_key = {
+        (str(row.get("proposal_id") or ""), _cell_tuple(row.get("cell"))): row
+        for row in validation_rows
+    }
+    merged: list[dict[str, Any]] = []
+    for proposal in proposal_rows:
+        key = (str(proposal.get("proposal_id") or ""), _cell_tuple(proposal.get("cell")))
+        validation = by_key.get(key)
+        if validation is not None:
+            merged.append({**proposal, **validation, "path_validation_attempted": True})
+            continue
+        reason = str(proposal.get("candidate_prefilter_reject_reason") or "path_validation_not_attempted")
+        row = dict(proposal)
+        row.update(
+            {
+                "proposal_only": True,
+                "proposal_validated_by_path_feedback": False,
+                "path_feedback_validation_source": reason,
+                "failure_reason": reason,
+                "planner_reachable": False,
+                "reachable": False,
+                "open_grid_fallback_used": False,
+                "validation_diagnostic_flags": [reason],
+                "path_validation_attempted": False,
+            }
+        )
+        merged.append(row)
+    return merged
+
+
+def _prefilter_failure_row(
+    *,
+    scenario: dict[str, Any],
+    slice_row: dict[str, Any],
+    current_cell: tuple[int, int],
+    step_index: int,
+    reason: str,
+    valid_context: ValidCellsContext,
+) -> dict[str, Any]:
+    scenario_id = str(slice_row.get("scenario_id") or scenario.get("scenario_id") or "scenario")
+    return {
+        "schema_version": "xunce-dynamic-frontier-nbv-prefilter-audit/v1",
+        "scenario_id": scenario_id,
+        "step_index": int(step_index),
+        "proposal_id": f"{scenario_id}-step-{step_index:03d}-{reason}",
+        "cell": [int(current_cell[0]), int(current_cell[1])],
+        "frontier_candidate_source": "none",
+        "candidate_generation_source": GENERATION_SOURCE,
+        "candidate_generation_algorithm_source": ALGORITHM_SOURCE,
+        "proposal_only": True,
+        "proposal_validated_by_path_feedback": False,
+        "path_feedback_validation_source": reason,
+        "failure_reason": reason,
+        "planner_reachable": False,
+        "reachable": False,
+        "open_grid_fallback_used": False,
+        "validation_diagnostic_flags": [reason],
+        "valid_cells_source": valid_context.valid_cells_source,
+        "valid_cells_count": int(valid_context.valid_cells_count),
+        "all_bounds_fallback_used": False,
+        "candidate_endpoint_passable": False,
+        "candidate_known_free": False,
+        "candidate_same_component_as_current": False,
+        "candidate_prefilter_reject_reason": reason,
+        "cheap_distance": None,
+        "candidate_quality": None,
+        "path_validation_attempted": False,
     }
 
 
@@ -706,18 +1135,21 @@ def _select_formal_candidates(rows: list[dict[str, Any]], limit: int) -> list[di
     return selected[:limit]
 
 
-def _frontier_selection_key(row: dict[str, Any]) -> tuple[float, float, int, tuple[int, int]]:
+def _frontier_selection_key(row: dict[str, Any]) -> tuple[float, float, float, float, int, tuple[int, int]]:
     return (
+        -_float_default(row.get("candidate_quality")),
         -_coverage_score(row),
+        _float_or_large(row.get("cheap_distance")),
         _float_or_large(row.get("path_cost")),
         SOURCE_PRIORITY.get(str(row.get("frontier_candidate_source")), 99),
         _cell_tuple(row.get("cell")) or (1_000_000, 1_000_000),
     )
 
 
-def _low_cost_key(row: dict[str, Any]) -> tuple[float, float, int, tuple[int, int]]:
+def _low_cost_key(row: dict[str, Any]) -> tuple[float, float, float, int, tuple[int, int]]:
     return (
         _float_or_large(row.get("path_cost")),
+        _float_or_large(row.get("cheap_distance")),
         _float_or_large(row.get("risk")),
         SOURCE_PRIORITY.get(str(row.get("frontier_candidate_source")), 99),
         _cell_tuple(row.get("cell")) or (1_000_000, 1_000_000),
@@ -753,9 +1185,11 @@ def _dominates(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return all(l >= r - TOLERANCE for l, r in zip(left_tuple, right_tuple)) and any(l > r + TOLERANCE for l, r in zip(left_tuple, right_tuple))
 
 
-def _formal_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, int, tuple[int, int]]:
+def _formal_candidate_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, int, tuple[int, int]]:
     return (
+        -_float_default(row.get("candidate_quality")),
         -_coverage_score(row),
+        _float_or_large(row.get("cheap_distance")),
         _float_or_large(row.get("path_cost")),
         _float_or_large(row.get("risk")),
         SOURCE_PRIORITY.get(str(row.get("frontier_candidate_source")), 99),
@@ -882,6 +1316,7 @@ def _validation_cache_key(
     contract_path: Path,
     sidecar_path: Path,
     config: dict[str, Any],
+    valid_context: ValidCellsContext,
 ) -> str:
     payload = {
         "scenario_id": scenario_id,
@@ -894,6 +1329,10 @@ def _validation_cache_key(
         "allow_open_grid_fallback": bool(config.get("allow_open_grid_fallback", False)),
         "dynamic_validation_max_path_length": int(config.get("dynamic_validation_max_path_length", 180)),
         "dynamic_sidecar_fallback_mode": str(config.get("dynamic_sidecar_fallback_mode", "diagnostic_only")),
+        "dynamic_path_validation_candidate_budget": _path_validation_candidate_budget(config),
+        "valid_cells_source": valid_context.valid_cells_source,
+        "valid_cells_hash": _hash_payload(sorted([list(cell) for cell in valid_context.valid_cells])),
+        "prefilter_source": "frontier_first_passable_connected_new_coverage/v1",
     }
     return _hash_payload(payload)
 
