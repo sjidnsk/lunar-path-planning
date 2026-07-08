@@ -71,6 +71,11 @@ local_crop_size_m
 frontier_top_m
 coordinate_convention
 theta_convention
+sensor_model_id
+sensor_range_m
+sensor_fov_deg
+sensor_range_cells
+coverage_update_mode
 ```
 
 For Kilometer v1, the environment may maintain a 2048 x 2048 high-resolution grid internally for mapping, frontier extraction, coverage accounting, and planner validation. The policy observation must remain hierarchical and sparse:
@@ -117,6 +122,71 @@ transition:
 ```
 
 An episode starts from an initial observed area around the robot and ends on success, budget exhaustion, stagnation, or severe safety violation.
+
+## Sensor And Coverage Update Model
+
+The v1 sensor model is a forward field-of-view endpoint observation model:
+
+```text
+sensor_model_id = endpoint-forward-fov-90-range-20m-los/v1
+sensor_range_m = 20.0
+sensor_fov_deg = 90.0
+sensor_direction = target_theta
+observation_origin = target_pose
+coverage_update_mode = endpoint_observation_only
+```
+
+At each PPO step, the policy selects a target frontier cell and a continuous `target_theta`. The planner attempts to reach the target pose. If the pose is valid and executed, the environment observes from that endpoint pose only:
+
+```text
+visible_cell =
+  inside_map_bounds
+  AND distance(endpoint_cell_center, cell_center) <= sensor_range_m
+  AND angular_distance(bearing(endpoint, cell), target_theta) <= sensor_fov_deg / 2
+  AND line_of_sight_not_blocked
+```
+
+Line-of-sight blockers include hard obstacle cells and slope-blocked cells when those sources are available. The v1 hard slope threshold stays aligned with the existing platform contract:
+
+```text
+max_traversable_slope_deg = 30.0
+```
+
+All currently unknown high-resolution cells satisfying this predicate become observed. For v1:
+
+```text
+observed cell -> coverage = 1, confidence = 1
+unknown cell  -> coverage = 0, confidence = 0
+```
+
+The sensor range is defined in meters. For implementation on a grid:
+
+```text
+sensor_range_cells = round(sensor_range_m / highres_resolution_m)
+```
+
+Because all v1 scale profiles use `highres_resolution_m = 0.5`, the fixed v1 value is:
+
+```text
+sensor_range_cells = 40
+```
+
+The continuous policy angle is the source of truth. If a helper expects degrees, convert from radians:
+
+```text
+target_theta_deg = degrees(target_theta_rad) mod 360
+```
+
+Legacy project stages used `theta_bin_count = 8`, `theta_step_deg = 45`, and smaller `sensor_range_cells` values for smoke-scale audits. Those values are historical compatibility settings and are not the v1 action-space contract for this design.
+
+Coverage gain is measured after endpoint observation:
+
+```text
+coverage_gain_cells = count(cells that changed from unknown to observed)
+coverage_gain_rate = coverage_gain_cells / total_highres_coverage_denominator_cells
+```
+
+Along-path continuous sensing, repeated-observation confidence accumulation, sensor noise, and multi-angle confidence are out of scope for v1.
 
 ## Observation Schema
 
@@ -276,6 +346,8 @@ reachable_prefilter == true
 The extractor should prefer high recall. If the action set is too large, top-M pruning must preserve spatial diversity instead of only selecting the nearest or highest immediate-gain frontier cells.
 
 For Kilometer v1, top-M pruning must be region-aware. It should preserve candidates across directions, connected components, and low-resolution coverage-summary tiles so that distant unexplored regions are not permanently removed from the policy action set.
+
+Frontier potential gain must use the fixed v1 sensor model above. Candidate gain estimates should evaluate the unknown cells visible from the candidate endpoint under a forward 90 degree FOV with 20m range and line-of-sight filtering. Since `target_theta` is continuous, the estimator may use an analytic best-facing direction toward nearby unknown cells or a small internal sampling heuristic, but the stored PPO action remains continuous theta.
 
 ## Action Space
 
@@ -522,7 +594,6 @@ The following values are intentionally not fixed in this design:
 
 ```text
 frontier spatial diversity strategy
-sensor footprint model
 coverage gain scaling
 invalid and safety penalty weights
 max_steps and path_budget
