@@ -39,10 +39,57 @@ Future versions may replace binary confidence with continuous confidence from re
 - Unknown high-resolution cells cannot be used as landing or stopping targets.
 - Target cells are observed-safe frontier cells. Unknown cells are exploration targets only through sensor observation, not physical target locations.
 
+## Map Scale Profiles
+
+The first implementation uses three fixed scale profiles. The kilometer profile represents the large lunar polar use case, but its high-resolution map is not passed to the policy as a dense tensor.
+
+| Profile | Purpose | ROI | High-resolution map | Low-resolution global map | Local high-resolution crop | Frontier cap |
+| --- | --- | --- | --- | --- | --- | --- |
+| Smoke v1 | Architecture smoke tests, tiny PPO overfit, unit tests | 64m x 64m | 128 x 128 @ 0.5m/cell | 32 x 32 @ 2m/cell | 64 x 64, covering 32m x 32m | 512 |
+| Standard v1 | Main v1 training and ablations | 128m x 128m | 256 x 256 @ 0.5m/cell | 32 x 32 @ 4m/cell | 96 x 96, covering 48m x 48m | 1024 |
+| Kilometer v1 | Large lunar polar scenes and long-horizon coverage stress tests | 1024m x 1024m | 2048 x 2048 @ 0.5m/cell, maintained by the environment only | 128 x 128 @ 8m/cell | 192 x 192, covering 96m x 96m | 4096 |
+
+The recommended development order is:
+
+```text
+Smoke v1 -> Standard v1 -> Kilometer v1
+```
+
+The following metadata must be stored in checkpoints, rollout manifests, and evaluation reports:
+
+```text
+scale_profile
+roi_size_m
+world_origin_m
+highres_resolution_m
+highres_shape
+lowres_resolution_m
+lowres_shape
+tile_ratio
+local_crop_shape
+local_crop_size_m
+frontier_top_m
+coordinate_convention
+theta_convention
+```
+
+For Kilometer v1, the environment may maintain a 2048 x 2048 high-resolution grid internally for mapping, frontier extraction, coverage accounting, and planner validation. The policy observation must remain hierarchical and sparse:
+
+```text
+global low-resolution map
++ global high-resolution coverage summary
++ local high-resolution crop
++ sparse global frontier candidates
++ pose and budget features
+```
+
+The full kilometer-scale high-resolution map must not be stored in every PPO transition as a dense policy tensor.
+
 ## Non-Goals
 
 - Do not train PPO to output low-level velocity or steering commands.
 - Do not use complete future high-resolution ground truth as a policy input.
+- Do not feed the full kilometer-scale high-resolution map directly into the policy network as a dense tensor.
 - Do not bypass planner or safety checks.
 - Do not claim mathematical global optimality.
 - Do not replace default A* or Hybrid A* semantics.
@@ -121,6 +168,8 @@ reachable_frontier_count
 ```
 
 This input prevents purely local behavior such as repeatedly exploring east while west remains uncovered.
+
+For Kilometer v1, this summary is the primary way the policy sees global high-resolution coverage progress. The full 2048 x 2048 high-resolution map remains an environment-side state, not a dense policy input.
 
 ### local_highres_observed_crop
 
@@ -225,6 +274,8 @@ reachable_prefilter == true
 `near_unknown` means the cell is an observed-safe landing cell near currently unobserved high-resolution cells, typically within sensor range or near an observed-unobserved boundary.
 
 The extractor should prefer high recall. If the action set is too large, top-M pruning must preserve spatial diversity instead of only selecting the nearest or highest immediate-gain frontier cells.
+
+For Kilometer v1, top-M pruning must be region-aware. It should preserve candidates across directions, connected components, and low-resolution coverage-summary tiles so that distant unexplored regions are not permanently removed from the policy action set.
 
 ## Action Space
 
@@ -470,10 +521,6 @@ Evaluation must verify that all inference observations use deployment-available 
 The following values are intentionally not fixed in this design:
 
 ```text
-global_lowres_prior_state resolution
-global_highres_coverage_summary resolution
-local_highres_observed_crop size
-frontier top-M cap
 frontier spatial diversity strategy
 sensor footprint model
 coverage gain scaling
@@ -482,5 +529,4 @@ max_steps and path_budget
 stagnation N
 ```
 
-These should be selected in the implementation plan and validated through small smoke tests before larger PPO experiments.
-
+The three scale profiles above are fixed for v1. The remaining values should be selected in the implementation plan and validated through small smoke tests before larger PPO experiments.
