@@ -22,6 +22,17 @@ The only task success metric is:
 highres_observed_coverage_rate >= 0.99
 ```
 
+For v1, the rate is measured against a reachable and observable high-resolution free-cell denominator:
+
+```text
+highres_observed_coverage_rate =
+  count(observed_highres_cells AND coverable_mask)
+  / count(coverable_mask)
+
+coverage_denominator_source =
+  reachable_observable_free_highres_cells/v1
+```
+
 For v1, coverage and confidence are equivalent:
 
 ```text
@@ -76,6 +87,11 @@ sensor_range_m
 sensor_fov_deg
 sensor_range_cells
 coverage_update_mode
+coverage_denominator_source
+coverable_mask_algorithm_id
+coverable_mask_hash
+coverable_mask_exact
+coverable_mask_precompute_scope
 ```
 
 For Kilometer v1, the environment may maintain a 2048 x 2048 high-resolution grid internally for mapping, frontier extraction, coverage accounting, and planner validation. The policy observation must remain hierarchical and sparse:
@@ -204,11 +220,86 @@ Legacy project stages used `theta_bin_count = 8`, `theta_step_deg = 45`, and sma
 Coverage gain is measured after endpoint observation:
 
 ```text
-coverage_gain_cells = count(cells that changed from unknown to observed)
+coverage_gain_cells = count(cells that changed from unknown to observed AND are in coverable_mask)
 coverage_gain_rate = coverage_gain_cells / total_highres_coverage_denominator_cells
 ```
 
 Along-path continuous sensing, repeated-observation confidence accumulation, sensor noise, and multi-angle confidence are out of scope for v1.
+
+## Coverage Denominator And Coverable Mask
+
+The 99 percent success denominator is not the full ROI. It is the set of high-resolution cells that the robot can theoretically cover from the start pose under the v1 safety, sensor, and LOS contracts.
+
+The v1 denominator is:
+
+```text
+coverage_denominator_source = reachable_observable_free_highres_cells/v1
+coverable_mask_precompute_scope = episode_initialization
+```
+
+The semantic construction is:
+
+```text
+safe_free_mask =
+  inside_roi
+  AND not hard_obstacle
+  AND not slope_blocked
+  AND clearance >= vehicle_radius + safety_margin
+
+reachable_safe_mask =
+  start-cell connected component within safe_free_mask
+
+coverable_mask =
+  free high-resolution cells
+  AND exists a cell in reachable_safe_mask
+      within sensor_range_m
+      with two_dimensional_grid_line_of_sight/v1 visible
+```
+
+This excludes free-looking cells that are enclosed by obstacle or slope-blocked regions and cannot be reached or seen from any reachable safe observation pose.
+
+For denominator construction, the 90 degree FOV is not a limiting factor because `target_theta` is continuous. If a cell is within 20m and has clear LOS from some reachable safe pose, the robot can theoretically face that cell. The 90 degree FOV still applies to each executed endpoint observation, reward step, and frontier potential-gain estimate.
+
+Blocked cells are treated as follows:
+
+```text
+hard_obstacle_cell:
+  may be observed as map evidence
+  excluded from coverable_mask
+  never a safe frontier target
+
+slope_blocked_cell:
+  may be observed as map evidence
+  excluded from coverable_mask
+  never a safe frontier target
+
+free_cell unreachable and not observable from reachable_safe_mask:
+  excluded from coverable_mask
+```
+
+The coverable mask is environment-side accounting, not a policy input. In simulation, it may be computed from high-resolution scenario truth at episode initialization and cached by map, start pose, scale profile, sensor model, LOS model, and safety thresholds. It must not be passed to the policy as a dense channel, and frontier generation must not use it to reveal unknown high-resolution truth.
+
+For implementation efficiency:
+
+```text
+Smoke v1 and Standard v1:
+  compute an exact LOS-refined coverable_mask during episode initialization
+
+Kilometer v1:
+  compute once during episode initialization or load from cache
+  use a distance-transform or dilation prefilter for within-20m candidates
+  then apply LOS refinement to produce the official coverable_mask
+```
+
+Any approximation must be explicit in metadata:
+
+```text
+coverable_mask_exact = true | false
+coverable_mask_algorithm_id
+coverable_mask_hash
+```
+
+Official success-rate comparisons should use `coverable_mask_exact = true`. Approximate masks are allowed only for development smoke tests or clearly labeled diagnostics.
 
 ## Observation Schema
 
@@ -342,6 +433,8 @@ no_gain_steps_norm
 ```
 
 These features help the policy and value head distinguish early exploration from late coverage completion.
+
+If `current_coverage_rate` is exposed as a policy feature, it must not leak a dense hidden-truth coverable mask. Either use a scalar derived from the same environment-side denominator without exposing spatial structure, or use a deployment-available progress estimate and record that choice in `observation_schema_version`.
 
 ## Frontier Action Set
 
@@ -570,6 +663,7 @@ The first implementation may share encoders between policy and value heads, but 
 The following are hard failures:
 
 - Policy input uses complete future high-resolution truth.
+- Policy input includes the dense `coverable_mask` or any equivalent hidden-truth spatial denominator channel.
 - Frontier generation filters on unknown high-resolution obstacle or height truth.
 - Training and deployment use different channel order, normalization, or map resolution semantics.
 - Update-time action set differs from rollout-time action set.
@@ -585,6 +679,8 @@ Allowed information:
 - Prior value map.
 - Derived summaries from already observed state.
 
+Environment-only accounting may use high-resolution scenario truth for reward, done, and evaluation denominators, but those masks must not become spatial policy inputs or candidate-filtering shortcuts.
+
 ## Evaluation
 
 Primary evaluation:
@@ -592,6 +688,8 @@ Primary evaluation:
 ```text
 final highres_observed_coverage_rate
 success_rate where coverage >= 0.99
+coverage_denominator_source
+coverable_mask_exact
 ```
 
 Diagnostic evaluation:
