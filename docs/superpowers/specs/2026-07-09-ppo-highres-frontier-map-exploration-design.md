@@ -226,6 +226,65 @@ coverage_gain_rate = coverage_gain_cells / total_highres_coverage_denominator_ce
 
 Along-path continuous sensing, repeated-observation confidence accumulation, sensor noise, and multi-angle confidence are out of scope for v1.
 
+## Observed Map Update Rules
+
+The environment may hold high-resolution scenario truth internally. The policy sees only the observed high-resolution map and prior-derived low-resolution maps. Truth values may enter the observed map only through a successful sensor observation.
+
+For each cell that passes the endpoint FOV and LOS predicate:
+
+```text
+observed_mask[cell] = 1
+confidence[cell] = 1
+observed_height[cell] = truth_height[cell]
+observed_obstacle[cell] = truth_obstacle[cell]
+observed_slope_deg[cell] = truth_or_derived_slope_deg[cell]
+observed_slope_blocked[cell] = observed_slope_deg[cell] > max_traversable_slope_deg
+observed_traversability[cell] =
+  0 if observed_obstacle[cell] or observed_slope_blocked[cell]
+  otherwise truth_or_derived_traversability[cell]
+```
+
+For cells that fail LOS because they are behind a blocker:
+
+```text
+observed_mask[cell] remains unchanged
+confidence[cell] remains unchanged
+height / obstacle / slope / traversability remain unknown
+```
+
+For a visible hard obstacle or slope-blocked cell:
+
+```text
+observed_mask[cell] = 1
+confidence[cell] = 1
+obstacle or slope_blocked evidence is written
+cell is excluded from coverable_mask
+cell is not counted in coverage_gain_cells
+cell is never a safe frontier target
+```
+
+Coverage and observation are related but not identical:
+
+```text
+observed:
+  any visible cell whose evidence is written into the observed map
+
+coverage_gain:
+  newly observed cells that are also in coverable_mask
+```
+
+The `value` signal is not written from hidden high-resolution truth. In v1 it remains a deployment-available prior:
+
+```text
+value_prior:
+  comes from low-resolution prior data
+  may be sampled or aggregated for frontier_features
+  may be resampled into a local crop if the network uses a local value channel
+  must not be replaced by hidden high-resolution future value truth
+```
+
+`frontier_mask` is not a persistent sensed channel. It is recomputed after each map update from the current observed map, safety rules, reachability prefilter, sensor model, and frontier extraction rules.
+
 ## Coverage Denominator And Coverable Mask
 
 The 99 percent success denominator is not the full ROI. It is the set of high-resolution cells that the robot can theoretically cover from the start pose under the v1 safety, sensor, and LOS contracts.
