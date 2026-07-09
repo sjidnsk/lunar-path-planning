@@ -133,6 +133,7 @@ stage1_acceptance_policy
 stage2_acceptance_policy
 stage3_acceptance_policy
 stage4_acceptance_policy
+stage5_acceptance_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -1986,16 +1987,14 @@ baseline_algorithms_v1 =
   random_valid_frontier
   nearest_frontier
   max_potential_gain_frontier
-  gain_cost_frontier
-  current_project_frontier_method
+  gain_over_cost_frontier
   ppo_policy
 
 non_learning_baselines =
   random_valid_frontier
   nearest_frontier
   max_potential_gain_frontier
-  gain_cost_frontier
-  current_project_frontier_method
+  gain_over_cost_frontier
 
 learning_method =
   ppo_policy
@@ -2013,15 +2012,11 @@ nearest_frontier:
 max_potential_gain_frontier:
   select max(potential_coverage_gain_norm)
 
-gain_cost_frontier:
+gain_over_cost_frontier:
   score =
-    0.6 * potential_coverage_gain_norm
-  - 0.2 * distance_from_robot_norm
-  - 0.2 * reachable_prefilter_cost_norm
+    potential_coverage_gain_norm
+    / max(reachable_prefilter_cost_norm, epsilon)
   select max(score)
-
-current_project_frontier_method:
-  use the existing project frontier exploration method under the same environment contract
 
 ppo_policy:
   use the trained PPO policy under deterministic evaluation mode
@@ -2696,32 +2691,62 @@ paper final claim
 Acceptance:
 
 ```text
-all methods run on same scenario_seed / start_pose_seed / terrain_seed
-all methods receive the same frontier candidate set at each state
-baselines do not access hidden highres truth
-baselines do not access dense coverable_mask as spatial input
-PPO eval uses argmax frontier + theta_mu
-tie-break is deterministic
-success_rate_under_fixed_step_budget is computed
-mean_final_coverage is computed
-steps_to_99_success_only is computed
-path_length_to_99_success_only is computed
-coverage_auc_over_steps is computed
-coverage_per_meter is computed
-invalid_action_count_mean is computed
-planner_failure_count_mean is computed
-bootstrap 95% CI is computed
-baseline progress JSONL is written
+stage5_acceptance_policy =
+  baseline_evaluator_acceptance/v1
+
+1. random_valid_frontier can run a complete Smoke evaluation episode.
+
+2. nearest_frontier can run a complete Smoke evaluation episode.
+
+3. max_potential_gain_frontier can run a complete Smoke evaluation episode.
+
+4. gain_over_cost_frontier can run a complete Smoke evaluation episode.
+
+5. All baselines and PPO evaluation use the same environment, map seed, start pose seed, sensor model, frontier candidate generator, reachability prefilter, planner validation, and max_steps.
+
+6. Baselines do not access hidden highres truth except through final metric computation.
+
+7. Baselines do not access dense coverable_mask as a spatial decision input.
+
+8. Every selected baseline action comes from the reachable observed-safe candidate set.
+
+9. Empty candidate set behavior is consistent across methods and is recorded as done or failure according to the environment contract.
+
+10. deterministic baselines are reproducible under the same seed.
+
+11. random_valid_frontier is reproducible under a fixed random seed.
+
+12. PPO eval uses argmax frontier plus theta_mu.
+
+13. Tie-break is deterministic.
+
+14. All methods write the same metrics schema.
+
+15. success_rate_under_fixed_step_budget is computed.
+
+16. path_length_to_99_success_only is computed.
+
+17. coverage_per_meter is computed.
+
+18. invalid_action_count_mean and planner_failure_count_mean are computed.
+
+19. bootstrap 95% CI is computed.
+
+20. baseline_comparison_table.csv is written.
+
+21. baseline_coverage_curves.csv is written.
+
+22. baseline_eval_report.md is written.
 ```
 
 Recommended artifacts:
 
 ```text
 baseline_eval_report.md
-baseline_main_result_table.csv
-baseline_main_result_table.json
-baseline_episode_metrics.jsonl
-baseline_progress_metrics.jsonl
+baseline_comparison_table.csv
+baseline_metrics.json
+baseline_coverage_curves.csv
+baseline_episode_traces.jsonl
 baseline_fairness_audit.json
 bootstrap_ci_audit.json
 ```
@@ -2769,7 +2794,7 @@ baseline comparison uses same_env_same_budget
 main result table generated
 coverage curves generated
 invalid/planner/safety failure counts reported
-PPO result compared against gain_cost_frontier and current_project_frontier_method
+PPO result compared against gain_over_cost_frontier
 ```
 
 First-pass acceptance:
@@ -2783,8 +2808,7 @@ PPO mean_final_coverage >= nearest_frontier baseline
 Later paper-level target:
 
 ```text
-PPO >= gain_cost_frontier
-PPO >= current_project_frontier_method
+PPO >= gain_over_cost_frontier
 ```
 
 Recommended artifacts:
