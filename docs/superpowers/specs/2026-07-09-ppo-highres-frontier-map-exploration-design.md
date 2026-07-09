@@ -111,6 +111,8 @@ max_candidates_per_segment
 standoff_distance_m
 potential_gain_source
 candidate_priority_source
+reward_scaling_source
+stagnation_policy
 efficiency_pressure_source
 max_steps_by_scale
 primary_eval_metric
@@ -177,7 +179,7 @@ transition:
   reward and done are computed from the updated state
 ```
 
-An episode starts from an initial observed area around the robot and ends on success, max step limit, stagnation, or severe safety violation.
+An episode starts from an initial observed area around the robot and ends on success, fixed-budget failure, stagnation, no-candidate termination, or severe safety violation.
 
 ## Sensor And Coverage Update Model
 
@@ -1177,11 +1179,11 @@ prefilter true:
 
 The task success metric is coverage above 99 percent. Reward is training support, not a separate success definition.
 
-The v1 reward is temporarily:
+The v1 reward is:
 
 ```text
 reward =
-  coverage_gain_shaping
+  coverage_gain_reward
 + success_bonus_if_coverage_rate_gt_0_99
 - invalid_action_penalty
 - safety_violation_penalty
@@ -1190,20 +1192,44 @@ reward =
 Where:
 
 ```text
-coverage_gain_shaping:
-  positive reward for newly observed high-resolution cells
+coverage_gain_cells =
+  count(newly_observed_cells AND coverable_mask)
+
+coverable_cell_count =
+  count(coverable_mask)
+
+normalized_coverage_gain =
+  coverage_gain_cells / coverable_cell_count
+
+coverage_gain_reward =
+  w_coverage * normalized_coverage_gain
+
+w_coverage =
+  100.0
 
 success_bonus_if_coverage_rate_gt_0_99:
-  terminal success bonus when highres_observed_coverage_rate >= 0.99
+  100.0 when highres_observed_coverage_rate >= 0.99
+  otherwise 0
 
 invalid_action_penalty:
-  penalty for invalid target, planner failure, or action-mask violation
+  2.0 for planner validation failure, theta check failure, or target-cell validation failure
 
 safety_violation_penalty:
-  stronger penalty for collision, hard obstacle entry, unsafe slope, or clearance violation
+  20.0 for collision, hard obstacle entry, unsafe slope, clearance violation, or severe safety checker failure
 ```
 
-Reward weights remain open for later tuning. The success metric remains coverage-based, but success is evaluated under a fixed step budget.
+```text
+reward_scaling_source =
+  normalized_coverable_coverage_gain/v1
+
+reward_constants_v1 =
+  w_coverage: 100.0
+  success_bonus: 100.0
+  invalid_action_penalty: 2.0
+  safety_violation_penalty: 20.0
+```
+
+The success metric remains coverage-based, but success is evaluated under a fixed step budget. V1 intentionally does not add path-cost, repeat-coverage, value-weighted coverage, distance, or turning penalties to the reward.
 
 ## Episode Termination
 
@@ -1247,7 +1273,7 @@ failure_done:
   AND step_count >= max_steps
 
 stagnation_done:
-  no_gain_steps >= N
+  consecutive_no_gain_steps >= scale_N
 
 no_candidate_done:
   valid_candidate_count == 0 before policy sampling
@@ -1276,6 +1302,26 @@ failure pressure comes from:
   finite step budget
   no future coverage_gain_reward after termination
 ```
+
+Stagnation termination is based on consecutive zero-coverage-gain actions:
+
+```text
+stagnation_policy =
+  consecutive_zero_coverage_gain/v1
+
+stagnation_no_gain_steps_by_scale =
+  Smoke v1: 8
+  Standard v1: 16
+  Kilometer v1: 32
+
+no_gain_step =
+  coverage_gain_cells == 0
+
+stagnation_done =
+  consecutive_no_gain_steps >= scale_N
+```
+
+If `coverage_gain_cells > 0`, the consecutive no-gain counter resets. V1 does not use a minimum positive gain threshold.
 
 ## PPO Transition Contract
 
@@ -1959,12 +2005,14 @@ Evaluation must verify that all inference observations use deployment-available 
 
 ## Open Decisions For Planning
 
-The following values are intentionally not fixed in this design:
+The v1 default constants for reward scaling, invalid and safety penalties, fixed step budgets, and stagnation termination are fixed in this design. Implementation planning may still define smoke-test acceptance thresholds, logging formats, and ablation ranges, but those must not replace the v1 defaults without creating a new version.
 
 ```text
-coverage gain scaling
-invalid and safety penalty weights
-stagnation N
+remaining implementation-plan choices:
+  smoke-test acceptance thresholds
+  ablation ranges around v1 defaults
+  report table formats
+  training run length and hardware scheduling
 ```
 
-The three scale profiles and their fixed step budgets are fixed for v1. Hard path-length budget is disabled for v1. The remaining values should be selected in the implementation plan and validated through small smoke tests before larger PPO experiments.
+The three scale profiles, fixed step budgets, reward constants, and stagnation thresholds are fixed for v1. Hard path-length budget is disabled for v1.
