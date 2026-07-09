@@ -96,6 +96,8 @@ frontier_segment_candidate_policy
 normal_confidence_threshold
 max_candidates_per_segment
 standoff_distance_m
+potential_gain_source
+candidate_priority_source
 ```
 
 For Kilometer v1, the environment may maintain a 2048 x 2048 high-resolution grid internally for mapping, frontier extraction, coverage accounting, and planner validation. The policy observation must remain hierarchical and sparse:
@@ -665,9 +667,98 @@ reachable_prefilter == true
 potential_gain > 0
 ```
 
-Frontier potential gain must use the fixed v1 sensor model above. Candidate gain estimates should evaluate the currently unknown cells visible from the candidate endpoint under a forward 90 degree FOV with 20m range and 2D line-of-sight filtering. The estimated cells must come from the current observed/unknown state and deployment-available prior data; the estimator must not use hidden high-resolution truth or the dense `coverable_mask`.
-
 `recommended_theta` is a feature and potential-gain estimate direction, not a hard action. PPO still samples a continuous `target_theta`, and the theta log probability is computed from that continuous policy distribution.
+
+### Potential Gain And Value Gain
+
+The v1 gain source is:
+
+```text
+potential_gain_source =
+  endpoint_fov_los_visible_unknown_gain/v1
+```
+
+For each generated candidate, estimate gain from the candidate endpoint and its `recommended_theta`:
+
+```text
+candidate_pose_for_gain =
+  (candidate_x, candidate_y, recommended_theta)
+```
+
+The candidate's visible unknown set is:
+
+```text
+visible_unknown_cells =
+  cells inside 20m range
+  AND inside 90 degree FOV centered at recommended_theta
+  AND line_of_sight_not_blocked_by_current_observed_blockers
+  AND observed_mask == 0
+```
+
+Line-of-sight blockers for this estimate may use only current observed evidence:
+
+```text
+current_observed_blocker =
+  observed_mask == 1
+  AND (observed_obstacle == 1 OR observed_slope_blocked == 1)
+```
+
+The estimator must not use hidden high-resolution truth to decide whether an unknown cell is free, blocked, high-value, or coverable. It also must not use the dense `coverable_mask` to filter `visible_unknown_cells`.
+
+The geometric potential gain is:
+
+```text
+potential_gain_cells =
+  count(visible_unknown_cells)
+```
+
+The low-resolution value gain is:
+
+```text
+value_gain =
+  sum(value_prior_lowres[tile(cell)] for cell in visible_unknown_cells)
+```
+
+Candidate retention uses only the geometric gain plus safety and reachability:
+
+```text
+retain candidate if:
+  potential_gain_cells > 0
+  AND observed-safe
+  AND reachable_prefilter == true
+```
+
+The v1 normalized feature values are computed within the current step's candidate set:
+
+```text
+epsilon = 1.0e-6
+
+visible_unknown_count_norm =
+  potential_gain_cells / max(1, max_candidate_potential_gain_cells)
+
+value_gain_norm =
+  value_gain / max(epsilon, max_candidate_value_gain)
+
+potential_coverage_gain_norm =
+  potential_gain_cells / max(1, visible_footprint_cell_count)
+```
+
+`visible_footprint_cell_count` is the number of cells visible from the candidate endpoint under the same 20m / 90 degree FOV / 2D LOS estimate before filtering by `observed_mask == 0`.
+
+Top-M pruning may use a priority score as a local ranking signal, but it must preserve spatial diversity before taking the final action cap:
+
+```text
+candidate_priority_source =
+  spatial_diversity_preserving_gain_value_cost_priority/v1
+
+candidate_priority =
+  0.5 * potential_coverage_gain_norm
++ 0.3 * value_gain_norm
+- 0.1 * distance_from_robot_norm
+- 0.1 * reachable_prefilter_cost_norm
+```
+
+This priority score is not reward and is not the success metric. It is only an action-set pruning heuristic.
 
 ## Action Space
 
