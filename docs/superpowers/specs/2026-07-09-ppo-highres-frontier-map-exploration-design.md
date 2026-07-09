@@ -88,6 +88,9 @@ sensor_fov_deg
 sensor_range_cells
 coverage_update_mode
 coverage_denominator_source
+reachable_prefilter_source
+path_budget_mode
+budget_done_mode
 coverable_mask_algorithm_id
 coverable_mask_hash
 coverable_mask_exact
@@ -107,7 +110,7 @@ global low-resolution map
 + global high-resolution coverage summary
 + local high-resolution crop
 + sparse global frontier candidates
-+ pose and budget features
++ pose and episode progress features
 ```
 
 The full kilometer-scale high-resolution map must not be stored in every PPO transition as a dense policy tensor.
@@ -366,6 +369,79 @@ coverable_mask_hash
 
 Official success-rate comparisons should use `coverable_mask_exact = true`. Approximate masks are allowed only for development smoke tests or clearly labeled diagnostics.
 
+## Reachability Prefilter
+
+The v1 reachability prefilter source is:
+
+```text
+reachable_prefilter_source =
+  observed_safe_connected_component_prefilter/v1
+```
+
+It is a fast action-set prefilter, not the final path planner. Its job is to remove candidate landing cells that are clearly disconnected from the robot in the currently observed safe map.
+
+The observed-safe cells are:
+
+```text
+observed_safe_cell =
+  observed == true
+  AND obstacle == false
+  AND slope_blocked == false
+  AND traversability >= threshold
+  AND clearance >= vehicle_radius + safety_margin
+```
+
+At each decision step, compute the observed-safe connected component from the current robot cell:
+
+```text
+reachable_component =
+  BFS(current_robot_cell, observed_safe_cell graph)
+
+reachable_prefilter == true if:
+  candidate_cell in reachable_component
+```
+
+The graph should use the same grid connectivity convention as the local planner, such as 8-connected cells for holonomic grid prefiltering. The implementation must record the chosen connectivity in metadata if it affects results.
+
+The boundary between prefiltering and planner validation is:
+
+```text
+reachable_prefilter == false:
+  candidate does not enter the PPO action set
+
+reachable_prefilter == true:
+  candidate may enter the PPO action set
+  but execution still requires planner validation
+
+planner validation failure:
+  apply invalid_action_penalty
+  done = false
+  unless the failure is a severe safety violation
+```
+
+V1 does not use a hard path budget:
+
+```text
+path_budget_m =
+  none for v1
+
+path_budget_mode =
+  disabled for v1
+
+budget_done =
+  disabled for v1
+
+budget_done_mode =
+  disabled for v1
+
+remaining_path_budget_norm =
+  omitted for v1
+```
+
+`detour_factor` and `remaining_path_budget` are not hard filters in v1. Path length remains a diagnostic metric, and may be used later for efficiency analysis, but it is not part of the v1 success/failure condition.
+
+If `reachable_prefilter_cost_norm` is retained as a candidate feature, it is only a soft feature for scoring or pruning among already reachable candidates. It may be computed from observed-map BFS distance or Euclidean distance and normalized within the current candidate set. It must not use hidden truth, `coverable_mask`, `path_budget`, or `detour_factor` as a hard gate.
+
 ## Observation Schema
 
 Each policy observation contains:
@@ -551,11 +627,12 @@ sin(theta)
 cos(theta)
 current_coverage_rate
 remaining_step_budget_norm
-remaining_path_budget_norm
 no_gain_steps_norm
 ```
 
 These features help the policy and value head distinguish early exploration from late coverage completion.
+
+`remaining_path_budget_norm` is intentionally omitted in v1 because hard path budget termination is disabled.
 
 If `current_coverage_rate` is exposed as a policy feature, it must not leak a dense hidden-truth coverable mask. Either use a scalar derived from the same environment-side denominator without exposing spatial structure, or use a deployment-available progress estimate and record that choice in `observation_schema_version`.
 
@@ -572,6 +649,7 @@ A frontier cell is valid only if:
 ```text
 observed == true
 obstacle == false
+slope_blocked == false
 traversability >= threshold
 clearance >= vehicle_radius + safety_margin
 near_unknown == true
@@ -580,6 +658,8 @@ reachable_prefilter == true
 ```
 
 `near_unknown` means the cell is an observed-safe landing cell near currently unobserved high-resolution cells, typically within sensor range or near an observed-unobserved boundary.
+
+Cells that fail `reachable_prefilter` are excluded before PPO sees the action set. Cells that pass it are only quick-screen reachable; they must still pass planner validation before execution.
 
 The extractor should prefer high recall. If the action set is too large, top-M pruning must preserve spatial diversity instead of only selecting the nearest or highest immediate-gain frontier cells.
 
@@ -815,7 +895,7 @@ Rollout and update must preserve separate theta and frontier log probabilities f
 
 ```text
 1. Build observation from current map state and pose.
-2. Extract global observed-safe frontier cells.
+2. Extract global observed-safe frontier cells and apply reachability prefilter.
 3. Build frontier_features and frontier_mask.
 4. Policy scores frontier actions.
 5. Sample target_frontier_index.
@@ -834,6 +914,17 @@ theta_unreachable
 path_collision
 safety_violation
 planner_timeout
+```
+
+The prefilter/planner contract is intentionally asymmetric:
+
+```text
+prefilter false:
+  do not expose the candidate to PPO
+
+prefilter true:
+  expose the candidate if other candidate rules pass
+  still run planner validation before execution
 ```
 
 ## Reward
@@ -876,9 +967,8 @@ An episode ends under any of these conditions:
 success_done:
   highres_observed_coverage_rate >= 0.99
 
-budget_done:
+max_steps_done:
   step_count >= max_steps
-  or path_length_used >= path_budget
 
 stagnation_done:
   no_gain_steps >= N
@@ -888,6 +978,8 @@ safety_done:
 ```
 
 Planner failure may be treated as invalid action and continue unless it indicates an unrecoverable safety condition.
+
+There is no `path_length_used >= path_budget` termination in v1. Path length is logged for diagnostics only.
 
 ## PPO Transition Contract
 
@@ -993,6 +1085,8 @@ Diagnostic evaluation:
 ```text
 coverage curve over steps
 path length used
+coverage per meter
+path length to success
 invalid action count
 planner failure count by cause
 safety violation count
@@ -1012,8 +1106,8 @@ The following values are intentionally not fixed in this design:
 frontier spatial diversity strategy
 coverage gain scaling
 invalid and safety penalty weights
-max_steps and path_budget
+max_steps
 stagnation N
 ```
 
-The three scale profiles above are fixed for v1. The remaining values should be selected in the implementation plan and validated through small smoke tests before larger PPO experiments.
+The three scale profiles above are fixed for v1. Hard path budget is disabled for v1. The remaining values should be selected in the implementation plan and validated through small smoke tests before larger PPO experiments.
