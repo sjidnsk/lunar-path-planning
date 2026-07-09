@@ -127,6 +127,7 @@ confidence_reporting
 ppo_eval_policy_mode
 evaluation_seed_policy
 tie_break_policy
+progress_reporting_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -2184,6 +2185,84 @@ selected_candidate_original_rank
 ```
 
 Evaluation must verify that all inference observations use deployment-available information only.
+
+## Progress Reporting
+
+Progress reporting is a monitoring and experiment-management feature. It is not a reward term, not a policy input, and not part of the PPO action distribution.
+
+The v1 progress reporting policy is:
+
+```text
+progress_reporting_policy =
+  console_progress_and_metrics_jsonl/v1
+```
+
+The implementation should show console progress bars and write the same state into append-only metrics JSONL records.
+
+Episode progress:
+
+```text
+episode_progress:
+  coverage_progress =
+    coverage_rate / 0.99
+
+  step_budget_progress =
+    step_count / max_steps
+
+  stagnation_progress =
+    consecutive_no_gain_steps / stagnation_N
+```
+
+Training progress:
+
+```text
+training_progress:
+  update_id / total_updates
+  rollout_steps_collected / rollout_batch_size
+  ppo_epoch / ppo_epochs
+  minibatch_id / minibatch_count
+  latest_eval_success_rate_under_fixed_step_budget
+  best_eval_success_rate_under_fixed_step_budget
+```
+
+Evaluation and baseline progress:
+
+```text
+evaluation_progress:
+  method_id / method_count
+  episode_id / eval_episode_count
+  scale_profile
+  current_success_count
+  current_mean_final_coverage
+```
+
+Metrics JSONL records should include:
+
+```text
+metrics_jsonl_fields:
+  progress_type
+  timestamp
+  scale_profile
+  method
+  update_id
+  episode_id
+  step_count
+  max_steps
+  coverage_rate
+  coverage_progress
+  step_budget_progress
+  stagnation_progress
+  rollout_steps_collected
+  rollout_batch_size
+  ppo_epoch
+  minibatch_id
+  minibatch_count
+  success_rate_so_far
+  mean_final_coverage_so_far
+  best_eval_success_rate_under_fixed_step_budget
+```
+
+Progress records must use deployment-available and already-computed diagnostics only. They must not expose hidden high-resolution truth, dense `coverable_mask` spatial structure, or future observation results to the policy.
 
 ## Open Decisions For Planning
 
