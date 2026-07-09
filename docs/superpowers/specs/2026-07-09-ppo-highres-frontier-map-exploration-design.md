@@ -111,6 +111,10 @@ max_candidates_per_segment
 standoff_distance_m
 potential_gain_source
 candidate_priority_source
+efficiency_pressure_source
+max_steps_by_scale
+primary_eval_metric
+baseline_comparison_contract
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -1199,18 +1203,48 @@ safety_violation_penalty:
   stronger penalty for collision, hard obstacle entry, unsafe slope, or clearance violation
 ```
 
-Reward weights remain open for later tuning. The success metric does not change.
+Reward weights remain open for later tuning. The success metric remains coverage-based, but success is evaluated under a fixed step budget.
 
 ## Episode Termination
+
+V1 uses fixed decision-step budgets to create exploration efficiency pressure without adding path-cost or repeat-coverage terms to the reward:
+
+```text
+efficiency_pressure_source =
+  fixed_step_budget_terminal_success/v1
+
+max_steps_by_scale =
+  Smoke v1: 64
+  Standard v1: 128
+  Kilometer v1: 512
+```
+
+Each step is one frontier decision followed by planner validation, path execution if valid, path observations, endpoint theta observation, and map update. Path length remains diagnostic; the hard efficiency budget is the number of high-level frontier decisions.
+
+The episode budget check order is:
+
+```text
+episode_budget_check_order =
+  execute_action_then_check_success_then_budget/v1
+
+1. Policy selects an action.
+2. Environment validates and executes the action if valid.
+3. Observed map and coverage are updated.
+4. step_count += 1.
+5. If coverage_rate >= 0.99, emit success_done.
+6. Else if step_count >= max_steps, emit failure_done.
+```
 
 An episode ends under any of these conditions:
 
 ```text
 success_done:
-  highres_observed_coverage_rate >= 0.99
+  highres_observed_coverage_rate >= 0.99 after action execution
+  AND step_count <= max_steps
 
-max_steps_done:
-  step_count >= max_steps
+failure_done:
+  highres_observed_coverage_rate < 0.99 after action execution
+  AND step_count >= max_steps
 
 stagnation_done:
   no_gain_steps >= N
@@ -1225,6 +1259,23 @@ safety_done:
 Planner failure may be treated as invalid action and continue unless it indicates an unrecoverable safety condition.
 
 There is no `path_length_used >= path_budget` termination in v1. Path length is logged for diagnostics only.
+
+V1 does not add a separate failure penalty:
+
+```text
+failure_penalty_policy =
+  no_extra_failure_penalty/v1
+
+failure_done:
+  reward does not include separate failure_penalty
+  terminal = true
+  bootstrap = 0
+
+failure pressure comes from:
+  no success_bonus
+  finite step budget
+  no future coverage_gain_reward after termination
+```
 
 ## PPO Transition Contract
 
@@ -1387,22 +1438,20 @@ return_t =
   advantage_t + value_t
 ```
 
-Bootstrap rules distinguish true terminal outcomes from artificial truncation:
+Fixed step budget failure is a terminal task outcome, not an artificial truncation:
 
 ```text
 terminal_done_reasons = {
   success_done,
+  failure_done,
   no_candidate_done,
   safety_done
 }
 
-truncated_done_reasons = {
-  max_steps_done
-}
+truncated_done_reasons = {}
 
 bootstrap_rule:
   terminal_done -> next_value = 0
-  truncated_done -> next_value = value(next_observation)
   non_done -> next_value = value(next_observation)
 ```
 
@@ -1623,7 +1672,7 @@ periodic:
   keep_count = 5
 
 best:
-  primary = best_success_rate
+  primary = best_success_rate_under_fixed_step_budget
   secondary = best_mean_final_coverage
 
 eval:
@@ -1852,19 +1901,46 @@ Environment-only accounting may use high-resolution scenario truth for reward, d
 Primary evaluation:
 
 ```text
-final highres_observed_coverage_rate
-success_rate where coverage >= 0.99
+primary_eval_metric =
+  success_rate_under_fixed_step_budget/v1
+
+success_threshold =
+  0.99
+
+success_rate_under_fixed_step_budget =
+  count(episodes where coverage_rate >= 0.99 before or at max_steps)
+  / total_eval_episodes
+
 coverage_denominator_source
 coverable_mask_exact
 ```
 
-Diagnostic evaluation:
+This is the primary metric because unlimited exploration would make final coverage alone too weak for comparing learned and rule-based exploration policies.
+
+Baseline comparison must use the same environment and budget:
 
 ```text
-coverage curve over steps
-path length used
-coverage per meter
-path length to success
+baseline_comparison_contract =
+  same_env_same_budget/v1
+
+all algorithms must use:
+  same map set
+  same start pose set
+  same sensor model
+  same coverable_mask denominator
+  same planner validation
+  same max_steps
+  same success threshold = 0.99
+```
+
+Secondary and diagnostic evaluation:
+
+```text
+mean_final_coverage
+steps_to_99_success_only
+path_length_to_99_success_only
+coverage_per_meter
+coverage_auc_over_steps
 observation sample count
 ray cell visit count
 newly observed cells per action
@@ -1888,8 +1964,7 @@ The following values are intentionally not fixed in this design:
 ```text
 coverage gain scaling
 invalid and safety penalty weights
-max_steps
 stagnation N
 ```
 
-The three scale profiles above are fixed for v1. Hard path budget is disabled for v1. The remaining values should be selected in the implementation plan and validated through small smoke tests before larger PPO experiments.
+The three scale profiles and their fixed step budgets are fixed for v1. Hard path-length budget is disabled for v1. The remaining values should be selected in the implementation plan and validated through small smoke tests before larger PPO experiments.
