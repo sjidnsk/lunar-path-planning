@@ -398,16 +398,64 @@ This input provides global geography, value, and coarse traversability context.
 
 This tensor is a low-resolution summary of the current high-resolution observed map. It must be computed only from cells observed so far.
 
-Recommended v1 channels per summary tile:
+The summary grid has the same shape as the low-resolution global map in the selected scale profile. Each summary tile aggregates the high-resolution cells whose centers fall inside that low-resolution tile.
+
+V1 channels per summary tile:
 
 ```text
-covered_ratio
+observed_ratio
 unknown_ratio
+observed_free_ratio
+observed_blocked_ratio
 frontier_count
 observed_safe_frontier_count
-mean_uncovered_value_prior
 reachable_frontier_count
+mean_uncovered_value_prior
 ```
+
+The aggregation rules are:
+
+```text
+tile_cell_count =
+  count(high-resolution cells in this low-resolution tile)
+
+observed_ratio =
+  count(observed_mask == 1 in tile) / tile_cell_count
+
+unknown_ratio =
+  count(observed_mask == 0 in tile) / tile_cell_count
+
+observed_free_ratio =
+  count(
+    observed_mask == 1
+    AND observed_obstacle == 0
+    AND observed_slope_blocked == 0
+    AND observed_traversability >= traversability_threshold
+    in tile
+  ) / tile_cell_count
+
+observed_blocked_ratio =
+  count(
+    observed_mask == 1
+    AND (observed_obstacle == 1 OR observed_slope_blocked == 1)
+    in tile
+  ) / tile_cell_count
+
+frontier_count =
+  count(frontier cells in tile) / tile_cell_count
+
+observed_safe_frontier_count =
+  count(observed-safe frontier cells in tile) / tile_cell_count
+
+reachable_frontier_count =
+  count(frontier cells passing reachability prefilter in tile) / tile_cell_count
+
+mean_uncovered_value_prior =
+  mean(value_prior for unobserved high-resolution cells in tile)
+  or 0 when the tile has no unobserved cells
+```
+
+These summary channels must not use the dense `coverable_mask` as a per-tile denominator or spatial mask, because that would expose hidden high-resolution scenario structure to the policy. They may use the current observed map, current frontier set, reachability prefilter result, sensor geometry, and deployment-available low-resolution value prior.
 
 This input prevents purely local behavior such as repeatedly exploring east while west remains uncovered.
 
