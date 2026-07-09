@@ -131,6 +131,7 @@ progress_reporting_policy
 implementation_roadmap_version
 stage1_acceptance_policy
 stage2_acceptance_policy
+stage3_acceptance_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -2509,20 +2510,40 @@ full training
 Acceptance:
 
 ```text
-forward accepts batched Smoke observations
-frontier_logits shape = [B, M]
-theta params shape = [B, M]
-value shape = [B]
-masked candidates never sampled
-all-false candidate_valid_mask is rejected before network forward
-selected_frontier_index is valid
-selected_theta is normalized to [-pi, pi)
-theta_kappa is finite and within [1e-3, 20]
-old_log_prob_total = old_log_prob_frontier + old_log_prob_theta
-deterministic mode uses argmax frontier + theta_mu
-value pooling ignores padding candidates
-forward pass has no NaN / inf
-same saved observation can recompute same logprob under same weights
+stage3_acceptance_policy =
+  network_forward_action_sampling_acceptance/v1
+
+1. forward accepts batched Smoke observations.
+
+2. frontier_logits shape = [B, M].
+
+3. theta_mu_sin_raw, theta_mu_cos_raw, and theta_kappa_raw each have shape = [B, M].
+
+4. value shape = [B].
+
+5. candidates with candidate_valid_mask = false are never sampled.
+
+6. all-false candidate_valid_mask is rejected before network forward.
+
+7. selected_frontier_index satisfies candidate_valid_mask[selected_frontier_index] = true.
+
+8. selected_theta is normalized to [-pi, pi).
+
+9. theta_kappa is finite and clipped to [1e-3, 20.0].
+
+10. old_log_prob_total = old_log_prob_frontier + old_log_prob_theta.
+
+11. deterministic eval uses argmax masked frontier logits plus theta_mu of the selected candidate.
+
+12. value pooling ignores padding candidates.
+
+13. forward outputs contain no NaN / inf.
+
+14. same saved observation and same weights recompute the same deterministic action.
+
+15. same saved observation and same weights recompute the same log probabilities.
+
+16. batch samples may have different valid candidate counts.
 ```
 
 Recommended artifacts:
