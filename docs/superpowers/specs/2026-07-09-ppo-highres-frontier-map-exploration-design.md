@@ -111,7 +111,20 @@ max_candidates_per_segment
 standoff_distance_m
 potential_gain_source
 candidate_priority_source
-rollout_storage_mode
+rollout_transition_storage
+rollout_collection_mode
+num_envs
+rollout_steps_per_env
+rollout_batch_size
+advantage_method
+policy_loss_type
+frontier_distribution_type
+theta_distribution_type
+value_loss_type
+entropy_regularization
+invalid_action_training_policy
+ppo_update_schedule
+checkpoint_policy
 network_architecture_version
 network_memory_mode
 network_diagram_path
@@ -1220,7 +1233,7 @@ Every trainable transition must store enough information to recompute PPO log pr
 The v1 storage mode is:
 
 ```text
-rollout_storage_mode =
+rollout_transition_storage =
   rollout_time_snapshot_storage/v1
 ```
 
@@ -1279,6 +1292,364 @@ Important rule:
 ```text
 PPO update must use the saved frontier list, features, and candidate_valid_mask from rollout.
 It must not re-run frontier extraction and silently replace the action space.
+```
+
+## PPO Training And Update Rules
+
+The v1 PPO trainer uses on-policy vectorized rollout collection:
+
+```text
+rollout_collection_mode =
+  on_policy_vectorized_env/v1
+
+num_envs = 8
+rollout_steps_per_env = 128
+rollout_batch_size = 1024
+after_update_clear_rollout_buffer = true
+```
+
+Each PPO update collects 128 steps from each of 8 parallel environments, then updates on the resulting 1024 trainable transitions. After the update, the rollout buffer is cleared. Old rollout batches must not be reused across later policy versions.
+
+The transition storage contract is:
+
+```text
+rollout_transition_storage =
+  rollout_time_snapshot_storage/v1
+
+must_store_candidate_snapshot = true
+must_not_rerun_frontier_extraction_during_update = true
+store_full_highres_truth_in_transition = false
+```
+
+A stored transition must include the observation snapshot, action-set snapshot, selected action, old log probabilities, old value, reward, done state, diagnostics, and version metadata. In structured form:
+
+```text
+transition = {
+  observation_snapshot,
+  action_set_snapshot,
+  selected_action,
+  old_policy_outputs,
+  reward_and_done,
+  execution_diagnostics,
+  version_metadata
+}
+```
+
+Empty candidate sets are terminal but non-trainable:
+
+```text
+empty_candidate_handling =
+  terminal_non_trainable/v1
+
+if valid_candidate_count == 0:
+  policy_forward = skipped
+  trainable_transition = false
+  done = true
+  done_reason = no_candidate_done
+  diagnostics_only = true
+```
+
+Invalid sampled actions are trainable penalized transitions:
+
+```text
+invalid_sampled_action_handling =
+  trainable_penalized_transition/v1
+
+if policy sampled action and validation failed:
+  trainable_transition = true
+  reward includes invalid_action_penalty
+  done = false
+  done_reason = none
+  severe safety violation may set done = true
+```
+
+Advantage and return are computed with GAE:
+
+```text
+advantage_method =
+  gae_lambda/v1
+
+gamma = 0.995
+gae_lambda = 0.95
+normalize_advantage = true
+```
+
+The recurrence is:
+
+```text
+delta_t =
+  reward_t + gamma * value_{t+1} * not_done_t - value_t
+
+advantage_t =
+  delta_t + gamma * gae_lambda * not_done_t * advantage_{t+1}
+
+return_t =
+  advantage_t + value_t
+```
+
+Bootstrap rules distinguish true terminal outcomes from artificial truncation:
+
+```text
+terminal_done_reasons = {
+  success_done,
+  no_candidate_done,
+  safety_done
+}
+
+truncated_done_reasons = {
+  max_steps_done
+}
+
+bootstrap_rule:
+  terminal_done -> next_value = 0
+  truncated_done -> next_value = value(next_observation)
+  non_done -> next_value = value(next_observation)
+```
+
+The PPO policy loss uses the joint action log probability:
+
+```text
+policy_loss_type =
+  clipped_surrogate_joint_action/v1
+
+old_log_prob_total =
+  old_log_prob_frontier + old_log_prob_theta
+
+new_log_prob_total =
+  new_log_prob_frontier + new_log_prob_theta
+
+ppo_ratio =
+  exp(new_log_prob_total - old_log_prob_total)
+
+clip_eps = 0.2
+
+policy_loss =
+  -mean(
+    min(
+      ppo_ratio * normalized_advantage,
+      clip(ppo_ratio, 1 - clip_eps, 1 + clip_eps) * normalized_advantage
+    )
+  )
+
+candidate_snapshot_consistency_required = true
+```
+
+The frontier index distribution is a strictly masked categorical distribution:
+
+```text
+frontier_distribution_type =
+  masked_categorical/v1
+
+invalid_logit_value = -1e9
+
+masked_frontier_logits =
+  frontier_logits.masked_fill(~candidate_valid_mask, invalid_logit_value)
+
+frontier_dist =
+  Categorical(logits = masked_frontier_logits)
+
+new_log_prob_frontier =
+  frontier_dist.log_prob(selected_frontier_index)
+
+frontier_entropy =
+  frontier_dist.entropy()
+```
+
+Frontier mask requirements:
+
+```text
+candidate_valid_mask.any() must be true
+selected index must be valid
+padding candidates never affect softmax/logprob/entropy/pooling
+```
+
+The continuous theta distribution is:
+
+```text
+theta_distribution_type =
+  von_mises_continuous/v1
+
+theta_mu_parameterization =
+  normalized_sin_cos_to_atan2/v1
+
+theta_kappa =
+  clamp(
+    softplus(theta_kappa_raw) + 1e-3,
+    min = 1e-3,
+    max = 20.0
+  )
+
+selected_theta_params =
+  gather candidate theta params by selected_frontier_index
+
+new_log_prob_theta =
+  VonMises(selected_theta_mu, selected_theta_kappa)
+    .log_prob(saved_selected_theta)
+
+saved_selected_theta_normalization =
+  [-pi, pi)
+
+theta_entropy_enabled_initially = false
+theta_exploration_initialization = low_kappa_init
+```
+
+The value loss is clipped:
+
+```text
+value_target =
+  return
+
+value_loss_type =
+  clipped_value_loss/v1
+
+value_clip_eps = 0.2
+value_loss_coef = 0.5
+
+value_pred_clipped =
+  old_value + clamp(new_value - old_value, -0.2, 0.2)
+
+value_loss =
+  0.5 * mean(
+    max(
+      (new_value - return)^2,
+      (value_pred_clipped - return)^2
+    )
+  )
+
+value_mask_rule:
+  candidate_valid_mask must be used for candidate pooling
+  padding candidates must not affect V(s)
+```
+
+Entropy regularization is frontier-only in v1:
+
+```text
+entropy_regularization =
+  frontier_only_entropy/v1
+
+frontier_entropy_coef = 0.01
+theta_entropy_enabled_initially = false
+entropy_schedule = constant/v1
+
+entropy_bonus =
+  frontier_entropy
+
+total_loss =
+  policy_loss
+  + value_loss_coef * value_loss
+  - frontier_entropy_coef * frontier_entropy
+```
+
+Required entropy diagnostics:
+
+```text
+frontier_entropy_mean
+frontier_entropy_min
+frontier_entropy_by_valid_candidate_count
+theta_kappa_mean
+theta_kappa_max
+```
+
+Invalid action training policy:
+
+```text
+invalid_action_training_policy =
+  validation_failure_trainable/v1
+
+mask_violation:
+  trainable_transition = false
+  reason = implementation_error
+  action = dropped
+  raise_critical_diagnostic = true
+
+planner_validation_failed:
+  trainable_transition = true
+  reward += invalid_action_penalty
+  done = false
+  invalid_action_flag = true
+
+theta_check_failed:
+  trainable_transition = true
+  reward += invalid_action_penalty
+  done = false
+  theta_invalid_flag = true
+
+severe_safety_violation:
+  trainable_transition = true
+  reward += safety_violation_penalty
+  done = true
+  done_reason = safety_done
+```
+
+The update schedule is:
+
+```text
+ppo_update_schedule =
+  fixed_epoch_minibatch/v1
+
+ppo_epochs = 4
+minibatch_size = 256
+shuffle_minibatches_each_epoch = true
+
+optimizer = AdamW
+learning_rate = 3e-4
+adam_eps = 1e-5
+weight_decay = 1e-4
+
+max_grad_norm = 0.5
+```
+
+KL monitoring is required:
+
+```text
+kl_monitoring:
+  approx_kl_source = old_log_prob_total_minus_new_log_prob_total
+  target_kl = 0.03
+  early_stop_update_epoch_if_kl_exceeds = true
+```
+
+Checkpoint and evaluation policy:
+
+```text
+checkpoint_policy =
+  latest_periodic_best/v1
+
+latest:
+  save_every_update = true
+  keep_count = 1
+
+periodic:
+  save_every_n_updates = 50
+  keep_count = 5
+
+best:
+  primary = best_success_rate
+  secondary = best_mean_final_coverage
+
+eval:
+  eval_every_n_updates = 10
+  eval_episodes = 16
+  eval_policy_mode = deterministic_argmax_frontier_mean_theta/v1
+```
+
+Deterministic evaluation uses the argmax valid frontier action and the selected frontier's `theta_mu_rad`. Training rollout remains stochastic.
+
+Checkpoint files must include:
+
+```text
+model_state_dict
+optimizer_state_dict
+update_step
+observation_schema_version
+action_space_version
+network_architecture_version
+reward_version
+normalization_stats
+top_m_config
+scale_profile
+git_commit
+training_config
+eval_metrics
 ```
 
 ## Network Shape
