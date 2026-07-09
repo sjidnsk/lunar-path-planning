@@ -132,6 +132,7 @@ implementation_roadmap_version
 stage1_acceptance_policy
 stage2_acceptance_policy
 stage3_acceptance_policy
+stage4_acceptance_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -2598,35 +2599,67 @@ performance claim
 Acceptance:
 
 ```text
-collects rollout_batch_size = 1024 trainable transitions or handles terminal non-trainable events correctly
-PPO update uses saved candidate snapshot, not re-extracted frontier
-old_log_prob_total and new_log_prob_total shapes match
-ratio finite
-advantages finite and normalized
-returns finite
-policy_loss finite
-value_loss finite
-entropy finite
-grad_norm finite and clipped by max_grad_norm
-approx_kl computed
-early stop triggers if KL > target_kl
-optimizer step changes at least one trainable parameter
-latest checkpoint can be saved and loaded
-loaded checkpoint reproduces same deterministic action on same observation
-training progress JSONL is written
-no NaN / inf in loss, gradients, model outputs
+stage4_acceptance_policy =
+  rollout_ppo_update_smoke_acceptance/v1
+
+1. The runner collects rollout_batch_size = 1024 trainable transitions.
+
+2. If an episode terminates early, terminal transitions are handled correctly and do not contaminate the PPO update.
+
+3. Each trainable transition stores the rollout-time observation snapshot and candidate snapshot.
+
+4. PPO update uses the saved candidate snapshot, not re-extracted frontier candidates.
+
+5. old_log_prob_frontier, old_log_prob_theta, and old_log_prob_total exist and have correct shape.
+
+6. new_log_prob_total can be recomputed on the same saved snapshot.
+
+7. old_log_prob_total and new_log_prob_total have matching shape.
+
+8. advantages and returns are finite.
+
+9. normalized advantages have mean approximately 0 and standard deviation approximately 1.
+
+10. PPO ratio = exp(new_log_prob_total - old_log_prob_total) is finite.
+
+11. clipped policy loss is finite.
+
+12. value loss is finite.
+
+13. entropy bonus is finite.
+
+14. grad_norm is finite and clipped by max_grad_norm.
+
+15. optimizer step changes at least one trainable parameter.
+
+16. approx_kl is recorded.
+
+17. early stop triggers when approx_kl > target_kl.
+
+18. rollout buffer is cleared after update.
+
+19. latest checkpoint can be saved.
+
+20. latest checkpoint can be loaded.
+
+21. loaded checkpoint reproduces the same deterministic action on the same observation.
+
+22. training progress JSONL is written.
+
+23. Three consecutive Smoke PPO updates run without NaN, inf, or crash.
 ```
 
 Recommended artifacts:
 
 ```text
-ppo_update_smoke_report.md
-rollout_buffer_audit.json
+stage4_smoke_update_report.md
+rollout_snapshot_audit.json
 gae_audit.json
-loss_audit.json
-gradient_audit.json
+ppo_loss_audit.json
+logprob_recompute_audit.json
+optimizer_step_audit.json
 checkpoint_load_audit.json
-training_progress_metrics.jsonl
+training_progress.jsonl
 checkpoint_latest.pt
 ```
 
