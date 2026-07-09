@@ -376,7 +376,7 @@ value_prior:
   must not be replaced by hidden high-resolution future value truth
 ```
 
-`frontier_mask` is not a persistent sensed channel. It is recomputed after each map update from the current observed map, safety rules, reachability prefilter, sensor model, and frontier extraction rules.
+`local_frontier_channel` is not a persistent sensed channel. It is recomputed after each map update from the current observed map, safety rules, reachability prefilter, sensor model, and frontier extraction rules. It is a local crop map channel and is separate from the sparse action-set `candidate_valid_mask`.
 
 ## Coverage Denominator And Coverable Mask
 
@@ -537,7 +537,7 @@ observation = {
   local_highres_observed_crop,
   frontier_cells,
   frontier_features,
-  frontier_mask,
+  candidate_valid_mask,
   pose_features
 }
 ```
@@ -638,7 +638,7 @@ observed_height
 coverage_mask
 obstacle
 traversability
-frontier_mask
+local_frontier_channel
 current_position_marker
 heading_sin_marker
 heading_cos_marker
@@ -691,14 +691,28 @@ These features must be derived from observed high-resolution state, low-resoluti
 
 `candidate_generation_mode` should be encoded as a stable categorical feature, such as `0` for `regular_normal_standoff` and `1` for `irregular_local_gain_sampling`, or as an equivalent one-hot representation recorded in `observation_schema_version`.
 
-### frontier_mask
+### candidate_valid_mask
 
 Padding and validity mask for batched training:
 
 ```text
-frontier_mask[i] = true  if frontier_features[i] is a valid action
-frontier_mask[i] = false if row i is padding or invalid
+candidate_valid_mask[i] = true  if frontier_features[i] is a valid action
+candidate_valid_mask[i] = false if row i is padding or invalid
 ```
+
+The environment must handle empty action sets before calling the policy:
+
+```text
+valid_candidate_count =
+  count(candidate_valid_mask == true)
+
+if valid_candidate_count == 0:
+  do not run the policy network
+  terminate the episode as no_candidate_done or stagnation_done
+  record the empty-action-set reason in diagnostics
+```
+
+This rule prevents undefined masked categorical sampling, masked entropy/log-probability recomputation, and masked mean/max pooling when every candidate row is padding or invalid. Because no policy action is sampled, this terminal environment outcome must not be stored as a trainable PPO action transition with fake action log probabilities.
 
 ### pose_features
 
@@ -711,7 +725,6 @@ sin(theta)
 cos(theta)
 current_coverage_rate
 remaining_step_budget_norm
-no_gain_steps_norm
 ```
 
 These features help the policy and value head distinguish early exploration from late coverage completion.
@@ -762,11 +775,12 @@ candidate_count_before_top_m = N
 if N <= frontier_top_m:
   keep all valid candidates
   pad frontier_features to frontier_top_m
-  set frontier_mask false for padding rows
+  set candidate_valid_mask false for padding rows
 
 if N > frontier_top_m:
   sort candidates by candidate_priority descending
   keep the first frontier_top_m candidates
+  set candidate_valid_mask true for kept rows
   prune the rest
 ```
 
@@ -1071,7 +1085,7 @@ target_theta_check =
 Planner validation succeeds only if:
 
 ```text
-selected frontier index is valid under frontier_mask
+selected frontier index is valid under candidate_valid_mask
 target_cell is observed_safe_cell
 target_cell passes reachable_prefilter
 2D A*/grid planner finds a path through observed_safe_cell
@@ -1107,7 +1121,7 @@ coverage_gain_cells =
 ```text
 1. Build observation from current map state and pose.
 2. Extract global observed-safe frontier cells and apply reachability prefilter.
-3. Build frontier_features and frontier_mask.
+3. Build frontier_features and candidate_valid_mask.
 4. Policy scores frontier actions.
 5. Sample target_frontier_index.
 6. Policy samples target_theta using the selected frontier cell.
@@ -1188,6 +1202,9 @@ max_steps_done:
 stagnation_done:
   no_gain_steps >= N
 
+no_candidate_done:
+  valid_candidate_count == 0 before policy sampling
+
 safety_done:
   severe safety violation occurred
 ```
@@ -1227,7 +1244,7 @@ Required fields:
 observation tensors
 frontier_cells
 frontier_features
-frontier_mask
+candidate_valid_mask
 top_m_selection_summary
 selected_frontier_index
 selected_cell_xy
@@ -1260,7 +1277,7 @@ execution_observation_summary
 Important rule:
 
 ```text
-PPO update must use the saved frontier list, features, and mask from rollout.
+PPO update must use the saved frontier list, features, and candidate_valid_mask from rollout.
 It must not re-run frontier extraction and silently replace the action space.
 ```
 
@@ -1284,6 +1301,35 @@ The architecture diagram is stored at:
 network_diagram_path =
   docs/superpowers/diagrams/ppo-cross-attention-frontier-policy.drawio
 ```
+
+The v1 token budget is fixed so kilometer-scale maps remain computationally bounded:
+
+```text
+frontier_top_m:
+  follows scale profile defaults
+
+global token count:
+  Kg <= 1024
+
+local token count:
+  Kl <= 1024
+
+context token count:
+  K = Kg + Kl + 1
+
+token dimension:
+  D = 128 by default
+  D = 256 maximum for larger ablations
+
+cross_attention_layers:
+  2
+
+attention_heads:
+  4 by default
+  8 maximum when D = 256
+```
+
+The CNN encoders must use stride, patching, or adaptive pooling to satisfy `Kg` and `Kl`. The policy must not create one token per high-resolution cell in kilometer-scale scenes.
 
 The forward structure is:
 
@@ -1351,7 +1397,7 @@ x = LayerNorm(x + FeedForward(x))
 The policy distribution is:
 
 ```text
-frontier_logits[frontier_mask == false] = -inf
+frontier_logits[candidate_valid_mask == false] = -inf
 selected_frontier_index ~ Categorical(masked frontier_logits)
 
 theta_mu_norm =
@@ -1376,7 +1422,7 @@ selected_theta_distribution =
   )
 ```
 
-All candidate-dependent operations must respect `frontier_mask`, including masked softmax, entropy, log-probability recomputation, masked mean pooling, and masked max pooling. Padding candidates must not affect the action distribution or the value estimate.
+All candidate-dependent operations must respect `candidate_valid_mask`, including masked softmax, entropy, log-probability recomputation, masked mean pooling, and masked max pooling. Padding candidates must not affect the action distribution or the value estimate.
 
 The value head may share map, pose, frontier, and cross-attention encoders with the policy, but its final MLP layers must be separate from the action output MLP and heads.
 
@@ -1389,7 +1435,7 @@ raw frontier_features preserved into output MLP
 shared output MLP before action heads
 theta_mu_sin/cos normalized to unit direction
 theta_kappa produced by softplus + epsilon
-strict frontier_mask handling
+strict candidate_valid_mask handling
 separate final value MLP
 conservative initialization for frontier_logit_head
 conservative low initial theta_kappa
