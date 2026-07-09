@@ -129,6 +129,7 @@ evaluation_seed_policy
 tie_break_policy
 progress_reporting_policy
 implementation_roadmap_version
+stage1_acceptance_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -2319,15 +2320,52 @@ performance claim
 Acceptance:
 
 ```text
-Smoke episode can run from reset to done
-observation tensors have expected shapes
-candidate_valid_mask has at least one valid action unless no_candidate_done
-empty candidate triggers no_candidate_done without policy forward
-invalid sampled action produces trainable penalized transition
-coverage_gain_reward matches formula
-success_done / failure_done / stagnation_done / safety_done can be triggered
-progress metrics JSONL is written
-no NaN / inf in reward, coverage, progress fields
+stage1_acceptance_policy =
+  smoke_env_closed_loop_acceptance/v1
+
+1. reset produces the Smoke v1 map dimensions:
+   ROI = 64m x 64m
+   highres = 128 x 128 @ 0.5m/cell
+   lowres = 32 x 32 @ 2m/cell
+   local crop = 64 x 64
+   frontier_top_m = 512
+   max_steps = 64
+
+2. initial observed area is created around the robot start pose.
+
+3. build observation completes without error.
+
+4. frontier candidate generation completes without error.
+
+5. candidate_valid_mask shape = [512].
+
+6. if no valid candidate exists:
+   no_candidate_done is emitted
+   policy forward is not called
+   no trainable PPO action transition with fake logprob is stored
+
+7. if at least one valid candidate exists:
+   a rule/test action can select a valid candidate.
+
+8. planner validation returns valid or invalid without crashing.
+
+9. valid action executes path observation plus endpoint theta observation.
+
+10. observed map updates after valid observation.
+
+11. coverage_gain_cells >= 0.
+
+12. reward matches the v1 formula:
+    coverage_gain_reward + success_bonus - invalid_action_penalty - safety_violation_penalty.
+
+13. done_reason belongs to the allowed set:
+    success_done, failure_done, stagnation_done, no_candidate_done, safety_done, none.
+
+14. progress metrics JSONL is written.
+
+15. one complete Smoke episode can run from reset to done.
+
+16. ten consecutive Smoke episodes run without NaN / inf in observation, reward, coverage, done, progress, or trace fields.
 ```
 
 Recommended artifacts:
