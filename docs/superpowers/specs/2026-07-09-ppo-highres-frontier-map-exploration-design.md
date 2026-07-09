@@ -128,6 +128,7 @@ ppo_eval_policy_mode
 evaluation_seed_policy
 tie_break_policy
 progress_reporting_policy
+implementation_roadmap_version
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -2264,13 +2265,484 @@ metrics_jsonl_fields:
 
 Progress records must use deployment-available and already-computed diagnostics only. They must not expose hidden high-resolution truth, dense `coverable_mask` spatial structure, or future observation results to the policy.
 
+## Implementation Roadmap
+
+The v1 implementation roadmap is:
+
+```text
+implementation_roadmap_version =
+  seven_stage_smoke_to_kilometer_v1
+
+stages:
+  1. Smoke v1 environment closed loop
+  2. Observation + frontier candidate generator
+  3. PPO network forward + action sampling
+  4. Rollout buffer + PPO update
+  5. Baseline evaluator
+  6. Standard v1 training/eval
+  7. Kilometer v1 stress test
+```
+
+### Stage 1: Smoke v1 environment closed loop
+
+Goal: run the minimum environment loop end to end on Smoke v1. This stage validates environment semantics, not PPO performance.
+
+Scope:
+
+```text
+map reset
+initial observed area
+observation build
+frontier candidate generation
+candidate_valid_mask
+action input
+planner validation
+path execution or invalid action handling
+path + endpoint observation update
+coverage_gain_cells
+reward calculation
+done reason
+progress reporting
+metrics_jsonl
+```
+
+Out of scope:
+
+```text
+PPO training
+network optimization
+baseline comparison
+Standard / Kilometer scale
+performance claim
+```
+
+Acceptance:
+
+```text
+Smoke episode can run from reset to done
+observation tensors have expected shapes
+candidate_valid_mask has at least one valid action unless no_candidate_done
+empty candidate triggers no_candidate_done without policy forward
+invalid sampled action produces trainable penalized transition
+coverage_gain_reward matches formula
+success_done / failure_done / stagnation_done / safety_done can be triggered
+progress metrics JSONL is written
+no NaN / inf in reward, coverage, progress fields
+```
+
+Recommended artifacts:
+
+```text
+smoke_env_closed_loop_report.md
+smoke_episode_trace.jsonl
+smoke_progress_metrics.jsonl
+smoke_config.json
+```
+
+### Stage 2: Observation + frontier candidate generator
+
+Goal: stabilize the full policy observation schema and sparse frontier action set before network training.
+
+Scope:
+
+```text
+global_lowres_prior_state
+global_highres_coverage_summary
+local_highres_observed_crop
+frontier_cells
+frontier_features
+candidate_valid_mask
+top-M padding
+top-M pruning
+top-M overflow diagnostics
+candidate priority
+regular / severe irregular frontier handling
+potential gain estimate
+value gain estimate
+```
+
+Out of scope:
+
+```text
+PPO update
+network training
+baseline comparison
+Kilometer stress test
+```
+
+Acceptance:
+
+```text
+all observation tensors match schema and dtype
+global_lowres_prior_state channels fixed and ordered
+global_highres_coverage_summary channels fixed and ordered
+local_highres_observed_crop channels fixed and ordered
+frontier_features fields fixed and ordered
+candidate_valid_mask shape = [M]
+padding rows have candidate_valid_mask = false
+valid rows have finite feature values
+N <= M keeps all valid candidates and pads
+N > M applies score-first top-M
+top-M does not use hidden truth or coverable_mask spatial leakage
+potential gain uses current observed map + sensor model only
+empty candidate set is represented cleanly
+```
+
+Recommended artifacts:
+
+```text
+observation_schema_report.md
+candidate_generation_audit.json
+top_m_audit.json
+sample_observation_batch.pt or sample_observation_batch.npz
+sample_candidate_table.csv
+```
+
+### Stage 3: PPO network forward + action sampling
+
+Goal: verify that the network consumes batched observations and returns legal actions, log probabilities, and state values. This stage does not update network weights.
+
+Scope:
+
+```text
+global encoder
+local encoder
+pose encoder
+frontier encoder
+cross-attention blocks
+shared output MLP
+frontier logit head
+theta parameter head
+value head
+candidate_valid_mask handling
+masked categorical sampling
+Von Mises theta sampling
+selected_frontier_index
+selected_theta
+old_log_prob_frontier
+old_log_prob_theta
+old_log_prob_total
+value
+deterministic eval action
+```
+
+Out of scope:
+
+```text
+PPO optimizer update
+rollout advantage calculation
+baseline comparison
+full training
+```
+
+Acceptance:
+
+```text
+forward accepts batched Smoke observations
+frontier_logits shape = [B, M]
+theta params shape = [B, M]
+value shape = [B]
+masked candidates never sampled
+all-false candidate_valid_mask is rejected before network forward
+selected_frontier_index is valid
+selected_theta is normalized to [-pi, pi)
+theta_kappa is finite and within [1e-3, 20]
+old_log_prob_total = old_log_prob_frontier + old_log_prob_theta
+deterministic mode uses argmax frontier + theta_mu
+value pooling ignores padding candidates
+forward pass has no NaN / inf
+same saved observation can recompute same logprob under same weights
+```
+
+Recommended artifacts:
+
+```text
+network_forward_audit.md
+network_shape_audit.json
+sample_policy_outputs.pt or sample_policy_outputs.npz
+logprob_recompute_audit.json
+mask_handling_audit.json
+```
+
+### Stage 4: Rollout buffer + PPO update
+
+Goal: run one complete PPO update chain on Smoke v1 and verify that the rollout snapshot, GAE, losses, optimizer step, checkpoint, and progress logs are correct.
+
+Scope:
+
+```text
+vectorized rollout collection
+rollout_time_snapshot_storage
+observation snapshot
+candidate snapshot
+selected action
+old logprobs
+old value
+reward / done
+GAE advantage
+return
+joint logprob recomputation
+PPO ratio
+clipped policy loss
+clipped value loss
+frontier entropy bonus
+gradient clipping
+optimizer step
+KL monitoring
+latest checkpoint save
+progress reporting
+metrics JSONL
+```
+
+Out of scope:
+
+```text
+baseline comparison
+Standard scale training
+Kilometer stress test
+performance claim
+```
+
+Acceptance:
+
+```text
+collects rollout_batch_size = 1024 trainable transitions or handles terminal non-trainable events correctly
+PPO update uses saved candidate snapshot, not re-extracted frontier
+old_log_prob_total and new_log_prob_total shapes match
+ratio finite
+advantages finite and normalized
+returns finite
+policy_loss finite
+value_loss finite
+entropy finite
+grad_norm finite and clipped by max_grad_norm
+approx_kl computed
+early stop triggers if KL > target_kl
+optimizer step changes at least one trainable parameter
+latest checkpoint can be saved and loaded
+loaded checkpoint reproduces same deterministic action on same observation
+training progress JSONL is written
+no NaN / inf in loss, gradients, model outputs
+```
+
+Recommended artifacts:
+
+```text
+ppo_update_smoke_report.md
+rollout_buffer_audit.json
+gae_audit.json
+loss_audit.json
+gradient_audit.json
+checkpoint_load_audit.json
+training_progress_metrics.jsonl
+checkpoint_latest.pt
+```
+
+### Stage 5: Baseline evaluator
+
+Goal: run all v1 baselines and PPO evaluation under the same environment, candidate set, seed set, planner validation, sensor model, and step budget.
+
+Scope:
+
+```text
+baseline_algorithms_v1
+shared candidate set
+same planner validation
+same sensor model
+same max_steps
+same success threshold = 0.99
+fixed eval seeds
+deterministic PPO eval
+stable tie-break
+main result table
+bootstrap 95% CI
+baseline progress reporting
+```
+
+Out of scope:
+
+```text
+PPO training improvement
+new reward tuning
+Kilometer stress test
+paper final claim
+```
+
+Acceptance:
+
+```text
+all methods run on same scenario_seed / start_pose_seed / terrain_seed
+all methods receive the same frontier candidate set at each state
+baselines do not access hidden highres truth
+baselines do not access dense coverable_mask as spatial input
+PPO eval uses argmax frontier + theta_mu
+tie-break is deterministic
+success_rate_under_fixed_step_budget is computed
+mean_final_coverage is computed
+steps_to_99_success_only is computed
+path_length_to_99_success_only is computed
+coverage_auc_over_steps is computed
+coverage_per_meter is computed
+invalid_action_count_mean is computed
+planner_failure_count_mean is computed
+bootstrap 95% CI is computed
+baseline progress JSONL is written
+```
+
+Recommended artifacts:
+
+```text
+baseline_eval_report.md
+baseline_main_result_table.csv
+baseline_main_result_table.json
+baseline_episode_metrics.jsonl
+baseline_progress_metrics.jsonl
+baseline_fairness_audit.json
+bootstrap_ci_audit.json
+```
+
+### Stage 6: Standard v1 training/eval
+
+Goal: run the main v1 training and evaluation workflow on Standard v1 and begin assessing whether PPO improves over rule-based baselines.
+
+Scope:
+
+```text
+Standard v1 scale profile
+train_scenarios
+validation_scenarios
+test_scenarios
+fixed step budget = 128
+PPO training with eval every 10 updates
+latest / periodic / best checkpoint
+best_success_rate_under_fixed_step_budget
+baseline comparison
+main result table
+coverage curves
+failure mode analysis
+```
+
+Out of scope:
+
+```text
+Kilometer stress test
+large lunar polar final claim
+reward redesign
+network architecture redesign
+```
+
+Acceptance:
+
+```text
+Standard training runs without NaN / inf
+latest checkpoint can resume
+best checkpoint selected by validation success_rate_under_fixed_step_budget
+validation eval uses deterministic PPO mode
+test eval does not update PPO
+test eval does not select checkpoint
+baseline comparison uses same_env_same_budget
+main result table generated
+coverage curves generated
+invalid/planner/safety failure counts reported
+PPO result compared against gain_cost_frontier and current_project_frontier_method
+```
+
+First-pass acceptance:
+
+```text
+training completes without numerical failure
+PPO success_rate > random_valid_frontier
+PPO mean_final_coverage >= nearest_frontier baseline
+```
+
+Later paper-level target:
+
+```text
+PPO >= gain_cost_frontier
+PPO >= current_project_frontier_method
+```
+
+Recommended artifacts:
+
+```text
+standard_training_report.md
+standard_training_metrics.jsonl
+standard_eval_report.md
+standard_baseline_comparison.csv
+standard_coverage_curves.csv
+standard_checkpoint_manifest.json
+checkpoint_latest.pt
+checkpoint_best_success_rate.pt
+checkpoint_best_mean_final_coverage.pt
+```
+
+### Stage 7: Kilometer v1 stress test
+
+Goal: verify that the hierarchical observation design, sparse action set, candidate cap, progress reporting, and evaluation protocol scale to kilometer-level lunar polar scenes.
+
+Scope:
+
+```text
+Kilometer v1 scale profile
+2048 x 2048 highres environment-side map
+128 x 128 lowres global map
+192 x 192 local crop
+frontier_top_m = 2048
+frontier_top_m_max = 4096 after overflow audit
+max_steps = 512
+fixed-budget evaluation
+progress reporting
+memory/runtime profiling
+candidate overflow audit
+coverage curve
+baseline comparison subset or full comparison
+```
+
+Out of scope:
+
+```text
+modifying reward
+modifying network structure
+replacing planner
+claiming final lunar deployment performance
+```
+
+Acceptance:
+
+```text
+Kilometer episode can reset and run to done
+policy observation remains hierarchical and sparse
+full highres map is not fed as dense policy tensor
+candidate generation finishes within acceptable runtime
+top-M overflow diagnostics are recorded
+PPO forward fits GPU/CPU memory budget
+progress metrics JSONL is written
+coverage_rate and success_rate_under_fixed_step_budget are reported
+baseline comparison uses same_env_same_budget
+no hidden truth leakage into policy or baseline
+no NaN / inf in observation, reward, policy outputs, metrics
+```
+
+Recommended artifacts:
+
+```text
+kilometer_stress_report.md
+kilometer_runtime_profile.json
+kilometer_memory_profile.json
+kilometer_candidate_overflow_audit.json
+kilometer_eval_metrics.jsonl
+kilometer_progress_metrics.jsonl
+kilometer_coverage_curves.csv
+kilometer_baseline_summary.csv
+```
+
 ## Open Decisions For Planning
 
-The v1 default constants for reward scaling, invalid and safety penalties, fixed step budgets, and stagnation termination are fixed in this design. Implementation planning may still define smoke-test acceptance thresholds, logging formats, and ablation ranges, but those must not replace the v1 defaults without creating a new version.
+The v1 default constants for reward scaling, invalid and safety penalties, fixed step budgets, stagnation termination, and implementation roadmap are fixed in this design. Implementation planning may still define implementation-specific runtime thresholds, logging formats, and ablation ranges, but those must not replace the v1 defaults without creating a new version.
 
 ```text
 remaining implementation-plan choices:
-  smoke-test acceptance thresholds
+  implementation-specific runtime thresholds
   ablation ranges around v1 defaults
   report table formats
   training run length and hardware scheduling
