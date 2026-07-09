@@ -134,6 +134,9 @@ stage2_acceptance_policy
 stage3_acceptance_policy
 stage4_acceptance_policy
 stage5_acceptance_policy
+stage6_acceptance_policy
+stage7_acceptance_policy
+stage8_acceptance_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -2270,7 +2273,7 @@ The v1 implementation roadmap is:
 
 ```text
 implementation_roadmap_version =
-  seven_stage_smoke_to_kilometer_v1
+  eight_stage_smoke_to_final_package_v1
 
 stages:
   1. Smoke v1 environment closed loop
@@ -2280,6 +2283,7 @@ stages:
   5. Baseline evaluator
   6. Standard v1 training/eval
   7. Kilometer v1 stress test
+  8. Final report package
 ```
 
 ### Stage 1: Smoke v1 environment closed loop
@@ -2753,62 +2757,78 @@ bootstrap_ci_audit.json
 
 ### Stage 6: Standard v1 training/eval
 
-Goal: run the main v1 training and evaluation workflow on Standard v1 and begin assessing whether PPO improves over rule-based baselines.
+Goal: run the minimum complete Standard v1 training and evaluation workflow. This stage is a system-closure milestone, not a new algorithm-design stage.
 
-Scope:
-
-```text
-Standard v1 scale profile
-train_scenarios
-validation_scenarios
-test_scenarios
-fixed step budget = 128
-PPO training with eval every 10 updates
-latest / periodic / best checkpoint
-best_success_rate_under_fixed_step_budget
-baseline comparison
-main result table
-coverage curves
-failure mode analysis
-```
-
-Out of scope:
+Minimum configuration:
 
 ```text
-Kilometer stress test
-large lunar polar final claim
-reward redesign
-network architecture redesign
+stage6_acceptance_policy =
+  standard_v1_minimal_training_eval_acceptance/v1
+
+scale_profile:
+  Standard v1
+
+train_seed_count:
+  5
+
+train_updates:
+  100
+
+eval_every_updates:
+  10
+
+max_steps:
+  128
+
+validation_eval_episodes:
+  16
+
+final_test_episodes:
+  64
+
+unseen_test_episodes:
+  64
+
+checkpoint_policy:
+  save latest every update
+  save best by validation success_rate_under_fixed_step_budget
+
+eval_policy:
+  deterministic PPO
+
+baseline_set:
+  random_valid_frontier
+  nearest_frontier
+  max_potential_gain_frontier
+  gain_over_cost_frontier
 ```
 
 Acceptance:
 
 ```text
-Standard training runs without NaN / inf
-latest checkpoint can resume
-best checkpoint selected by validation success_rate_under_fixed_step_budget
-validation eval uses deterministic PPO mode
-test eval does not update PPO
-test eval does not select checkpoint
-baseline comparison uses same_env_same_budget
-main result table generated
-coverage curves generated
-invalid/planner/safety failure counts reported
-PPO result compared against gain_over_cost_frontier
-```
+1. Standard training completes 100 PPO updates without NaN, inf, or crash.
 
-First-pass acceptance:
+2. latest checkpoint can resume training.
 
-```text
-training completes without numerical failure
-PPO success_rate > random_valid_frontier
-PPO mean_final_coverage >= nearest_frontier baseline
-```
+3. best checkpoint is selected only by validation success_rate_under_fixed_step_budget.
 
-Later paper-level target:
+4. validation evaluation uses deterministic PPO mode.
 
-```text
-PPO >= gain_over_cost_frontier
+5. final test evaluation does not update PPO.
+
+6. final test evaluation does not select or change the checkpoint.
+
+7. baseline comparison uses same_env_same_budget.
+
+8. PPO is compared against all four v1 non-learning baselines.
+
+9. success_rate_under_fixed_step_budget, path_length_to_99_success_only, coverage_per_meter, invalid_action_count_mean, and planner_failure_count_mean are reported.
+
+10. coverage curves are generated.
+
+11. checkpoint manifest is generated.
+
+12. Implementation acceptance does not require PPO to beat gain_over_cost_frontier; that remains a later paper-level performance target.
 ```
 
 Recommended artifacts:
@@ -2822,54 +2842,63 @@ standard_coverage_curves.csv
 standard_checkpoint_manifest.json
 checkpoint_latest.pt
 checkpoint_best_success_rate.pt
-checkpoint_best_mean_final_coverage.pt
 ```
 
 ### Stage 7: Kilometer v1 stress test
 
-Goal: verify that the hierarchical observation design, sparse action set, candidate cap, progress reporting, and evaluation protocol scale to kilometer-level lunar polar scenes.
+Goal: verify that the Standard v1 policy and the sparse hierarchical observation/action pipeline can run on kilometer-level scenes without changing reward, network, planner, or action semantics.
 
-Scope:
-
-```text
-Kilometer v1 scale profile
-2048 x 2048 highres environment-side map
-128 x 128 lowres global map
-192 x 192 local crop
-frontier_top_m = 2048
-frontier_top_m_max = 4096 after overflow audit
-max_steps = 512
-fixed-budget evaluation
-progress reporting
-memory/runtime profiling
-candidate overflow audit
-coverage curve
-baseline comparison subset or full comparison
-```
-
-Out of scope:
+Minimum configuration:
 
 ```text
-modifying reward
-modifying network structure
-replacing planner
-claiming final lunar deployment performance
+stage7_acceptance_policy =
+  kilometer_v1_eval_only_stress_acceptance/v1
+
+scale_profile:
+  Kilometer v1
+
+mode:
+  eval_only
+
+policy_source:
+  Stage 6 checkpoint_best_success_rate.pt
+
+max_steps:
+  512
+
+primary_baseline:
+  gain_over_cost_frontier
+
+full_baseline_set:
+  optional only if runtime is acceptable
 ```
 
 Acceptance:
 
 ```text
-Kilometer episode can reset and run to done
-policy observation remains hierarchical and sparse
-full highres map is not fed as dense policy tensor
-candidate generation finishes within acceptable runtime
-top-M overflow diagnostics are recorded
-PPO forward fits GPU/CPU memory budget
-progress metrics JSONL is written
-coverage_rate and success_rate_under_fixed_step_budget are reported
-baseline comparison uses same_env_same_budget
-no hidden truth leakage into policy or baseline
-no NaN / inf in observation, reward, policy outputs, metrics
+1. Kilometer episode can reset and run to done.
+
+2. policy observation remains hierarchical and sparse.
+
+3. full highres map is not fed as a dense policy tensor.
+
+4. PPO uses the Stage 6 checkpoint without Kilometer-specific fine-tuning.
+
+5. candidate generation completes within the implementation runtime threshold.
+
+6. top-M overflow diagnostics are recorded.
+
+7. PPO forward fits the available CPU/GPU memory budget.
+
+8. runtime and memory profiles are recorded.
+
+9. PPO is compared against gain_over_cost_frontier under same_env_same_budget.
+
+10. coverage_rate and success_rate_under_fixed_step_budget are reported.
+
+11. no hidden truth leakage enters policy or baseline decision inputs.
+
+12. no NaN, inf, or crash occurs in observation, reward, policy outputs, or metrics.
 ```
 
 Recommended artifacts:
@@ -2885,16 +2914,80 @@ kilometer_coverage_curves.csv
 kilometer_baseline_summary.csv
 ```
 
+### Stage 8: Final report package
+
+Goal: package the design, configs, checkpoints, metrics, comparisons, and audits into one reproducible experiment report. This stage does not add new training or algorithm changes.
+
+Scope:
+
+```text
+stage8_acceptance_policy =
+  final_report_package_acceptance/v1
+
+design document
+experiment configs
+checkpoint manifest
+training curves
+baseline comparison table
+coverage curves
+failure audit
+truth-leakage audit
+reproduction commands
+final report markdown
+```
+
+Acceptance:
+
+```text
+1. artifact_manifest.json references all required files.
+
+2. final_report.md states the task success criterion: coverage_rate >= 0.99 under the fixed step budget.
+
+3. final_report.md includes Standard v1 training/eval results.
+
+4. final_report.md includes Kilometer v1 stress-test results.
+
+5. final_report.md compares PPO with the four v1 non-learning baselines.
+
+6. success_rate_under_fixed_step_budget, path_length_to_99_success_only, coverage_per_meter, invalid_action_count_mean, and planner_failure_count_mean are included.
+
+7. coverage curves and baseline comparison tables are included.
+
+8. checkpoint_manifest.json identifies latest and best checkpoints.
+
+9. reproduction_commands.md contains the commands needed to rerun Stage 6 and Stage 7.
+
+10. leakage_audit.json confirms that hidden truth is used only for environment updates and final metrics, not policy or baseline decisions.
+
+11. report claims do not exceed the evidence; Kilometer v1 is reported as a stress test, not final deployment validation.
+
+12. Open decisions are limited to implementation-specific runtime thresholds, hardware scheduling, and optional future ablations.
+```
+
+Recommended artifacts:
+
+```text
+final_report.md
+artifact_manifest.json
+reproduction_commands.md
+config_manifest.json
+checkpoint_manifest.json
+final_metrics_summary.json
+baseline_comparison_table.csv
+coverage_curves.csv
+failure_audit.json
+leakage_audit.json
+```
+
 ## Open Decisions For Planning
 
-The v1 default constants for reward scaling, invalid and safety penalties, fixed step budgets, stagnation termination, and implementation roadmap are fixed in this design. Implementation planning may still define implementation-specific runtime thresholds, logging formats, and ablation ranges, but those must not replace the v1 defaults without creating a new version.
+The v1 default constants for reward scaling, invalid and safety penalties, fixed step budgets, stagnation termination, baseline comparison, and implementation roadmap are fixed in this design. The remaining choices are implementation logistics only and must not replace the v1 defaults without creating a new version.
 
 ```text
 remaining implementation-plan choices:
   implementation-specific runtime thresholds
-  ablation ranges around v1 defaults
-  report table formats
-  training run length and hardware scheduling
+  hardware scheduling
+  optional future ablation ranges around v1 defaults
 ```
 
 The three scale profiles, fixed step budgets, reward constants, and stagnation thresholds are fixed for v1. Hard path-length budget is disabled for v1.
