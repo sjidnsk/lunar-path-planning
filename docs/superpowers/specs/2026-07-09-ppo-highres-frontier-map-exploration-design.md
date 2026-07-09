@@ -117,6 +117,16 @@ efficiency_pressure_source
 max_steps_by_scale
 primary_eval_metric
 baseline_comparison_contract
+baseline_algorithms_v1
+baseline_candidate_set_contract
+baseline_information_contract
+scenario_split_policy
+eval_episode_count_policy
+main_result_table_metrics
+confidence_reporting
+ppo_eval_policy_mode
+evaluation_seed_policy
+tie_break_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -1723,7 +1733,7 @@ best:
 
 eval:
   eval_every_n_updates = 10
-  eval_episodes = 16
+  eval_episodes = scale-specific validation_eval_episodes
   eval_policy_mode = deterministic_argmax_frontier_mean_theta/v1
 ```
 
@@ -1963,6 +1973,93 @@ coverable_mask_exact
 
 This is the primary metric because unlimited exploration would make final coverage alone too weak for comparing learned and rule-based exploration policies.
 
+The v1 baseline set is:
+
+```text
+baseline_algorithms_v1 =
+  random_valid_frontier
+  nearest_frontier
+  max_potential_gain_frontier
+  gain_cost_frontier
+  current_project_frontier_method
+  ppo_policy
+
+non_learning_baselines =
+  random_valid_frontier
+  nearest_frontier
+  max_potential_gain_frontier
+  gain_cost_frontier
+  current_project_frontier_method
+
+learning_method =
+  ppo_policy
+```
+
+Baseline behavior definitions:
+
+```text
+random_valid_frontier:
+  uniformly select one valid candidate
+
+nearest_frontier:
+  select min(distance_from_robot_norm)
+
+max_potential_gain_frontier:
+  select max(potential_coverage_gain_norm)
+
+gain_cost_frontier:
+  score =
+    0.6 * potential_coverage_gain_norm
+  - 0.2 * distance_from_robot_norm
+  - 0.2 * reachable_prefilter_cost_norm
+  select max(score)
+
+current_project_frontier_method:
+  use the existing project frontier exploration method under the same environment contract
+
+ppo_policy:
+  use the trained PPO policy under deterministic evaluation mode
+```
+
+All methods use the same candidate set:
+
+```text
+baseline_candidate_set_contract =
+  shared_observed_safe_reachable_frontier_candidates/v1
+
+all_methods_use_same_candidate_set = true
+all_methods_use_same_planner_validation = true
+all_methods_use_same_sensor_model = true
+all_methods_use_same_step_budget = true
+```
+
+The shared candidate set includes the same frontier extraction, regular/severe irregular segment handling, observed-safe filtering, reachability prefilter, top-M cap when applicable, candidate features, and planner validation. Algorithms differ only in how they choose among valid candidates.
+
+Baseline information access is restricted to deployment-available information:
+
+```text
+baseline_information_contract =
+  deployment_available_information_only/v1
+
+forbidden_for_baselines:
+  hidden_highres_truth
+  dense_coverable_mask_as_spatial_input
+  future_observation_result
+  unknown_cell_true_obstacle_or_height
+  unknown_cell_true_traversability
+
+allowed_for_baselines:
+  current_observed_highres_map
+  lowres_prior_map
+  global_coverage_summary
+  frontier_cells
+  frontier_features
+  candidate_valid_mask
+  current_pose
+  sensor_model
+  planner_validation_result
+```
+
 Baseline comparison must use the same environment and budget:
 
 ```text
@@ -1979,26 +2076,111 @@ all algorithms must use:
   same success threshold = 0.99
 ```
 
-Secondary and diagnostic evaluation:
+Scenario splitting is fixed-seed and disjoint:
 
 ```text
-mean_final_coverage
-steps_to_99_success_only
-path_length_to_99_success_only
-coverage_per_meter
-coverage_auc_over_steps
-observation sample count
-ray cell visit count
-newly observed cells per action
-invalid action count
-planner failure count by cause
-safety violation count
-stagnation termination count
-frontier action entropy
-theta distribution diagnostics
-frontier extractor recall diagnostics
-top-M overflow diagnostics
-selected candidate original rank
+scenario_split_policy =
+  fixed_seed_disjoint_split/v1
+
+splits:
+  train_scenarios
+  validation_scenarios
+  test_scenarios
+  unseen_test_scenarios
+
+split_ratio_default:
+  train = 0.70
+  validation = 0.15
+  test = 0.15
+
+rules:
+  validation and test do not update PPO
+  test is not used for checkpoint selection
+  unseen_test is reported separately as generalization
+  scenario_seed, start_pose_seed, terrain_seed must be logged
+```
+
+Evaluation episode counts are scale-specific:
+
+```text
+eval_episode_count_policy =
+  scale_specific_eval_counts/v1
+
+validation_eval_episodes:
+  Smoke v1: 8
+  Standard v1: 16
+  Kilometer v1: 8
+
+final_test_episodes:
+  Smoke v1: 16
+  Standard v1: 64
+  Kilometer v1: 32
+
+unseen_test_episodes:
+  Smoke v1: 16
+  Standard v1: 64
+  Kilometer v1: 32
+```
+
+Main result tables must report:
+
+```text
+main_result_table_metrics =
+  method
+  scale_profile
+  success_rate_under_fixed_step_budget
+  mean_final_coverage
+  steps_to_99_success_only
+  path_length_to_99_success_only
+  coverage_auc_over_steps
+  coverage_per_meter
+  invalid_action_count_mean
+  planner_failure_count_mean
+  safety_violation_count
+
+confidence_reporting =
+  bootstrap_95ci_by_episode/v1
+```
+
+PPO evaluation is deterministic:
+
+```text
+ppo_eval_policy_mode =
+  deterministic_argmax_frontier_mean_theta/v1
+
+frontier_eval_action =
+  argmax(masked_frontier_logits)
+
+theta_eval_action =
+  theta_mu_rad[selected_frontier_index]
+
+evaluation_seed_policy =
+  fixed_eval_seed_set/v1
+
+tie_break_policy =
+  stable_candidate_order/v1
+
+argmax_tie_break =
+  lowest_candidate_index
+```
+
+Training rollout remains stochastic. Evaluation uses fixed scenario seeds, start-pose seeds, terrain seeds, and deterministic tie-breaking so that repeated evaluations of the same checkpoint are comparable.
+
+Additional diagnostic metrics include:
+
+```text
+observation_sample_count
+ray_cell_visit_count
+newly_observed_cells_per_action
+invalid_action_count_by_reason
+planner_failure_count_by_cause
+safety_violation_count_by_cause
+stagnation_termination_count
+frontier_action_entropy
+theta_distribution_diagnostics
+frontier_extractor_recall_diagnostics
+top_m_overflow_diagnostics
+selected_candidate_original_rank
 ```
 
 Evaluation must verify that all inference observations use deployment-available information only.
