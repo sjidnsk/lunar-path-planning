@@ -60,6 +60,31 @@ The first implementation uses three scale profiles. The kilometer profile repres
 | Standard v1 | Main v1 training and ablations | 128m x 128m | 256 x 256 @ 0.5m/cell | 32 x 32 @ 4m/cell | 96 x 96, covering 48m x 48m | 1024 |
 | Kilometer v1 | Large lunar polar scenes and long-horizon coverage stress tests | 1024m x 1024m | 2048 x 2048 @ 0.5m/cell, maintained by the environment only | 128 x 128 @ 8m/cell | 192 x 192, covering 96m x 96m | 2048 default, 4096 max after overflow audit |
 
+Scale-profile metadata is derived directly from this table:
+
+```text
+roi_size_m:
+  ROI physical size
+
+highres_shape:
+  high-resolution map cell shape
+
+lowres_resolution_m:
+  low-resolution global map meters per cell
+
+lowres_shape:
+  low-resolution global map cell shape
+
+tile_ratio:
+  lowres_resolution_m / highres_resolution_m
+
+local_crop_shape:
+  local high-resolution crop cell shape
+
+local_crop_size_m:
+  local high-resolution crop physical size
+```
+
 The recommended development order is:
 
 ```text
@@ -84,6 +109,14 @@ frontier_top_m_max
 top_m_selection_policy
 coordinate_convention
 theta_convention
+platform_safety_constants_source
+vehicle_radius_m
+safety_margin_m
+traversability_threshold
+max_traversable_slope_deg
+coverage_progress_feature_source
+theta_kappa_parameterization
+baseline_cost_score_policy
 sensor_model_id
 sensor_range_m
 sensor_fov_deg
@@ -170,6 +203,65 @@ global low-resolution map
 ```
 
 The full kilometer-scale high-resolution map must not be stored in every PPO transition as a dense policy tensor.
+
+## Coordinate And Angle Convention
+
+The v1 coordinate and heading convention is fixed so that observation generation, frontier cells, planner validation, network features, and report artifacts use the same frame:
+
+```text
+coordinate_convention =
+  world_xy_grid_col_row_cell_center/v1
+
+theta_convention =
+  radians_world_x_ccw_normalized_minus_pi_to_pi/v1
+
+world_origin_m:
+  lower-left ROI corner unless explicitly overridden by config
+
+world_x:
+  increases to the right / east direction of the ROI
+
+world_y:
+  increases upward / north direction of the ROI
+
+grid_cell:
+  (cell_x, cell_y)
+  where cell_x = column index
+  and cell_y = row index
+
+cell_center_world:
+  x_m = world_origin_x_m + (cell_x + 0.5) * highres_resolution_m
+  y_m = world_origin_y_m + (cell_y + 0.5) * highres_resolution_m
+
+theta_rad:
+  0 points along +world_x
+  positive rotation is counter-clockwise toward +world_y
+  normalized to [-pi, pi)
+```
+
+All stored `frontier_cells`, `selected_cell_xy`, planned path cells, and map-index features must use `(cell_x, cell_y)` order. If any internal library uses `(row, col)`, the adapter must convert at the boundary and record the conversion in the audit artifact.
+
+## Platform Safety Constants
+
+V1 does not silently invent vehicle geometry. Safety constants must come from the stage config or platform config and must be written into checkpoints, rollout manifests, and evaluation reports:
+
+```text
+platform_safety_constants_source =
+  required_stage_or_platform_config/v1
+
+required constants:
+  vehicle_radius_m
+  safety_margin_m
+  traversability_threshold
+
+fixed v1 constant:
+  max_traversable_slope_deg = 30.0
+
+derived constant:
+  min_clearance_m = vehicle_radius_m + safety_margin_m
+```
+
+Any environment reset must fail fast if `vehicle_radius_m`, `safety_margin_m`, or `traversability_threshold` is missing. All clearance checks use `clearance >= min_clearance_m`.
 
 ## Non-Goals
 
@@ -438,7 +530,7 @@ safe_free_mask =
   inside_roi
   AND not hard_obstacle
   AND not slope_blocked
-  AND clearance >= vehicle_radius + safety_margin
+  AND clearance >= min_clearance_m
 
 reachable_safe_mask =
   start-cell connected component within safe_free_mask
@@ -513,8 +605,8 @@ observed_safe_cell =
   observed == true
   AND obstacle == false
   AND slope_blocked == false
-  AND traversability >= threshold
-  AND clearance >= vehicle_radius + safety_margin
+  AND traversability >= traversability_threshold
+  AND clearance >= min_clearance_m
 ```
 
 At each decision step, compute the observed-safe connected component from the current robot cell:
@@ -693,7 +785,7 @@ This input supports local safety, local terrain reasoning, and near-field fronti
 The global high-resolution frontier action set for the current step. Each item is a high-resolution cell coordinate:
 
 ```text
-frontier_cells[i] = (x_i, y_i)
+frontier_cells[i] = (cell_x_i, cell_y_i)
 ```
 
 These cells are action candidates, not unknown cells to be mapped directly.
@@ -750,11 +842,13 @@ valid_candidate_count =
 
 if valid_candidate_count == 0:
   do not run the policy network
-  terminate the episode as no_candidate_done or stagnation_done
+  terminate the episode as no_candidate_done
   record the empty-action-set reason in diagnostics
 ```
 
 This rule prevents undefined masked categorical sampling, masked entropy/log-probability recomputation, and masked mean/max pooling when every candidate row is padding or invalid. Because no policy action is sampled, this terminal environment outcome must not be stored as a trainable PPO action transition with fake action log probabilities.
+
+`stagnation_done` is reserved for the consecutive zero-coverage-gain counter and must not be used as the empty-candidate terminal reason.
 
 ### pose_features
 
@@ -765,7 +859,7 @@ x_norm
 y_norm
 sin(theta)
 cos(theta)
-current_coverage_rate
+observed_roi_ratio
 remaining_step_budget_norm
 ```
 
@@ -773,7 +867,18 @@ These features help the policy and value head distinguish early exploration from
 
 `remaining_path_budget_norm` is intentionally omitted in v1 because hard path budget termination is disabled.
 
-If `current_coverage_rate` is exposed as a policy feature, it must not leak a dense hidden-truth coverable mask. Either use a scalar derived from the same environment-side denominator without exposing spatial structure, or use a deployment-available progress estimate and record that choice in `observation_schema_version`.
+The policy input must not include the true `highres_observed_coverage_rate`, because that scalar uses the environment-side `coverable_mask` denominator. V1 uses an observed-only progress feature instead:
+
+```text
+coverage_progress_feature_source =
+  observed_roi_ratio_no_coverable_denominator/v1
+
+observed_roi_ratio =
+  count(observed_mask == 1 inside ROI)
+  / count(high-resolution cells inside ROI)
+```
+
+`observed_roi_ratio` is a policy feature only. It is not the success metric, not the reward denominator, and not a replacement for `highres_observed_coverage_rate` in reward, done, or evaluation.
 
 ## Frontier Action Set
 
@@ -789,8 +894,8 @@ A frontier cell is valid only if:
 observed == true
 obstacle == false
 slope_blocked == false
-traversability >= threshold
-clearance >= vehicle_radius + safety_margin
+traversability >= traversability_threshold
+clearance >= min_clearance_m
 near_unknown == true
 potential_gain > 0
 reachable_prefilter == true
@@ -931,8 +1036,8 @@ All generated candidates must satisfy:
 observed == true
 obstacle == false
 slope_blocked == false
-traversability >= threshold
-clearance >= vehicle_radius + safety_margin
+traversability >= traversability_threshold
+clearance >= min_clearance_m
 reachable_prefilter == true
 potential_gain > 0
 ```
@@ -1071,16 +1176,29 @@ log_prob_total = log_prob_frontier_index + log_prob_theta
 The theta head should output:
 
 ```text
-theta_mu_sin
-theta_mu_cos
+theta_mu_sin_raw
+theta_mu_cos_raw
 theta_kappa_raw
 ```
 
 These are converted to:
 
 ```text
-theta_mu_rad = atan2(theta_mu_sin, theta_mu_cos)
-theta_kappa  = softplus(theta_kappa_raw) + epsilon
+theta_kappa_parameterization =
+  clamped_softplus_kappa/v1
+
+theta_mu_norm =
+  sqrt(theta_mu_sin_raw^2 + theta_mu_cos_raw^2) + epsilon
+
+theta_mu_rad =
+  atan2(theta_mu_sin_raw / theta_mu_norm, theta_mu_cos_raw / theta_mu_norm)
+
+theta_kappa =
+  clamp(
+    softplus(theta_kappa_raw) + 1e-3,
+    min = 1e-3,
+    max = 20.0
+  )
 ```
 
 Rollout and update must preserve separate theta and frontier log probabilities for auditability.
@@ -1151,12 +1269,17 @@ Execution after successful validation is:
 The action-level coverage gain is:
 
 ```text
+newly_observed_cell_count =
+  count(cells where observed_mask changed from 0 to 1 after all path and endpoint observations)
+
 coverage_gain_cells =
-  newly observed cells after all path and endpoint observations
-  minus observed cells before action execution
+  count(cells where observed_mask changed from 0 to 1 AND coverable_mask)
+
+coverage_gain_per_meter =
+  coverage_gain_cells / max(path_length_m, epsilon)
 ```
 
-`path_length_m`, `coverage_gain_cells`, and `coverage_gain_per_meter` are diagnostic fields. They do not create a hard path budget in v1.
+`newly_observed_cell_count` records all newly written observed-map evidence. `coverage_gain_cells` is the reward and success-progress quantity and always counts only newly observed cells inside `coverable_mask`. `path_length_m`, `coverage_gain_cells`, and `coverage_gain_per_meter` are diagnostic fields. They do not create a hard path budget in v1.
 
 ## Execution Flow
 
@@ -1902,7 +2025,11 @@ theta_mu_rad =
   atan2(theta_mu_sin, theta_mu_cos)
 
 theta_kappa =
-  softplus(theta_kappa_raw) + epsilon
+  clamp(
+    softplus(theta_kappa_raw) + 1e-3,
+    min = 1e-3,
+    max = 20.0
+  )
 
 selected_theta_distribution =
   VonMises(
@@ -1923,7 +2050,7 @@ cross-attention residual + LayerNorm enabled
 raw frontier_features preserved into output MLP
 shared output MLP before action heads
 theta_mu_sin/cos normalized to unit direction
-theta_kappa produced by softplus + epsilon
+theta_kappa uses clamped_softplus_kappa/v1
 strict candidate_valid_mask handling
 separate final value MLP
 conservative initialization for frontier_logit_head
@@ -2009,6 +2136,9 @@ learning_method =
 Baseline behavior definitions:
 
 ```text
+baseline_cost_score_policy =
+  gain_over_one_plus_cost/v1
+
 random_valid_frontier:
   uniformly select one valid candidate
 
@@ -2021,7 +2151,7 @@ max_potential_gain_frontier:
 gain_over_cost_frontier:
   score =
     potential_coverage_gain_norm
-    / max(reachable_prefilter_cost_norm, epsilon)
+    / (1.0 + reachable_prefilter_cost_norm)
   select max(score)
 
 ppo_policy:
@@ -2841,7 +2971,7 @@ stage5_acceptance_policy =
 
 8. Every selected baseline action comes from the reachable observed-safe candidate set.
 
-9. Empty candidate set behavior is consistent across methods and is recorded as done or failure according to the environment contract.
+9. Empty candidate set behavior is consistent across methods and is recorded as no_candidate_done according to the environment contract.
 
 10. deterministic baselines are reproducible under the same seed.
 
@@ -2917,8 +3047,11 @@ unseen_test_episodes:
   64
 
 checkpoint_policy:
+  inherit latest_periodic_best/v1
   save latest every update
+  save periodic every 50 updates
   save best by validation success_rate_under_fixed_step_budget
+  use validation mean_final_coverage only as a tie-break
 
 eval_policy:
   deterministic PPO
@@ -2937,7 +3070,7 @@ Acceptance:
 
 2. latest checkpoint can resume training.
 
-3. best checkpoint is selected only by validation success_rate_under_fixed_step_budget.
+3. best checkpoint is selected by validation success_rate_under_fixed_step_budget, with validation mean_final_coverage used only as a deterministic tie-break.
 
 4. validation evaluation uses deterministic PPO mode.
 
