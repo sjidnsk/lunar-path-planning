@@ -87,6 +87,10 @@ sensor_range_m
 sensor_fov_deg
 sensor_range_cells
 coverage_update_mode
+los_model
+los_implementation_source
+ray_angle_step_deg
+observation_overlap_policy
 coverage_denominator_source
 reachable_prefilter_source
 planner_validation_source
@@ -175,6 +179,9 @@ coverage_update_mode =
   path_continuous_observation_plus_endpoint_theta_observation
 
 los_model = two_dimensional_grid_line_of_sight/v1
+los_implementation_source = grid_ray_casting_fov/v1
+ray_angle_step_deg = 1.0
+observation_overlap_policy = update_newly_observed_only/v1
 ```
 
 At each PPO step, the policy selects a target frontier cell and a continuous `target_theta`. The planner attempts to reach the target cell. If the path is valid and executed, the environment observes from regularly sampled path poses using the local path tangent heading, then observes from the endpoint using `target_theta`.
@@ -204,11 +211,25 @@ Line-of-sight blockers include hard obstacle cells and slope-blocked cells when 
 max_traversable_slope_deg = 30.0
 ```
 
-The v1 LOS model is a 2D grid line-of-sight model, not a 3D DEM ray-casting model. For every candidate visible cell from the range and FOV test, the environment checks the grid line segment from the endpoint cell center to the target cell center. A cell is visible only when no intermediate line cell is a LOS blocker.
+The v1 LOS model is a 2D grid line-of-sight model, not a 3D DEM visibility model. The implementation should use 2D grid ray casting over the FOV instead of checking a separate LOS segment for every cell in the sector.
+
+The ray-casting rule is:
 
 Recommended implementation semantics:
 
 ```text
+ray_angle_set =
+  angles from sensor_direction - sensor_fov_deg / 2
+  to sensor_direction + sensor_fov_deg / 2
+  in ray_angle_step_deg increments
+
+ray traversal =
+  deterministic Bresenham-style or DDA integer grid traversal
+  from observation_origin
+  until sensor_range_cells
+  or map boundary
+  or los_blocker_cell
+
 los_blocker_cell =
   hard_obstacle_cell
   OR slope_blocked_cell
@@ -216,12 +237,16 @@ los_blocker_cell =
 slope_blocked_cell =
   slope_deg > max_traversable_slope_deg
 
-los_visible(target_cell) =
-  target_cell is not a los_blocker_cell
-  AND no intermediate grid-line cell is a los_blocker_cell
+visible_cells_for_sample =
+  unique cells visited by any ray before the ray stops,
+  including the first blocker cell if encountered
 ```
 
-The line cells may be generated with a deterministic Bresenham-style integer grid traversal. The endpoint cell itself does not block its own observation. If the target cell is a blocker, it is not counted as newly covered free terrain and it also blocks cells behind it.
+With `sensor_range_m = 20m`, `highres_resolution_m = 0.5m`, and `ray_angle_step_deg = 1.0`, a single sample uses about 91 rays and at most 40 cell visits per ray before blocker early-stopping. This is roughly 3,640 cell visits per observation sample before deduplication, and it avoids repeated per-cell LOS checks over the whole FOV sector.
+
+The observation origin cell itself does not block its own observation. If a ray reaches a blocker, that blocker cell may be observed as obstacle or slope-blocked evidence, but cells behind it remain unknown for that sample.
+
+Rays may visit the same cell more than once because neighboring rays overlap. The implementation must deduplicate visible cells within a sample before map update and coverage-gain accounting.
 
 Height is still part of the observed high-resolution map, but v1 does not perform continuous 3D height-profile visibility interpolation. Terrain height may be used to derive slope-blocked cells; full 3D DEM LOS is reserved for a later version.
 
@@ -252,20 +277,47 @@ target_theta_deg = degrees(target_theta_rad) mod 360
 
 Legacy project stages used `theta_bin_count = 8`, `theta_step_deg = 45`, and smaller `sensor_range_cells` values for smoke-scale audits. Those values are historical compatibility settings and are not the v1 action-space contract for this design.
 
-Coverage gain is measured after endpoint observation:
+Coverage gain is measured after the full action observation batch:
 
 ```text
-coverage_gain_cells = count(cells that changed from unknown to observed AND are in coverable_mask)
+action_visible_cells =
+  union(visible_cells_for_sample over all path samples and endpoint sample)
+
+newly_observed_cells =
+  cells in action_visible_cells
+  where observed_mask changed from 0 to 1 during this action
+
+coverage_gain_cells =
+  count(newly_observed_cells AND cells in coverable_mask)
+
 coverage_gain_rate = coverage_gain_cells / total_highres_coverage_denominator_cells
 ```
 
-Along-path continuous sensing, repeated-observation confidence accumulation, sensor noise, and multi-angle confidence are out of scope for v1.
+Overlapping observations are expected and are handled by set union plus unknown-to-observed accounting:
+
+```text
+already observed free cell:
+  may be traversed by rays
+  not written again
+  not counted again in coverage_gain_cells
+
+already observed blocker cell:
+  may be traversed by rays
+  still stops the ray
+  not counted again in coverage_gain_cells
+
+unknown visible cell:
+  written once into observed map
+  counted in coverage_gain_cells only if it is in coverable_mask and not blocked
+```
+
+Repeated-observation confidence accumulation, sensor noise, and multi-angle confidence are out of scope for v1.
 
 ## Observed Map Update Rules
 
 The environment may hold high-resolution scenario truth internally. The policy sees only the observed high-resolution map and prior-derived low-resolution maps. Truth values may enter the observed map only through a successful sensor observation.
 
-For each cell that passes the endpoint FOV and LOS predicate:
+For each currently unknown cell in `action_visible_cells`:
 
 ```text
 observed_mask[cell] = 1
@@ -795,9 +847,11 @@ The candidate's visible unknown set is:
 
 ```text
 visible_unknown_cells =
-  cells inside 20m range
-  AND inside 90 degree FOV centered at recommended_theta
-  AND line_of_sight_not_blocked_by_current_observed_blockers
+  unique cells swept by grid_ray_casting_fov/v1
+  from candidate endpoint
+  inside 20m range
+  inside 90 degree FOV centered at recommended_theta
+  stopping at current observed blockers
   AND observed_mask == 0
 ```
 
@@ -810,6 +864,8 @@ current_observed_blocker =
 ```
 
 The estimator must not use hidden high-resolution truth to decide whether an unknown cell is free, blocked, high-value, or coverable. It also must not use the dense `coverable_mask` to filter `visible_unknown_cells`.
+
+Candidate potential-gain estimation should use the same ray-casting FOV implementation as execution observation, but with current observed blockers only. This keeps action ranking computationally aligned with execution while avoiding hidden-truth leakage.
 
 The geometric potential gain is:
 
@@ -1103,6 +1159,10 @@ path_length_m
 path_observation_step_m
 coverage_gain_cells
 coverage_gain_per_meter
+observation_sample_count
+ray_count_per_sample
+ray_cell_visit_count
+newly_observed_cell_count
 old_log_prob_frontier
 old_log_prob_theta
 old_log_prob_total
@@ -1196,6 +1256,9 @@ coverage curve over steps
 path length used
 coverage per meter
 path length to success
+observation sample count
+ray cell visit count
+newly observed cells per action
 invalid action count
 planner failure count by cause
 safety violation count
