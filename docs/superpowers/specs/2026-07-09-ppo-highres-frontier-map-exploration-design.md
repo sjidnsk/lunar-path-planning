@@ -128,6 +128,9 @@ ppo_eval_policy_mode
 evaluation_seed_policy
 tie_break_policy
 progress_reporting_policy
+implementation_file_structure
+legacy_code_isolation_policy
+integration_adapter_policy
 implementation_roadmap_version
 stage1_acceptance_policy
 stage2_acceptance_policy
@@ -2266,6 +2269,130 @@ metrics_jsonl_fields:
 ```
 
 Progress records must use deployment-available and already-computed diagnostics only. They must not expose hidden high-resolution truth, dense `coverable_mask` spatial structure, or future observation results to the policy.
+
+## Implementation File Structure And Isolation
+
+The v1 implementation must be separated from previous Stage26 / xunce runners and legacy experiment scripts. Existing code remains usable as dependencies, but the new PPO exploration system must have its own package, configs, tests, runners, and output root.
+
+```text
+implementation_file_structure =
+  isolated_core_package_with_thin_stage_runners/v1
+
+legacy_code_isolation_policy =
+  do_not_modify_legacy_runners_or_default_policy/v1
+
+integration_adapter_policy =
+  reuse_existing_capabilities_only_through_adapters/v1
+```
+
+Recommended repository layout:
+
+```text
+lunar-path-planning/
+  src/
+    lunar_exploration_ppo/
+      __init__.py
+
+      env/
+        __init__.py
+        map_state.py
+        sensor_model.py
+        coverage.py
+        frontier.py
+        reachability.py
+        action_execution.py
+        env.py
+
+      policy/
+        __init__.py
+        observation.py
+        network.py
+        distributions.py
+        action_sampling.py
+
+      ppo/
+        __init__.py
+        rollout_buffer.py
+        advantage.py
+        losses.py
+        trainer.py
+        checkpoint.py
+
+      eval/
+        __init__.py
+        baselines.py
+        evaluator.py
+        metrics.py
+        reports.py
+
+      integrations/
+        __init__.py
+        path_planner_adapter.py
+        artifact_io_adapter.py
+        config_loader.py
+
+      configs/
+        __init__.py
+        schema.py
+
+      utils/
+        __init__.py
+        geometry.py
+        masks.py
+        rng.py
+        artifact_io.py
+
+  scripts/
+    run_ppo_stage1_smoke_env.py
+    run_ppo_stage2_observation_candidates.py
+    run_ppo_stage3_network_forward.py
+    run_ppo_stage4_update_smoke.py
+    run_ppo_stage5_baselines.py
+    run_ppo_stage6_standard_train_eval.py
+    run_ppo_stage7_kilometer_stress.py
+    run_ppo_stage8_final_package.py
+
+  configs/
+    ppo_highres_frontier_smoke_v1.json
+    ppo_highres_frontier_standard_v1.json
+    ppo_highres_frontier_kilometer_v1.json
+
+  tests/
+    ppo_highres_frontier/
+      test_stage1_smoke_env.py
+      test_stage2_observation_candidates.py
+      test_stage3_network_forward.py
+      test_stage4_ppo_update.py
+      test_stage5_baselines.py
+      test_stage6_standard_config.py
+      test_stage7_kilometer_config.py
+      test_stage8_report_package.py
+```
+
+Boundary rules:
+
+```text
+new PPO core package:
+  src/lunar_exploration_ppo/
+
+thin stage runners:
+  scripts/run_ppo_stage*.py
+
+new config namespace:
+  configs/ppo_highres_frontier_*.json
+
+new test namespace:
+  tests/ppo_highres_frontier/
+
+default output root:
+  D:/xunce/out/ppo_frontier/
+```
+
+The `scripts/run_ppo_stage*.py` files should only load config, call the package API, and write artifacts. Environment semantics, candidate generation, network forward, PPO update, baseline evaluation, and report generation belong in the package, not in the runner scripts.
+
+The existing `path-planner/src/path_planner/` package remains an external planning dependency. The new PPO package must not move planner code into itself and must not modify the default planner policy. Planner calls should go through `lunar_exploration_ppo.integrations.path_planner_adapter`.
+
+Legacy xunce / Stage26 runners, configs, and tests are not part of this new PPO v1 implementation. They may be referenced for artifact IO conventions or planner behavior, but the new package must not depend on legacy runner internals.
 
 ## Implementation Roadmap
 
