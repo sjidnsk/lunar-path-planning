@@ -130,6 +130,7 @@ tie_break_policy
 progress_reporting_policy
 implementation_roadmap_version
 stage1_acceptance_policy
+stage2_acceptance_policy
 rollout_transition_storage
 rollout_collection_mode
 num_envs
@@ -2411,19 +2412,51 @@ Kilometer stress test
 Acceptance:
 
 ```text
-all observation tensors match schema and dtype
-global_lowres_prior_state channels fixed and ordered
-global_highres_coverage_summary channels fixed and ordered
-local_highres_observed_crop channels fixed and ordered
-frontier_features fields fixed and ordered
-candidate_valid_mask shape = [M]
-padding rows have candidate_valid_mask = false
-valid rows have finite feature values
-N <= M keeps all valid candidates and pads
-N > M applies score-first top-M
-top-M does not use hidden truth or coverable_mask spatial leakage
-potential gain uses current observed map + sensor model only
-empty candidate set is represented cleanly
+stage2_acceptance_policy =
+  observation_candidate_generator_acceptance/v1
+
+1. global_lowres_prior_state shape matches the Smoke v1 schema.
+
+2. global_lowres_prior_state channel order is fixed and documented.
+
+3. global_highres_coverage_summary shape matches the Smoke v1 schema.
+
+4. global_highres_coverage_summary is aggregated only from the current observed map, current frontier set, reachability prefilter result, sensor geometry, and deployment-available low-resolution prior. It does not use dense coverable_mask spatial structure.
+
+5. local_highres_observed_crop shape matches the Smoke v1 schema.
+
+6. local_highres_observed_crop channel order is fixed and documented.
+
+7. frontier_cells shape is valid and every coordinate lies inside the high-resolution map bounds.
+
+8. frontier_features shape = [M, F].
+
+9. frontier_features field order is fixed and documented.
+
+10. candidate_valid_mask shape = [M].
+
+11. padding rows have candidate_valid_mask = false.
+
+12. every valid row has finite feature values.
+
+13. if N <= M:
+    all valid candidates are kept
+    remaining rows are padding.
+
+14. if N > M:
+    score-first top-M pruning is applied.
+
+15. top-M pruning does not use hidden high-resolution truth or dense coverable_mask spatial leakage.
+
+16. potential_gain uses the current observed map, current observed blockers, sensor model, and ray-casting estimate only. It does not use future truth.
+
+17. empty candidate sets are represented cleanly:
+    frontier_cells padded
+    frontier_features padded
+    candidate_valid_mask all false
+    no NaN / inf feature values
+
+18. sample observation batch can be saved and reloaded with unchanged shape, dtype, channel order, feature order, and candidate_valid_mask.
 ```
 
 Recommended artifacts:
