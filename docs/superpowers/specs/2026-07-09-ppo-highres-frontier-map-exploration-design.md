@@ -52,13 +52,13 @@ Future versions may replace binary confidence with continuous confidence from re
 
 ## Map Scale Profiles
 
-The first implementation uses three fixed scale profiles. The kilometer profile represents the large lunar polar use case, but its high-resolution map is not passed to the policy as a dense tensor.
+The first implementation uses three scale profiles. The kilometer profile represents the large lunar polar use case, but its high-resolution map is not passed to the policy as a dense tensor.
 
 | Profile | Purpose | ROI | High-resolution map | Low-resolution global map | Local high-resolution crop | Frontier cap |
 | --- | --- | --- | --- | --- | --- | --- |
 | Smoke v1 | Architecture smoke tests, tiny PPO overfit, unit tests | 64m x 64m | 128 x 128 @ 0.5m/cell | 32 x 32 @ 2m/cell | 64 x 64, covering 32m x 32m | 512 |
 | Standard v1 | Main v1 training and ablations | 128m x 128m | 256 x 256 @ 0.5m/cell | 32 x 32 @ 4m/cell | 96 x 96, covering 48m x 48m | 1024 |
-| Kilometer v1 | Large lunar polar scenes and long-horizon coverage stress tests | 1024m x 1024m | 2048 x 2048 @ 0.5m/cell, maintained by the environment only | 128 x 128 @ 8m/cell | 192 x 192, covering 96m x 96m | 4096 |
+| Kilometer v1 | Large lunar polar scenes and long-horizon coverage stress tests | 1024m x 1024m | 2048 x 2048 @ 0.5m/cell, maintained by the environment only | 128 x 128 @ 8m/cell | 192 x 192, covering 96m x 96m | 2048 default, 4096 max after overflow audit |
 
 The recommended development order is:
 
@@ -80,6 +80,8 @@ tile_ratio
 local_crop_shape
 local_crop_size_m
 frontier_top_m
+frontier_top_m_max
+top_m_selection_policy
 coordinate_convention
 theta_convention
 sensor_model_id
@@ -109,6 +111,10 @@ max_candidates_per_segment
 standoff_distance_m
 potential_gain_source
 candidate_priority_source
+rollout_storage_mode
+network_architecture_version
+network_memory_mode
+network_diagram_path
 ```
 
 For Kilometer v1, the environment may maintain a 2048 x 2048 high-resolution grid internally for mapping, frontier extraction, coverage accounting, and planner validation. The policy observation must remain hierarchical and sparse:
@@ -739,9 +745,59 @@ reachable_prefilter == true
 
 Cells that fail `reachable_prefilter` are excluded before PPO sees the action set. Cells that pass it are only quick-screen reachable; they must still pass planner validation before execution.
 
-The extractor should prefer high recall. If the action set is too large, top-M pruning must preserve spatial diversity instead of only selecting the nearest or highest immediate-gain frontier cells.
+The extractor should prefer high recall before hard filtering. If the action set is too large, top-M pruning only controls the maximum number of candidates exposed to the network; it is not a replacement for PPO policy selection.
 
-For Kilometer v1, top-M pruning must be region-aware. It should preserve candidates across directions, connected components, and low-resolution coverage-summary tiles so that distant unexplored regions are not permanently removed from the policy action set.
+The v1 top-M policy is:
+
+```text
+top_m_selection_policy =
+  score_first_top_m/v1
+```
+
+The selection rule is:
+
+```text
+candidate_count_before_top_m = N
+
+if N <= frontier_top_m:
+  keep all valid candidates
+  pad frontier_features to frontier_top_m
+  set frontier_mask false for padding rows
+
+if N > frontier_top_m:
+  sort candidates by candidate_priority descending
+  keep the first frontier_top_m candidates
+  prune the rest
+```
+
+V1 does not use mandatory region quota, direction quota, FOV-overlap suppression, or extra duplicate-suppression rules in top-M. Repetition is primarily controlled by the segment candidate generator, including `max_candidates_per_segment`.
+
+The scale-specific top-M defaults are:
+
+```text
+Smoke v1:
+  frontier_top_m = 512
+
+Standard v1:
+  frontier_top_m = 1024
+
+Kilometer v1:
+  frontier_top_m = 2048
+  frontier_top_m_max = 4096 after overflow audit
+```
+
+The following diagnostics must be recorded:
+
+```text
+candidate_count_before_top_m
+candidate_count_after_top_m
+candidate_overflow_count
+kept_min_priority
+pruned_max_priority
+selected_candidate_original_rank
+```
+
+If high-priority candidates are frequently pruned, increase `frontier_top_m` rather than introducing hard regional quotas.
 
 ### Frontier Segment Candidate Policy
 
@@ -907,11 +963,11 @@ potential_coverage_gain_norm =
 
 `visible_footprint_cell_count` is the number of cells visible from the candidate endpoint under the same 20m / 90 degree FOV / 2D LOS estimate before filtering by `observed_mask == 0`.
 
-Top-M pruning may use a priority score as a local ranking signal, but it must preserve spatial diversity before taking the final action cap:
+Top-M pruning uses a score-first priority:
 
 ```text
 candidate_priority_source =
-  spatial_diversity_preserving_gain_value_cost_priority/v1
+  score_first_gain_value_cost_priority/v1
 
 candidate_priority =
   0.5 * potential_coverage_gain_norm
@@ -1144,6 +1200,27 @@ There is no `path_length_used >= path_budget` termination in v1. Path length is 
 
 Every trainable transition must store enough information to recompute PPO log probabilities without re-extracting frontier actions.
 
+The v1 storage mode is:
+
+```text
+rollout_storage_mode =
+  rollout_time_snapshot_storage/v1
+```
+
+The PPO data lifecycle is:
+
+```text
+1. Collect T rollout steps with the current policy.
+2. For every step, save the observation tensors, frontier action-set snapshot,
+   selected action, old log probabilities, old value, reward, and done.
+3. After rollout collection, compute advantage and return.
+4. Run PPO update epochs using only the saved rollout snapshots.
+5. Clear the rollout buffer after the update.
+6. Persist checkpoints, metrics, manifests, and small audit samples only.
+```
+
+The rollout buffer is not a permanent history memory for the policy. It exists to make PPO updates mathematically consistent with the action set that was available when each action was sampled.
+
 Required fields:
 
 ```text
@@ -1151,6 +1228,7 @@ observation tensors
 frontier_cells
 frontier_features
 frontier_mask
+top_m_selection_summary
 selected_frontier_index
 selected_cell_xy
 selected_theta
@@ -1188,32 +1266,146 @@ It must not re-run frontier extraction and silently replace the action space.
 
 ## Network Shape
 
-A v1 network should include:
+The v1 network architecture is:
+
+```text
+network_architecture_version =
+  cross_attention_frontier_policy/v1
+
+network_memory_mode =
+  stateless_observation_only/v1
+```
+
+The network does not use RNN, LSTM, recurrent hidden state, previous action input, visited-path history, or candidate failure history. History is represented only through the current observed map, coverage summary, frontier set, and pose/progress features.
+
+The architecture diagram is stored at:
+
+```text
+network_diagram_path =
+  docs/superpowers/diagrams/ppo-cross-attention-frontier-policy.drawio
+```
+
+The forward structure is:
 
 ```text
 global encoder:
-  encodes global_lowres_prior_state and global_highres_coverage_summary
+  CNN(global_lowres_prior_state + global_highres_coverage_summary)
+  + 2D positional encoding
+  -> global_map_tokens [B, Kg, D]
 
 local encoder:
-  encodes local_highres_observed_crop
+  CNN(local_highres_observed_crop)
+  + 2D positional encoding
+  -> local_map_tokens [B, Kl, D]
 
 pose encoder:
-  encodes pose_features
+  MLP(pose_features)
+  -> pose_token [B, 1, D]
 
 frontier encoder:
-  encodes each frontier_features row
+  shared MLP(frontier_features)
+  + frontier positional encoding from x_norm, y_norm, bearing_sin, bearing_cos
+  -> frontier_tokens [B, M, D]
 
-frontier scoring head:
-  produces masked logits over frontier cells
+context_tokens:
+  concat(global_map_tokens, local_map_tokens, pose_token)
+  -> [B, K, D]
 
-theta head:
-  produces Von Mises parameters for the selected frontier cell
+cross-attention:
+  Q = frontier_tokens
+  K,V = context_tokens
+  CrossAttentionBlock x 2
+  -> refined_frontier_tokens [B, M, D]
+
+output input:
+  concat(original_frontier_tokens, refined_frontier_tokens, raw frontier_features)
+  -> shared_output_mlp
+  -> action_hidden [B, M, H]
+
+frontier logit head:
+  Linear(H, 1)
+  -> frontier_logits [B, M]
+
+theta parameter head:
+  Linear(H, 3)
+  -> theta_mu_sin_raw [B, M]
+  -> theta_mu_cos_raw [B, M]
+  -> theta_kappa_raw [B, M]
 
 value head:
-  estimates state value from global, local, pose, and pooled frontier context
+  masked_mean(refined_frontier_tokens)
+  + masked_max(refined_frontier_tokens)
+  + pooled context_tokens
+  -> independent value MLP
+  -> value [B]
 ```
 
-The first implementation may share encoders between policy and value heads, but checkpoint metadata must record the architecture and observation schema.
+The cross-attention block must use residual connections and normalization:
+
+```text
+x = frontier_tokens
+x = LayerNorm(x + CrossAttention(Q=x, K=context_tokens, V=context_tokens))
+x = LayerNorm(x + FeedForward(x))
+```
+
+The policy distribution is:
+
+```text
+frontier_logits[frontier_mask == false] = -inf
+selected_frontier_index ~ Categorical(masked frontier_logits)
+
+theta_mu_norm =
+  sqrt(theta_mu_sin_raw^2 + theta_mu_cos_raw^2) + epsilon
+
+theta_mu_sin =
+  theta_mu_sin_raw / theta_mu_norm
+
+theta_mu_cos =
+  theta_mu_cos_raw / theta_mu_norm
+
+theta_mu_rad =
+  atan2(theta_mu_sin, theta_mu_cos)
+
+theta_kappa =
+  softplus(theta_kappa_raw) + epsilon
+
+selected_theta_distribution =
+  VonMises(
+    theta_mu_rad[selected_frontier_index],
+    theta_kappa[selected_frontier_index]
+  )
+```
+
+All candidate-dependent operations must respect `frontier_mask`, including masked softmax, entropy, log-probability recomputation, masked mean pooling, and masked max pooling. Padding candidates must not affect the action distribution or the value estimate.
+
+The value head may share map, pose, frontier, and cross-attention encoders with the policy, but its final MLP layers must be separate from the action output MLP and heads.
+
+Required stability settings:
+
+```text
+frontier/map positional encoding enabled
+cross-attention residual + LayerNorm enabled
+raw frontier_features preserved into output MLP
+shared output MLP before action heads
+theta_mu_sin/cos normalized to unit direction
+theta_kappa produced by softplus + epsilon
+strict frontier_mask handling
+separate final value MLP
+conservative initialization for frontier_logit_head
+conservative low initial theta_kappa
+```
+
+The v1 network must not include:
+
+```text
+RNN / LSTM
+previous-action history input
+candidate self-attention over all M candidates
+multiple alternative network branches
+candidate-neighborhood token gather
+```
+
+Checkpoint metadata must record the architecture version, memory mode, token dimensions, attention layer count, head count, hidden dimensions, initialization settings, and observation schema.
 
 ## Leakage And Consistency Rules
 
@@ -1266,6 +1458,8 @@ stagnation termination count
 frontier action entropy
 theta distribution diagnostics
 frontier extractor recall diagnostics
+top-M overflow diagnostics
+selected candidate original rank
 ```
 
 Evaluation must verify that all inference observations use deployment-available information only.
@@ -1275,7 +1469,6 @@ Evaluation must verify that all inference observations use deployment-available 
 The following values are intentionally not fixed in this design:
 
 ```text
-frontier spatial diversity strategy
 coverage gain scaling
 invalid and safety penalty weights
 max_steps
