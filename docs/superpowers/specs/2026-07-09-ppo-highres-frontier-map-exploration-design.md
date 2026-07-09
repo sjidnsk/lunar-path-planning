@@ -92,6 +92,10 @@ coverable_mask_algorithm_id
 coverable_mask_hash
 coverable_mask_exact
 coverable_mask_precompute_scope
+frontier_segment_candidate_policy
+normal_confidence_threshold
+max_candidates_per_segment
+standoff_distance_m
 ```
 
 For Kilometer v1, the environment may maintain a 2048 x 2048 high-resolution grid internally for mapping, frontier extraction, coverage accounting, and planner validation. The policy observation must remain hierarchical and sparse:
@@ -505,6 +509,14 @@ bearing_cos
 potential_coverage_gain_norm
 visible_unknown_count_norm
 value_gain_norm
+frontier_segment_id_norm
+segment_length_norm
+normal_sin
+normal_cos
+normal_confidence
+candidate_generation_mode
+recommended_theta_sin
+recommended_theta_cos
 traversability
 clearance_norm
 reachable_prefilter_cost_norm
@@ -514,6 +526,8 @@ same_connected_component
 ```
 
 These features must be derived from observed high-resolution state, low-resolution prior, and sensor geometry only. They must not use future high-resolution truth.
+
+`candidate_generation_mode` should be encoded as a stable categorical feature, such as `0` for `regular_normal_standoff` and `1` for `irregular_local_gain_sampling`, or as an equivalent one-hot representation recorded in `observation_schema_version`.
 
 ### frontier_mask
 
@@ -569,7 +583,91 @@ The extractor should prefer high recall. If the action set is too large, top-M p
 
 For Kilometer v1, top-M pruning must be region-aware. It should preserve candidates across directions, connected components, and low-resolution coverage-summary tiles so that distant unexplored regions are not permanently removed from the policy action set.
 
-Frontier potential gain must use the fixed v1 sensor model above. Candidate gain estimates should evaluate the unknown cells visible from the candidate endpoint under a forward 90 degree FOV with 20m range and line-of-sight filtering. Since `target_theta` is continuous, the estimator may use an analytic best-facing direction toward nearby unknown cells or a small internal sampling heuristic, but the stored PPO action remains continuous theta.
+### Frontier Segment Candidate Policy
+
+The v1 frontier candidate generator uses a binary segment policy:
+
+```text
+frontier_segment_candidate_policy =
+  binary_regular_normal_or_irregular_gain_sampling/v1
+```
+
+The extractor first groups observed-safe frontier cells into frontier segments. Each segment is classified as either regular or irregular:
+
+```text
+regular segment:
+  normal_confidence >= normal_confidence_threshold
+
+irregular segment:
+  normal_confidence < normal_confidence_threshold
+```
+
+For v1, `normal_confidence` should be simple and auditable. It is primarily based on unknown-side consistency: a segment is regular when its local boundary has a stable observed side and a stable unknown side. Optional supporting diagnostics may include segment chord ratio, curvature variance, and normal variance, but v1 does not introduce a separate mild-irregular mode. The default threshold is:
+
+```text
+normal_confidence_threshold = 0.6
+```
+
+Regular segment candidates:
+
+```text
+mode = regular_normal_standoff
+anchor_count = 1 to 3 based on segment length
+look_at_point = segment midpoint or arc-length anchors
+recommended_theta = outward normal from observed side to unknown side
+candidate_position = look_at_point - normal_vector * standoff_distance_m
+standoff_distance_m = 5.0
+```
+
+The candidate position must be corrected onto the observed-safe side. If the ideal standoff cell is not observed-safe, does not have enough clearance, or fails reachability prefilter, the generator searches nearby observed-safe cells within a small radius. If no valid cell is found, that anchor produces no candidate.
+
+Irregular segment candidates:
+
+```text
+mode = irregular_local_gain_sampling
+sample observed-safe cells near the segment
+estimate one or more recommended theta values from local unknown distribution
+score samples with 20m / 90 degree FOV / 2D LOS visible unknown gain
+keep the best 1 to 3 valid candidates for that segment
+```
+
+Irregular segments are not discarded merely because their geometry is noisy. They are filtered by the same safety, reachability, and potential-gain checks as regular candidates. This avoids two failure modes:
+
+```text
+do not delete useful irregular frontiers only because the boundary is not smooth
+do not force a single unreliable normal direction onto an irregular frontier
+```
+
+The number of candidates per segment is capped:
+
+```text
+max_candidates_per_segment = 3
+
+segment_length_m <= 10:
+  target anchor_count = 1
+
+10 < segment_length_m <= 30:
+  target anchor_count = 2
+
+segment_length_m > 30:
+  target anchor_count = 3
+```
+
+All generated candidates must satisfy:
+
+```text
+observed == true
+obstacle == false
+slope_blocked == false
+traversability >= threshold
+clearance >= vehicle_radius + safety_margin
+reachable_prefilter == true
+potential_gain > 0
+```
+
+Frontier potential gain must use the fixed v1 sensor model above. Candidate gain estimates should evaluate the currently unknown cells visible from the candidate endpoint under a forward 90 degree FOV with 20m range and 2D line-of-sight filtering. The estimated cells must come from the current observed/unknown state and deployment-available prior data; the estimator must not use hidden high-resolution truth or the dense `coverable_mask`.
+
+`recommended_theta` is a feature and potential-gain estimate direction, not a hard action. PPO still samples a continuous `target_theta`, and the theta log probability is computed from that continuous policy distribution.
 
 ## Action Space
 
