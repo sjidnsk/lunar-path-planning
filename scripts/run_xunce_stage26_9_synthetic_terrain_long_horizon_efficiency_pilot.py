@@ -167,8 +167,9 @@ def run_xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot(
 
     matrix_rows = _scan_matrix_rows(subjobs)
     if not boundary_rejections and not input_rejections and bool(config["run_stage26_8m"]):
+        route_before_next_job = _route(boundary_rejections, input_rejections, matrix_rows)
         pending = next((row for row in matrix_rows if row["status"] == "pending"), None)
-        if pending:
+        if route_before_next_job == ROUTE_CONTINUE and pending:
             stage26_8m.run_xunce_stage26_8m_generalized_resumable_training_pipeline(
                 config_path=Path(str(pending["sub_config_path"])),
                 output_root=Path(str(pending["sub_output_root"])),
@@ -664,14 +665,14 @@ def _route(boundary_rejections: list[str], input_rejections: list[str], matrix_r
         return ROUTE_INPUTS
     if any(_matrix_row_has_eval_or_safety_risk(row) for row in matrix_rows):
         return ROUTE_EVAL
-    if any(row.get("status") == "pending" for row in matrix_rows):
-        return ROUTE_CONTINUE
 
     clean_rows = [row for row in matrix_rows if not _matrix_row_has_eval_or_safety_risk(row)]
     if not clean_rows:
         return ROUTE_EXPAND
     if any(row.get("stage26_8m_clean_credit_route") for row in clean_rows):
         return ROUTE_CREDIT
+    if any(row.get("status") == "pending" for row in matrix_rows):
+        return ROUTE_CONTINUE
     horizon_count = len({int(row["horizon"]) for row in clean_rows})
     horizons_with_seed_majority_nonnegative = 0
     horizons_with_seed_majority_negative = 0

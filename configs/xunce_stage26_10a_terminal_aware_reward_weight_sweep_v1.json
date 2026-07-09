@@ -1,0 +1,17 @@
+{
+  "schema_version": "xunce-stage26-10a-terminal-aware-reward-weight-sweep-config/v1",
+  "stage_id": "xunce-stage26-10a-terminal-aware-reward-weight-sweep",
+  "stage21_1_collector_root": "",
+  "baseline_reward_profile": "configs/xunce_stage26_10_terminal_aware_ppo_reward_profile_v3.json",
+  "base_stage21_2_config": "configs/xunce_stage21_2_coverage_first_ppo_reward_contract_v1.json",
+  "base_stage21_3_config": "configs/xunce_stage21_3_ppo_batch_validation_v1.json",
+  "base_stage26_10_config": "configs/xunce_stage26_10_terminal_aware_reward_shaping_v1.json",
+  "top_k": 3,
+  "run_topk_stage26_10": true,
+  "release_or_training_authorized": false,
+  "publishes_checkpoint": false,
+  "replaces_default_policy": false,
+  "connects_real_executor": false,
+  "starts_online_canary": false,
+  "canary_traffic_fraction": 0.0
+}

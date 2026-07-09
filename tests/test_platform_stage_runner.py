@@ -119,6 +119,8 @@ SUPPORTED_STAGE_IDS = {
     "xunce-stage26-8s-terminal-aware-sample-expansion",
     "xunce-stage26-9-synthetic-terrain-long-horizon-efficiency-pilot",
     "xunce-stage26-10-terminal-aware-reward-shaping",
+    "xunce-stage26-10a-terminal-aware-reward-weight-sweep",
+    "xunce-stage26-10b-completion-capable-shadow-trial",
     "xunce-stage26-io1-artifact-path-contract-and-long-path-resilience",
     "xunce-stage26-io2-remaining-runner-long-path-migration",
     "xunce-stage18i-evidence-closure-audit",

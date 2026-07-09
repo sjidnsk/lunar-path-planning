@@ -172,6 +172,19 @@ def test_stage26_9_routes_continue_passed_expand_credit_and_eval_safety() -> Non
     ]
     assert s26._route([], [], credit_rows) == "repair_stage26_synthetic_credit_assignment"
 
+    early_credit_rows = [
+        _matrix_row(
+            32,
+            260801,
+            delta=-2.0,
+            stage26_8m_status="failed",
+            stage26_8m_next_required_change="repair_stage26_synthetic_credit_assignment",
+            stage26_8m_clean_credit_route=True,
+        ),
+        _matrix_row(32, 260802, status="pending"),
+    ]
+    assert s26._route([], [], early_credit_rows) == "repair_stage26_synthetic_credit_assignment"
+
     unsafe_rows = [_matrix_row(20, 260801, delta=1.0, mask_violation_count=1)]
     assert s26._route([], [], unsafe_rows) == "repair_stage26_9_eval_binding_or_safety"
 
@@ -557,6 +570,43 @@ def test_stage26_9_routes_clean_8m_credit_subjobs_to_credit_assignment(tmp_path:
 
     assert summary["status"] == "failed"
     assert summary["next_required_change"] == "repair_stage26_synthetic_credit_assignment"
+
+
+def test_stage26_9_does_not_start_pending_subjob_after_clean_credit_route(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import scripts.run_xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot as s26
+
+    stage26_8n_root = _write_stage26_8n_root(tmp_path)
+    output_root = tmp_path / "out"
+    _write_8m_summary(
+        output_root / "h20_s260801_r20",
+        status="failed",
+        next_required_change="repair_stage26_synthetic_credit_assignment",
+        pending_job_count=0,
+        completed_job_count=1,
+        failed_job_count=0,
+        mean_main_coverage_per_100m_delta=-2.0,
+    )
+    calls: list[dict] = []
+
+    def fake_8m(*, config_path: Path, output_root: Path, repo_root: Path, **kwargs) -> dict:
+        calls.append({"config_path": config_path, "output_root": output_root, "kwargs": kwargs})
+        return _write_8m_summary(output_root, next_required_change="continue_stage26_8m_jobs")
+
+    monkeypatch.setattr(s26.stage26_8m, "run_xunce_stage26_8m_generalized_resumable_training_pipeline", fake_8m)
+
+    summary = s26.run_xunce_stage26_9_synthetic_terrain_long_horizon_efficiency_pilot(
+        config_path=_write_config(tmp_path, stage26_8n_root),
+        output_root=output_root,
+        repo_root=REPO_ROOT,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_stage26_synthetic_credit_assignment"
+    assert summary["pending_subjob_count"] == 8
+    assert calls == []
 
 
 def test_stage26_9_routes_corrupt_stage26_8n_summary_to_required_inputs(tmp_path: Path) -> None:
