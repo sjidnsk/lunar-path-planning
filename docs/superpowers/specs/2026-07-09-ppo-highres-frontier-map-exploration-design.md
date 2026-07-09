@@ -89,6 +89,10 @@ sensor_range_cells
 coverage_update_mode
 coverage_denominator_source
 reachable_prefilter_source
+planner_validation_source
+planner_search_state
+execution_observation_source
+path_observation_step_m
 path_budget_mode
 budget_done_mode
 coverable_mask_algorithm_id
@@ -141,36 +145,58 @@ action_t:
   selected continuous target theta
 
 transition:
-  planner validates and executes the target pose
+  planner validates target cell reachability and endpoint theta
   sensor updates high-resolution observed coverage
   reward and done are computed from the updated state
 ```
 
-An episode starts from an initial observed area around the robot and ends on success, budget exhaustion, stagnation, or severe safety violation.
+An episode starts from an initial observed area around the robot and ends on success, max step limit, stagnation, or severe safety violation.
 
 ## Sensor And Coverage Update Model
 
-The v1 sensor model is a forward field-of-view endpoint observation model:
+The v1 sensor model observes along the executed path and then observes once more at the endpoint using the PPO-selected theta:
 
 ```text
-sensor_model_id = endpoint-forward-fov-90-range-20m-los/v1
+sensor_model_id = path-tangent-plus-endpoint-theta-fov-90-range-20m-los/v1
+execution_observation_source = path_tangent_samples_plus_endpoint_theta/v1
 sensor_range_m = 20.0
 sensor_fov_deg = 90.0
-sensor_direction = target_theta
-observation_origin = target_pose
-coverage_update_mode = endpoint_observation_only
+path_observation_step_m = 1.0
+
+sensor_direction =
+  path_tangent_heading for intermediate path samples
+  target_theta for endpoint observation
+
+observation_origin =
+  sampled poses along executed path
+  plus endpoint pose
+
+coverage_update_mode =
+  path_continuous_observation_plus_endpoint_theta_observation
+
 los_model = two_dimensional_grid_line_of_sight/v1
 ```
 
-At each PPO step, the policy selects a target frontier cell and a continuous `target_theta`. The planner attempts to reach the target pose. If the pose is valid and executed, the environment observes from that endpoint pose only:
+At each PPO step, the policy selects a target frontier cell and a continuous `target_theta`. The planner attempts to reach the target cell. If the path is valid and executed, the environment observes from regularly sampled path poses using the local path tangent heading, then observes from the endpoint using `target_theta`.
+
+Each observation sample uses the same 20m / 90 degree FOV / 2D LOS geometry:
 
 ```text
 visible_cell =
   inside_map_bounds
-  AND distance(endpoint_cell_center, cell_center) <= sensor_range_m
-  AND angular_distance(bearing(endpoint, cell), target_theta) <= sensor_fov_deg / 2
+  AND distance(observation_origin, cell_center) <= sensor_range_m
+  AND angular_distance(bearing(observation_origin, cell), sensor_direction) <= sensor_fov_deg / 2
   AND line_of_sight_not_blocked
 ```
+
+For an intermediate sample, `sensor_direction` is:
+
+```text
+path_tangent_heading =
+  atan2(next_y - current_y, next_x - current_x)
+```
+
+At corners, the heading follows the currently executed path segment. At the final endpoint, the robot may rotate in place and `sensor_direction = target_theta`.
 
 Line-of-sight blockers include hard obstacle cells and slope-blocked cells when those sources are available. The v1 hard slope threshold stays aligned with the existing platform contract:
 
@@ -891,6 +917,79 @@ theta_kappa  = softplus(theta_kappa_raw) + epsilon
 
 Rollout and update must preserve separate theta and frontier log probabilities for auditability.
 
+## Planner Validation And Execution
+
+The v1 planner validation source is:
+
+```text
+planner_validation_source =
+  observed_safe_grid_astar_with_endpoint_theta_check/v1
+
+planner_search_state =
+  (x, y)
+```
+
+The PPO policy outputs an exploration goal pose, not a final trajectory:
+
+```text
+exploration_goal_pose =
+  target_cell_x
+  target_cell_y
+  target_theta
+```
+
+The actual path must be produced by the planner before execution:
+
+```text
+planned_path =
+  current_cell -> target_cell
+```
+
+For v1, the planner should use the current project's stable 2D A*/grid-planner semantics over the currently observed safe map. It should not require Hybrid A* as the default execution planner. Existing Hybrid A* pose-path machinery may remain an optional diagnostic or later validation source, but v1 does not replace the default 2D A* route and does not claim Ackermann-feasible execution.
+
+Because the robot can rotate in place, `target_theta` is not part of the path search state. It does not make the target position unreachable. It only affects the final endpoint observation, and it must pass a lightweight endpoint check:
+
+```text
+target_theta_check =
+  finite numeric value
+  normalized to [-pi, pi)
+  endpoint cell has enough clearance for in-place rotation
+```
+
+Planner validation succeeds only if:
+
+```text
+selected frontier index is valid under frontier_mask
+target_cell is observed_safe_cell
+target_cell passes reachable_prefilter
+2D A*/grid planner finds a path through observed_safe_cell
+planned_path does not cross obstacle, slope_blocked, unknown, or insufficient-clearance cells
+target_theta_check passes
+```
+
+If validation fails before movement, the environment does not execute the path and does not update coverage for that action. It applies `invalid_action_penalty`, sets `done = false`, and returns control to PPO for the next decision unless the failure exposes a severe safety violation.
+
+Execution after successful validation is:
+
+```text
+1. Follow planned_path.
+2. Sample observation poses every path_observation_step_m along the path.
+3. Use path_tangent_heading for each intermediate FOV observation.
+4. At the endpoint, rotate in place to target_theta.
+5. Perform one endpoint FOV observation using target_theta.
+6. Update the high-resolution observed map with the union of all visible cells.
+```
+
+The action-level coverage gain is:
+
+```text
+coverage_gain_cells =
+  newly observed cells after all path and endpoint observations
+  minus observed cells before action execution
+```
+
+`path_length_m`, `coverage_gain_cells`, and `coverage_gain_per_meter` are diagnostic fields. They do not create a hard path budget in v1.
+
 ## Execution Flow
 
 ```text
@@ -900,20 +999,24 @@ Rollout and update must preserve separate theta and frontier log probabilities f
 4. Policy scores frontier actions.
 5. Sample target_frontier_index.
 6. Policy samples target_theta using the selected frontier cell.
-7. Planner validates current_pose -> (target_cell, target_theta).
-8. If valid, execute and update high-resolution observed coverage.
-9. Compute reward and done.
-10. Store the full transition contract for PPO update.
+7. Planner validates current_pose -> target_cell using 2D observed-safe A*/grid search.
+8. Endpoint theta check validates target_theta for in-place rotation and observation.
+9. If valid, execute path observations plus endpoint theta observation.
+10. Compute reward and done.
+11. Store the full transition contract for PPO update.
 ```
 
 Planner failure should be classified by cause where possible:
 
 ```text
+mask_invalid
+cell_unsafe
 cell_unreachable
-theta_unreachable
+theta_invalid
 path_collision
 safety_violation
 planner_timeout
+execution_safety_stop
 ```
 
 The prefilter/planner contract is intentionally asymmetric:
@@ -995,6 +1098,11 @@ frontier_mask
 selected_frontier_index
 selected_cell_xy
 selected_theta
+planned_path_cells
+path_length_m
+path_observation_step_m
+coverage_gain_cells
+coverage_gain_per_meter
 old_log_prob_frontier
 old_log_prob_theta
 old_log_prob_total
@@ -1008,6 +1116,7 @@ observation_schema_version
 action_space_version
 reward_version
 planner_validation_summary
+execution_observation_summary
 ```
 
 Important rule:
