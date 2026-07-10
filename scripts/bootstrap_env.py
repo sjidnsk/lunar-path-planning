@@ -82,19 +82,28 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.install_editable:
         editable_specs = [
+            str(repo_root),
             str(repo_root / "path-planner"),
             str(repo_root / "dev-platform-constraints"),
             str(repo_root / "model-explorer") + ("[training]" if args.with_training else ""),
         ]
         if args.with_visual_workbench:
             editable_specs.append(str(repo_root / "visual-workbench"))
-        _run([args.conda, "run", *env_target, "python", "-m", "pip", "install", "-e", *editable_specs], dry_run=args.dry_run, env=env)
+        editable_args = [item for spec in editable_specs for item in ("-e", spec)]
+        _run([args.conda, "run", *env_target, "python", "-m", "pip", "install", *editable_args], dry_run=args.dry_run, env=env)
     elif args.with_training:
         _run([args.conda, "run", *env_target, "python", "-m", "pip", "install", "torch>=2.0"], dry_run=args.dry_run, env=env)
     if args.with_visual_workbench and not args.install_editable:
         _run([args.conda, "run", *env_target, "python", "-m", "pip", "install", "-e", str(repo_root / "visual-workbench")], dry_run=args.dry_run, env=env)
 
-    _run_import_smoke(args.conda, env_target, repo_root, dry_run=args.dry_run, env=env)
+    _run_import_smoke(
+        args.conda,
+        env_target,
+        repo_root,
+        include_root=args.install_editable,
+        dry_run=args.dry_run,
+        env=env,
+    )
     if args.run_validation:
         _run_validation(args.conda, env_target, repo_root, platform_name=platform_name, dry_run=args.dry_run, env=env)
 
@@ -125,12 +134,26 @@ def _run(command: list[str], *, dry_run: bool, env: dict[str, str]) -> None:
     subprocess.run(command, check=True, env=env)
 
 
-def _run_import_smoke(conda: str, env_target: list[str], repo_root: Path, *, dry_run: bool, env: dict[str, str]) -> None:
+def _run_import_smoke(
+    conda: str,
+    env_target: list[str],
+    repo_root: Path,
+    *,
+    include_root: bool,
+    dry_run: bool,
+    env: dict[str, str],
+) -> None:
     smokes = [
         ("path-planner", "path_planner"),
         ("model-explorer", "model_explorer"),
         ("dev-platform-constraints", "dev_platform_constraints"),
     ]
+    if include_root:
+        _run(
+            [conda, "run", *env_target, "python", "-c", "import lunar_exploration_ppo; print('lunar_exploration_ppo import ok')"],
+            dry_run=dry_run,
+            env=env,
+        )
     for module_dir, import_name in smokes:
         source_path = repo_root / module_dir / "src"
         smoke_env = dict(env)
