@@ -195,11 +195,13 @@ D:/conda_envs/lunar-explorer/python.exe -c "import lunar_exploration_ppo"
 
 实现 map state、0.5m proxy generator、传感器 ray casting、exact coverable mask、reachability、A* adapter、reward/done、progress 和环境闭环。覆盖坐标半格、GeoTIFF y 轴、unknown 禁行、单次安全膨胀、路径切线观测、endpoint theta、0.99 边界、stagnation/no-candidate terminal；完成设计中的 16 项验收与 10 个连续 Smoke episode。修改未观测 truth 不得改变 observation/candidate，成功观测后才允许变化。审查 truth 泄漏、planner 安全、reward 符号、terminal/bootstrap。
 
+用户批准的 proxy fixture 增补要求 Smoke、Standard 与 Kilometer 的程序化 highres truth 含空间零散的岩石与陨石坑；陨石坑由坡度/可通行度判定，训练密度均衡混合 low/medium/high，Smoke 固定 medium，并沿用 hard-obstacle/slope-blocked 的 2D LOS。Stage 1 的详细 TDD、provenance、gate 和重审步骤见 `docs/superpowers/plans/2026-07-10-rock-crater-proxy-fixture.md`，设计合同见 `docs/superpowers/specs/2026-07-10-rock-crater-proxy-fixture-design-addendum.md`。
+
 **Approval commit:** `feat: add smoke exploration environment`
 
 ### Task 3: Stage 2 — 完整 Observation 与 Frontier Generator
 
-实现固定 channel/feature 顺序、local crop padding、summary aggregation、regular/irregular segment、recommended theta、observed-only potential gain、score-first top-M。建立按父级 ROI/macro-tile 先分割再裁剪的 Standard 场景目录：700 train、150 validation、150 test、64 空间隔离 unseen；同一父 ROI 不得跨 split。Rasterio 读取 affine/CRS；Standard 保留原生 4m prior，Kilometer 聚合 8m，记录 provenance。验收 shape/order/finite、空集、overflow、稳定排序、NPZ round-trip、truth-mutation 与 split overlap=0。
+实现固定 channel/feature 顺序、local crop padding、summary aggregation、regular/irregular segment、recommended theta、observed-only potential gain、score-first top-M。建立按父级 ROI/macro-tile 先分割再裁剪的 Standard 场景目录：700 train、150 validation、150 test、64 空间隔离 unseen；同一父 ROI 不得跨 split。Rasterio 读取 affine/CRS；Standard 保留原生 4m prior，Kilometer 聚合 8m，记录 provenance。程序化 highres truth 使用 `procedural_lunar_rock_crater_proxy/v1`：train 对 low/medium/high 密度各 `1/3`，validation/test/unseen 按场景数近似等量分层且任意两档数量差不超过 1；proxy seed 在父 ROI split 后派生。验收 shape/order/finite、空集、overflow、稳定排序、NPZ round-trip、truth-mutation、密度分层与 split overlap=0。
 
 **Approval commit:** `feat: add frontier observation pipeline`
 
@@ -229,7 +231,7 @@ D:/conda_envs/lunar-explorer/python.exe -c "import lunar_exploration_ppo"
 
 ### Task 8: Stage 7 — Kilometer 稀疏压力测试
 
-使用 Stage 6 全局 best checkpoint，eval-only、无 fine-tune、`max_steps=512`。先 8 episode 预检，再 32 test 与 32 unseen，至少与 gain-over-cost 同环境同预算比较。2048² highres 只留在环境；policy 保持 128² prior、192² local crop、2048 sparse frontiers、513 context tokens。exact coverable mask 按数据/起点/安全/sensor hash 预计算和校验缓存。硬门：VRAM `<=10.1GiB`、RSS `<=20GiB`、policy forward p95 `<=250ms`、candidate+prefilter p95 `<=8s`、无泄漏/OOM/NaN。结论仅表述为 proxy-based kilometer stress test。
+使用 Stage 6 全局 best checkpoint，eval-only、无 fine-tune、`max_steps=512`。先 8 episode 预检，再 32 test 与 32 unseen，至少与 gain-over-cost 同环境同预算比较；test/unseen 的 low/medium/high rock-crater 密度按场景数近似等量分层。2048² highres 只留在环境；policy 保持 128² prior、192² local crop、2048 sparse frontiers、513 context tokens。exact coverable mask 按数据/起点/安全/sensor/proxy-catalog hash 预计算和校验缓存。硬门：VRAM `<=10.1GiB`、RSS `<=20GiB`、policy forward p95 `<=250ms`、candidate+prefilter p95 `<=8s`、无泄漏/OOM/NaN。结论仅表述为 proxy-based kilometer stress test。
 
 **Approval commit:** `feat: add kilometer stress evaluation`
 

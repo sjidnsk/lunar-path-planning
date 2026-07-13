@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import ast
 import copy
 import hashlib
 import inspect
@@ -155,11 +156,22 @@ def test_namespace_is_importable_and_isolated_from_legacy_modules() -> None:
     assert lunar_exploration_ppo.__version__
     source_root = REPO_ROOT / "src" / "lunar_exploration_ppo"
     forbidden = ("model_explorer", "scripts.xunce_", "sys.path")
+    direct_planner_importers: list[Path] = []
     for source_file in source_root.rglob("*.py"):
         source = source_file.read_text(encoding="utf-8")
         assert not any(token in source for token in forbidden), source_file
-        if "path_planner" in source:
-            assert source_file.name == "path_planner_adapter.py"
+        tree = ast.parse(source, filename=str(source_file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(
+                alias.name == "path_planner" or alias.name.startswith("path_planner.")
+                for alias in node.names
+            ):
+                direct_planner_importers.append(source_file)
+            if isinstance(node, ast.ImportFrom) and node.module and (
+                node.module == "path_planner" or node.module.startswith("path_planner.")
+            ):
+                direct_planner_importers.append(source_file)
+    assert {path.name for path in direct_planner_importers} == {"path_planner_adapter.py"}
 
 
 def test_foundation_config_freezes_coordinate_safety_proxy_and_scan_contracts() -> None:
@@ -368,6 +380,92 @@ def test_artifact_store_atomic_writes_append_jsonl_and_builds_sha256_manifest(
         payload = (tmp_path / relative_path).read_bytes()
         assert entry["size_bytes"] == len(payload)
         assert entry["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+def test_artifact_store_exclusive_json_publishes_canonical_complete_bytes(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    value = {"unicode": "月面", "b": 2, "a": 1}
+
+    written = store.write_json_exclusive("gate.json", value)
+
+    assert written.resolve() == (tmp_path / "gate.json").resolve()
+    assert written.read_bytes() == ArtifactStore.canonical_json_bytes(value)
+    assert not [path for path in tmp_path.iterdir() if path.name.startswith(".gate.json.")]
+
+
+def test_artifact_store_exclusive_bytes_rejects_preexisting_target_without_mutation(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    target = tmp_path / "gate.json"
+    foreign = b'{"actor":"foreign-preexisting"}\n'
+    target.write_bytes(foreign)
+
+    with pytest.raises(FileExistsError):
+        store.write_bytes_exclusive("gate.json", b'{"actor":"ours"}\n')
+
+    assert target.read_bytes() == foreign
+    assert not [path for path in tmp_path.iterdir() if path.name.startswith(".gate.json.")]
+
+
+def test_artifact_store_exclusive_publish_race_preserves_foreign_and_cleans_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    target = tmp_path / "gate.json"
+    ours = b'{"actor":"ours"}\n'
+    foreign = b'{"actor":"foreign-racer"}\n'
+    real_link = os.link
+    link_calls = 0
+
+    def competing_link(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+        nonlocal link_calls
+        link_calls += 1
+        source_path = Path(source)
+        destination_path = Path(destination)
+        assert source_path.parent == destination_path.parent
+        assert source_path.read_bytes() == ours
+        assert not destination_path.exists()
+        destination_path.write_bytes(foreign)
+        real_link(source, destination)
+
+    def reject_replace(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("exclusive publish must never fall back to os.replace")
+
+    monkeypatch.setattr(os, "link", competing_link)
+    monkeypatch.setattr(os, "replace", reject_replace)
+
+    with pytest.raises(FileExistsError):
+        store.write_bytes_exclusive("gate.json", ours)
+
+    assert link_calls == 1
+    assert target.read_bytes() == foreign
+    assert not [path for path in tmp_path.iterdir() if path.name.startswith(".gate.json.")]
+
+
+def test_artifact_store_exclusive_link_unsupported_fails_closed_without_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    link_error = OSError("hard links unsupported by test filesystem")
+
+    def reject_link(*_args: object, **_kwargs: object) -> None:
+        raise link_error
+
+    def reject_replace(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("exclusive publish must never fall back to os.replace")
+
+    monkeypatch.setattr(os, "link", reject_link)
+    monkeypatch.setattr(os, "replace", reject_replace)
+
+    with pytest.raises(OSError) as captured:
+        store.write_json_exclusive("gate.json", {"actor": "ours"})
+
+    assert captured.value is link_error
+    assert not (tmp_path / "gate.json").exists()
+    assert not [path for path in tmp_path.iterdir() if path.name.startswith(".gate.json.")]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows long-path prefix contract")

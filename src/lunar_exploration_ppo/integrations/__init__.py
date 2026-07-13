@@ -1,1 +1,3 @@
-"""Integration namespace; no legacy integration is active in Foundation."""
+"""External integration boundaries."""
+
+__all__: list[str] = []

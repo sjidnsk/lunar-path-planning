@@ -37,6 +37,9 @@ class ArtifactStore:
     def write_json(self, relative_path: str | Path, value: Any) -> Path:
         return self.write_bytes(relative_path, self.canonical_json_bytes(value))
 
+    def write_json_exclusive(self, relative_path: str | Path, value: Any) -> Path:
+        return self.write_bytes_exclusive(relative_path, self.canonical_json_bytes(value))
+
     @staticmethod
     def canonical_json_bytes(value: Any) -> bytes:
         return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
@@ -44,6 +47,11 @@ class ArtifactStore:
     def write_bytes(self, relative_path: str | Path, payload: bytes) -> Path:
         destination = self.resolve(relative_path)
         self._atomic_write(destination, payload)
+        return destination
+
+    def write_bytes_exclusive(self, relative_path: str | Path, payload: bytes) -> Path:
+        destination = self.resolve(relative_path)
+        self._exclusive_write(destination, payload)
         return destination
 
     def write_checkpoint(self, relative_path: str | Path, payload: bytes) -> Path:
@@ -97,6 +105,27 @@ class ArtifactStore:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, self._native_path(destination))
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+
+    def _exclusive_write(self, destination: Path, payload: bytes) -> None:
+        self._make_parent(destination)
+        native_parent = self._native_path(destination.parent)
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=native_parent,
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.link(self._native_path(temporary), self._native_path(destination))
         finally:
             if temporary is not None and temporary.exists():
                 temporary.unlink()
