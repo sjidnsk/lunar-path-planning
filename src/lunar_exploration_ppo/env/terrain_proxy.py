@@ -371,6 +371,7 @@ class ProceduralTerrainProxyGenerator:
         scenario_key: str,
         split: str,
         parent_roi: str,
+        seed_hex: str | None = None,
     ) -> TerrainProxyBundle:
         base = np.asarray(base_height, dtype=np.float64)
         if base.shape != geometry.shape or base.ndim != 2:
@@ -380,13 +381,16 @@ class ProceduralTerrainProxyGenerator:
         if not geometry.in_bounds(start_pose.cell):
             raise ValueError("start pose is outside geometry")
 
-        seed_hex = derive_proxy_seed(
-            scenario_key=scenario_key,
-            split=split,
-            parent_roi=parent_roi,
-            base_seed=self.settings.base_seed,
-            density_profile=self.settings.density_profile,
-        )
+        if seed_hex is None:
+            seed_hex = derive_proxy_seed(
+                scenario_key=scenario_key,
+                split=split,
+                parent_roi=parent_roi,
+                base_seed=self.settings.base_seed,
+                density_profile=self.settings.density_profile,
+            )
+        elif not isinstance(seed_hex, str) or _SEED_PATTERN.fullmatch(seed_hex) is None:
+            raise ValueError("explicit terrain proxy seed_hex is invalid")
         area_m2 = (
             geometry.width
             * geometry.resolution_m

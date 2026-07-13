@@ -67,6 +67,18 @@ class EnvAction:
     target_theta: float
 
 
+@dataclass(frozen=True, slots=True)
+class _LegacyRulePolicyInput:
+    frontier_features: np.ndarray
+    pose_features: np.ndarray
+    candidate_mask: np.ndarray
+
+    def __post_init__(self) -> None:
+        self.frontier_features.setflags(write=False)
+        self.pose_features.setflags(write=False)
+        self.candidate_mask.setflags(write=False)
+
+
 def select_conservative_frontier_candidate_index(
     frontier_features: np.ndarray,
     candidate_mask: np.ndarray,
@@ -110,6 +122,44 @@ def select_conservative_rule_action(observation: PolicyObservation) -> EnvAction
             float(selected[3]),
             float(selected[2]),
         )
+    if target_theta is None:
+        target_theta = _finite_direction_theta_or_none(
+            float(observation.pose_features[2]),
+            float(observation.pose_features[3]),
+        )
+    if target_theta is None:
+        target_theta = 0.0
+    return EnvAction(candidate_index=index, target_theta=target_theta)
+
+
+def select_stage2_diagnostic_rule_action(observation: PolicyObservation) -> EnvAction:
+    """Opt-in Stage 2 demo selector; never used by the default rule policy."""
+
+    features = np.asarray(observation.frontier_features)
+    mask = np.asarray(observation.candidate_mask)
+    if features.ndim != 2 or features.shape[1] < 22:
+        raise ValueError("Stage 2 diagnostic selector requires the 22-field schema")
+    if mask.ndim != 1 or mask.shape[0] != features.shape[0]:
+        raise ValueError("Stage 2 diagnostic selector candidate mask shape mismatch")
+    valid_rows = [index for index, valid in enumerate(mask) if bool(valid)]
+    if not valid_rows:
+        raise RuntimeError("Stage 2 diagnostic selector requires a candidate")
+    index = min(
+        valid_rows,
+        key=lambda row: (
+            -(
+                0.5 * float(features[row, 5])
+                + 0.3 * float(features[row, 7])
+                - 0.1 * float(features[row, 2])
+                - 0.1 * float(features[row, 18])
+            ),
+            row,
+        ),
+    )
+    selected = features[index]
+    target_theta = _finite_direction_theta_or_none(float(selected[14]), float(selected[15]))
+    if target_theta is None:
+        target_theta = _finite_direction_theta_or_none(float(selected[3]), float(selected[4]))
     if target_theta is None:
         target_theta = _finite_direction_theta_or_none(
             float(observation.pose_features[2]),
@@ -257,6 +307,7 @@ class LunarExplorationEnv:
         self.planner = PathPlannerAdapter(self._scenario.truth.geometry)
         self.execution_safety_checker = execution_safety_checker or FinalMaskExecutionSafetyChecker()
         self.observed_state = ObservedMapState.empty(self._scenario.truth.geometry)
+        self.observed_state.remaining_step_budget_norm = 1.0
         self.pose = self._scenario.start_pose
         self.step_count = 0
         self.consecutive_no_gain_steps = 0
@@ -311,7 +362,13 @@ class LunarExplorationEnv:
             raise ValueError("rule action requires the current observation")
         if not self.needs_policy or self.current_action_set.candidate_count == 0:
             raise RuntimeError("policy must be skipped when no candidate exists")
-        return select_conservative_rule_action(observation)
+        rule_input = _legacy_rule_policy_input(
+            self.observed_state,
+            self._scenario.prior,
+            self.pose,
+            self.current_action_set,
+        )
+        return select_conservative_rule_action(rule_input)
 
     def step(self, action: EnvAction) -> StepResult:
         if self.current_observation is None:
@@ -378,6 +435,10 @@ class LunarExplorationEnv:
         if coverage_gain_cells < 0:
             raise RuntimeError("observed coverable count regressed")
         self.step_count += 1
+        self.observed_state.remaining_step_budget_norm = max(
+            0.0,
+            (self.config.max_steps - self.step_count) / self.config.max_steps,
+        )
         if coverage_gain_cells == 0:
             self.consecutive_no_gain_steps += 1
         else:
@@ -595,6 +656,111 @@ def _post_observation_safety_failure(
         if not bool(safe_mask[cell.y, cell.x]):
             return "post_observation_path_unsafe"
     return None
+
+
+def _legacy_rule_policy_input(
+    state: ObservedMapState,
+    prior: LowResolutionPrior,
+    pose: PoseXYTheta,
+    action_set: FrontierActionSet,
+) -> _LegacyRulePolicyInput:
+    """Adapt current candidates to the frozen Stage 1 rule-feature semantics."""
+
+    height, width = state.geometry.shape
+    features = np.zeros((action_set.candidate_mask.size, 22), dtype=np.float32)
+    diagonal = max(math.hypot(width - 1, height - 1), 1.0)
+    for index, cell in enumerate(action_set.cells):
+        dx = cell.x - pose.cell.x
+        dy = cell.y - pose.cell.y
+        unknown_count, unknown_dx, unknown_dy = _legacy_unknown_neighbor_statistics(
+            state.observed_mask,
+            cell,
+        )
+        observed_blockers = _legacy_observed_blocker_neighbor_count(state, cell)
+        prior_x = min(prior.channels.shape[2] - 1, int(cell.x * prior.channels.shape[2] / width))
+        prior_y = min(prior.channels.shape[1] - 1, int(cell.y * prior.channels.shape[1] / height))
+        if unknown_dx != 0 or unknown_dy != 0:
+            recommended_theta = math.atan2(unknown_dy, unknown_dx)
+        elif math.hypot(dx, dy) > 0.0:
+            recommended_theta = math.atan2(dy, dx)
+        else:
+            recommended_theta = pose.theta
+        features[index, 0:9] = (
+            cell.x / max(width - 1, 1),
+            cell.y / max(height - 1, 1),
+            dx / max(width - 1, 1),
+            dy / max(height - 1, 1),
+            math.hypot(dx, dy) / diagonal,
+            math.sin(recommended_theta),
+            math.cos(recommended_theta),
+            unknown_count / 8.0,
+            observed_blockers / 8.0,
+        )
+        features[index, 9:14] = (
+            state.confidence[cell.y, cell.x],
+            state.height[cell.y, cell.x],
+            state.slope_deg[cell.y, cell.x] / 30.0,
+            state.traversability[cell.y, cell.x],
+            1.0,
+        )
+        features[index, 14:21] = prior.channels[:, prior_y, prior_x]
+        features[index, 21] = index / max(action_set.candidate_mask.size - 1, 1)
+    pose_features = np.asarray(
+        (
+            pose.cell.x / max(width - 1, 1),
+            pose.cell.y / max(height - 1, 1),
+            math.sin(pose.theta),
+            math.cos(pose.theta),
+            float(np.mean(state.observed_mask, dtype=np.float64)),
+            float(state.remaining_step_budget_norm),
+        ),
+        dtype=np.float32,
+    )
+    return _LegacyRulePolicyInput(
+        frontier_features=features,
+        pose_features=pose_features,
+        candidate_mask=np.asarray(action_set.candidate_mask, dtype=bool).copy(),
+    )
+
+
+def _legacy_unknown_neighbor_statistics(
+    observed_mask: np.ndarray,
+    cell: CellXY,
+) -> tuple[int, int, int]:
+    height, width = observed_mask.shape
+    count = 0
+    sum_dx = 0
+    sum_dy = 0
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            x = cell.x + dx
+            y = cell.y + dy
+            if 0 <= x < width and 0 <= y < height and not observed_mask[y, x]:
+                count += 1
+                sum_dx += dx
+                sum_dy += dy
+    return count, sum_dx, sum_dy
+
+
+def _legacy_observed_blocker_neighbor_count(state: ObservedMapState, cell: CellXY) -> int:
+    height, width = state.observed_mask.shape
+    count = 0
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            x = cell.x + dx
+            y = cell.y + dy
+            if (
+                0 <= x < width
+                and 0 <= y < height
+                and state.observed_mask[y, x]
+                and not state.observed_safe_mask[y, x]
+            ):
+                count += 1
+    return count
 
 
 def _empty_action_set(top_m: int) -> FrontierActionSet:

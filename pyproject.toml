@@ -11,6 +11,7 @@ dependencies = [
   "numpy>=1.26,<2.3",
   "path-planner==0.1.0",
   "pydantic>=2.7,<3",
+  "rasterio>=1.5,<2",
 ]
 
 [project.optional-dependencies]

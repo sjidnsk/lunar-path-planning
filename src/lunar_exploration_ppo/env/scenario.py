@@ -49,9 +49,11 @@ class LowResolutionPrior:
     channels: np.ndarray
     resolution_m: float
     value_prior_source: str
+    provenance: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         self.channels.setflags(write=False)
+        object.__setattr__(self, "provenance", MappingProxyType(dict(self.provenance or {})))
 
 
 @dataclass(frozen=True, slots=True)

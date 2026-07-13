@@ -22,6 +22,7 @@ class ObservedMapState:
     slope_deg: np.ndarray
     traversability: np.ndarray
     observed_safe_mask: np.ndarray
+    remaining_step_budget_norm: float = 1.0
 
     @classmethod
     def empty(cls, geometry: GridGeometry) -> ObservedMapState:
@@ -35,6 +36,7 @@ class ObservedMapState:
             slope_deg=np.zeros(shape, dtype=np.float64),
             traversability=np.zeros(shape, dtype=np.float64),
             observed_safe_mask=np.zeros(shape, dtype=bool),
+            remaining_step_budget_norm=1.0,
         )
 
     def reveal_cells(
