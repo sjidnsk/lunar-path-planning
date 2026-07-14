@@ -300,12 +300,19 @@ class FrontierGenerator:
         result: list[tuple[CellXY, float]] = []
         theta = math.atan2(normal_y, normal_x)
         standoff_cells = self.standoff_distance_m / state.geometry.resolution_m
+        correction_radius_cells = max(8, math.ceil(standoff_cells))
         for anchor in anchors:
             ideal = CellXY(
                 round(anchor.x - normal_x * standoff_cells),
                 round(anchor.y - normal_y * standoff_cells),
             )
-            corrected = _nearest_valid_cell(state, component, ideal, radius_cells=8, threshold=self.traversability_threshold)
+            corrected = _nearest_valid_cell(
+                state,
+                component,
+                ideal,
+                radius_cells=correction_radius_cells,
+                threshold=self.traversability_threshold,
+            )
             if corrected is not None and corrected not in (cell for cell, _ in result):
                 result.append((corrected, theta))
         return result

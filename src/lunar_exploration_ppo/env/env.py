@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import math
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Final, Literal, Mapping, Protocol
 
 import numpy as np
 
@@ -19,6 +22,7 @@ from lunar_exploration_ppo.env.sensor_model import ObservationDelta, SensorDiagn
 from lunar_exploration_ppo.env.terrain_proxy import TerrainProxySettings
 from lunar_exploration_ppo.integrations.path_planner_adapter import PathPlannerAdapter
 from lunar_exploration_ppo.policy.observation import ObservationBuilder, PolicyObservation
+from lunar_exploration_ppo.utils.artifact_io import ArtifactStore
 from lunar_exploration_ppo.utils.geometry import CellXY, PoseXYTheta, normalize_theta
 
 
@@ -33,6 +37,16 @@ DoneReason = Literal[
 ALLOWED_DONE_REASONS = frozenset(
     {"success_done", "failure_done", "stagnation_done", "no_candidate_done", "safety_done", "none"}
 )
+EPISODE_STATE_SCHEMA_VERSION: Final = "lunar_exploration_env_episode_state/v1"
+_EPISODE_ARRAY_DTYPES: Final = {
+    "observed_mask": np.dtype("|b1"),
+    "confidence": np.dtype("<f4"),
+    "height": np.dtype("<f8"),
+    "obstacle": np.dtype("|b1"),
+    "slope_deg": np.dtype("<f8"),
+    "traversability": np.dtype("<f8"),
+    "observed_safe_mask": np.dtype("|b1"),
+}
 
 
 class FrontierExtractor(Protocol):
@@ -226,6 +240,10 @@ class StepDiagnostics:
     safety_violation: bool
     progress: ProgressSnapshot
     frontier: FrontierDiagnostics
+    planned_path_cells: tuple[CellXY, ...] = ()
+    path_length_m: float = 0.0
+    path_observation_step_m: float = 0.0
+    newly_observed_cell_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,6 +398,8 @@ class LunarExplorationEnv:
         planner_diagnostics: dict[str, object] = {}
         sensor_delta: ObservationDelta | None = None
         execution: ActionExecutionDiagnostics | None = None
+        planned_path_cells: tuple[CellXY, ...] = ()
+        planned_path_length_m = 0.0
         before_covered = self._observed_coverable_count()
 
         if not invalid_action:
@@ -390,6 +410,8 @@ class LunarExplorationEnv:
                 target,
                 action.target_theta,
             )
+            planned_path_cells = tuple(plan.path_cells)
+            planned_path_length_m = float(plan.path_length_m)
             planner_diagnostics = dict(plan.diagnostics)
             planner_diagnostics["failure_reason"] = plan.failure_reason
             planner_diagnostics["failure_classification"] = plan.failure_classification
@@ -488,6 +510,12 @@ class LunarExplorationEnv:
                 safety_violation=severe_safety,
                 progress=progress,
                 frontier=frontier_diagnostics,
+                planned_path_cells=planned_path_cells,
+                path_length_m=planned_path_length_m,
+                path_observation_step_m=self.config.path_observation_step_m,
+                newly_observed_cell_count=(
+                    sensor_delta.newly_observed_count if sensor_delta is not None else 0
+                ),
             ),
         )
 
@@ -539,6 +567,192 @@ class LunarExplorationEnv:
     @property
     def coverable_cell_count(self) -> int:
         return self._coverage_masks.coverable_cell_count
+
+    def export_episode_state(self) -> dict[str, object]:
+        """导出仅含 observed episode 状态的 canonical JSON DTO。"""
+
+        initialized = self.current_observation is not None
+        body: dict[str, object] = {
+            "schema_version": EPISODE_STATE_SCHEMA_VERSION,
+            "scenario_id": self.scenario_id,
+            "scenario_hash": self.scenario_hash,
+            "initialized": initialized,
+            "step_count": self.step_count,
+            "consecutive_no_gain_steps": self.consecutive_no_gain_steps,
+            "pose_cell_xy": [self.pose.cell.x, self.pose.cell.y],
+            "pose_theta": self.pose.theta,
+            "is_done": self.is_done,
+            "terminal_reason": self.terminal_reason,
+            "needs_policy": self.needs_policy,
+            "remaining_step_budget_norm": (
+                self.observed_state.remaining_step_budget_norm
+            ),
+            "observed_arrays": {
+                name: _encode_episode_array(getattr(self.observed_state, name))
+                for name in _EPISODE_ARRAY_DTYPES
+            },
+        }
+        return {
+            **body,
+            "state_sha256": hashlib.sha256(
+                ArtifactStore.canonical_json_bytes(body)
+            ).hexdigest(),
+        }
+
+    def import_episode_state(self, value: Mapping[str, object]) -> None:
+        """校验完整 DTO 后原子恢复 episode；不读取或导出 hidden truth。"""
+
+        state = _copy_episode_state(value)
+        expected_fields = {
+            "schema_version",
+            "scenario_id",
+            "scenario_hash",
+            "initialized",
+            "step_count",
+            "consecutive_no_gain_steps",
+            "pose_cell_xy",
+            "pose_theta",
+            "is_done",
+            "terminal_reason",
+            "needs_policy",
+            "remaining_step_budget_norm",
+            "observed_arrays",
+            "state_sha256",
+        }
+        if set(state) != expected_fields:
+            raise ValueError("episode state field set drift")
+        supplied_hash = state.pop("state_sha256")
+        actual_hash = hashlib.sha256(
+            ArtifactStore.canonical_json_bytes(state)
+        ).hexdigest()
+        if supplied_hash != actual_hash:
+            raise ValueError("episode state hash mismatch")
+        if state["schema_version"] != EPISODE_STATE_SCHEMA_VERSION:
+            raise ValueError("episode state schema mismatch")
+        if (
+            state["scenario_id"] != self.scenario_id
+            or state["scenario_hash"] != self.scenario_hash
+        ):
+            raise ValueError("episode state scenario mismatch")
+
+        initialized = state["initialized"]
+        step_count = state["step_count"]
+        no_gain = state["consecutive_no_gain_steps"]
+        is_done = state["is_done"]
+        needs_policy = state["needs_policy"]
+        reason = state["terminal_reason"]
+        if (
+            type(initialized) is not bool
+            or type(is_done) is not bool
+            or type(needs_policy) is not bool
+            or type(step_count) is not int
+            or not 0 <= step_count <= self.config.max_steps
+            or type(no_gain) is not int
+            or not 0 <= no_gain <= step_count
+            or reason not in ALLOWED_DONE_REASONS
+            or is_done != (reason != "none")
+            or needs_policy and is_done
+        ):
+            raise ValueError("episode state lifecycle fields are invalid")
+        pose_value = state["pose_cell_xy"]
+        theta_value = state["pose_theta"]
+        if (
+            not isinstance(pose_value, list)
+            or len(pose_value) != 2
+            or any(type(component) is not int for component in pose_value)
+            or not isinstance(theta_value, (int, float))
+        ):
+            raise ValueError("episode state pose is invalid")
+        pose_cell = CellXY(pose_value[0], pose_value[1])
+        if not self.observed_state.geometry.in_bounds(pose_cell):
+            raise ValueError("episode state pose is out of bounds")
+        restored_theta = normalize_theta(float(theta_value))
+        if restored_theta != float(theta_value):
+            raise ValueError("episode state theta is not normalized")
+
+        remaining = state["remaining_step_budget_norm"]
+        expected_remaining = max(
+            0.0,
+            (self.config.max_steps - step_count) / self.config.max_steps,
+        )
+        if (
+            not isinstance(remaining, (int, float))
+            or not math.isfinite(float(remaining))
+            or not math.isclose(
+                float(remaining),
+                expected_remaining,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+        ):
+            raise ValueError("episode state remaining step budget is invalid")
+        array_records = state["observed_arrays"]
+        if not isinstance(array_records, dict) or set(array_records) != set(
+            _EPISODE_ARRAY_DTYPES
+        ):
+            raise ValueError("episode state observed array set drift")
+        restored_arrays = {
+            name: _decode_episode_array(
+                array_records[name],
+                expected_dtype=dtype,
+                expected_shape=self.observed_state.geometry.shape,
+            )
+            for name, dtype in _EPISODE_ARRAY_DTYPES.items()
+        }
+        restored_observed = ObservedMapState(
+            geometry=self.observed_state.geometry,
+            **restored_arrays,
+            remaining_step_budget_norm=float(remaining),
+        )
+        safety_check = restored_observed.observed_safe_mask.copy()
+        restored_observed.recompute_observed_safe_mask(
+            min_clearance_m=self.config.min_clearance_m,
+            max_slope_deg=self.config.max_traversable_slope_deg,
+            traversability_threshold=self.config.traversability_threshold,
+        )
+        if not np.array_equal(restored_observed.observed_safe_mask, safety_check):
+            raise ValueError("episode state observed safety mask is inconsistent")
+
+        restored_pose = PoseXYTheta(pose_cell, restored_theta)
+        if initialized:
+            restored_action_set = self.frontier_generator.extract(
+                restored_observed,
+                self._scenario.prior,
+                restored_pose,
+            )
+            restored_observation = self.observation_builder.build(
+                self._scenario.prior,
+                restored_observed,
+                restored_pose,
+                restored_action_set,
+            )
+            expected_needs_policy = (
+                not is_done and restored_action_set.candidate_count > 0
+            )
+            if needs_policy != expected_needs_policy:
+                raise ValueError("episode state policy lifecycle is inconsistent")
+        else:
+            if (
+                step_count != 0
+                or no_gain != 0
+                or is_done
+                or needs_policy
+                or reason != "none"
+            ):
+                raise ValueError("uninitialized episode state is inconsistent")
+            restored_action_set = _empty_action_set(self.config.frontier_top_m)
+            restored_observation = None
+
+        self.observed_state = restored_observed
+        self.pose = restored_pose
+        self.step_count = step_count
+        self.consecutive_no_gain_steps = no_gain
+        self.is_done = is_done
+        self.terminal_reason = reason
+        self.needs_policy = needs_policy
+        self.current_action_set = restored_action_set
+        self.current_observation = restored_observation
+        self.last_reset_diagnostics = None
 
     def _progress(self, coverage_rate: float) -> ProgressSnapshot:
         return ProgressSnapshot(
@@ -769,3 +983,72 @@ def _empty_action_set(top_m: int) -> FrontierActionSet:
         frontier_features=np.zeros((top_m, 22), dtype=np.float32),
         candidate_mask=np.zeros((top_m,), dtype=bool),
     )
+
+
+def _copy_episode_state(value: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("episode state must be a mapping")
+    try:
+        copied = json.loads(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                allow_nan=False,
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("episode state must contain finite JSON values") from exc
+    if not isinstance(copied, dict):
+        raise ValueError("episode state must be a JSON object")
+    return copied
+
+
+def _encode_episode_array(value: np.ndarray) -> dict[str, object]:
+    canonical = np.ascontiguousarray(value)
+    payload = canonical.tobytes(order="C")
+    return {
+        "dtype": canonical.dtype.str,
+        "shape": list(canonical.shape),
+        "size_bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "base64": base64.b64encode(payload).decode("ascii"),
+    }
+
+
+def _decode_episode_array(
+    value: object,
+    *,
+    expected_dtype: np.dtype,
+    expected_shape: tuple[int, int],
+) -> np.ndarray:
+    if not isinstance(value, dict) or set(value) != {
+        "dtype",
+        "shape",
+        "size_bytes",
+        "sha256",
+        "base64",
+    }:
+        raise ValueError("episode state array record is invalid")
+    if (
+        value["dtype"] != expected_dtype.str
+        or value["shape"] != list(expected_shape)
+        or type(value["size_bytes"]) is not int
+        or not isinstance(value["sha256"], str)
+        or not isinstance(value["base64"], str)
+    ):
+        raise ValueError("episode state array metadata mismatch")
+    try:
+        payload = base64.b64decode(value["base64"], validate=True)
+    except ValueError as exc:
+        raise ValueError("episode state array base64 is invalid") from exc
+    expected_size = int(np.prod(expected_shape, dtype=np.int64)) * (
+        expected_dtype.itemsize
+    )
+    if (
+        len(payload) != expected_size
+        or value["size_bytes"] != expected_size
+        or hashlib.sha256(payload).hexdigest() != value["sha256"]
+    ):
+        raise ValueError("episode state array hash or size mismatch")
+    return np.frombuffer(payload, dtype=expected_dtype).reshape(expected_shape).copy()
