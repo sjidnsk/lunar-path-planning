@@ -30,6 +30,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -56,6 +57,12 @@ jobs:
         run: |
           python -c 'import lunar_exploration_ppo; from lunar_exploration_ppo.configs.schema import resolve_device; assert resolve_device("cpu", cuda_available=False) == "cpu"'
           python -m pytest tests/ppo_highres_frontier/test_foundation.py -q
+
+      - name: Stage 3 CPU policy contract
+        shell: bash
+        run: |
+          python -m pytest tests/ppo_highres_frontier/test_stage3_policy_cpu.py -q
+          python -m pytest tests/ppo_highres_frontier/test_stage3_workflow.py -q
 
       - name: Platform compatibility tests
         shell: bash

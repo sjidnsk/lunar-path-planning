@@ -147,16 +147,21 @@ def _stage2_review_inputs(workflow: object, tmp_path: Path, run_id: str):
         run_id=run_id,
         base_output_root=tmp_path,
     )
+    machine_config = json.loads(
+        (result.stage_root / "config.json").read_text(encoding="utf-8")
+    )
+    review_base = machine_config["stage1_approval_commit"]
     package = workflow.prepare_stage2_review_package(
         repo_root=ROOT,
         package_path=tmp_path / f"{run_id}-review.patch",
+        base_commit=review_base,
     )
+    assert package.base_commit == review_base
     bindings = workflow.inspect_stage2_review_bindings(
         stage_root=result.stage_root,
         repo_root=ROOT,
         review_package=package.path,
     )
-    machine_config = json.loads((result.stage_root / "config.json").read_text(encoding="utf-8"))
     package_bytes = package.path.read_bytes()
     bindings = {
         **bindings,
@@ -581,10 +586,16 @@ def test_stage2_verifier_and_review_bindings_reject_synchronized_payload_tamper(
         arrays["frontier_features"][0, 0] += np.float32(0.125)
         np.savez_compressed(path, **arrays)
     _rewrite_manifest_entry(workflow, result.stage_root, relative)
+    machine_config = json.loads(
+        (result.stage_root / "config.json").read_text(encoding="utf-8")
+    )
+    review_base = machine_config["stage1_approval_commit"]
     package = workflow.prepare_stage2_review_package(
         repo_root=ROOT,
         package_path=tmp_path / f"{tamper_kind}-review.patch",
+        base_commit=review_base,
     )
+    assert package.base_commit == review_base
 
     with pytest.raises(workflow.Stage2WorkflowError, match="deterministic payload drift"):
         workflow.verify_stage2_machine_run(stage_root=result.stage_root, repo_root=ROOT)

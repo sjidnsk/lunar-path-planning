@@ -12,6 +12,7 @@ dependencies = [
   "path-planner==0.1.0",
   "pydantic>=2.7,<3",
   "rasterio>=1.5,<2",
+  "torch>=2.12.1,<2.13",
 ]
 
 [project.optional-dependencies]
