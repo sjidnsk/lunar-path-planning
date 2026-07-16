@@ -11,6 +11,7 @@
   },
   "formal_output_root": "D:/xunce/out/path_v2/g3",
   "temp_root": "D:/xunce/tmp/path_v2_g3",
+  "probe_subprocess_timeout_s": 30.0,
   "focused": {
     "working_directory": "path-planner",
     "pythonpath": [

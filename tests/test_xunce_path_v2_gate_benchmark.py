@@ -264,6 +264,7 @@ def _gate3_config(tmp_path: Path, *, boundaries=None) -> Path:
         },
         "formal_output_root": "D:/xunce/out/path_v2/g3",
         "temp_root": "D:/xunce/tmp/path_v2_g3",
+        "probe_subprocess_timeout_s": 30.0,
         "focused": {
             "working_directory": "path-planner",
             "pythonpath": ["path-planner/src"],
@@ -1777,6 +1778,11 @@ def test_checked_in_gate2_config_matches_frozen_test_contract(tmp_path: Path) ->
         pytest.param(("expected_git", "gate_input_commit"), GATE2_INPUT_COMMIT, id="gate-input"),
         pytest.param(("formal_output_root",), "D:/xunce/out/path_v2/other", id="formal-root"),
         pytest.param(("temp_root",), "D:/xunce/tmp/path_v2_other", id="temp-root"),
+        pytest.param(
+            ("probe_subprocess_timeout_s",),
+            0.0,
+            id="probe-subprocess-timeout",
+        ),
         pytest.param(("focused", "pytest_targets"), list(GATE2_FOCUSED_TARGETS), id="focused"),
         pytest.param(("full", "legacy_expected", "passed"), 157, id="legacy"),
         pytest.param(("ablation", "cases"), list(reversed(GATE3_CASES)), id="cases"),
@@ -2068,6 +2074,141 @@ def test_gate3_real_probe_is_isolated_and_exercises_component_safety_contracts(
         assert row["fallback_isolated"] is True
         assert row["fatal_reason"] is None
         assert row["accelerator_used"] is False
+
+
+def test_gate3_probe_subprocess_timeout_has_stable_failure_sentinel(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    observed: dict[str, object] = {}
+
+    def timeout_run(command, **kwargs):
+        observed["command"] = command
+        observed["timeout"] = kwargs.get("timeout")
+        raise runner.subprocess.TimeoutExpired(
+            command,
+            kwargs.get("timeout"),
+            output="partial probe output",
+            stderr="probe deadline exceeded",
+        )
+
+    monkeypatch.setattr(runner.subprocess, "run", timeout_run)
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=4,
+        hash_seed=29,
+        repeat=2,
+        common_env=runner._common_env(REPO_ROOT, tmp_path / "probe-timeout"),
+        timeout_s=30.0,
+    )
+
+    assert observed["timeout"] == 30.0
+    assert result["returncode"] == 124
+    assert result["stable_failure_reason"] == "probe_subprocess_timeout"
+    assert result["rows"] == []
+    assert result["worker_count"] == 4
+    assert result["python_hash_seed"] == 29
+    assert result["repeat"] == 2
+
+
+def test_gate3_probe_timeout_fills_six_rows_and_routes_to_probe_repair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    timeout_key = (4, 29, 2)
+    calls: list[tuple[int, int, int]] = []
+    complete_rows = _gate3_probe_rows()
+
+    def fake_probe_process(*, worker_count, hash_seed, repeat, **kwargs):
+        key = (worker_count, hash_seed, repeat)
+        calls.append(key)
+        stable_failure_reason = (
+            "probe_subprocess_timeout" if key == timeout_key else None
+        )
+        rows = (
+            []
+            if stable_failure_reason is not None
+            else [
+                deepcopy(row)
+                for row in complete_rows
+                if (
+                    row["worker_count"],
+                    row["python_hash_seed"],
+                    row["repeat"],
+                )
+                == key
+            ]
+        )
+        return {
+            "command": ["python", "-c", "<gate3-probe>"],
+            "environment": {},
+            "worker_count": worker_count,
+            "python_hash_seed": hash_seed,
+            "repeat": repeat,
+            "returncode": 124 if stable_failure_reason is not None else 0,
+            "stable_failure_reason": stable_failure_reason,
+            "rows": rows,
+        }
+
+    monkeypatch.setattr(
+        runner,
+        "_run_gate3_probe_process",
+        fake_probe_process,
+    )
+    result = runner._run_gate3_probes(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        common_env=runner._common_env(REPO_ROOT, tmp_path / "probe-matrix"),
+        timeout_s=30.0,
+    )
+
+    expected_calls = [
+        (worker_count, hash_seed, repeat)
+        for worker_count in (1, 4)
+        for hash_seed in (11, 29, 47)
+        for repeat in (1, 2, 3)
+    ]
+    assert calls == expected_calls
+    assert len(result["commands"]) == 18
+    assert len(result["rows"]) == 108
+    timeout_rows = [
+        row
+        for row in result["rows"]
+        if (
+            row["worker_count"],
+            row["python_hash_seed"],
+            row["repeat"],
+        )
+        == timeout_key
+    ]
+    assert len(timeout_rows) == 6
+    assert [row["case_id"] for row in timeout_rows] == GATE3_CASES
+    assert {row["status"] for row in timeout_rows} == {"failed"}
+    assert {row["fatal_reason"] for row in timeout_rows} == {
+        "probe_subprocess_timeout"
+    }
+    assert all(not row["runtime_disabled_accelerators"] for row in timeout_rows)
+    assert result["status"] == "failed"
+    assert result["matrix_complete"] is True
+    assert result["stable_row_order"] is True
+    assert result["runtime_fallback_count"] == 0
+    assert result["fatal_reasons"] == ["probe_subprocess_timeout"]
+
+    status, route, checks = runner._evaluate_gate3(
+        preflight={"status": "passed"},
+        postflight_ok=True,
+        focused={"status": "passed"},
+        full={"status": "passed"},
+        probe_audit=result,
+        boundary_ok=True,
+    )
+    assert status == "failed"
+    assert route == "repair_gate3_deterministic_component_probes"
+    assert checks["fatal_authority_clean"] is False
 
 
 @pytest.mark.parametrize(
@@ -2436,6 +2577,84 @@ _gate3_validation.validate_route = _gate3_component_failure
         ],
         "full_v2": ["lazy_validation", "validation_cache"],
     }
+
+
+@pytest.mark.parametrize(
+    "fault_type",
+    [
+        pytest.param("RuntimeError", id="optional-constructor-failure"),
+        pytest.param("TimeoutError", id="constructor-deadline"),
+    ],
+)
+def test_gate3_cache_constructor_failure_is_classified_inside_child(
+    tmp_path: Path,
+    monkeypatch,
+    fault_type: str,
+) -> None:
+    runner = _runner()
+    fault_injection = f"""
+import path_planner.v2.cache as _gate3_cache
+
+_gate3_cache_fault_type = {fault_type}
+
+
+def _gate3_cache_constructor_failure(*args, **kwargs):
+    raise _gate3_cache_fault_type("injected cache constructor failure")
+
+
+_gate3_cache.ValidationCacheV2 = _gate3_cache_constructor_failure
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(
+        REPO_ROOT,
+        tmp_path / f"cache-constructor-{fault_type}",
+    )
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+        timeout_s=30.0,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert len(result["rows"]) == len(GATE3_CASES)
+    if fault_type == "TimeoutError":
+        assert {row["status"] for row in result["rows"]} == {"failed"}
+        assert {row["fatal_reason"] for row in result["rows"]} == {
+            "planning_deadline_expired"
+        }
+        assert all(
+            not row["runtime_disabled_accelerators"]
+            for row in result["rows"]
+        )
+    else:
+        assert {row["status"] for row in result["rows"]} == {"passed"}
+        assert {row["fatal_reason"] for row in result["rows"]} == {None}
+        assert all(row["l2_authority_preserved"] for row in result["rows"])
+        disabled_by_case = {
+            row["case_id"]: [
+                item["accelerator_id"]
+                for item in row["runtime_disabled_accelerators"]
+            ]
+            for row in result["rows"]
+        }
+        assert disabled_by_case == {
+            "fine_only": [],
+            "multi_heuristic_only": [],
+            "hierarchy_only": [],
+            "lazy_validation_only": [],
+            "lazy_validation_plus_cache": ["validation_cache"],
+            "full_v2": ["validation_cache"],
+        }
 
 
 @pytest.mark.parametrize(

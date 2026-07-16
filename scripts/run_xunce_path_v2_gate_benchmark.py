@@ -120,6 +120,8 @@ GATE3_STAGE_ID = "xunce-path-v2-gate3-accelerators"
 GATE3_INPUT_COMMIT = "d6b6b93c7e2c148195cd907010f46bd88e97ce2b"
 GATE3_FORMAL_OUTPUT_ROOT = Path("D:/xunce/out/path_v2/g3")
 GATE3_FORMAL_TEMP_ROOT = Path("D:/xunce/tmp/path_v2_g3")
+GATE3_PROBE_SUBPROCESS_TIMEOUT_S = 30.0
+GATE3_PROBE_TIMEOUT_RETURNCODE = 124
 GATE3_PASS_ROUTE = "implement_path_v2_legged_static_stability_oracle"
 GATE3_EXECUTE_ROUTE = "execute_gate3_accelerator_evidence"
 GATE3_FOCUSED_TARGETS = (
@@ -587,54 +589,64 @@ if fatal_reason is None:
         fatal_reason = route_validation_fatal_reason(lazy_result)
 
 if fatal_reason is None:
-    cache = ValidationCacheV2()
-    cached_first, cached_first_scope = validate_route_with_l2_tracking(
-        outcome.route,
-        anchor,
-        wheel_profile,
-        ValidationLevelV2.L2,
-        request=request,
-        deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
-        cache=cache,
-    )
-    cached_first_scope_reason = validation_scope_fatal_reason(cached_first_scope)
-    if cached_first_scope_reason is not None:
-        fatal_reason = cached_first_scope_reason
-    elif cached_first_scope["component_exception"] is None:
-        fatal_reason = route_validation_fatal_reason(cached_first)
-        if fatal_reason is None:
-            cached_second, cached_second_scope = validate_route_with_l2_tracking(
-                outcome.route,
-                anchor,
-                wheel_profile,
-                ValidationLevelV2.L2,
-                request=request,
-                deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
-                cache=cache,
-            )
-            cached_second_scope_reason = validation_scope_fatal_reason(
-                cached_second_scope
-            )
-            if cached_second_scope_reason is not None:
-                fatal_reason = cached_second_scope_reason
-            elif cached_second_scope["component_exception"] is None:
-                fatal_reason = route_validation_fatal_reason(cached_second)
-                cache_ok = (
-                    fatal_reason is None
-                    and type(cached_first) is RouteValidationResultV2
-                    and type(cached_second) is RouteValidationResultV2
-                    and cached_first.success
-                    and cached_second.success
-                    and cached_second.cache_hits == 1
-                    and cached_first.l2_result is not None
-                    and cached_second.l2_result is not None
-                    and cached_first.l2_result.reason_code == fine_result.reason_code
-                    and cached_second.l2_result.reason_code == fine_result.reason_code
-                    and cached_first.l2_result.validated_route_hash
-                    == fine_result.validated_route_hash
-                    and cached_second.l2_result.validated_route_hash
-                    == fine_result.validated_route_hash
+    try:
+        cache = ValidationCacheV2()
+    except TimeoutError:
+        fatal_reason = "planning_deadline_expired"
+        cache = None
+    except Exception:
+        cache = None
+
+    if fatal_reason is None and cache is not None:
+        cached_first, cached_first_scope = validate_route_with_l2_tracking(
+            outcome.route,
+            anchor,
+            wheel_profile,
+            ValidationLevelV2.L2,
+            request=request,
+            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+            cache=cache,
+        )
+        cached_first_scope_reason = validation_scope_fatal_reason(cached_first_scope)
+        if cached_first_scope_reason is not None:
+            fatal_reason = cached_first_scope_reason
+        elif cached_first_scope["component_exception"] is None:
+            fatal_reason = route_validation_fatal_reason(cached_first)
+            if fatal_reason is None:
+                cached_second, cached_second_scope = validate_route_with_l2_tracking(
+                    outcome.route,
+                    anchor,
+                    wheel_profile,
+                    ValidationLevelV2.L2,
+                    request=request,
+                    deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+                    cache=cache,
                 )
+                cached_second_scope_reason = validation_scope_fatal_reason(
+                    cached_second_scope
+                )
+                if cached_second_scope_reason is not None:
+                    fatal_reason = cached_second_scope_reason
+                elif cached_second_scope["component_exception"] is None:
+                    fatal_reason = route_validation_fatal_reason(cached_second)
+                    cache_ok = (
+                        fatal_reason is None
+                        and type(cached_first) is RouteValidationResultV2
+                        and type(cached_second) is RouteValidationResultV2
+                        and cached_first.success
+                        and cached_second.success
+                        and cached_second.cache_hits == 1
+                        and cached_first.l2_result is not None
+                        and cached_second.l2_result is not None
+                        and cached_first.l2_result.reason_code
+                        == fine_result.reason_code
+                        and cached_second.l2_result.reason_code
+                        == fine_result.reason_code
+                        and cached_first.l2_result.validated_route_hash
+                        == fine_result.validated_route_hash
+                        and cached_second.l2_result.validated_route_hash
+                        == fine_result.validated_route_hash
+                    )
 
 accelerator_used = bool(
     getattr(getattr(outcome, "search_telemetry", None), "accelerator_used", True)
@@ -1120,6 +1132,7 @@ def _validate_gate3_config(config: dict[str, Any]) -> None:
         "expected_git",
         "formal_output_root",
         "temp_root",
+        "probe_subprocess_timeout_s",
         "focused",
         "full",
         "baseline_evidence",
@@ -1156,6 +1169,11 @@ def _validate_gate3_config(config: dict[str, Any]) -> None:
         config.get("temp_root"),
         GATE3_FORMAL_TEMP_ROOT.as_posix(),
         "temp_root",
+    )
+    _require_frozen(
+        config.get("probe_subprocess_timeout_s"),
+        GATE3_PROBE_SUBPROCESS_TIMEOUT_S,
+        "probe_subprocess_timeout_s",
     )
     _require_frozen(
         config.get("focused"),
@@ -1691,6 +1709,7 @@ def _run_gate3_probe_process(
     hash_seed: int,
     repeat: int,
     common_env: dict[str, str],
+    timeout_s: float = GATE3_PROBE_SUBPROCESS_TIMEOUT_S,
 ) -> dict[str, Any]:
     env = common_env.copy()
     env.update(
@@ -1705,42 +1724,56 @@ def _run_gate3_probe_process(
         }
     )
     command = [str(python), "-c", GATE3_PROBE_CODE]
-    completed = subprocess.run(
-        command,
-        cwd=repo_root / "path-planner",
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
     rows: list[dict[str, Any]] = []
     stable_failure_reason: str | None = None
-    if completed.returncode != 0:
-        stable_failure_reason = "probe_subprocess_failed"
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=repo_root / "path-planner",
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        returncode = GATE3_PROBE_TIMEOUT_RETURNCODE
+        stable_failure_reason = "probe_subprocess_timeout"
     else:
-        try:
-            payload = json.loads(completed.stdout.strip().splitlines()[-1])
-            raw_rows = payload["rows"]
-            if (
-                type(payload) is not dict
-                or type(raw_rows) is not list
-                or len(raw_rows) != len(GATE3_CASES)
-                or any(type(row) is not dict for row in raw_rows)
-                or [row.get("case_id") for row in raw_rows] != list(GATE3_CASES)
+        returncode = int(completed.returncode)
+        if completed.returncode != 0:
+            stable_failure_reason = "probe_subprocess_failed"
+        else:
+            try:
+                payload = json.loads(completed.stdout.strip().splitlines()[-1])
+                raw_rows = payload["rows"]
+                if (
+                    type(payload) is not dict
+                    or type(raw_rows) is not list
+                    or len(raw_rows) != len(GATE3_CASES)
+                    or any(type(row) is not dict for row in raw_rows)
+                    or [row.get("case_id") for row in raw_rows]
+                    != list(GATE3_CASES)
+                ):
+                    raise ValueError("invalid Gate 3 probe rows")
+                for raw in raw_rows:
+                    row = dict(raw)
+                    row.update(
+                        worker_count=worker_count,
+                        python_hash_seed=hash_seed,
+                        repeat=repeat,
+                    )
+                    rows.append(row)
+            except (
+                IndexError,
+                KeyError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
             ):
-                raise ValueError("invalid Gate 3 probe rows")
-            for raw in raw_rows:
-                row = dict(raw)
-                row.update(
-                    worker_count=worker_count,
-                    python_hash_seed=hash_seed,
-                    repeat=repeat,
-                )
-                rows.append(row)
-        except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-            stable_failure_reason = "probe_output_invalid"
-            rows = []
+                stable_failure_reason = "probe_output_invalid"
+                rows = []
     return {
         "command": command,
         "environment": {
@@ -1757,7 +1790,7 @@ def _run_gate3_probe_process(
         "worker_count": worker_count,
         "python_hash_seed": hash_seed,
         "repeat": repeat,
-        "returncode": int(completed.returncode),
+        "returncode": returncode,
         "stable_failure_reason": stable_failure_reason,
         "rows": rows,
     }
@@ -1799,6 +1832,7 @@ def _run_gate3_probes(
     python: Path,
     repo_root: Path,
     common_env: dict[str, str],
+    timeout_s: float = GATE3_PROBE_SUBPROCESS_TIMEOUT_S,
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     commands: list[dict[str, Any]] = []
@@ -1812,6 +1846,7 @@ def _run_gate3_probes(
                     hash_seed=hash_seed,
                     repeat=repeat,
                     common_env=common_env,
+                    timeout_s=timeout_s,
                 )
                 commands.append(
                     {
@@ -2809,6 +2844,8 @@ def _evaluate_gate3(
         route = "restore_gate3_focused_contracts"
     elif not checks["full"]:
         route = "restore_path_planner_v1_regression"
+    elif "probe_subprocess_timeout" in probe_audit.get("fatal_reasons", ()):
+        route = "repair_gate3_deterministic_component_probes"
     elif not checks["fatal_authority_clean"]:
         route = "restore_gate3_fine_l2_authority"
     elif not checks["ablation_matrix"] or not checks["one_decision_digest"]:
@@ -3041,6 +3078,7 @@ def _run_gate3_benchmark(
                     python=python,
                     repo_root=repo_root,
                     common_env=env,
+                    timeout_s=config["probe_subprocess_timeout_s"],
                 )
 
         postflight = _gate3_postflight(config, repo_root)
