@@ -14,6 +14,15 @@ This file defines where Xunce stage information belongs. Keep it short and use i
 | `docs/superpowers/specs` | Long-lived technical specifications and interface contracts. It should summarize current contracts, not repeat every runner result. |
 | `configs/stage_registry.json` | Machine-readable stage registration only. Do not use it as narrative documentation. |
 
+## Path Planner v2 Gate Route
+
+| Location | Responsibility |
+|---|---|
+| `docs/superpowers/specs/2026-07-16-multiplatform-path-planner-v2-design.md` | Durable Path Planner v2 design and safety-boundary contract. |
+| `docs/superpowers/plans/2026-07-16-multiplatform-path-planner-v2-implementation.md` | Task-by-task implementation intent and acceptance sequence. |
+| `D:/xunce/out/path_v2/g0/report.md` | Gate 0 clean-worktree baseline and isolation result. |
+| `D:/xunce/out/path_v2/g0/manifest.json` | Hash and size bindings for the Gate 0 artifact set, excluding the manifest itself. |
+
 ## Current Stage26 Mainline
 
 ```text

@@ -1,0 +1,105 @@
+{
+  "schema_version": "xunce-path-v2-g0-baseline-and-isolation/v1",
+  "stage_id": "xunce-path-v2-g0-baseline-and-isolation",
+  "python": "D:/conda_envs/lunar-explorer/python.exe",
+  "expected_python_version": "3.12.13",
+  "expected_git": {
+    "branch": "codex/multiplatform-path-planner-v2",
+    "base_commit": "b635740ee021258ef31811ec87c60add839fc5f9"
+  },
+  "temp_root": "D:/xunce/tmp/path_v2_g0",
+  "path_planner": {
+    "working_directory": "path-planner",
+    "pythonpath": [
+      "path-planner/src"
+    ],
+    "pytest_targets": [],
+    "junit_xml": "path_planner_baseline.junit.xml",
+    "expected": {
+      "tests": 173,
+      "passed": 156,
+      "skipped": 17,
+      "failures": 0,
+      "errors": 0
+    },
+    "allowed_skip_dependency": "pydrake"
+  },
+  "ppo_stage1": {
+    "working_directory": ".",
+    "pythonpath": [
+      "src",
+      "path-planner/src"
+    ],
+    "pytest_targets": [
+      "tests/ppo_highres_frontier/test_stage1_smoke_env.py"
+    ],
+    "junit_xml": "ppo_stage1_baseline.junit.xml",
+    "expected": {
+      "tests": 56,
+      "passed": 43,
+      "skipped": 0,
+      "failures": 13,
+      "errors": 0
+    },
+    "known_failures": [
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_frontier_recommended_theta_points_to_observed_unknown_side[single-side]",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_frontier_recommended_theta_points_to_observed_unknown_side[diagonal]",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_frontier_recommended_theta_points_to_observed_unknown_side[multi-neighbour-vector]",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_frontier_recommended_theta_points_to_observed_unknown_side[symmetric-travel-fallback]",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_env_and_workflow_rule_policy_share_one_conservative_selector",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_post_reveal_endpoint_clearance_failure_is_severe_safety[hidden_rock]",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_post_reveal_endpoint_clearance_failure_is_severe_safety[hidden_steep_terrain]",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_post_reveal_distant_blocker_keeps_endpoint_safe",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_conservative_smoke_contract_is_stable_across_python_hash_seeds",
+        "category": "inherited_external_baseline_symptom"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_ten_episode_workflow_writes_finite_append_only_machine_artifacts",
+        "category": "frozen_foundation_identity_mismatch"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_stage1_gate_binds_required_sources_without_writing_gate_artifact",
+        "category": "frozen_foundation_identity_mismatch"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_stage1_gate_fails_closed_on_missing_review_jump_state_and_artifact_drift",
+        "category": "frozen_foundation_identity_mismatch"
+      },
+      {
+        "nodeid": "tests/ppo_highres_frontier/test_stage1_smoke_env.py::test_stage1_gate_rejects_dirty_tree_and_has_no_force_path",
+        "category": "frozen_foundation_identity_mismatch"
+      }
+    ]
+  },
+  "boundaries": {
+    "publishes_checkpoint": false,
+    "replaces_default_policy": false,
+    "connects_real_executor": false,
+    "starts_online_canary": false
+  }
+}

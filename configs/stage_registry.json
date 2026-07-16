@@ -1,6 +1,12 @@
 {
   "schema_version": "lunar-stage-registry/v1",
   "stages": {
+    "xunce-path-v2-g0-baseline-and-isolation": {
+      "script": "scripts/run_xunce_path_v2_g0_baseline_and_isolation.py",
+      "default_config": "configs/xunce_path_v2_g0_baseline_and_isolation_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g0",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-model-comparison-input-readiness": {
       "script": "scripts/run_xunce_model_comparison_input_readiness.py",
       "default_output_root": "outputs/xunce_model_comparison_input_readiness_v1",
