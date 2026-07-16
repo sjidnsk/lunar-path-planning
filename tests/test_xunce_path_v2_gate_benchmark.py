@@ -2223,6 +2223,97 @@ _gate3_validation.validate_route_l2 = _gate3_fault_after_initial_fine
 
 
 @pytest.mark.parametrize(
+    ("stage", "fault_call_index"),
+    [
+        pytest.param("lazy", 2, id="lazy"),
+        pytest.param("cache", 3, id="cache"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("fault_mode", "expected_fatal_reason"),
+    [
+        pytest.param("wrong_type", "l2_authority_malformed", id="wrong-type"),
+        pytest.param("exception", "l2_authority_malformed", id="exception"),
+        pytest.param(
+            "typed_timeout",
+            "planning_deadline_expired",
+            id="typed-timeout",
+        ),
+        pytest.param("typed_rejection", "l2_rejected", id="typed-rejection"),
+    ],
+)
+def test_gate3_real_probe_preserves_one_shot_l2_fault_source(
+    tmp_path: Path,
+    monkeypatch,
+    stage: str,
+    fault_call_index: int,
+    fault_mode: str,
+    expected_fatal_reason: str,
+) -> None:
+    runner = _runner()
+    fault_injection = f"""
+import path_planner.v2.validation as _gate3_validation
+
+_gate3_original_validate_route_l2 = _gate3_validation.validate_route_l2
+_gate3_l2_call_count = 0
+_gate3_fault_call_index = {fault_call_index}
+_gate3_fault_mode = {fault_mode!r}
+
+
+def _gate3_one_shot_l2_fault(*args, **kwargs):
+    global _gate3_l2_call_count
+    call_index = _gate3_l2_call_count
+    _gate3_l2_call_count += 1
+    if call_index != _gate3_fault_call_index:
+        return _gate3_original_validate_route_l2(*args, **kwargs)
+    if _gate3_fault_mode == "wrong_type":
+        return object()
+    if _gate3_fault_mode == "exception":
+        raise RuntimeError("injected one-shot L2 failure")
+    if _gate3_fault_mode == "typed_timeout":
+        return _gate3_validation._timeout(
+            _gate3_validation.WHEEL_ROUTE_VALIDATOR_ID_V2,
+            0,
+        )
+    return _gate3_validation._result(
+        _gate3_validation.WHEEL_ROUTE_VALIDATOR_ID_V2,
+        "primitive_structure_mismatch",
+    )
+
+
+_gate3_validation.validate_route_l2 = _gate3_one_shot_l2_fault
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(
+        REPO_ROOT,
+        tmp_path / f"one-shot-{stage}-{fault_mode}",
+    )
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        expected_fatal_reason
+    }
+    assert all(
+        not row["runtime_disabled_accelerators"] for row in result["rows"]
+    )
+
+
+@pytest.mark.parametrize(
     ("fault_mode", "expected_fatal_reason"),
     [
         pytest.param(
@@ -2345,6 +2436,285 @@ _gate3_validation.validate_route = _gate3_component_failure
         ],
         "full_v2": ["lazy_validation", "validation_cache"],
     }
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        pytest.param("entry", id="entry-construction"),
+        pytest.param("init", id="queue-init"),
+        pytest.param("extend", id="queue-extend"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("fault_type", "expected_fatal_reason"),
+    [
+        pytest.param(
+            "TimeoutError",
+            "planning_deadline_expired",
+            id="deadline",
+        ),
+        pytest.param("RuntimeError", None, id="optional-component-failure"),
+    ],
+)
+def test_gate3_real_probe_classifies_the_entire_search_probe_scope(
+    tmp_path: Path,
+    monkeypatch,
+    stage: str,
+    fault_type: str,
+    expected_fatal_reason: str | None,
+) -> None:
+    runner = _runner()
+    fault_injection = f"""
+import path_planner.v2.search as _gate3_search
+
+_gate3_search_stage = {stage!r}
+_gate3_search_fault_type = {fault_type}
+
+
+def _gate3_search_fault(*args, **kwargs):
+    raise _gate3_search_fault_type("injected search probe failure")
+
+
+if _gate3_search_stage == "entry":
+    _gate3_search.SearchQueueEntryV2 = _gate3_search_fault
+elif _gate3_search_stage == "init":
+    _gate3_search.StableSearchQueueV2.__init__ = _gate3_search_fault
+else:
+    _gate3_search.StableSearchQueueV2.extend = _gate3_search_fault
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(
+        REPO_ROOT,
+        tmp_path / f"search-{stage}-{fault_type}",
+    )
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    if expected_fatal_reason is not None:
+        assert {row["status"] for row in result["rows"]} == {"failed"}
+        assert {row["fatal_reason"] for row in result["rows"]} == {
+            expected_fatal_reason
+        }
+        assert all(
+            not row["runtime_disabled_accelerators"]
+            for row in result["rows"]
+        )
+    else:
+        assert {row["status"] for row in result["rows"]} == {"passed"}
+        assert {row["fatal_reason"] for row in result["rows"]} == {None}
+        disabled_by_case = {
+            row["case_id"]: [
+                item["accelerator_id"]
+                for item in row["runtime_disabled_accelerators"]
+            ]
+            for row in result["rows"]
+        }
+        assert disabled_by_case == {
+            "fine_only": [],
+            "multi_heuristic_only": ["multi_heuristic"],
+            "hierarchy_only": [],
+            "lazy_validation_only": [],
+            "lazy_validation_plus_cache": [],
+            "full_v2": ["multi_heuristic"],
+        }
+
+
+def test_gate3_initial_l2_fatal_precedes_later_hierarchy_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    fault_injection = """
+import path_planner.v2.hierarchy as _gate3_hierarchy
+import path_planner.v2.validation as _gate3_validation
+
+_gate3_original_validate_route_l2 = _gate3_validation.validate_route_l2
+_gate3_l2_call_count = 0
+
+
+def _gate3_initial_l2_malformed(*args, **kwargs):
+    global _gate3_l2_call_count
+    call_index = _gate3_l2_call_count
+    _gate3_l2_call_count += 1
+    if call_index == 1:
+        return object()
+    return _gate3_original_validate_route_l2(*args, **kwargs)
+
+
+def _gate3_later_hierarchy_timeout(cls, *args, **kwargs):
+    raise TimeoutError("hierarchy must not replace initial L2 fatal")
+
+
+_gate3_validation.validate_route_l2 = _gate3_initial_l2_malformed
+_gate3_hierarchy.ConservativeHierarchyV2.build = classmethod(
+    _gate3_later_hierarchy_timeout
+)
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(
+        REPO_ROOT,
+        tmp_path / "initial-l2-before-hierarchy-timeout",
+    )
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        "l2_authority_malformed"
+    }
+    assert all(
+        not row["runtime_disabled_accelerators"] for row in result["rows"]
+    )
+
+
+def test_gate3_initial_l2_fatal_short_circuits_search_probe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    fault_injection = """
+import path_planner.v2.search as _gate3_search
+import path_planner.v2.validation as _gate3_validation
+
+_gate3_original_validate_route_l2 = _gate3_validation.validate_route_l2
+_gate3_l2_call_count = 0
+
+
+def _gate3_initial_l2_malformed(*args, **kwargs):
+    global _gate3_l2_call_count
+    call_index = _gate3_l2_call_count
+    _gate3_l2_call_count += 1
+    if call_index == 1:
+        return object()
+    return _gate3_original_validate_route_l2(*args, **kwargs)
+
+
+def _gate3_search_must_not_run(*args, **kwargs):
+    raise SystemExit("search ran after initial fatal")
+
+
+_gate3_validation.validate_route_l2 = _gate3_initial_l2_malformed
+_gate3_search.SearchQueueEntryV2 = _gate3_search_must_not_run
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(
+        REPO_ROOT,
+        tmp_path / "initial-l2-short-circuits-search",
+    )
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        "l2_authority_malformed"
+    }
+
+
+def test_gate3_search_deadline_short_circuits_all_later_optional_probes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    fault_injection = """
+import path_planner.v2.hierarchy as _gate3_hierarchy
+import path_planner.v2.search as _gate3_search
+import path_planner.v2.validation as _gate3_validation
+
+_gate3_original_validate_route_l2 = _gate3_validation.validate_route_l2
+_gate3_l2_call_count = 0
+
+
+def _gate3_l2_must_not_run_after_initial(*args, **kwargs):
+    global _gate3_l2_call_count
+    call_index = _gate3_l2_call_count
+    _gate3_l2_call_count += 1
+    if call_index < 2:
+        return _gate3_original_validate_route_l2(*args, **kwargs)
+    raise SystemExit("lazy or cache ran after search deadline")
+
+
+def _gate3_search_timeout(*args, **kwargs):
+    raise TimeoutError("injected search deadline")
+
+
+def _gate3_hierarchy_must_not_run(cls, *args, **kwargs):
+    raise SystemExit("hierarchy ran after search deadline")
+
+
+_gate3_validation.validate_route_l2 = _gate3_l2_must_not_run_after_initial
+_gate3_search.StableSearchQueueV2.__init__ = _gate3_search_timeout
+_gate3_hierarchy.ConservativeHierarchyV2.build = classmethod(
+    _gate3_hierarchy_must_not_run
+)
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(
+        REPO_ROOT,
+        tmp_path / "search-deadline-short-circuits-later",
+    )
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        "planning_deadline_expired"
+    }
+    assert all(
+        not row["runtime_disabled_accelerators"] for row in result["rows"]
+    )
 
 
 def test_gate3_real_probe_never_downgrades_hierarchy_timeout_to_fallback(

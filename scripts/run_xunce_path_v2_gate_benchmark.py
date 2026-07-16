@@ -222,6 +222,7 @@ import json
 import os
 
 import numpy as np
+import path_planner.v2.validation as validation_module
 
 from path_planner.core import Cell
 from path_planner.v2.api import plan_v2
@@ -393,100 +394,187 @@ def recheck_fine_l2_authority():
     return None
 
 
-entries = (
-    SearchQueueEntryV2(
-        "anchor-first",
-        (0,),
-        "a",
-        0.0,
-        0.0,
-        (("resource", 9.0),),
-    ),
-    SearchQueueEntryV2(
-        "aux-first",
-        (1,),
-        "a",
-        1.0,
-        0.0,
-        (("resource", 0.0),),
-    ),
-    SearchQueueEntryV2(
-        "later",
-        (2,),
-        "a",
-        0.5,
-        1.0,
-        (("resource", 2.0),),
-    ),
-)
-expected_order = tuple(
-    entry.candidate_id
-    for entry in sorted(
-        entries,
-        key=lambda entry: (
-            entry.path_cost + entry.anchor_heuristic,
-            entry.path_cost,
-            entry.state_key,
-            entry.primitive_key,
-            entry.candidate_id,
-        ),
-    )
-)
+def route_validation_fatal_reason(result):
+    if type(result) is not RouteValidationResultV2:
+        return "l2_authority_malformed"
+    if result.reason_code == "planning_deadline_expired":
+        return "planning_deadline_expired"
+    if result.reason_code == "route_l2_authority_unavailable":
+        return "l2_authority_malformed"
+    if result.l2_result is not None and type(result.l2_result) is not WheelValidationResultV2:
+        return "l2_authority_malformed"
+    if result.l2_result is not None and (
+        result.l2_result.timed_out is True
+        or result.l2_result.reason_code == "planning_deadline_expired"
+    ):
+        return "planning_deadline_expired"
+    if result.l2_result is not None and not result.l2_result.evidence.passed:
+        return "l2_rejected"
+    return None
+
+
+def validate_route_with_l2_tracking(*args, **kwargs):
+    original_l2 = validation_module.validate_route_l2
+    scope = {
+        "component_exception": None,
+        "l2_fault_reason": None,
+        "restored": False,
+    }
+
+    def tracked_l2(*l2_args, **l2_kwargs):
+        try:
+            result = original_l2(*l2_args, **l2_kwargs)
+        except TimeoutError:
+            scope["l2_fault_reason"] = "planning_deadline_expired"
+            raise
+        except Exception:
+            scope["l2_fault_reason"] = "l2_authority_malformed"
+            raise
+        if type(result) is not WheelValidationResultV2:
+            scope["l2_fault_reason"] = "l2_authority_malformed"
+        elif (
+            result.timed_out is True
+            or result.reason_code == "planning_deadline_expired"
+        ):
+            scope["l2_fault_reason"] = "planning_deadline_expired"
+        elif not result.evidence.passed:
+            scope["l2_fault_reason"] = "l2_rejected"
+        return result
+
+    validation_module.validate_route_l2 = tracked_l2
+    try:
+        result = validate_route(*args, **kwargs)
+    except TimeoutError:
+        scope["component_exception"] = "timeout"
+        result = None
+    except Exception:
+        scope["component_exception"] = "exception"
+        result = None
+    finally:
+        validation_module.validate_route_l2 = original_l2
+        scope["restored"] = validation_module.validate_route_l2 is original_l2
+    return result, scope
+
+
+def validation_scope_fatal_reason(scope):
+    if scope["restored"] is not True:
+        return "l2_authority_malformed"
+    if scope["l2_fault_reason"] is not None:
+        return scope["l2_fault_reason"]
+    if scope["component_exception"] == "timeout":
+        return "planning_deadline_expired"
+    if scope["component_exception"] == "exception":
+        return recheck_fine_l2_authority()
+    return None
+
+
+entries = ()
+expected_order = ()
 search_ok = True
-try:
-    queue = StableSearchQueueV2()
-    batches = ((entries[0], entries[2]), (entries[1],))
-    with ThreadPoolExecutor(max_workers=WORKER_COUNT) as executor:
-        futures = tuple(executor.submit(lambda batch: batch, batch) for batch in batches)
-        completion_order = (0, 1) if WORKER_COUNT == 1 else (1, 0)
-        for index in completion_order:
-            queue.extend(futures[index].result())
-    suggestion = queue.suggest("resource")
-    popped = []
-    while len(queue):
-        popped.append(queue.pop_anchor().candidate_id)
-    search_ok = (
-        suggestion is not None
-        and suggestion.candidate_id == "aux-first"
-        and tuple(popped) == expected_order
-        and expected_order[0] == "anchor-first"
-    )
-except Exception:
-    search_ok = False
+if fatal_reason is None:
+    try:
+        entries = (
+            SearchQueueEntryV2(
+                "anchor-first",
+                (0,),
+                "a",
+                0.0,
+                0.0,
+                (("resource", 9.0),),
+            ),
+            SearchQueueEntryV2(
+                "aux-first",
+                (1,),
+                "a",
+                1.0,
+                0.0,
+                (("resource", 0.0),),
+            ),
+            SearchQueueEntryV2(
+                "later",
+                (2,),
+                "a",
+                0.5,
+                1.0,
+                (("resource", 2.0),),
+            ),
+        )
+        expected_order = tuple(
+            entry.candidate_id
+            for entry in sorted(
+                entries,
+                key=lambda entry: (
+                    entry.path_cost + entry.anchor_heuristic,
+                    entry.path_cost,
+                    entry.state_key,
+                    entry.primitive_key,
+                    entry.candidate_id,
+                ),
+            )
+        )
+        queue = StableSearchQueueV2()
+        batches = ((entries[0], entries[2]), (entries[1],))
+        with ThreadPoolExecutor(max_workers=WORKER_COUNT) as executor:
+            futures = tuple(
+                executor.submit(lambda batch: batch, batch) for batch in batches
+            )
+            completion_order = (0, 1) if WORKER_COUNT == 1 else (1, 0)
+            for index in completion_order:
+                queue.extend(futures[index].result())
+        suggestion = queue.suggest("resource")
+        popped = []
+        while len(queue):
+            popped.append(queue.pop_anchor().candidate_id)
+        search_ok = (
+            suggestion is not None
+            and suggestion.candidate_id == "aux-first"
+            and tuple(popped) == expected_order
+            and expected_order[0] == "anchor-first"
+        )
+    except TimeoutError:
+        fatal_reason = "planning_deadline_expired"
+        search_ok = False
+    except Exception:
+        search_ok = False
 
 hierarchy_ok = True
-try:
-    mixed_anchor = FineSafetyAnchorV2(snapshot(mixed=True))
-    hierarchy = ConservativeHierarchyV2.build(
-        mixed_anchor,
-        max_slope_deg=30.0,
-        deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
-    )
-    mixed_hint = hierarchy.hint(2, Cell(0, 0))
-    hierarchy_ok = (
-        mixed_hint.status is HierarchyHintStatusV2.UNKNOWN
-        and mixed_anchor.query(Cell(0, 0), 30.0).reason_code == "terrain_unknown"
-        and mixed_anchor.query(Cell(1, 0), 30.0).reason_code
-        == "terrain_hard_obstacle"
-    )
-except TimeoutError:
-    fatal_reason = "planning_deadline_expired"
-    hierarchy_ok = False
-except Exception:
-    hierarchy_ok = False
+if fatal_reason is None:
+    try:
+        mixed_anchor = FineSafetyAnchorV2(snapshot(mixed=True))
+        hierarchy = ConservativeHierarchyV2.build(
+            mixed_anchor,
+            max_slope_deg=30.0,
+            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+        )
+        mixed_hint = hierarchy.hint(2, Cell(0, 0))
+        hierarchy_ok = (
+            mixed_hint.status is HierarchyHintStatusV2.UNKNOWN
+            and mixed_anchor.query(Cell(0, 0), 30.0).reason_code
+            == "terrain_unknown"
+            and mixed_anchor.query(Cell(1, 0), 30.0).reason_code
+            == "terrain_hard_obstacle"
+        )
+    except TimeoutError:
+        fatal_reason = "planning_deadline_expired"
+        hierarchy_ok = False
+    except Exception:
+        hierarchy_ok = False
 
 lazy_ok = False
 cache_ok = False
 if fatal_reason is None:
-    try:
-        lazy_result = validate_route(
-            outcome.route,
-            anchor,
-            wheel_profile,
-            ValidationLevelV2.L2,
-            request=request,
-            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
-        )
+    lazy_result, lazy_scope = validate_route_with_l2_tracking(
+        outcome.route,
+        anchor,
+        wheel_profile,
+        ValidationLevelV2.L2,
+        request=request,
+        deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+    )
+    lazy_scope_reason = validation_scope_fatal_reason(lazy_scope)
+    if lazy_scope_reason is not None:
+        fatal_reason = lazy_scope_reason
+    elif lazy_scope["component_exception"] is None:
         lazy_ok = (
             type(lazy_result) is RouteValidationResultV2
             and lazy_result.success
@@ -496,41 +584,26 @@ if fatal_reason is None:
             and lazy_result.l2_result.validated_route_hash
             == fine_result.validated_route_hash
         )
-        if type(lazy_result) is not RouteValidationResultV2:
-            fatal_reason = "l2_authority_malformed"
-        elif lazy_result.reason_code == "planning_deadline_expired":
-            fatal_reason = "planning_deadline_expired"
-        elif lazy_result.reason_code == "route_l2_authority_unavailable":
-            fatal_reason = "l2_authority_malformed"
-        elif (
-            lazy_result.l2_result is not None
-            and type(lazy_result.l2_result) is not WheelValidationResultV2
-        ):
-            fatal_reason = "l2_authority_malformed"
-        elif (
-            lazy_result.l2_result is not None
-            and (
-                lazy_result.l2_result.timed_out is True
-                or lazy_result.l2_result.reason_code
-                == "planning_deadline_expired"
-            )
-        ):
-            fatal_reason = "planning_deadline_expired"
-        elif lazy_result.l2_result is not None and not lazy_result.l2_result.evidence.passed:
-            fatal_reason = "l2_rejected"
-    except TimeoutError:
-        fatal_reason = "planning_deadline_expired"
-    except Exception:
-        recheck_reason = recheck_fine_l2_authority()
-        if recheck_reason is None:
-            lazy_ok = False
-        else:
-            fatal_reason = recheck_reason
-    cache_probe_enabled = fatal_reason is None
-    try:
-        if cache_probe_enabled:
-            cache = ValidationCacheV2()
-            cached_first = validate_route(
+        fatal_reason = route_validation_fatal_reason(lazy_result)
+
+if fatal_reason is None:
+    cache = ValidationCacheV2()
+    cached_first, cached_first_scope = validate_route_with_l2_tracking(
+        outcome.route,
+        anchor,
+        wheel_profile,
+        ValidationLevelV2.L2,
+        request=request,
+        deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+        cache=cache,
+    )
+    cached_first_scope_reason = validation_scope_fatal_reason(cached_first_scope)
+    if cached_first_scope_reason is not None:
+        fatal_reason = cached_first_scope_reason
+    elif cached_first_scope["component_exception"] is None:
+        fatal_reason = route_validation_fatal_reason(cached_first)
+        if fatal_reason is None:
+            cached_second, cached_second_scope = validate_route_with_l2_tracking(
                 outcome.route,
                 anchor,
                 wheel_profile,
@@ -539,92 +612,29 @@ if fatal_reason is None:
                 deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
                 cache=cache,
             )
-            cached_second = validate_route(
-                outcome.route,
-                anchor,
-                wheel_profile,
-                ValidationLevelV2.L2,
-                request=request,
-                deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
-                cache=cache,
+            cached_second_scope_reason = validation_scope_fatal_reason(
+                cached_second_scope
             )
-        else:
-            cached_first = None
-            cached_second = None
-        cache_ok = (
-            cache_probe_enabled
-            and type(cached_first) is RouteValidationResultV2
-            and type(cached_second) is RouteValidationResultV2
-            and cached_first.success
-            and cached_second.success
-            and cached_second.cache_hits == 1
-            and cached_first.l2_result is not None
-            and cached_second.l2_result is not None
-            and cached_first.l2_result.reason_code == fine_result.reason_code
-            and cached_second.l2_result.reason_code == fine_result.reason_code
-            and cached_first.l2_result.validated_route_hash
-            == fine_result.validated_route_hash
-            and cached_second.l2_result.validated_route_hash
-            == fine_result.validated_route_hash
-        )
-        if not cache_probe_enabled:
-            pass
-        elif (
-            type(cached_first) is not RouteValidationResultV2
-            or type(cached_second) is not RouteValidationResultV2
-        ):
-            fatal_reason = "l2_authority_malformed"
-        elif (
-            cached_first.reason_code == "planning_deadline_expired"
-            or cached_second.reason_code == "planning_deadline_expired"
-        ):
-            fatal_reason = "planning_deadline_expired"
-        elif (
-            cached_first.l2_result is not None
-            and type(cached_first.l2_result) is not WheelValidationResultV2
-        ) or (
-            cached_second.l2_result is not None
-            and type(cached_second.l2_result) is not WheelValidationResultV2
-        ):
-            fatal_reason = "l2_authority_malformed"
-        elif (
-            (
-                cached_first.l2_result is not None
-                and (
-                    cached_first.l2_result.timed_out is True
-                    or cached_first.l2_result.reason_code
-                    == "planning_deadline_expired"
+            if cached_second_scope_reason is not None:
+                fatal_reason = cached_second_scope_reason
+            elif cached_second_scope["component_exception"] is None:
+                fatal_reason = route_validation_fatal_reason(cached_second)
+                cache_ok = (
+                    fatal_reason is None
+                    and type(cached_first) is RouteValidationResultV2
+                    and type(cached_second) is RouteValidationResultV2
+                    and cached_first.success
+                    and cached_second.success
+                    and cached_second.cache_hits == 1
+                    and cached_first.l2_result is not None
+                    and cached_second.l2_result is not None
+                    and cached_first.l2_result.reason_code == fine_result.reason_code
+                    and cached_second.l2_result.reason_code == fine_result.reason_code
+                    and cached_first.l2_result.validated_route_hash
+                    == fine_result.validated_route_hash
+                    and cached_second.l2_result.validated_route_hash
+                    == fine_result.validated_route_hash
                 )
-            )
-            or (
-                cached_second.l2_result is not None
-                and (
-                    cached_second.l2_result.timed_out is True
-                    or cached_second.l2_result.reason_code
-                    == "planning_deadline_expired"
-                )
-            )
-        ):
-            fatal_reason = "planning_deadline_expired"
-        elif (
-            (
-                cached_first.l2_result is not None
-                and not cached_first.l2_result.evidence.passed
-            )
-            or (
-                cached_second.l2_result is not None
-                and not cached_second.l2_result.evidence.passed
-            )
-        ):
-            fatal_reason = "l2_rejected"
-    except TimeoutError:
-        fatal_reason = "planning_deadline_expired"
-    except Exception:
-        recheck_reason = recheck_fine_l2_authority()
-        if recheck_reason is None:
-            cache_ok = False
-        else:
-            fatal_reason = recheck_reason
 
 accelerator_used = bool(
     getattr(getattr(outcome, "search_telemetry", None), "accelerator_used", True)
