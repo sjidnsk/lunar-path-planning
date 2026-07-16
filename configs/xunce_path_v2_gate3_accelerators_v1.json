@@ -1,0 +1,102 @@
+{
+  "schema_version": "xunce-path-v2-gate3-accelerators/v1",
+  "stage_id": "xunce-path-v2-gate3-accelerators",
+  "python": "D:/conda_envs/lunar-explorer/python.exe",
+  "expected_python_version": "3.12.13",
+  "expected_git": {
+    "branch": "codex/multiplatform-path-planner-v2",
+    "base_commit": "b635740ee021258ef31811ec87c60add839fc5f9",
+    "gate_input_commit": "d6b6b93c7e2c148195cd907010f46bd88e97ce2b",
+    "nested_branch": "codex/multiplatform-path-planner-v2"
+  },
+  "formal_output_root": "D:/xunce/out/path_v2/g3",
+  "temp_root": "D:/xunce/tmp/path_v2_g3",
+  "focused": {
+    "working_directory": "path-planner",
+    "pythonpath": [
+      "path-planner/src"
+    ],
+    "pytest_targets": [
+      "tests/test_v2_search.py",
+      "tests/test_v2_hierarchy.py",
+      "tests/test_v2_cache.py",
+      "tests/test_v2_lazy_validation.py",
+      "tests/test_v2_route_validation.py",
+      "tests/test_v2_wheel_provider.py",
+      "tests/test_v2_wheel_contracts.py",
+      "tests/test_v2_api.py",
+      "tests/test_v2_runtime.py",
+      "tests/test_v2_serialization.py",
+      "tests/test_v2_contracts.py",
+      "tests/test_hybrid_astar.py",
+      "tests/test_astar.py"
+    ]
+  },
+  "full": {
+    "working_directory": "path-planner",
+    "pythonpath": [
+      "path-planner/src"
+    ],
+    "pytest_targets": [
+      "tests"
+    ],
+    "legacy_expected": {
+      "passed": 156,
+      "skipped": 17,
+      "failures": 0,
+      "errors": 0
+    },
+    "allowed_skip_dependency": "pydrake"
+  },
+  "baseline_evidence": {
+    "schema_version": "xunce-path-v2-gate0-path-planner-junit/v1",
+    "path": "D:/xunce/out/path_v2/g0/path_planner_baseline.junit.xml",
+    "sha256": "90a02eb6af78805bfdf2fcce4828283cb3f4d77f30aae55519f533896a06e676",
+    "test_count": 173
+  },
+  "ablation": {
+    "cases": [
+      "fine_only",
+      "multi_heuristic_only",
+      "hierarchy_only",
+      "lazy_validation_only",
+      "lazy_validation_plus_cache",
+      "full_v2"
+    ],
+    "worker_counts": [
+      1,
+      4
+    ],
+    "python_hash_seeds": [
+      11,
+      29,
+      47
+    ],
+    "repeat_count": 3
+  },
+  "expected_disabled_accelerators": [
+    {
+      "accelerator_id": "hierarchy",
+      "reason": "not_integrated_into_provider"
+    },
+    {
+      "accelerator_id": "lazy_validation",
+      "reason": "not_integrated_into_provider"
+    },
+    {
+      "accelerator_id": "multi_heuristic",
+      "reason": "not_integrated_into_provider"
+    },
+    {
+      "accelerator_id": "validation_cache",
+      "reason": "not_integrated_into_provider"
+    }
+  ],
+  "boundaries": {
+    "publishes_checkpoint": false,
+    "replaces_default_policy": false,
+    "connects_real_executor": false,
+    "starts_online_canary": false
+  },
+  "pass_route": "implement_path_v2_legged_static_stability_oracle"
+}

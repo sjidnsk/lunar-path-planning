@@ -26,6 +26,7 @@ EXPECTED_BRANCH = "codex/multiplatform-path-planner-v2"
 ORIGINAL_BASE_COMMIT = "b635740ee021258ef31811ec87c60add839fc5f9"
 GATE_INPUT_COMMIT = "b2a36d31f3802eb5a37fcfcf594f74a499aa719b"
 GATE2_INPUT_COMMIT = "0cc3eb9728a77473dd436dc2b05e2df009a296c7"
+GATE3_INPUT_COMMIT = "d6b6b93c7e2c148195cd907010f46bd88e97ce2b"
 EXPECTED_PYTHON_VERSION = "3.12.13"
 FOCUSED_TARGETS = [
     "tests/test_v2_contracts.py",
@@ -47,6 +48,35 @@ GATE2_FOCUSED_TARGETS = [
     "tests/test_v2_runtime.py",
     "tests/test_hybrid_astar.py",
     "tests/test_astar.py",
+]
+GATE3_FOCUSED_TARGETS = [
+    "tests/test_v2_search.py",
+    "tests/test_v2_hierarchy.py",
+    "tests/test_v2_cache.py",
+    "tests/test_v2_lazy_validation.py",
+    "tests/test_v2_route_validation.py",
+    "tests/test_v2_wheel_provider.py",
+    "tests/test_v2_wheel_contracts.py",
+    "tests/test_v2_api.py",
+    "tests/test_v2_runtime.py",
+    "tests/test_v2_serialization.py",
+    "tests/test_v2_contracts.py",
+    "tests/test_hybrid_astar.py",
+    "tests/test_astar.py",
+]
+GATE3_CASES = [
+    "fine_only",
+    "multi_heuristic_only",
+    "hierarchy_only",
+    "lazy_validation_only",
+    "lazy_validation_plus_cache",
+    "full_v2",
+]
+GATE3_DISABLED_ACCELERATORS = [
+    {"accelerator_id": "hierarchy", "reason": "not_integrated_into_provider"},
+    {"accelerator_id": "lazy_validation", "reason": "not_integrated_into_provider"},
+    {"accelerator_id": "multi_heuristic", "reason": "not_integrated_into_provider"},
+    {"accelerator_id": "validation_cache", "reason": "not_integrated_into_provider"},
 ]
 CANONICAL_ARTIFACTS = {
     "config.json",
@@ -217,6 +247,173 @@ def _gate2_config(tmp_path: Path, *, boundaries=None) -> Path:
     path = tmp_path / "gate2.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def _gate3_config(tmp_path: Path, *, boundaries=None) -> Path:
+    payload = {
+        "schema_version": "xunce-path-v2-gate3-accelerators/v1",
+        "stage_id": "xunce-path-v2-gate3-accelerators",
+        "python": "D:/conda_envs/lunar-explorer/python.exe",
+        "expected_python_version": "3.12.13",
+        "expected_git": {
+            "branch": EXPECTED_BRANCH,
+            "base_commit": ORIGINAL_BASE_COMMIT,
+            "gate_input_commit": GATE3_INPUT_COMMIT,
+            "nested_branch": EXPECTED_BRANCH,
+        },
+        "formal_output_root": "D:/xunce/out/path_v2/g3",
+        "temp_root": "D:/xunce/tmp/path_v2_g3",
+        "focused": {
+            "working_directory": "path-planner",
+            "pythonpath": ["path-planner/src"],
+            "pytest_targets": list(GATE3_FOCUSED_TARGETS),
+        },
+        "full": {
+            "working_directory": "path-planner",
+            "pythonpath": ["path-planner/src"],
+            "pytest_targets": ["tests"],
+            "legacy_expected": {
+                "passed": 156,
+                "skipped": 17,
+                "failures": 0,
+                "errors": 0,
+            },
+            "allowed_skip_dependency": "pydrake",
+        },
+        "baseline_evidence": {
+            "schema_version": "xunce-path-v2-gate0-path-planner-junit/v1",
+            "path": "D:/xunce/out/path_v2/g0/path_planner_baseline.junit.xml",
+            "sha256": "90a02eb6af78805bfdf2fcce4828283cb3f4d77f30aae55519f533896a06e676",
+            "test_count": 173,
+        },
+        "ablation": {
+            "cases": list(GATE3_CASES),
+            "worker_counts": [1, 4],
+            "python_hash_seeds": [11, 29, 47],
+            "repeat_count": 3,
+        },
+        "expected_disabled_accelerators": deepcopy(GATE3_DISABLED_ACCELERATORS),
+        "boundaries": dict(BOUNDARIES if boundaries is None else boundaries),
+        "pass_route": "implement_path_v2_legged_static_stability_oracle",
+    }
+    path = tmp_path / "gate3.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _gate3_probe_rows(*, digest: str = "a" * 64) -> list[dict]:
+    rows = []
+    for case_id in GATE3_CASES:
+        for worker_count in (1, 4):
+            for hash_seed in (11, 29, 47):
+                for repeat in (1, 2, 3):
+                    rows.append(
+                        {
+                            "case_id": case_id,
+                            "worker_count": worker_count,
+                            "python_hash_seed": hash_seed,
+                            "repeat": repeat,
+                            "status": "passed",
+                            "decision_digest": digest,
+                            "fine_only_digest": digest,
+                            "safety_equivalent": True,
+                            "authoritative_order_preserved": True,
+                            "suggestion_non_authoritative": True,
+                            "hierarchy_conservative": True,
+                            "cache_l2_equivalent": True,
+                            "l2_authority_preserved": True,
+                            "fallback_isolated": True,
+                            "fatal_reason": None,
+                            "accelerator_used": False,
+                            "runtime_disabled_accelerators": [],
+                        }
+                    )
+    return rows
+
+
+def _install_gate3_green_mocks(
+    monkeypatch,
+    runner,
+    events: list[str],
+    *,
+    probe_rows: list[dict] | None = None,
+) -> None:
+    runtime = _runtime_audit()
+    monkeypatch.setattr(
+        runner,
+        "_gate3_preflight",
+        lambda config, repo_root: deepcopy(runtime),
+    )
+
+    def fake_run_pytest(*, targets, **kwargs):
+        suite = "focused" if tuple(targets) == tuple(GATE3_FOCUSED_TARGETS) else "full"
+        events.append(suite)
+        return {
+            "command": ["python", "-m", "pytest", *targets],
+            "returncode": 0,
+            "stdout_tail": "green",
+            "stderr_tail": "",
+        }
+
+    monkeypatch.setattr(runner, "_run_pytest", fake_run_pytest)
+    monkeypatch.setattr(
+        runner,
+        "_audit_focused_junit",
+        lambda path: {
+            "status": "passed",
+            "tests": 500,
+            "passed": 500,
+            "skipped": 0,
+            "failures": 0,
+            "errors": 0,
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_audit_gate3_full_junit",
+        lambda *args, **kwargs: {
+            "schema_version": "xunce-path-v2-gate3-full-junit-audit/v1",
+            "status": "passed",
+            "total": {"passed": 836, "skipped": 17, "failures": 0, "errors": 0},
+            "baseline": {"passed": 156, "skipped": 17, "failures": 0, "errors": 0},
+            "v2": {"passed": 680, "skipped": 0, "failures": 0, "errors": 0},
+            "baseline_not_reduced": True,
+            "skip_contract": True,
+            "v2_green": True,
+        },
+    )
+    rows = deepcopy(_gate3_probe_rows() if probe_rows is None else probe_rows)
+    audit = runner._audit_gate3_probe_rows(rows)
+
+    def fake_probes(**kwargs):
+        events.append("probes")
+        return {
+            **audit,
+            "rows": deepcopy(rows),
+            "commands": [
+                {
+                    "command": ["python", "-c", "<gate3-probe>"],
+                    "environment": {
+                        "PYTHONHASHSEED": "11",
+                        "PATH_V2_GATE3_WORKER_COUNT": "1",
+                        "PATH_V2_GATE3_REPEAT": "1",
+                    },
+                    "worker_count": 1,
+                    "python_hash_seed": 11,
+                    "repeat": 1,
+                    "returncode": 0,
+                    "stable_failure_reason": None,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(runner, "_run_gate3_probes", fake_probes)
+
+    def fake_postflight(config, repo_root):
+        events.append("postflight")
+        return deepcopy(runtime)
+
+    monkeypatch.setattr(runner, "_gate3_postflight", fake_postflight)
 
 
 FROZEN_CONFIG_TAMPERS = [
@@ -1569,3 +1766,569 @@ def test_checked_in_gate2_config_matches_frozen_test_contract(tmp_path: Path) ->
     expected = json.loads(_gate2_config(tmp_path).read_text(encoding="utf-8"))
 
     assert checked_in == expected
+
+
+@pytest.mark.parametrize(
+    ("field_path", "tampered"),
+    [
+        pytest.param(("schema_version",), "xunce-path-v2-gate2-wheel/v1", id="schema"),
+        pytest.param(("stage_id",), "xunce-path-v2-gate3-other", id="stage"),
+        pytest.param(("expected_git", "gate_input_commit"), GATE2_INPUT_COMMIT, id="gate-input"),
+        pytest.param(("formal_output_root",), "D:/xunce/out/path_v2/other", id="formal-root"),
+        pytest.param(("temp_root",), "D:/xunce/tmp/path_v2_other", id="temp-root"),
+        pytest.param(("focused", "pytest_targets"), list(GATE2_FOCUSED_TARGETS), id="focused"),
+        pytest.param(("full", "legacy_expected", "passed"), 157, id="legacy"),
+        pytest.param(("ablation", "cases"), list(reversed(GATE3_CASES)), id="cases"),
+        pytest.param(("ablation", "worker_counts"), [4, 1], id="workers"),
+        pytest.param(("ablation", "python_hash_seeds"), [11, 29, 48], id="seeds"),
+        pytest.param(("ablation", "repeat_count"), 2, id="repeats"),
+        pytest.param(
+            ("expected_disabled_accelerators",),
+            GATE3_DISABLED_ACCELERATORS[:-1],
+            id="disabled-disclosure",
+        ),
+        pytest.param(("pass_route",), "release_default_policy", id="route"),
+    ],
+)
+def test_gate3_frozen_config_rejects_tampering_before_side_effects(
+    tmp_path: Path,
+    monkeypatch,
+    field_path,
+    tampered,
+) -> None:
+    runner = _runner()
+    config_path = _gate3_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    target = config
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = tampered
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Gate 3 side effect occurred before config rejection")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
+    monkeypatch.setattr(runner.gate_artifacts, "write_gate_artifacts", forbidden)
+    with pytest.raises(ValueError, match="frozen"):
+        runner.run_gate_benchmark(
+            config_path,
+            tmp_path / "out",
+            REPO_ROOT,
+            execute_tests=False,
+        )
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
+def test_gate3_config_rejects_missing_or_extra_top_level_keys(
+    tmp_path: Path,
+    monkeypatch,
+    mutation: str,
+) -> None:
+    runner = _runner()
+    config_path = _gate3_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if mutation == "missing":
+        config.pop("ablation")
+    else:
+        config["unfrozen"] = True
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts",
+        lambda **kwargs: pytest.fail("artifacts written for malformed config"),
+    )
+
+    with pytest.raises(ValueError, match="top-level keys"):
+        runner.run_gate_benchmark(
+            config_path,
+            tmp_path / "out",
+            REPO_ROOT,
+            execute_tests=False,
+        )
+
+
+def test_gate3_dry_run_dispatch_writes_exact_artifacts_without_tests_or_probes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Gate 3 dry run executed tests, probes, or runtime audit")
+
+    monkeypatch.setattr(runner, "_run_pytest", forbidden)
+    monkeypatch.setattr(runner, "_run_gate3_probes", forbidden, raising=False)
+    monkeypatch.setattr(runner, "_gate3_preflight", forbidden, raising=False)
+    output_root = tmp_path / "out"
+    summary = runner.run_gate_benchmark(
+        _gate3_config(tmp_path),
+        output_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["schema_version"] == "xunce-path-v2-gate3-accelerators/v1"
+    assert summary["status"] == "dry_run"
+    assert summary["next_required_change"] == "execute_gate3_accelerator_evidence"
+    assert summary["blocking_reasons"] == []
+    assert summary["disabled_accelerators"] == GATE3_DISABLED_ACCELERATORS
+    assert summary["checks"]["boundaries_strict_false"] is True
+    assert all(summary[field] is False for field in BOUNDARIES)
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+    rows = [
+        json.loads(line)
+        for line in (output_root / "results.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    ablation = [row for row in rows if row["suite"] == "ablation"]
+    assert len(ablation) == 108
+    assert [
+        (row["case_id"], row["worker_count"], row["python_hash_seed"], row["repeat"])
+        for row in ablation
+    ] == [
+        (case_id, workers, seed, repeat)
+        for case_id in GATE3_CASES
+        for workers in (1, 4)
+        for seed in (11, 29, 47)
+        for repeat in (1, 2, 3)
+    ]
+    assert all(row["status"] == "not_run" for row in ablation)
+    assert {row["suite"] for row in rows} == {
+        "test",
+        "ablation",
+        "fallback",
+        "disclosure",
+        "boundary",
+    }
+    report = (output_root / "report.md").read_text(encoding="utf-8")
+    assert "v1 remains the default" in report
+    assert "v2 remains opt-in" in report
+    assert "no end-to-end accelerator use" in report
+
+
+def test_gate3_registry_entry_has_frozen_defaults() -> None:
+    registry = json.loads(
+        (REPO_ROOT / "configs" / "stage_registry.json").read_text(encoding="utf-8")
+    )
+    assert registry["stages"]["xunce-path-v2-gate3-accelerators"] == {
+        "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+        "default_config": "configs/xunce_path_v2_gate3_accelerators_v1.json",
+        "default_output_root": "D:/xunce/out/path_v2/g3",
+        "args": [
+            "--config",
+            "{config}",
+            "--output-root",
+            "{output_root}",
+            "--repo-root",
+            "{repo_root}",
+        ],
+    }
+
+
+def test_checked_in_gate3_config_matches_frozen_test_contract(tmp_path: Path) -> None:
+    checked_in = json.loads(
+        (REPO_ROOT / "configs" / "xunce_path_v2_gate3_accelerators_v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expected = json.loads(_gate3_config(tmp_path).read_text(encoding="utf-8"))
+    assert checked_in == expected
+
+
+def test_gate3_probe_audit_requires_exact_matrix_order_and_one_digest() -> None:
+    runner = _runner()
+    rows = _gate3_probe_rows()
+
+    audit = runner._audit_gate3_probe_rows(rows)
+
+    assert audit["status"] == "passed"
+    assert audit["row_count"] == 108
+    assert audit["decision_digest"] == "a" * 64
+    assert audit["matrix_complete"] is True
+    assert audit["stable_row_order"] is True
+    assert audit["one_decision_digest"] is True
+    assert audit["safety_equivalence"] is True
+    assert audit["suggestion_non_authority"] is True
+    assert audit["hierarchy_conservatism"] is True
+    assert audit["cache_l2_equivalence"] is True
+    assert audit["fallback_isolation"] is True
+    assert audit["provider_accelerator_unused"] is True
+
+    wrong_order = deepcopy(rows)
+    wrong_order[0], wrong_order[1] = wrong_order[1], wrong_order[0]
+    assert runner._audit_gate3_probe_rows(wrong_order)["status"] == "failed"
+
+    digest_drift = deepcopy(rows)
+    digest_drift[-1]["decision_digest"] = "b" * 64
+    drift_audit = runner._audit_gate3_probe_rows(digest_drift)
+    assert drift_audit["status"] == "failed"
+    assert drift_audit["one_decision_digest"] is False
+
+
+def test_gate3_optional_accelerator_failure_isolated_fallback_does_not_fail_gate() -> None:
+    runner = _runner()
+    rows = _gate3_probe_rows()
+    hierarchy_row = next(row for row in rows if row["case_id"] == "hierarchy_only")
+    hierarchy_row["runtime_disabled_accelerators"] = [
+        {"accelerator_id": "hierarchy", "reason": "component_probe_failed"}
+    ]
+
+    audit = runner._audit_gate3_probe_rows(rows)
+
+    assert audit["status"] == "passed"
+    assert audit["fallback_isolation"] is True
+    assert audit["runtime_fallback_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "fatal_reason",
+    [
+        "planning_deadline_expired",
+        "fine_anchor_failed",
+        "l2_authority_malformed",
+        "l2_rejected",
+    ],
+)
+def test_gate3_timeout_fine_anchor_and_l2_failures_are_never_swallowed(
+    fatal_reason: str,
+) -> None:
+    runner = _runner()
+    rows = _gate3_probe_rows()
+    rows[0].update(status="failed", fatal_reason=fatal_reason)
+
+    audit = runner._audit_gate3_probe_rows(rows)
+
+    assert audit["status"] == "failed"
+    assert audit["fatal_authority_clean"] is False
+    assert fatal_reason in audit["fatal_reasons"]
+
+
+def test_gate3_runtime_fallback_cannot_disable_an_unrelated_accelerator() -> None:
+    runner = _runner()
+    rows = _gate3_probe_rows()
+    rows[0]["runtime_disabled_accelerators"] = [
+        {"accelerator_id": "hierarchy", "reason": "component_probe_failed"}
+    ]
+
+    audit = runner._audit_gate3_probe_rows(rows)
+
+    assert audit["status"] == "failed"
+    assert audit["fallback_isolation"] is False
+
+
+def test_gate3_probe_audit_fails_closed_on_malformed_matrix_dimension() -> None:
+    runner = _runner()
+    rows = _gate3_probe_rows()
+    rows[0]["worker_count"] = "1"
+
+    audit = runner._audit_gate3_probe_rows(rows)
+
+    assert audit["status"] == "failed"
+    assert audit["matrix_complete"] is False
+    assert audit["stable_row_order"] is False
+
+
+def test_gate3_real_probe_is_isolated_and_exercises_component_safety_contracts(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    common_env = runner._common_env(REPO_ROOT, tmp_path / "probe")
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=4,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert [row["case_id"] for row in result["rows"]] == GATE3_CASES
+    for row in result["rows"]:
+        assert row["status"] == "passed"
+        assert row["safety_equivalent"] is True
+        assert row["authoritative_order_preserved"] is True
+        assert row["suggestion_non_authoritative"] is True
+        assert row["hierarchy_conservative"] is True
+        assert row["cache_l2_equivalent"] is True
+        assert row["l2_authority_preserved"] is True
+        assert row["fallback_isolated"] is True
+        assert row["fatal_reason"] is None
+        assert row["accelerator_used"] is False
+
+
+@pytest.mark.parametrize(
+    "successful_l2_calls",
+    [
+        pytest.param(1, id="fine-l2"),
+        pytest.param(2, id="lazy-l2"),
+        pytest.param(3, id="cache-l2"),
+    ],
+)
+def test_gate3_real_probe_preserves_typed_l2_timeout_as_fatal_deadline(
+    tmp_path: Path,
+    monkeypatch,
+    successful_l2_calls: int,
+) -> None:
+    runner = _runner()
+    timeout_injection = f"""
+import path_planner.v2.validation as _gate3_validation
+
+_gate3_original_validate_route_l2 = _gate3_validation.validate_route_l2
+_gate3_l2_call_count = 0
+
+
+def _gate3_timeout_after_successes(*args, **kwargs):
+    global _gate3_l2_call_count
+    call_index = _gate3_l2_call_count
+    _gate3_l2_call_count += 1
+    if call_index < {successful_l2_calls}:
+        return _gate3_original_validate_route_l2(*args, **kwargs)
+    return _gate3_validation._timeout(
+        _gate3_validation.WHEEL_ROUTE_VALIDATOR_ID_V2,
+        0,
+    )
+
+
+_gate3_validation.validate_route_l2 = _gate3_timeout_after_successes
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        timeout_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(REPO_ROOT, tmp_path / "typed-timeout-probe")
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        "planning_deadline_expired"
+    }
+    assert all(
+        not row["runtime_disabled_accelerators"] for row in result["rows"]
+    )
+
+
+def test_gate3_real_probe_never_downgrades_hierarchy_timeout_to_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    timeout_injection = """
+import path_planner.v2.hierarchy as _gate3_hierarchy
+
+
+def _gate3_hierarchy_timeout(cls, *args, **kwargs):
+    raise TimeoutError("injected hierarchy deadline")
+
+
+_gate3_hierarchy.ConservativeHierarchyV2.build = classmethod(
+    _gate3_hierarchy_timeout
+)
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        timeout_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(REPO_ROOT, tmp_path / "hierarchy-timeout-probe")
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        "planning_deadline_expired"
+    }
+    assert all(
+        not row["runtime_disabled_accelerators"] for row in result["rows"]
+    )
+
+
+def test_gate3_full_audit_preserves_every_gate0_nodeid_and_allows_only_new_v2_passes(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    baseline = tmp_path / "baseline.xml"
+    current = tmp_path / "current.xml"
+    missing = tmp_path / "missing.xml"
+    baseline_cases = _full_cases()[:173]
+    current_cases = baseline_cases + [
+        (f"tests/test_v2_gate3.py::test_new_{index}", "passed", "")
+        for index in range(20)
+    ]
+    _write_junit(baseline, baseline_cases)
+    _write_junit(current, current_cases)
+    _write_junit(missing, current_cases[1:])
+    kwargs = {
+        "expected_legacy": {"passed": 156, "skipped": 17, "failures": 0, "errors": 0},
+        "allowed_skip_dependency": "pydrake",
+        "baseline_evidence": {
+            "schema_version": "test-baseline/v1",
+            "path": baseline.as_posix(),
+            "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+            "test_count": 173,
+        },
+    }
+
+    green = runner._audit_gate3_full_junit(current, **kwargs)
+    drifted = runner._audit_gate3_full_junit(missing, **kwargs)
+
+    assert green["schema_version"] == "xunce-path-v2-gate3-full-junit-audit/v1"
+    assert green["status"] == "passed"
+    assert green["baseline_not_reduced"] is True
+    assert green["v2"]["skipped"] == 0
+    assert drifted["status"] == "failed"
+    assert drifted["missing_baseline_nodeids"]
+
+
+def test_gate3_green_execution_passes_with_stable_rows_and_explicit_disclosure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    events: list[str] = []
+    _install_gate3_green_mocks(monkeypatch, runner, events)
+    output_root = tmp_path / "out"
+
+    summary = runner.run_gate_benchmark(
+        _gate3_config(tmp_path),
+        output_root,
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert events == ["focused", "full", "probes", "postflight"]
+    assert summary["status"] == "passed"
+    assert summary["next_required_change"] == "implement_path_v2_legged_static_stability_oracle"
+    assert summary["blocking_reasons"] == []
+    assert summary["disabled_accelerators"] == GATE3_DISABLED_ACCELERATORS
+    assert summary["checks"]["provider_accelerator_unused"] is True
+    assert summary["ablation"]["decision_digest"] == "a" * 64
+    assert all(summary[field] is False for field in BOUNDARIES)
+
+    rows = [
+        json.loads(line)
+        for line in (output_root / "results.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    ablation = [row for row in rows if row["suite"] == "ablation"]
+    assert [
+        (
+            row["case_id"],
+            row["worker_count"],
+            row["python_hash_seed"],
+            row["repeat"],
+        )
+        for row in ablation
+    ] == [
+        (case_id, workers, seed, repeat)
+        for case_id in GATE3_CASES
+        for workers in (1, 4)
+        for seed in (11, 29, 47)
+        for repeat in (1, 2, 3)
+    ]
+    assert {row["suite"] for row in rows} == {
+        "test",
+        "ablation",
+        "fallback",
+        "disclosure",
+        "boundary",
+    }
+    routing = json.loads((output_root / "routing.json").read_text(encoding="utf-8"))
+    assert routing["route"] == summary["next_required_change"]
+    assert routing["disabled_accelerators"] == GATE3_DISABLED_ACCELERATORS
+    review = json.loads((output_root / "review.json").read_text(encoding="utf-8"))
+    assert review["probe_audit"]["row_count"] == 108
+    assert review["execution"]["probe_commands"][0]["environment"]["PYTHONHASHSEED"] == "11"
+    assert "stderr" not in json.dumps(review["execution"]["probe_commands"])
+    assert runner.status_exit_code(summary["status"]) == 0
+
+
+def test_gate3_postflight_identity_drift_fails_with_stable_repair_route(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    events: list[str] = []
+    _install_gate3_green_mocks(monkeypatch, runner, events)
+    monkeypatch.setattr(
+        runner,
+        "_gate3_postflight",
+        lambda config, repo_root: _postflight_with_mutation("nested-gitlink-drift"),
+    )
+
+    summary = runner.run_gate_benchmark(
+        _gate3_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "restore_gate3_runtime_isolation"
+    assert summary["checks"]["postflight"] is False
+    assert runner.status_exit_code(summary["status"]) == 1
+
+
+def test_gate3_fatal_l2_probe_failure_is_failed_not_optional_disabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    rows = _gate3_probe_rows()
+    rows[0].update(status="failed", fatal_reason="l2_rejected")
+    events: list[str] = []
+    _install_gate3_green_mocks(monkeypatch, runner, events, probe_rows=rows)
+
+    summary = runner.run_gate_benchmark(
+        _gate3_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "restore_gate3_fine_l2_authority"
+    assert summary["checks"]["fatal_authority_clean"] is False
+    assert summary["blocking_reasons"] == []
+    assert summary["disabled_accelerators"] == GATE3_DISABLED_ACCELERATORS
+
+
+def test_gate3_dry_run_rejects_stale_noncanonical_artifact_without_deletion(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    output_root = tmp_path / "out"
+    output_root.mkdir()
+    stale = output_root / "stale.txt"
+    stale.write_text("preserve", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="stale noncanonical"):
+        runner.run_gate_benchmark(
+            _gate3_config(tmp_path),
+            output_root,
+            REPO_ROOT,
+            execute_tests=False,
+        )
+    assert stale.read_text(encoding="utf-8") == "preserve"

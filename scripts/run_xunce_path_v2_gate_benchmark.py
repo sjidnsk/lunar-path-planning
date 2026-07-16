@@ -114,6 +114,46 @@ GATE2_ROW_API = {
     "exact_map_quality": ("ExactMapQualityRowV2", "aggregate_exact_map_quality_v2"),
     "standard_episodes": ("StandardEpisodeRowV2", "aggregate_standard_episodes_v2"),
 }
+
+GATE3_SCHEMA_VERSION = "xunce-path-v2-gate3-accelerators/v1"
+GATE3_STAGE_ID = "xunce-path-v2-gate3-accelerators"
+GATE3_INPUT_COMMIT = "d6b6b93c7e2c148195cd907010f46bd88e97ce2b"
+GATE3_FORMAL_OUTPUT_ROOT = Path("D:/xunce/out/path_v2/g3")
+GATE3_FORMAL_TEMP_ROOT = Path("D:/xunce/tmp/path_v2_g3")
+GATE3_PASS_ROUTE = "implement_path_v2_legged_static_stability_oracle"
+GATE3_EXECUTE_ROUTE = "execute_gate3_accelerator_evidence"
+GATE3_FOCUSED_TARGETS = (
+    "tests/test_v2_search.py",
+    "tests/test_v2_hierarchy.py",
+    "tests/test_v2_cache.py",
+    "tests/test_v2_lazy_validation.py",
+    "tests/test_v2_route_validation.py",
+    "tests/test_v2_wheel_provider.py",
+    "tests/test_v2_wheel_contracts.py",
+    "tests/test_v2_api.py",
+    "tests/test_v2_runtime.py",
+    "tests/test_v2_serialization.py",
+    "tests/test_v2_contracts.py",
+    "tests/test_hybrid_astar.py",
+    "tests/test_astar.py",
+)
+GATE3_CASES = (
+    "fine_only",
+    "multi_heuristic_only",
+    "hierarchy_only",
+    "lazy_validation_only",
+    "lazy_validation_plus_cache",
+    "full_v2",
+)
+GATE3_WORKER_COUNTS = (1, 4)
+GATE3_HASH_SEEDS = (11, 29, 47)
+GATE3_REPEAT_COUNT = 3
+GATE3_DISABLED_ACCELERATORS = (
+    {"accelerator_id": "hierarchy", "reason": "not_integrated_into_provider"},
+    {"accelerator_id": "lazy_validation", "reason": "not_integrated_into_provider"},
+    {"accelerator_id": "multi_heuristic", "reason": "not_integrated_into_provider"},
+    {"accelerator_id": "validation_cache", "reason": "not_integrated_into_provider"},
+)
 class _Gate2LoaderContractError(RuntimeError):
     pass
 
@@ -171,6 +211,468 @@ print(json.dumps({
     "root_has_plan_v2": "plan_v2" in path_planner.__dict__,
     "v1_route_schema": legacy_schema,
 }, sort_keys=True, separators=(",", ":")))
+"""
+
+
+GATE3_PROBE_CODE = r"""
+from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
+import json
+import os
+
+import numpy as np
+
+from path_planner.core import Cell
+from path_planner.v2.api import plan_v2
+from path_planner.v2.cache import ValidationCacheV2
+from path_planner.v2.contracts import (
+    AcceleratorPolicyV2,
+    ObjectiveProfileV2,
+    PlanningRequestV2,
+    PlanningSuccessV2,
+    PlatformKindV2,
+    PoseStateV2,
+    ResourceBudgetV2,
+    ValidationLevelV2,
+)
+from path_planner.v2.hierarchy import (
+    ConservativeHierarchyV2,
+    HierarchyHintStatusV2,
+)
+from path_planner.v2.profiles import (
+    PlatformProfileRegistryV2,
+    PlatformProfileV2,
+    WheelProfileV2,
+)
+from path_planner.v2.providers.wheel import WheelPrimitiveProviderV2
+from path_planner.v2.runtime import PlanningDeadlineV2
+from path_planner.v2.search import SearchQueueEntryV2, StableSearchQueueV2
+from path_planner.v2.serialization import canonical_json_bytes
+from path_planner.v2.terrain import (
+    FineGridGeometryV2,
+    FineSafetyAnchorV2,
+    TerrainProvenanceV2,
+    TerrainSnapshotV2,
+)
+from path_planner.v2.validation import (
+    RouteValidationResultV2,
+    WheelValidationResultV2,
+    validate_route,
+    validate_route_l2,
+)
+
+CASES = tuple(json.loads(os.environ["PATH_V2_GATE3_CASES"]))
+WORKER_COUNT = int(os.environ["PATH_V2_GATE3_WORKER_COUNT"])
+
+
+def snapshot(*, mixed=False):
+    shape = (8, 8)
+    traversable = np.ones(shape, dtype=bool)
+    hard = np.zeros(shape, dtype=bool)
+    observed = np.ones(shape, dtype=bool)
+    if mixed:
+        observed[0, 0] = False
+        hard[0, 1] = True
+        traversable[0, 1] = False
+    return TerrainSnapshotV2(
+        geometry=FineGridGeometryV2(width=8, height=8, frame_id="moon"),
+        elevation_m=np.zeros(shape, dtype=np.float64),
+        slope_deg=np.zeros(shape, dtype=np.float64),
+        traversable_mask=traversable,
+        hard_obstacle_mask=hard,
+        observed_mask=observed,
+        confidence=np.ones(shape, dtype=np.float64),
+        provenance=TerrainProvenanceV2(
+            source_kind="synthetic_terrain_obstacle_proxy/v1",
+            source_id="gate3-component-probe",
+            source_hash="gate3-component-probe-hash",
+            physical_obstacle_cells_written=False,
+        ),
+    )
+
+
+generic_profile = PlatformProfileV2(
+    profile_id="wheel-gate3/v1",
+    platform_kind=PlatformKindV2.WHEEL,
+    capability_revision="wheel-gate3-capability/v1",
+    simulation_proxy=False,
+    max_traversable_slope_deg=30.0,
+    goal_position_tolerance_m=0.0,
+    goal_heading_tolerance_rad=0.0,
+)
+wheel_profile = WheelProfileV2(profile=generic_profile)
+terrain = snapshot()
+state = PoseStateV2(2.25, 2.25, 0.0)
+request = PlanningRequestV2(
+    request_id="gate3-component-probe",
+    platform_profile_id=generic_profile.profile_id,
+    start_state=state,
+    goal_state=state,
+    terrain_snapshot=terrain,
+    objective_profile=ObjectiveProfileV2(),
+    resource_budget=ResourceBudgetV2(),
+    timeout_s=1.0,
+    accelerator_policy=AcceleratorPolicyV2.OPTIONAL,
+    determinism_seed=17,
+)
+provider = WheelPrimitiveProviderV2(wheel_profile)
+outcome = plan_v2(
+    request,
+    registry=PlatformProfileRegistryV2((generic_profile,)),
+    providers={generic_profile.profile_id: provider},
+    monotonic_clock=lambda: 0.0,
+)
+fatal_reason = None
+if type(outcome) is not PlanningSuccessV2:
+    telemetry = getattr(outcome, "search_telemetry", None)
+    fatal_reason = (
+        "planning_deadline_expired"
+        if getattr(telemetry, "timed_out", False) is True
+        else "fine_anchor_failed"
+    )
+
+fine_result = None
+if fatal_reason is None:
+    anchor = FineSafetyAnchorV2(terrain)
+    deadline = PlanningDeadlineV2(0.0, 100.0, lambda: 0.0)
+    fine_result = validate_route_l2(
+        outcome.route,
+        request,
+        anchor,
+        wheel_profile,
+        deadline,
+    )
+    if type(fine_result) is not WheelValidationResultV2:
+        fatal_reason = "l2_authority_malformed"
+    elif (
+        fine_result.timed_out is True
+        or fine_result.reason_code == "planning_deadline_expired"
+    ):
+        fatal_reason = "planning_deadline_expired"
+    elif not fine_result.evidence.passed:
+        fatal_reason = "l2_rejected"
+    elif fine_result.validated_route_hash is None:
+        fatal_reason = "l2_authority_malformed"
+
+entries = (
+    SearchQueueEntryV2(
+        "anchor-first",
+        (0,),
+        "a",
+        0.0,
+        0.0,
+        (("resource", 9.0),),
+    ),
+    SearchQueueEntryV2(
+        "aux-first",
+        (1,),
+        "a",
+        1.0,
+        0.0,
+        (("resource", 0.0),),
+    ),
+    SearchQueueEntryV2(
+        "later",
+        (2,),
+        "a",
+        0.5,
+        1.0,
+        (("resource", 2.0),),
+    ),
+)
+expected_order = tuple(
+    entry.candidate_id
+    for entry in sorted(
+        entries,
+        key=lambda entry: (
+            entry.path_cost + entry.anchor_heuristic,
+            entry.path_cost,
+            entry.state_key,
+            entry.primitive_key,
+            entry.candidate_id,
+        ),
+    )
+)
+search_ok = True
+try:
+    queue = StableSearchQueueV2()
+    batches = ((entries[0], entries[2]), (entries[1],))
+    with ThreadPoolExecutor(max_workers=WORKER_COUNT) as executor:
+        futures = tuple(executor.submit(lambda batch: batch, batch) for batch in batches)
+        completion_order = (0, 1) if WORKER_COUNT == 1 else (1, 0)
+        for index in completion_order:
+            queue.extend(futures[index].result())
+    suggestion = queue.suggest("resource")
+    popped = []
+    while len(queue):
+        popped.append(queue.pop_anchor().candidate_id)
+    search_ok = (
+        suggestion is not None
+        and suggestion.candidate_id == "aux-first"
+        and tuple(popped) == expected_order
+        and expected_order[0] == "anchor-first"
+    )
+except Exception:
+    search_ok = False
+
+hierarchy_ok = True
+try:
+    mixed_anchor = FineSafetyAnchorV2(snapshot(mixed=True))
+    hierarchy = ConservativeHierarchyV2.build(
+        mixed_anchor,
+        max_slope_deg=30.0,
+        deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+    )
+    mixed_hint = hierarchy.hint(2, Cell(0, 0))
+    hierarchy_ok = (
+        mixed_hint.status is HierarchyHintStatusV2.UNKNOWN
+        and mixed_anchor.query(Cell(0, 0), 30.0).reason_code == "terrain_unknown"
+        and mixed_anchor.query(Cell(1, 0), 30.0).reason_code
+        == "terrain_hard_obstacle"
+    )
+except TimeoutError:
+    fatal_reason = "planning_deadline_expired"
+    hierarchy_ok = False
+except Exception:
+    hierarchy_ok = False
+
+lazy_ok = False
+cache_ok = False
+if fatal_reason is None:
+    try:
+        lazy_result = validate_route(
+            outcome.route,
+            anchor,
+            wheel_profile,
+            ValidationLevelV2.L2,
+            request=request,
+            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+        )
+        lazy_ok = (
+            type(lazy_result) is RouteValidationResultV2
+            and lazy_result.success
+            and lazy_result.l2_result is not None
+            and lazy_result.l2_result.evidence.passed
+            and lazy_result.l2_result.reason_code == fine_result.reason_code
+            and lazy_result.l2_result.validated_route_hash
+            == fine_result.validated_route_hash
+        )
+        if type(lazy_result) is not RouteValidationResultV2:
+            fatal_reason = "l2_authority_malformed"
+        elif lazy_result.reason_code == "planning_deadline_expired":
+            fatal_reason = "planning_deadline_expired"
+        elif lazy_result.reason_code == "route_l2_authority_unavailable":
+            fatal_reason = "l2_authority_malformed"
+        elif (
+            lazy_result.l2_result is not None
+            and type(lazy_result.l2_result) is not WheelValidationResultV2
+        ):
+            fatal_reason = "l2_authority_malformed"
+        elif (
+            lazy_result.l2_result is not None
+            and (
+                lazy_result.l2_result.timed_out is True
+                or lazy_result.l2_result.reason_code
+                == "planning_deadline_expired"
+            )
+        ):
+            fatal_reason = "planning_deadline_expired"
+        elif lazy_result.l2_result is not None and not lazy_result.l2_result.evidence.passed:
+            fatal_reason = "l2_rejected"
+    except TimeoutError:
+        fatal_reason = "planning_deadline_expired"
+    except Exception:
+        lazy_ok = False
+    try:
+        cache = ValidationCacheV2()
+        cached_first = validate_route(
+            outcome.route,
+            anchor,
+            wheel_profile,
+            ValidationLevelV2.L2,
+            request=request,
+            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+            cache=cache,
+        )
+        cached_second = validate_route(
+            outcome.route,
+            anchor,
+            wheel_profile,
+            ValidationLevelV2.L2,
+            request=request,
+            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+            cache=cache,
+        )
+        cache_ok = (
+            type(cached_first) is RouteValidationResultV2
+            and type(cached_second) is RouteValidationResultV2
+            and cached_first.success
+            and cached_second.success
+            and cached_second.cache_hits == 1
+            and cached_first.l2_result is not None
+            and cached_second.l2_result is not None
+            and cached_first.l2_result.reason_code == fine_result.reason_code
+            and cached_second.l2_result.reason_code == fine_result.reason_code
+            and cached_first.l2_result.validated_route_hash
+            == fine_result.validated_route_hash
+            and cached_second.l2_result.validated_route_hash
+            == fine_result.validated_route_hash
+        )
+        if (
+            type(cached_first) is not RouteValidationResultV2
+            or type(cached_second) is not RouteValidationResultV2
+        ):
+            fatal_reason = "l2_authority_malformed"
+        elif (
+            cached_first.reason_code == "planning_deadline_expired"
+            or cached_second.reason_code == "planning_deadline_expired"
+        ):
+            fatal_reason = "planning_deadline_expired"
+        elif (
+            cached_first.l2_result is not None
+            and type(cached_first.l2_result) is not WheelValidationResultV2
+        ) or (
+            cached_second.l2_result is not None
+            and type(cached_second.l2_result) is not WheelValidationResultV2
+        ):
+            fatal_reason = "l2_authority_malformed"
+        elif (
+            (
+                cached_first.l2_result is not None
+                and (
+                    cached_first.l2_result.timed_out is True
+                    or cached_first.l2_result.reason_code
+                    == "planning_deadline_expired"
+                )
+            )
+            or (
+                cached_second.l2_result is not None
+                and (
+                    cached_second.l2_result.timed_out is True
+                    or cached_second.l2_result.reason_code
+                    == "planning_deadline_expired"
+                )
+            )
+        ):
+            fatal_reason = "planning_deadline_expired"
+        elif (
+            (
+                cached_first.l2_result is not None
+                and not cached_first.l2_result.evidence.passed
+            )
+            or (
+                cached_second.l2_result is not None
+                and not cached_second.l2_result.evidence.passed
+            )
+        ):
+            fatal_reason = "l2_rejected"
+    except TimeoutError:
+        fatal_reason = "planning_deadline_expired"
+    except Exception:
+        cache_ok = False
+
+accelerator_used = bool(
+    getattr(getattr(outcome, "search_telemetry", None), "accelerator_used", True)
+)
+projection = {
+    "authoritative_order": list(expected_order),
+    "outcome_category": type(outcome).__name__,
+    "provider_termination": getattr(
+        getattr(outcome, "search_telemetry", None),
+        "termination_reason",
+        "missing",
+    ),
+    "route_reason": getattr(fine_result, "reason_code", fatal_reason),
+    "validated_route_hash": getattr(fine_result, "validated_route_hash", None),
+    "l2_validator": getattr(
+        getattr(fine_result, "evidence", None),
+        "validator_id",
+        None,
+    ),
+    "accelerator_used": accelerator_used,
+}
+fine_only_digest = sha256(canonical_json_bytes(projection)).hexdigest()
+
+enabled_by_case = {
+    "fine_only": (),
+    "multi_heuristic_only": ("multi_heuristic",),
+    "hierarchy_only": ("hierarchy",),
+    "lazy_validation_only": ("lazy_validation",),
+    "lazy_validation_plus_cache": ("lazy_validation", "validation_cache"),
+    "full_v2": (
+        "hierarchy",
+        "lazy_validation",
+        "multi_heuristic",
+        "validation_cache",
+    ),
+}
+component_ok = {
+    "hierarchy": hierarchy_ok,
+    "lazy_validation": lazy_ok,
+    "multi_heuristic": search_ok,
+    "validation_cache": cache_ok,
+}
+rows = []
+for case_id in CASES:
+    enabled = enabled_by_case[case_id]
+    runtime_disabled = (
+        []
+        if fatal_reason is not None
+        else [
+            {"accelerator_id": accelerator_id, "reason": "component_probe_failed"}
+            for accelerator_id in enabled
+            if not component_ok[accelerator_id]
+        ]
+    )
+    fallback_isolated = all(
+        item["accelerator_id"] in enabled for item in runtime_disabled
+    )
+    rows.append(
+        {
+            "case_id": case_id,
+            "status": (
+                "passed" if fatal_reason is None and fallback_isolated else "failed"
+            ),
+            "decision_digest": fine_only_digest,
+            "fine_only_digest": fine_only_digest,
+            "safety_equivalent": fatal_reason is None,
+            "authoritative_order_preserved": (
+                "multi_heuristic" not in enabled
+                or search_ok
+                or "multi_heuristic" in {
+                    item["accelerator_id"] for item in runtime_disabled
+                }
+            ),
+            "suggestion_non_authoritative": (
+                "multi_heuristic" not in enabled
+                or search_ok
+                or "multi_heuristic" in {
+                    item["accelerator_id"] for item in runtime_disabled
+                }
+            ),
+            "hierarchy_conservative": (
+                "hierarchy" not in enabled
+                or hierarchy_ok
+                or "hierarchy" in {
+                    item["accelerator_id"] for item in runtime_disabled
+                }
+            ),
+            "cache_l2_equivalent": (
+                "validation_cache" not in enabled
+                or cache_ok
+                or "validation_cache" in {
+                    item["accelerator_id"] for item in runtime_disabled
+                }
+            ),
+            "l2_authority_preserved": fatal_reason is None,
+            "fallback_isolated": fallback_isolated,
+            "fatal_reason": fatal_reason,
+            "accelerator_used": accelerator_used,
+            "runtime_disabled_accelerators": runtime_disabled,
+        }
+    )
+
+print(json.dumps({"rows": rows}, sort_keys=True, separators=(",", ":")))
 """
 
 
@@ -544,6 +1046,100 @@ def _validate_gate2_config(config: dict[str, Any]) -> None:
     _require_frozen(config.get("pass_route"), GATE2_PASS_ROUTE, "pass_route")
 
 
+def _validate_gate3_config(config: dict[str, Any]) -> None:
+    expected_keys = {
+        "schema_version",
+        "stage_id",
+        "python",
+        "expected_python_version",
+        "expected_git",
+        "formal_output_root",
+        "temp_root",
+        "focused",
+        "full",
+        "baseline_evidence",
+        "ablation",
+        "expected_disabled_accelerators",
+        "boundaries",
+        "pass_route",
+    }
+    _require_frozen(set(config), expected_keys, "top-level keys")
+    _require_frozen(config.get("schema_version"), GATE3_SCHEMA_VERSION, "schema_version")
+    _require_frozen(config.get("stage_id"), GATE3_STAGE_ID, "stage_id")
+    _require_frozen(config.get("python"), FORMAL_PYTHON.as_posix(), "python")
+    _require_frozen(
+        config.get("expected_python_version"),
+        EXPECTED_PYTHON_VERSION,
+        "expected_python_version",
+    )
+    _require_frozen(
+        config.get("expected_git"),
+        {
+            "branch": EXPECTED_BRANCH,
+            "base_commit": ORIGINAL_BASE_COMMIT,
+            "gate_input_commit": GATE3_INPUT_COMMIT,
+            "nested_branch": EXPECTED_BRANCH,
+        },
+        "expected_git",
+    )
+    _require_frozen(
+        config.get("formal_output_root"),
+        GATE3_FORMAL_OUTPUT_ROOT.as_posix(),
+        "formal_output_root",
+    )
+    _require_frozen(
+        config.get("temp_root"),
+        GATE3_FORMAL_TEMP_ROOT.as_posix(),
+        "temp_root",
+    )
+    _require_frozen(
+        config.get("focused"),
+        {
+            "working_directory": PATH_PLANNER_WORKING_DIRECTORY,
+            "pythonpath": PATH_PLANNER_PYTHONPATH,
+            "pytest_targets": list(GATE3_FOCUSED_TARGETS),
+        },
+        "focused",
+    )
+    _require_frozen(
+        config.get("full"),
+        {
+            "working_directory": PATH_PLANNER_WORKING_DIRECTORY,
+            "pythonpath": PATH_PLANNER_PYTHONPATH,
+            "pytest_targets": ["tests"],
+            "legacy_expected": LEGACY_EXPECTED,
+            "allowed_skip_dependency": ALLOWED_SKIP_DEPENDENCY,
+        },
+        "full",
+    )
+    _require_frozen(
+        config.get("baseline_evidence"),
+        GATE2_BASELINE_EVIDENCE,
+        "baseline_evidence",
+    )
+    _require_frozen(
+        config.get("ablation"),
+        {
+            "cases": list(GATE3_CASES),
+            "worker_counts": list(GATE3_WORKER_COUNTS),
+            "python_hash_seeds": list(GATE3_HASH_SEEDS),
+            "repeat_count": GATE3_REPEAT_COUNT,
+        },
+        "ablation",
+    )
+    _require_frozen(
+        config.get("expected_disabled_accelerators"),
+        list(GATE3_DISABLED_ACCELERATORS),
+        "expected_disabled_accelerators",
+    )
+    _require_frozen(
+        config.get("boundaries"),
+        gate_artifacts.BOUNDARY_FIELDS,
+        "boundaries",
+    )
+    _require_frozen(config.get("pass_route"), GATE3_PASS_ROUTE, "pass_route")
+
+
 def _junit_records(
     content: bytes,
 ) -> tuple[list[ET.Element], dict[str, dict[str, str]], list[str]]:
@@ -743,6 +1339,75 @@ def _gate2_runtime_audit(repo_root: Path) -> dict[str, Any]:
         "original_base_is_ancestor": original_base_is_ancestor,
         "gate_input_is_ancestor": gate_input_is_ancestor,
     }
+
+
+def _audit_gate3_full_junit(
+    path: Path,
+    *,
+    expected_legacy: dict[str, Any],
+    allowed_skip_dependency: str,
+    baseline_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    audit = _audit_gate2_full_junit(
+        path,
+        expected_legacy=expected_legacy,
+        allowed_skip_dependency=allowed_skip_dependency,
+        baseline_evidence=baseline_evidence,
+    )
+    return {
+        **audit,
+        "schema_version": "xunce-path-v2-gate3-full-junit-audit/v1",
+    }
+
+
+def _gate3_runtime_audit(repo_root: Path) -> dict[str, Any]:
+    superproject = gate0.audit_git_identity(
+        repo_root,
+        EXPECTED_BRANCH,
+        ORIGINAL_BASE_COMMIT,
+    )
+    gate_input = gate0.audit_git_identity(
+        repo_root,
+        EXPECTED_BRANCH,
+        GATE3_INPUT_COMMIT,
+    )
+    nested = _audit_nested_git(repo_root, EXPECTED_BRANCH)
+    imports = gate0.audit_import_origins(FORMAL_PYTHON, repo_root)
+    python_version_matches = imports.get("python_version") == EXPECTED_PYTHON_VERSION
+    original_base_is_ancestor = (
+        superproject.get("status") == "passed"
+        and superproject.get("base_is_ancestor") is True
+    )
+    gate_input_is_ancestor = (
+        gate_input.get("status") == "passed"
+        and gate_input.get("base_is_ancestor") is True
+    )
+    passed = (
+        original_base_is_ancestor
+        and gate_input_is_ancestor
+        and nested.get("status") == "passed"
+        and imports.get("status") == "passed"
+        and python_version_matches
+    )
+    return {
+        "schema_version": "xunce-path-v2-gate3-runtime-audit/v1",
+        "status": "passed" if passed else "failed",
+        "superproject_git": superproject,
+        "gate_input_git": gate_input,
+        "nested_git": nested,
+        "import_origins": imports,
+        "python_version_matches": python_version_matches,
+        "original_base_is_ancestor": original_base_is_ancestor,
+        "gate_input_is_ancestor": gate_input_is_ancestor,
+    }
+
+
+def _gate3_preflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    return _gate3_runtime_audit(repo_root)
+
+
+def _gate3_postflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    return _gate3_runtime_audit(repo_root)
 
 
 def _gate2_preflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
@@ -951,6 +1616,321 @@ def _run_byte_repeats(
             }
         )
     return rows
+
+
+def _run_gate3_probe_process(
+    *,
+    python: Path,
+    repo_root: Path,
+    worker_count: int,
+    hash_seed: int,
+    repeat: int,
+    common_env: dict[str, str],
+) -> dict[str, Any]:
+    env = common_env.copy()
+    env.update(
+        {
+            "PYTHONHASHSEED": str(hash_seed),
+            "PATH_V2_GATE3_CASES": json.dumps(
+                list(GATE3_CASES),
+                separators=(",", ":"),
+            ),
+            "PATH_V2_GATE3_WORKER_COUNT": str(worker_count),
+            "PATH_V2_GATE3_REPEAT": str(repeat),
+        }
+    )
+    command = [str(python), "-c", GATE3_PROBE_CODE]
+    completed = subprocess.run(
+        command,
+        cwd=repo_root / "path-planner",
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    rows: list[dict[str, Any]] = []
+    stable_failure_reason: str | None = None
+    if completed.returncode != 0:
+        stable_failure_reason = "probe_subprocess_failed"
+    else:
+        try:
+            payload = json.loads(completed.stdout.strip().splitlines()[-1])
+            raw_rows = payload["rows"]
+            if (
+                type(payload) is not dict
+                or type(raw_rows) is not list
+                or len(raw_rows) != len(GATE3_CASES)
+                or any(type(row) is not dict for row in raw_rows)
+                or [row.get("case_id") for row in raw_rows] != list(GATE3_CASES)
+            ):
+                raise ValueError("invalid Gate 3 probe rows")
+            for raw in raw_rows:
+                row = dict(raw)
+                row.update(
+                    worker_count=worker_count,
+                    python_hash_seed=hash_seed,
+                    repeat=repeat,
+                )
+                rows.append(row)
+        except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            stable_failure_reason = "probe_output_invalid"
+            rows = []
+    return {
+        "command": command,
+        "environment": {
+            "PYTHONHASHSEED": str(hash_seed),
+            "PATH_V2_GATE3_WORKER_COUNT": str(worker_count),
+            "PATH_V2_GATE3_REPEAT": str(repeat),
+            "PYTHONNOUSERSITE": env.get("PYTHONNOUSERSITE"),
+            "PYTHONDONTWRITEBYTECODE": env.get("PYTHONDONTWRITEBYTECODE"),
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": env.get(
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD"
+            ),
+            "PYTHONPATH": env.get("PYTHONPATH"),
+        },
+        "worker_count": worker_count,
+        "python_hash_seed": hash_seed,
+        "repeat": repeat,
+        "returncode": int(completed.returncode),
+        "stable_failure_reason": stable_failure_reason,
+        "rows": rows,
+    }
+
+
+def _failed_gate3_probe_rows(
+    *,
+    worker_count: int,
+    hash_seed: int,
+    repeat: int,
+    reason: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "case_id": case_id,
+            "worker_count": worker_count,
+            "python_hash_seed": hash_seed,
+            "repeat": repeat,
+            "status": "failed",
+            "decision_digest": None,
+            "fine_only_digest": None,
+            "safety_equivalent": False,
+            "authoritative_order_preserved": False,
+            "suggestion_non_authoritative": False,
+            "hierarchy_conservative": False,
+            "cache_l2_equivalent": False,
+            "l2_authority_preserved": False,
+            "fallback_isolated": False,
+            "fatal_reason": reason,
+            "accelerator_used": None,
+            "runtime_disabled_accelerators": [],
+        }
+        for case_id in GATE3_CASES
+    ]
+
+
+def _run_gate3_probes(
+    *,
+    python: Path,
+    repo_root: Path,
+    common_env: dict[str, str],
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    commands: list[dict[str, Any]] = []
+    for worker_count in GATE3_WORKER_COUNTS:
+        for hash_seed in GATE3_HASH_SEEDS:
+            for repeat in range(1, GATE3_REPEAT_COUNT + 1):
+                result = _run_gate3_probe_process(
+                    python=python,
+                    repo_root=repo_root,
+                    worker_count=worker_count,
+                    hash_seed=hash_seed,
+                    repeat=repeat,
+                    common_env=common_env,
+                )
+                commands.append(
+                    {
+                        key: result[key]
+                        for key in (
+                            "command",
+                            "environment",
+                            "worker_count",
+                            "python_hash_seed",
+                            "repeat",
+                            "returncode",
+                            "stable_failure_reason",
+                        )
+                    }
+                )
+                if result["stable_failure_reason"] is None:
+                    rows.extend(result["rows"])
+                else:
+                    rows.extend(
+                        _failed_gate3_probe_rows(
+                            worker_count=worker_count,
+                            hash_seed=hash_seed,
+                            repeat=repeat,
+                            reason=result["stable_failure_reason"],
+                        )
+                    )
+    case_order = {case_id: index for index, case_id in enumerate(GATE3_CASES)}
+    rows.sort(
+        key=lambda row: (
+            case_order.get(row.get("case_id"), len(case_order)),
+            row.get("worker_count", -1),
+            row.get("python_hash_seed", -1),
+            row.get("repeat", -1),
+        )
+    )
+    audit = _audit_gate3_probe_rows(rows)
+    return {**audit, "rows": rows, "commands": commands}
+
+
+def _gate3_sha256(value: object) -> bool:
+    return (
+        type(value) is str
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _audit_gate3_probe_rows(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    expected_keys = [
+        (case_id, worker_count, hash_seed, repeat)
+        for case_id in GATE3_CASES
+        for worker_count in GATE3_WORKER_COUNTS
+        for hash_seed in GATE3_HASH_SEEDS
+        for repeat in range(1, GATE3_REPEAT_COUNT + 1)
+    ]
+    actual_keys: list[tuple[object, object, object, object]] = []
+    row_shapes_valid = type(rows) in (list, tuple)
+    matrix_keys_valid = row_shapes_valid
+    normalized_rows: list[dict[str, Any]] = []
+    if row_shapes_valid:
+        for row in rows:
+            if type(row) is not dict:
+                row_shapes_valid = False
+                matrix_keys_valid = False
+                break
+            normalized_rows.append(row)
+            key = (
+                row.get("case_id"),
+                row.get("worker_count"),
+                row.get("python_hash_seed"),
+                row.get("repeat"),
+            )
+            actual_keys.append(key)
+            if not (
+                type(key[0]) is str
+                and type(key[1]) is int
+                and type(key[2]) is int
+                and type(key[3]) is int
+            ):
+                matrix_keys_valid = False
+    matrix_complete = (
+        row_shapes_valid
+        and matrix_keys_valid
+        and len(actual_keys) == len(expected_keys)
+        and set(actual_keys) == set(expected_keys)
+    )
+    stable_row_order = (
+        row_shapes_valid and matrix_keys_valid and actual_keys == expected_keys
+    )
+
+    enabled_by_case = {
+        "fine_only": set(),
+        "multi_heuristic_only": {"multi_heuristic"},
+        "hierarchy_only": {"hierarchy"},
+        "lazy_validation_only": {"lazy_validation"},
+        "lazy_validation_plus_cache": {"lazy_validation", "validation_cache"},
+        "full_v2": {
+            "hierarchy",
+            "lazy_validation",
+            "multi_heuristic",
+            "validation_cache",
+        },
+    }
+    fallback_isolation = row_shapes_valid
+    runtime_fallback_count = 0
+    fatal_reasons: set[str] = set()
+    for row in normalized_rows:
+        runtime_disabled = row.get("runtime_disabled_accelerators")
+        if type(runtime_disabled) is not list:
+            fallback_isolation = False
+            continue
+        ids: list[str] = []
+        for item in runtime_disabled:
+            valid_item = (
+                type(item) is dict
+                and set(item) == {"accelerator_id", "reason"}
+                and type(item.get("accelerator_id")) is str
+                and item.get("reason") == "component_probe_failed"
+            )
+            if not valid_item:
+                fallback_isolation = False
+                continue
+            ids.append(item["accelerator_id"])
+        enabled = enabled_by_case.get(row.get("case_id"), set())
+        if ids != sorted(set(ids)) or not set(ids) <= enabled:
+            fallback_isolation = False
+        if row.get("fallback_isolated") is not True:
+            fallback_isolation = False
+        runtime_fallback_count += len(ids)
+        fatal_reason = row.get("fatal_reason")
+        if type(fatal_reason) is str:
+            fatal_reasons.add(fatal_reason)
+
+    digests = [row.get("decision_digest") for row in normalized_rows]
+    one_decision_digest = (
+        bool(digests)
+        and all(_gate3_sha256(digest) for digest in digests)
+        and len(set(digests)) == 1
+        and all(row.get("fine_only_digest") == digests[0] for row in normalized_rows)
+    )
+    safety_equivalence = bool(normalized_rows) and all(
+        row.get("status") == "passed"
+        and row.get("safety_equivalent") is True
+        and row.get("authoritative_order_preserved") is True
+        and row.get("l2_authority_preserved") is True
+        for row in normalized_rows
+    )
+    suggestion_non_authority = bool(normalized_rows) and all(
+        row.get("suggestion_non_authoritative") is True for row in normalized_rows
+    )
+    hierarchy_conservatism = bool(normalized_rows) and all(
+        row.get("hierarchy_conservative") is True for row in normalized_rows
+    )
+    cache_l2_equivalence = bool(normalized_rows) and all(
+        row.get("cache_l2_equivalent") is True for row in normalized_rows
+    )
+    fatal_authority_clean = bool(normalized_rows) and all(
+        row.get("fatal_reason") is None for row in normalized_rows
+    )
+    provider_accelerator_unused = bool(normalized_rows) and all(
+        row.get("accelerator_used") is False for row in normalized_rows
+    )
+    checks = {
+        "matrix_complete": matrix_complete,
+        "stable_row_order": stable_row_order,
+        "one_decision_digest": one_decision_digest,
+        "safety_equivalence": safety_equivalence,
+        "suggestion_non_authority": suggestion_non_authority,
+        "hierarchy_conservatism": hierarchy_conservatism,
+        "cache_l2_equivalence": cache_l2_equivalence,
+        "fallback_isolation": fallback_isolation,
+        "fatal_authority_clean": fatal_authority_clean,
+        "provider_accelerator_unused": provider_accelerator_unused,
+    }
+    passed = all(checks.values())
+    return {
+        "schema_version": "xunce-path-v2-gate3-probe-audit/v1",
+        "status": "passed" if passed else "failed",
+        "row_count": len(normalized_rows),
+        "decision_digest": digests[0] if one_decision_digest else None,
+        "runtime_fallback_count": runtime_fallback_count,
+        "fatal_reasons": sorted(fatal_reasons),
+        **checks,
+    }
 
 
 def _report(summary: dict[str, Any]) -> str:
@@ -1726,6 +2706,454 @@ def _run_gate2_benchmark(
     return summary
 
 
+def _evaluate_gate3(
+    *,
+    preflight: dict[str, Any],
+    postflight_ok: bool,
+    focused: dict[str, Any],
+    full: dict[str, Any],
+    probe_audit: dict[str, Any],
+    boundary_ok: bool,
+) -> tuple[str, str, dict[str, bool]]:
+    checks = {
+        "preflight": preflight.get("status") == "passed",
+        "postflight": postflight_ok,
+        "focused": focused.get("status") == "passed",
+        "full": full.get("status") == "passed",
+        "ablation_matrix": probe_audit.get("matrix_complete") is True
+        and probe_audit.get("stable_row_order") is True,
+        "one_decision_digest": probe_audit.get("one_decision_digest") is True,
+        "safety_equivalence": probe_audit.get("safety_equivalence") is True,
+        "suggestion_non_authority": probe_audit.get("suggestion_non_authority") is True,
+        "hierarchy_conservatism": probe_audit.get("hierarchy_conservatism") is True,
+        "cache_l2_equivalence": probe_audit.get("cache_l2_equivalence") is True,
+        "fallback_isolation": probe_audit.get("fallback_isolation") is True,
+        "fatal_authority_clean": probe_audit.get("fatal_authority_clean") is True,
+        "disabled_accelerator_disclosure": True,
+        "provider_accelerator_unused": probe_audit.get(
+            "provider_accelerator_unused"
+        )
+        is True,
+        "boundaries_strict_false": boundary_ok,
+    }
+    if not checks["preflight"] or not checks["postflight"]:
+        route = "restore_gate3_runtime_isolation"
+    elif not checks["boundaries_strict_false"]:
+        route = "restore_gate3_safety_boundaries"
+    elif not checks["focused"]:
+        route = "restore_gate3_focused_contracts"
+    elif not checks["full"]:
+        route = "restore_path_planner_v1_regression"
+    elif not checks["fatal_authority_clean"]:
+        route = "restore_gate3_fine_l2_authority"
+    elif not checks["ablation_matrix"] or not checks["one_decision_digest"]:
+        route = "repair_gate3_deterministic_component_probes"
+    elif not (
+        checks["safety_equivalence"]
+        and checks["suggestion_non_authority"]
+        and checks["hierarchy_conservatism"]
+        and checks["cache_l2_equivalence"]
+    ):
+        route = "repair_gate3_accelerator_safety_equivalence"
+    elif not checks["fallback_isolation"]:
+        route = "repair_gate3_accelerator_fallback_isolation"
+    elif not checks["provider_accelerator_unused"]:
+        route = "remove_unintegrated_provider_accelerator_claim"
+    else:
+        route = GATE3_PASS_ROUTE
+    status = "passed" if all(checks.values()) else "failed"
+    return status, route, checks
+
+
+def _gate3_report(summary: dict[str, Any]) -> str:
+    disabled = ", ".join(
+        item["accelerator_id"] for item in summary["disabled_accelerators"]
+    ) or "none"
+    return (
+        "# Path Planner v2 Gate 3 accelerator evidence\n\n"
+        f"- Status: `{summary['status']}`\n"
+        f"- Next route: `{summary['next_required_change']}`\n"
+        f"- Disabled accelerators: `{disabled}`\n\n"
+        "v1 remains the default and v2 remains opt-in. The listed components have "
+        "no end-to-end accelerator use in the wheel provider; component evidence does "
+        "not claim a runtime speedup or success-rate improvement. This Gate does not "
+        "publish a checkpoint, replace the default policy, connect an executor, or "
+        "start a canary.\n"
+    )
+
+
+def _gate3_dry_run_payloads(config: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    boundary_ok = boundaries_match(config.get("boundaries"))
+    status = "dry_run" if boundary_ok else "failed"
+    route = GATE3_EXECUTE_ROUTE if boundary_ok else "restore_gate3_safety_boundaries"
+    disabled = [dict(item) for item in GATE3_DISABLED_ACCELERATORS]
+    checks = {
+        "preflight": False,
+        "postflight": False,
+        "focused": False,
+        "full": False,
+        "ablation_matrix": False,
+        "one_decision_digest": False,
+        "safety_equivalence": False,
+        "fallback_isolation": False,
+        "disabled_accelerator_disclosure": True,
+        "provider_accelerator_unused": True,
+        "boundaries_strict_false": boundary_ok,
+    }
+    summary = {
+        "schema_version": GATE3_SCHEMA_VERSION,
+        "stage_id": GATE3_STAGE_ID,
+        "status": status,
+        "next_required_change": route,
+        "blocking_reasons": [],
+        "checks": checks,
+        "preflight": {"status": "not_run"},
+        "postflight": {"status": "not_run"},
+        "focused": {"status": "not_run"},
+        "full": {"status": "not_run"},
+        "ablation": {"status": "not_run", "row_count": 0, "decision_digest": None},
+        "disabled_accelerators": disabled,
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    routing = {
+        "schema_version": "xunce-path-v2-gate3-routing/v1",
+        "stage_id": GATE3_STAGE_ID,
+        "status": status,
+        "route": route,
+        "blocking_reasons": [],
+        "disabled_accelerators": disabled,
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    rows = [
+        {"suite": "test", "check": suite, "status": "not_run"}
+        for suite in ("focused", "full")
+    ]
+    rows.extend(
+        {
+            "suite": "ablation",
+            "case_id": case_id,
+            "worker_count": worker_count,
+            "python_hash_seed": hash_seed,
+            "repeat": repeat,
+            "status": "not_run",
+        }
+        for case_id in GATE3_CASES
+        for worker_count in GATE3_WORKER_COUNTS
+        for hash_seed in GATE3_HASH_SEEDS
+        for repeat in range(1, GATE3_REPEAT_COUNT + 1)
+    )
+    rows.extend(
+        {
+            "suite": "fallback",
+            "accelerator_id": item["accelerator_id"],
+            "status": "not_run",
+        }
+        for item in disabled
+    )
+    rows.extend(
+        {
+            "suite": "disclosure",
+            "accelerator_id": item["accelerator_id"],
+            "reason": item["reason"],
+            "status": "passed",
+        }
+        for item in disabled
+    )
+    rows.extend(
+        {
+            "suite": "boundary",
+            "check": field,
+            "status": "passed" if boundary_ok else "failed",
+            "value": False,
+        }
+        for field in sorted(gate_artifacts.BOUNDARY_FIELDS)
+    )
+    phases = [
+        {
+            "phase": phase,
+            "status": (
+                "completed"
+                if phase in {"disclosure", "boundary-review"} and boundary_ok
+                else "not_run"
+            ),
+        }
+        for phase in (
+            "preflight",
+            "focused",
+            "full",
+            "ablation",
+            "fallback",
+            "disclosure",
+            "boundary-review",
+            "postflight",
+        )
+    ]
+    review = {
+        "schema_version": "xunce-path-v2-gate3-review/v1",
+        "status": status,
+        "checks": checks,
+        "preflight": summary["preflight"],
+        "postflight": summary["postflight"],
+        "execution": {"status": "not_run", "commands": [], "environment": {}},
+        "probe_audit": summary["ablation"],
+    }
+    return summary, routing, rows, phases, review
+
+
+def _run_gate3_benchmark(
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    repo_root: Path,
+    execute_tests: bool,
+) -> dict[str, Any]:
+    _validate_gate3_config(config)
+    _assert_no_stale_artifacts(output_root)
+    if not execute_tests:
+        summary, routing, rows, phases, review = _gate3_dry_run_payloads(config)
+    else:
+        preflight = _gate3_preflight(config, repo_root)
+        attempt_id = (
+            datetime.now(timezone.utc).strftime("attempt-%Y%m%dT%H%M%SZ")
+            + f"-{os.getpid()}"
+        )
+        attempt_root = Path(str(config["temp_root"])) / attempt_id
+        artifact_io.make_dirs(attempt_root / "mpl")
+        env = _common_env(repo_root, attempt_root)
+        python = Path(str(config["python"])).resolve()
+        focused_run: dict[str, Any] = {"status": "not_run", "returncode": None}
+        full_run: dict[str, Any] = {"status": "not_run", "returncode": None}
+        focused: dict[str, Any] = {"status": "not_run"}
+        full: dict[str, Any] = {"status": "not_run"}
+        probe_result: dict[str, Any] = {
+            **_audit_gate3_probe_rows([]),
+            "rows": [],
+            "commands": [],
+        }
+        if preflight.get("status") == "passed":
+            focused_junit = attempt_root / "focused.junit.xml"
+            full_junit = attempt_root / "full.junit.xml"
+            focused_run = _run_pytest(
+                python=python,
+                repo_root=repo_root,
+                targets=GATE3_FOCUSED_TARGETS,
+                junit_path=focused_junit,
+                basetemp=attempt_root / "focused-basetemp",
+                env=env,
+            )
+            focused = _audit_focused_junit(focused_junit)
+            focused["returncode"] = focused_run["returncode"]
+            focused["status"] = (
+                "passed"
+                if focused.get("status") == "passed"
+                and focused_run["returncode"] == 0
+                else "failed"
+            )
+            full_run = _run_pytest(
+                python=python,
+                repo_root=repo_root,
+                targets=("tests",),
+                junit_path=full_junit,
+                basetemp=attempt_root / "full-basetemp",
+                env=env,
+            )
+            full = _audit_gate3_full_junit(
+                full_junit,
+                expected_legacy=LEGACY_EXPECTED,
+                allowed_skip_dependency=ALLOWED_SKIP_DEPENDENCY,
+                baseline_evidence=config["baseline_evidence"],
+            )
+            full["returncode"] = full_run["returncode"]
+            full["status"] = (
+                "passed"
+                if full.get("status") == "passed" and full_run["returncode"] == 0
+                else "failed"
+            )
+            if focused["status"] == "passed" and full["status"] == "passed":
+                probe_result = _run_gate3_probes(
+                    python=python,
+                    repo_root=repo_root,
+                    common_env=env,
+                )
+
+        postflight = _gate3_postflight(config, repo_root)
+        postflight_ok = _postflight_matches(preflight, postflight)
+        boundary_ok = boundaries_match(config.get("boundaries"))
+        status, route, checks = _evaluate_gate3(
+            preflight=preflight,
+            postflight_ok=postflight_ok,
+            focused=focused,
+            full=full,
+            probe_audit=probe_result,
+            boundary_ok=boundary_ok,
+        )
+        disabled = [dict(item) for item in GATE3_DISABLED_ACCELERATORS]
+        public_probe_audit = {
+            key: value
+            for key, value in probe_result.items()
+            if key not in {"rows", "commands"}
+        }
+        summary = {
+            "schema_version": GATE3_SCHEMA_VERSION,
+            "stage_id": GATE3_STAGE_ID,
+            "status": status,
+            "next_required_change": route,
+            "blocking_reasons": [],
+            "checks": checks,
+            "preflight": preflight,
+            "postflight": postflight,
+            "focused": focused,
+            "full": full,
+            "ablation": public_probe_audit,
+            "disabled_accelerators": disabled,
+            **gate_artifacts.BOUNDARY_FIELDS,
+        }
+        routing = {
+            "schema_version": "xunce-path-v2-gate3-routing/v1",
+            "stage_id": GATE3_STAGE_ID,
+            "status": status,
+            "route": route,
+            "blocking_reasons": [],
+            "disabled_accelerators": disabled,
+            **gate_artifacts.BOUNDARY_FIELDS,
+        }
+        rows = [
+            {
+                "suite": "test",
+                "check": "focused",
+                "status": focused.get("status", "not_run"),
+                "passed": focused.get("passed", 0),
+                "skipped": focused.get("skipped", 0),
+            },
+            {
+                "suite": "test",
+                "check": "full",
+                "status": full.get("status", "not_run"),
+                **full.get("total", _empty_counts()),
+            },
+        ]
+        rows.extend(
+            {"suite": "ablation", **row} for row in probe_result["rows"]
+        )
+        rows.extend(
+            {
+                "suite": "fallback",
+                "accelerator_id": item["accelerator_id"],
+                "status": "passed" if checks["fallback_isolation"] else "failed",
+                "runtime_disable_count": sum(
+                    1
+                    for row in probe_result["rows"]
+                    for runtime_item in row.get("runtime_disabled_accelerators", [])
+                    if runtime_item.get("accelerator_id") == item["accelerator_id"]
+                ),
+            }
+            for item in disabled
+        )
+        rows.extend(
+            {
+                "suite": "disclosure",
+                "accelerator_id": item["accelerator_id"],
+                "reason": item["reason"],
+                "status": "passed",
+            }
+            for item in disabled
+        )
+        rows.extend(
+            {
+                "suite": "boundary",
+                "check": field,
+                "status": "passed" if boundary_ok else "failed",
+                "value": False,
+            }
+            for field in sorted(gate_artifacts.BOUNDARY_FIELDS)
+        )
+        phases = [
+            {
+                "phase": "preflight",
+                "status": (
+                    "completed" if preflight.get("status") == "passed" else "failed"
+                ),
+            },
+            {
+                "phase": "focused",
+                "status": (
+                    "completed"
+                    if focused.get("status") == "passed"
+                    else focused.get("status", "not_run")
+                ),
+            },
+            {
+                "phase": "full",
+                "status": (
+                    "completed"
+                    if full.get("status") == "passed"
+                    else full.get("status", "not_run")
+                ),
+            },
+            {
+                "phase": "ablation",
+                "status": (
+                    "completed"
+                    if public_probe_audit.get("status") == "passed"
+                    else public_probe_audit.get("status", "not_run")
+                ),
+            },
+            {
+                "phase": "fallback",
+                "status": "completed" if checks["fallback_isolation"] else "failed",
+            },
+            {"phase": "disclosure", "status": "completed"},
+            {
+                "phase": "boundary-review",
+                "status": "completed" if boundary_ok else "failed",
+            },
+            {
+                "phase": "postflight",
+                "status": "completed" if postflight_ok else "failed",
+            },
+        ]
+        isolation_env = {
+            key: env[key]
+            for key in (
+                "PYTHONNOUSERSITE",
+                "PYTHONDONTWRITEBYTECODE",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+                "PYTHONPATH",
+                "TEMP",
+                "TMP",
+                "MPLCONFIGDIR",
+            )
+        }
+        review = {
+            "schema_version": "xunce-path-v2-gate3-review/v1",
+            "status": status,
+            "checks": checks,
+            "preflight": preflight,
+            "postflight": postflight,
+            "execution": {
+                "attempt_root": str(attempt_root),
+                "isolation_env": isolation_env,
+                "focused_command_result": focused_run,
+                "full_command_result": full_run,
+                "probe_commands": probe_result["commands"],
+            },
+            "focused_junit": focused,
+            "full_junit": full,
+            "probe_audit": public_probe_audit,
+        }
+    gate_artifacts.write_gate_artifacts(
+        output_root=output_root,
+        config=config,
+        summary=summary,
+        routing=routing,
+        rows=rows,
+        phases=phases,
+        review=review,
+        report=_gate3_report(summary),
+    )
+    return summary
+
+
 def run_gate_benchmark(
     config_path: Path,
     output_root: Path,
@@ -1736,6 +3164,13 @@ def run_gate_benchmark(
     repo_root = Path(repo_root).resolve()
     output_root = validate_output_root(repo_root, output_root)
     config = artifact_io.read_json(config_path)
+    if config.get("schema_version") == GATE3_SCHEMA_VERSION:
+        return _run_gate3_benchmark(
+            config=config,
+            output_root=output_root,
+            repo_root=repo_root,
+            execute_tests=execute_tests,
+        )
     if config.get("schema_version") == GATE2_SCHEMA_VERSION:
         return _run_gate2_benchmark(
             config=config,
