@@ -3129,20 +3129,86 @@ def test_gate3_fatal_l2_probe_failure_is_failed_not_optional_disabled(
     assert summary["disabled_accelerators"] == GATE3_DISABLED_ACCELERATORS
 
 
-def test_gate3_dry_run_rejects_stale_noncanonical_artifact_without_deletion(
+@pytest.mark.parametrize(
+    "root_kind",
+    [
+        pytest.param("empty", id="empty-directory"),
+        pytest.param("old-pass", id="old-eight-artifact-pass"),
+        pytest.param("noncanonical", id="noncanonical-file"),
+        pytest.param("child-directory", id="child-directory"),
+    ],
+)
+@pytest.mark.parametrize(
+    "execute_tests",
+    [False, True],
+    ids=["dry-run", "execute"],
+)
+def test_gate3_rejects_every_existing_output_root_before_side_effects(
     tmp_path: Path,
+    monkeypatch,
+    root_kind: str,
+    execute_tests: bool,
 ) -> None:
     runner = _runner()
-    output_root = tmp_path / "out"
-    output_root.mkdir()
-    stale = output_root / "stale.txt"
-    stale.write_text("preserve", encoding="utf-8")
+    output_root = tmp_path / f"out-{root_kind}"
+    if root_kind == "old-pass":
+        runner.gate_artifacts.write_gate_artifacts(
+            output_root=output_root,
+            config={"old": "config"},
+            summary={"status": "passed", "old": True},
+            routing={"status": "passed", "route": "old-route"},
+            rows=[{"status": "passed", "old": True}],
+            phases=[{"phase": "old", "status": "completed"}],
+            review={"status": "passed", "old": True},
+            report="# old PASS\n",
+        )
+        assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+    else:
+        output_root.mkdir()
+        if root_kind == "noncanonical":
+            (output_root / "stale.bin").write_bytes(b"preserve-noncanonical")
+        elif root_kind == "child-directory":
+            child = output_root / "nested"
+            child.mkdir()
+            (child / "marker.bin").write_bytes(b"preserve-child")
 
-    with pytest.raises(RuntimeError, match="stale noncanonical"):
+    def snapshot() -> tuple[tuple[str, str, bytes | None], ...]:
+        records = []
+        for path in sorted(output_root.rglob("*"), key=lambda item: item.as_posix()):
+            relative = path.relative_to(output_root).as_posix()
+            if path.is_dir():
+                records.append(("directory", relative, None))
+            else:
+                records.append(("file", relative, path.read_bytes()))
+        return tuple(records)
+
+    before = snapshot()
+    forbidden_calls: list[str] = []
+
+    def forbidden(name: str):
+        def fail(*args, **kwargs):
+            forbidden_calls.append(name)
+            raise AssertionError(f"{name} ran before existing-root rejection")
+
+        return fail
+
+    monkeypatch.setattr(runner, "_gate3_preflight", forbidden("preflight"))
+    monkeypatch.setattr(runner, "_run_pytest", forbidden("tests"))
+    monkeypatch.setattr(runner, "_run_gate3_probes", forbidden("probes"))
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts",
+        forbidden("writer"),
+    )
+
+    with pytest.raises(RuntimeError, match="Gate 3 output_root already exists"):
         runner.run_gate_benchmark(
             _gate3_config(tmp_path),
             output_root,
             REPO_ROOT,
-            execute_tests=False,
+            execute_tests=execute_tests,
         )
-    assert stale.read_text(encoding="utf-8") == "preserve"
+
+    assert forbidden_calls == []
+    assert output_root.is_dir()
+    assert snapshot() == before

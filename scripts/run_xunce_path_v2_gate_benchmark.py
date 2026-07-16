@@ -907,6 +907,12 @@ def _assert_no_stale_artifacts(output_root: Path) -> None:
         raise RuntimeError(f"stale noncanonical Gate 1 artifacts: {stale}")
 
 
+def _assert_gate3_output_root_absent(output_root: Path) -> None:
+    root = Path(output_root).resolve()
+    if os.path.lexists(artifact_io.windows_safe_path(root)):
+        raise RuntimeError("Gate 3 output_root already exists")
+
+
 def _git(repo_root: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],
@@ -3012,7 +3018,7 @@ def _run_gate3_benchmark(
     execute_tests: bool,
 ) -> dict[str, Any]:
     _validate_gate3_config(config)
-    _assert_no_stale_artifacts(output_root)
+    _assert_gate3_output_root_absent(output_root)
     if not execute_tests:
         summary, routing, rows, phases, review = _gate3_dry_run_payloads(config)
     else:
