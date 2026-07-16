@@ -25,6 +25,7 @@ BOUNDARIES = {
 EXPECTED_BRANCH = "codex/multiplatform-path-planner-v2"
 ORIGINAL_BASE_COMMIT = "b635740ee021258ef31811ec87c60add839fc5f9"
 GATE_INPUT_COMMIT = "b2a36d31f3802eb5a37fcfcf594f74a499aa719b"
+GATE2_INPUT_COMMIT = "0cc3eb9728a77473dd436dc2b05e2df009a296c7"
 EXPECTED_PYTHON_VERSION = "3.12.13"
 FOCUSED_TARGETS = [
     "tests/test_v2_contracts.py",
@@ -33,6 +34,19 @@ FOCUSED_TARGETS = [
     "tests/test_v2_fine_safety_anchor.py",
     "tests/test_v2_profiles.py",
     "tests/test_v2_api.py",
+]
+GATE2_FOCUSED_TARGETS = [
+    "tests/test_v2_benchmark.py",
+    "tests/test_v2_wheel_provider.py",
+    "tests/test_v2_route_validation.py",
+    "tests/test_v2_geometry.py",
+    "tests/test_v2_profiles.py",
+    "tests/test_v2_wheel_contracts.py",
+    "tests/test_v2_contracts.py",
+    "tests/test_v2_api.py",
+    "tests/test_v2_runtime.py",
+    "tests/test_hybrid_astar.py",
+    "tests/test_astar.py",
 ]
 CANONICAL_ARTIFACTS = {
     "config.json",
@@ -135,6 +149,72 @@ def _config(tmp_path: Path, *, boundaries=None) -> Path:
         "pass_route": "implement_path_v2_wheel_provider",
     }
     path = tmp_path / "gate1.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _gate2_config(tmp_path: Path, *, boundaries=None) -> Path:
+    payload = {
+        "schema_version": "xunce-path-v2-gate2-wheel/v1",
+        "stage_id": "xunce-path-v2-gate2-wheel",
+        "python": "D:/conda_envs/lunar-explorer/python.exe",
+        "expected_python_version": "3.12.13",
+        "expected_git": {
+            "branch": EXPECTED_BRANCH,
+            "base_commit": ORIGINAL_BASE_COMMIT,
+            "gate_input_commit": GATE2_INPUT_COMMIT,
+            "nested_branch": EXPECTED_BRANCH,
+        },
+        "temp_root": "D:/xunce/tmp/path_v2_g2",
+        "focused": {
+            "working_directory": "path-planner",
+            "pythonpath": ["path-planner/src"],
+            "pytest_targets": list(GATE2_FOCUSED_TARGETS),
+        },
+        "full": {
+            "working_directory": "path-planner",
+            "pythonpath": ["path-planner/src"],
+            "pytest_targets": ["tests"],
+            "legacy_expected": {
+                "passed": 156,
+                "skipped": 17,
+                "failures": 0,
+                "errors": 0,
+            },
+            "allowed_skip_dependency": "pydrake",
+        },
+        "inputs": {
+            "primitive_audit": "D:/xunce/inputs/path_v2/g2/independent_wheel_oracle_labels.jsonl",
+            "exact_map_quality": "D:/xunce/inputs/path_v2/g2/independent_wheel_exact_map_optima.jsonl",
+            "standard_episodes": "D:/xunce/inputs/path_v2/g2/standard_wheel_schedule.jsonl",
+        },
+        "baseline_evidence": {
+            "schema_version": "xunce-path-v2-gate0-path-planner-junit/v1",
+            "path": "D:/xunce/out/path_v2/g0/path_planner_baseline.junit.xml",
+            "sha256": "90a02eb6af78805bfdf2fcce4828283cb3f4d77f30aae55519f533896a06e676",
+            "test_count": 173,
+        },
+        "thresholds": {
+            "min_primitive_independent_samples": 10000,
+            "max_primitive_false_positives": 0,
+            "min_primitive_recall": 0.98,
+            "min_primitive_complete_l2_ratio": 1.0,
+            "min_exact_map_independent_cases": 1,
+            "min_exact_map_success_ratio": 1.0,
+            "min_exact_map_resource_cost_ratio": 1.0,
+            "max_exact_map_resource_cost_ratio": 1.10,
+            "min_exact_map_complete_l2_ratio": 1.0,
+            "min_standard_independent_episodes": 100,
+            "min_standard_reachable_success_ratio": 0.99,
+            "min_standard_complete_l2_ratio": 1.0,
+            "max_standard_p95_runtime_ms": 250.0,
+            "hard_timeout_ms": 2000.0,
+            "max_hard_timeout_violations": 0,
+        },
+        "boundaries": dict(BOUNDARIES if boundaries is None else boundaries),
+        "pass_route": "implement_path_v2_lazy_validation_and_cache",
+    }
+    path = tmp_path / "gate2.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
@@ -557,3 +637,935 @@ def test_dry_run_rejects_non_strict_boundary_config(tmp_path: Path) -> None:
 
     assert summary["status"] == "failed"
     assert summary["next_required_change"] == "restore_gate1_safety_boundaries"
+
+
+def _gate2_loaded_datasets() -> dict[str, dict]:
+    return {
+        "primitive_audit": {
+            "status": "loaded",
+            "rows": [
+                {
+                    "schema_version": "path-planner-v2-primitive-audit-row/v1",
+                    "row_id": "primitive-b",
+                    "seed": 2,
+                },
+                {
+                    "schema_version": "path-planner-v2-primitive-audit-row/v1",
+                    "row_id": "primitive-a",
+                    "seed": 1,
+                },
+            ],
+            "summary": {
+                "total_row_count": 10000,
+                "formal_row_count": 10000,
+                "excluded_row_count": 0,
+                "false_positive_count": 0,
+                "primitive_recall": 0.99,
+                "provider_success_count": 9900,
+                "complete_l2_ratio": 1.0,
+                "runtime_p50_ms": 10.0,
+                "runtime_p95_ms": 20.0,
+                "runtime_p99_ms": 30.0,
+                "timeout_count": 0,
+                "hard_timeout_violation_count": 0,
+                "reason_histogram": {},
+            },
+        },
+        "exact_map_quality": {
+            "status": "loaded",
+            "rows": [
+                {
+                    "schema_version": "path-planner-v2-exact-map-quality-row/v1",
+                    "row_id": "exact-a",
+                    "seed": 3,
+                }
+            ],
+            "summary": {
+                "total_row_count": 1,
+                "formal_row_count": 1,
+                "excluded_row_count": 0,
+                "provider_success_count": 1,
+                "provider_success_ratio": 1.0,
+                "complete_l2_ratio": 1.0,
+                "resource_cost_ratios": [{"row_id": "exact-a", "ratio": 1.05}],
+                "max_resource_cost_ratio": 1.05,
+                "runtime_p50_ms": 12.0,
+                "runtime_p95_ms": 12.0,
+                "runtime_p99_ms": 12.0,
+                "timeout_count": 0,
+                "hard_timeout_violation_count": 0,
+                "reason_histogram": {},
+            },
+        },
+        "standard_episodes": {
+            "status": "loaded",
+            "rows": [
+                {
+                    "schema_version": "path-planner-v2-standard-episode-row/v1",
+                    "episode_id": "standard-a",
+                    "seed": 4,
+                }
+            ],
+            "summary": {
+                "total_episode_count": 100,
+                "formal_episode_count": 100,
+                "excluded_episode_count": 0,
+                "formal_oracle_reachable_count": 100,
+                "reachable_provider_success_count": 99,
+                "reachable_query_success_ratio": 0.99,
+                "complete_l2_ratio": 1.0,
+                "runtime_p50_ms": 100.0,
+                "runtime_p95_ms": 240.0,
+                "runtime_p99_ms": 300.0,
+                "timeout_count": 0,
+                "hard_timeout_violation_count": 0,
+                "reason_histogram": {},
+            },
+        },
+    }
+
+
+def _install_gate2_green_mocks(
+    monkeypatch,
+    runner,
+    datasets: dict[str, dict],
+    events: list[str],
+) -> None:
+    preflight = _runtime_audit()
+    monkeypatch.setattr(
+        runner,
+        "_gate2_preflight",
+        lambda config, repo_root: deepcopy(preflight),
+    )
+
+    def fake_run_pytest(*, targets, **kwargs):
+        suite = "focused" if tuple(targets) == tuple(GATE2_FOCUSED_TARGETS) else "full"
+        events.append(suite)
+        return {
+            "command": ["python", "-m", "pytest", *targets],
+            "working_directory": "path-planner",
+            "pythonpath": "path-planner/src",
+            "returncode": 0,
+            "stdout_tail": "green",
+            "stderr_tail": "",
+        }
+
+    monkeypatch.setattr(runner, "_run_pytest", fake_run_pytest)
+    monkeypatch.setattr(
+        runner,
+        "_audit_focused_junit",
+        lambda path: {
+            "status": "passed",
+            "tests": 316,
+            "passed": 316,
+            "skipped": 0,
+            "failures": 0,
+            "errors": 0,
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_audit_gate2_full_junit",
+        lambda *args, **kwargs: {
+            "status": "passed",
+            "total": {"passed": 672, "skipped": 17, "failures": 0, "errors": 0},
+            "baseline": {"passed": 156, "skipped": 17, "failures": 0, "errors": 0},
+            "baseline_not_reduced": True,
+            "skip_contract": True,
+            "skip_messages": ["pydrake"] * 17,
+        },
+    )
+
+    def fake_load(*, dataset_name, **kwargs):
+        events.append(dataset_name)
+        return deepcopy(datasets[dataset_name])
+
+    monkeypatch.setattr(runner, "_load_gate2_dataset", fake_load)
+
+    def fake_postflight(config, repo_root):
+        events.append("postflight")
+        return deepcopy(preflight)
+
+    monkeypatch.setattr(runner, "_gate2_postflight", fake_postflight)
+
+
+@pytest.mark.parametrize(
+    ("field_path", "tampered"),
+    [
+        pytest.param(("expected_git", "gate_input_commit"), GATE_INPUT_COMMIT, id="gate-input"),
+        pytest.param(("inputs", "primitive_audit"), "D:/other.jsonl", id="oracle-input"),
+        pytest.param(("baseline_evidence", "sha256"), "0" * 64, id="baseline-hash"),
+        pytest.param(("thresholds", "min_primitive_independent_samples"), 9999, id="primitive-min"),
+        pytest.param(("thresholds", "min_exact_map_resource_cost_ratio"), 0.99, id="exact-min-ratio"),
+        pytest.param(("thresholds", "max_exact_map_resource_cost_ratio"), 1.11, id="exact-ratio"),
+        pytest.param(("thresholds", "max_standard_p95_runtime_ms"), 251.0, id="standard-p95"),
+        pytest.param(("pass_route",), "skip-gate3", id="pass-route"),
+    ],
+)
+def test_gate2_frozen_config_rejects_tampering_before_side_effects(
+    tmp_path: Path,
+    monkeypatch,
+    field_path,
+    tampered,
+) -> None:
+    runner = _runner()
+    config_path = _gate2_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    target = config
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = tampered
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("side effect occurred before frozen Gate 2 config rejection")
+
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
+    monkeypatch.setattr(runner.gate_artifacts, "write_gate_artifacts", forbidden)
+
+    with pytest.raises(ValueError, match="frozen"):
+        runner.run_gate_benchmark(
+            config_path,
+            tmp_path / "out",
+            REPO_ROOT,
+            execute_tests=False,
+        )
+    assert not (tmp_path / "out").exists()
+
+
+def test_gate2_dry_run_writes_exact_artifacts_without_loading_formal_inputs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("dry run loaded formal evidence")
+
+    monkeypatch.setattr(runner, "_load_gate2_dataset", forbidden, raising=False)
+    output_root = tmp_path / "out"
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        output_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "dry_run"
+    assert summary["next_required_change"] == "execute_gate2_wheel_evidence"
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+
+
+def test_gate2_missing_inputs_block_in_exact_priority_after_code_checks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    datasets = {
+        name: {"status": "missing", "rows": [], "summary": None}
+        for name in _gate2_loaded_datasets()
+    }
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+    output_root = tmp_path / "out"
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        output_root,
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    blockers = [
+        "provide_independent_wheel_oracle_labels",
+        "provide_independent_wheel_exact_map_optima",
+        "provide_standard_wheel_schedule",
+    ]
+    assert events == [
+        "focused",
+        "full",
+        "primitive_audit",
+        "exact_map_quality",
+        "standard_episodes",
+        "postflight",
+    ]
+    assert summary["status"] == "blocked"
+    assert summary["blocking_reasons"] == blockers
+    assert summary["next_required_change"] == blockers[0]
+    routing = json.loads((output_root / "routing.json").read_text(encoding="utf-8"))
+    assert routing["route"] == blockers[0]
+    assert routing["blocking_reasons"] == blockers
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+
+
+@pytest.mark.parametrize(
+    ("missing_dataset", "expected_route"),
+    [
+        ("exact_map_quality", "provide_independent_wheel_exact_map_optima"),
+        ("standard_episodes", "provide_standard_wheel_schedule"),
+    ],
+)
+def test_gate2_later_blocker_appears_only_after_prior_independent_evidence(
+    tmp_path: Path,
+    monkeypatch,
+    missing_dataset: str,
+    expected_route: str,
+) -> None:
+    runner = _runner()
+    datasets = _gate2_loaded_datasets()
+    datasets[missing_dataset] = {"status": "missing", "rows": [], "summary": None}
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "blocked"
+    assert summary["next_required_change"] == expected_route
+    assert expected_route in summary["blocking_reasons"]
+
+
+@pytest.mark.parametrize("dataset_status", ["invalid", "non_independent"])
+def test_gate2_invalid_or_self_labelled_oracle_rows_never_fake_formal_pass(
+    tmp_path: Path,
+    monkeypatch,
+    dataset_status: str,
+) -> None:
+    runner = _runner()
+    datasets = _gate2_loaded_datasets()
+    datasets["primitive_audit"] = {
+        "status": dataset_status,
+        "rows": [],
+        "summary": (
+            None
+            if dataset_status == "invalid"
+            else {
+                "total_row_count": 10000,
+                "formal_row_count": 0,
+                "excluded_row_count": 10000,
+            }
+        ),
+    }
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "blocked"
+    assert summary["next_required_change"] == "provide_independent_wheel_oracle_labels"
+    assert summary["checks"]["primitive_formal_denominator"] is False
+
+
+def test_gate2_sufficient_independent_evidence_with_metric_failure_is_failed_not_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    datasets = _gate2_loaded_datasets()
+    datasets["primitive_audit"]["summary"]["false_positive_count"] = 1
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["blocking_reasons"] == []
+    assert summary["next_required_change"] == "repair_wheel_oracle_false_positives"
+    assert summary["checks"]["primitive_false_positives"] is False
+
+
+@pytest.mark.parametrize(
+    "ratio",
+    [
+        pytest.param(0.99, id="below-optimum"),
+        pytest.param(1.100001, id="above-limit"),
+        pytest.param(10**400, id="unrepresentable-huge-ratio"),
+    ],
+)
+def test_gate2_exact_cost_ratio_outside_frozen_interval_fails(
+    tmp_path: Path,
+    monkeypatch,
+    ratio,
+) -> None:
+    runner = _runner()
+    datasets = _gate2_loaded_datasets()
+    datasets["exact_map_quality"]["summary"]["resource_cost_ratios"] = [
+        {"row_id": "exact-a", "ratio": ratio}
+    ]
+    datasets["exact_map_quality"]["summary"]["max_resource_cost_ratio"] = ratio
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_wheel_exact_map_resource_cost"
+    assert summary["checks"]["exact_map_resource_cost"] is False
+
+
+@pytest.mark.parametrize("ratio", [1.0, 1.10])
+def test_gate2_exact_cost_ratio_closed_interval_boundaries_pass(
+    tmp_path: Path,
+    monkeypatch,
+    ratio: float,
+) -> None:
+    runner = _runner()
+    datasets = _gate2_loaded_datasets()
+    datasets["exact_map_quality"]["summary"]["resource_cost_ratios"] = [
+        {"row_id": "exact-a", "ratio": ratio}
+    ]
+    datasets["exact_map_quality"]["summary"]["max_resource_cost_ratio"] = ratio
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["checks"]["exact_map_resource_cost"] is True
+
+
+def test_gate2_all_sufficient_metrics_pass_with_stable_result_order_and_hash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    datasets = _gate2_loaded_datasets()
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+    first_root = tmp_path / "first"
+
+    first = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        first_root,
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert first["status"] == "passed"
+    assert first["next_required_change"] == "implement_path_v2_lazy_validation_and_cache"
+    result_lines = (first_root / "results.jsonl").read_text(encoding="utf-8").splitlines()
+    result_rows = [json.loads(line) for line in result_lines]
+    assert result_rows == sorted(
+        result_rows,
+        key=lambda row: (
+            str(row.get("suite", "")),
+            int(row.get("seed", -1)),
+            str(row.get("row_id", row.get("episode_id", row.get("check", "")))),
+        ),
+    )
+    manifest = json.loads((first_root / "manifest.json").read_text(encoding="utf-8"))
+    result_entry = next(
+        entry for entry in manifest["artifacts"] if entry["relative_path"] == "results.jsonl"
+    )
+    assert result_entry["sha256"] == hashlib.sha256(
+        (first_root / "results.jsonl").read_bytes()
+    ).hexdigest()
+
+
+def test_gate2_blocked_is_successful_cli_outcome_but_failed_is_not() -> None:
+    runner = _runner()
+
+    assert runner.status_exit_code("blocked") == 0
+    assert runner.status_exit_code("passed") == 0
+    assert runner.status_exit_code("dry_run") == 0
+    assert runner.status_exit_code("failed") == 1
+
+
+def test_gate2_registry_entry_has_frozen_defaults() -> None:
+    registry = json.loads(
+        (REPO_ROOT / "configs" / "stage_registry.json").read_text(encoding="utf-8")
+    )
+
+    entry = registry["stages"]["xunce-path-v2-gate2-wheel"]
+    assert entry == {
+        "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+        "default_config": "configs/xunce_path_v2_gate2_wheel_v1.json",
+        "default_output_root": "D:/xunce/out/path_v2/g2",
+        "args": [
+            "--config",
+            "{config}",
+            "--output-root",
+            "{output_root}",
+            "--repo-root",
+            "{repo_root}",
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("dataset_name", "payloads", "formal_field", "expected_formal"),
+    [
+        (
+            "primitive_audit",
+            [
+                {
+                    "row_id": "primitive-b",
+                    "seed": 2,
+                    "expected_safe": False,
+                    "expected_label_source": "provider-self-label/v1",
+                    "expected_label_independent": False,
+                    "provider_safe": False,
+                    "provider_complete_l2": False,
+                    "runtime_ms": 20.0,
+                    "timed_out": False,
+                    "reason_code": "provider_rejected",
+                },
+                {
+                    "row_id": "primitive-a",
+                    "seed": 1,
+                    "expected_safe": True,
+                    "expected_label_source": "independent-wheel-oracle/v1",
+                    "expected_label_independent": True,
+                    "provider_safe": True,
+                    "provider_complete_l2": True,
+                    "runtime_ms": 10.0,
+                    "timed_out": False,
+                    "reason_code": "safe",
+                },
+            ],
+            "formal_row_count",
+            1,
+        ),
+        (
+            "exact_map_quality",
+            [
+                {
+                    "row_id": "exact-a",
+                    "seed": 3,
+                    "optimum_resource_cost": 10.0,
+                    "optimum_source": "independent-exact-solver/v1",
+                    "optimum_independent": True,
+                    "provider_success": True,
+                    "provider_resource_cost": 10.5,
+                    "provider_complete_l2": True,
+                    "runtime_ms": 12.0,
+                    "timed_out": False,
+                    "reason_code": "goal_reached",
+                }
+            ],
+            "formal_row_count",
+            1,
+        ),
+        (
+            "standard_episodes",
+            [
+                {
+                    "episode_id": "standard-a",
+                    "seed": 4,
+                    "schedule_source": "independent-standard-wheel/v1",
+                    "schedule_independent": True,
+                    "oracle_reachable": True,
+                    "provider_success": True,
+                    "provider_complete_l2": True,
+                    "runtime_ms": 25.0,
+                    "timed_out": False,
+                    "reason_code": "goal_reached",
+                }
+            ],
+            "formal_episode_count",
+            1,
+        ),
+    ],
+)
+def test_gate2_loader_uses_public_typed_api_and_preserves_independent_denominator(
+    tmp_path: Path,
+    dataset_name: str,
+    payloads: list[dict],
+    formal_field: str,
+    expected_formal: int,
+) -> None:
+    runner = _runner()
+    input_path = tmp_path / f"{dataset_name}.jsonl"
+    input_path.write_text(
+        "".join(json.dumps(payload, sort_keys=True) + "\n" for payload in payloads),
+        encoding="utf-8",
+    )
+
+    loaded = runner._load_gate2_dataset(
+        dataset_name=dataset_name,
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "loaded"
+    assert loaded["summary"][formal_field] == expected_formal
+    assert loaded["input_sha256"] == hashlib.sha256(input_path.read_bytes()).hexdigest()
+    assert loaded["rows_sha256"] is not None
+    assert [row["seed"] for row in loaded["rows"]] == sorted(
+        row["seed"] for row in loaded["rows"]
+    )
+
+
+def test_gate2_loader_rejects_non_object_jsonl_row_instead_of_silently_dropping_it(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    input_path = tmp_path / "invalid.jsonl"
+    input_path.write_text("[]\n", encoding="utf-8")
+
+    loaded = runner._load_gate2_dataset(
+        dataset_name="primitive_audit",
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "invalid"
+    assert loaded["error_type"] == "ValueError"
+    assert loaded["rows"] == []
+    assert loaded["input_sha256"] == hashlib.sha256(input_path.read_bytes()).hexdigest()
+
+
+def test_gate2_loader_rejects_internal_blank_jsonl_row_instead_of_silently_dropping_it(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    valid = {
+        "row_id": "primitive-a",
+        "seed": 1,
+        "expected_safe": True,
+        "expected_label_source": "independent-wheel-oracle/v1",
+        "expected_label_independent": True,
+        "provider_safe": True,
+        "provider_complete_l2": True,
+        "runtime_ms": 10.0,
+        "timed_out": False,
+        "reason_code": "safe",
+    }
+    input_path = tmp_path / "blank-row.jsonl"
+    input_path.write_text(
+        json.dumps(valid) + "\n\n" + json.dumps({**valid, "row_id": "primitive-b"}) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = runner._load_gate2_dataset(
+        dataset_name="primitive_audit",
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "invalid"
+    assert loaded["error_type"] == "ValueError"
+    assert loaded["rows"] == []
+    assert loaded["input_sha256"] == hashlib.sha256(input_path.read_bytes()).hexdigest()
+
+
+def test_gate2_loader_rejects_duplicate_json_key_that_could_override_independence(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    input_path = tmp_path / "duplicate-independence.jsonl"
+    input_path.write_text(
+        "{"
+        '"row_id":"primitive-a",'
+        '"seed":1,'
+        '"expected_safe":true,'
+        '"expected_label_source":"provider-self-label/v1",'
+        '"expected_label_independent":false,'
+        '"expected_label_independent":true,'
+        '"provider_safe":true,'
+        '"provider_complete_l2":true,'
+        '"runtime_ms":10.0,'
+        '"timed_out":false,'
+        '"reason_code":"safe"'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    loaded = runner._load_gate2_dataset(
+        dataset_name="primitive_audit",
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "invalid"
+    assert loaded["error_type"] == "ValueError"
+    assert loaded["rows"] == []
+    assert loaded["input_sha256"] == hashlib.sha256(input_path.read_bytes()).hexdigest()
+
+
+def test_gate2_loader_preserves_invalid_utf8_snapshot_hash(tmp_path: Path) -> None:
+    runner = _runner()
+    input_path = tmp_path / "invalid-utf8.jsonl"
+    input_path.write_bytes(b"\xff\n")
+
+    loaded = runner._load_gate2_dataset(
+        dataset_name="primitive_audit",
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "invalid"
+    assert loaded["error_type"] == "UnicodeDecodeError"
+    assert loaded["input_sha256"] == hashlib.sha256(input_path.read_bytes()).hexdigest()
+
+
+def test_gate2_loader_classifies_deep_malformed_json_as_invalid_not_internal_error(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    input_path = tmp_path / "deep-malformed.jsonl"
+    input_path.write_text("[" * 5000 + "0" + "]" * 5000 + "\n", encoding="utf-8")
+
+    loaded = runner._load_gate2_dataset(
+        dataset_name="primitive_audit",
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "invalid"
+    assert loaded["error_type"] in {"RecursionError", "ValueError"}
+    assert loaded["input_sha256"] == hashlib.sha256(input_path.read_bytes()).hexdigest()
+
+
+def test_gate2_loader_hashes_the_same_single_byte_snapshot_that_it_parses(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    payload = {
+        "row_id": "primitive-a",
+        "seed": 1,
+        "expected_safe": True,
+        "expected_label_source": "independent-wheel-oracle/v1",
+        "expected_label_independent": True,
+        "provider_safe": True,
+        "provider_complete_l2": True,
+        "runtime_ms": 10.0,
+        "timed_out": False,
+        "reason_code": "safe",
+    }
+    input_path = tmp_path / "single-snapshot.jsonl"
+    content = (json.dumps(payload) + "\n").encode("utf-8")
+    input_path.write_bytes(content)
+    original_read_bytes = runner.artifact_io.read_bytes
+    reads: list[Path] = []
+
+    def counted_read_bytes(path):
+        reads.append(Path(path))
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(runner.artifact_io, "read_bytes", counted_read_bytes)
+    loaded = runner._load_gate2_dataset(
+        dataset_name="primitive_audit",
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "loaded"
+    assert reads == [input_path]
+    assert loaded["input_sha256"] == hashlib.sha256(content).hexdigest()
+
+
+def test_gate2_loader_classifies_huge_numeric_row_as_invalid_instead_of_crashing(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    payload = {
+        "row_id": "primitive-huge-runtime",
+        "seed": 1,
+        "expected_safe": True,
+        "expected_label_source": "independent-wheel-oracle/v1",
+        "expected_label_independent": True,
+        "provider_safe": True,
+        "provider_complete_l2": True,
+        "runtime_ms": 10**400,
+        "timed_out": False,
+        "reason_code": "safe",
+    }
+    input_path = tmp_path / "huge-number.jsonl"
+    input_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    loaded = runner._load_gate2_dataset(
+        dataset_name="primitive_audit",
+        path=input_path,
+        repo_root=REPO_ROOT,
+    )
+
+    assert loaded["status"] == "invalid"
+    assert loaded["error_type"] in {"OverflowError", "ValueError"}
+    assert loaded["rows"] == []
+
+
+def test_gate2_internal_loader_error_is_code_failure_not_formal_blocker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    datasets = _gate2_loaded_datasets()
+    datasets["primitive_audit"] = {
+        "status": "internal_error",
+        "rows": [],
+        "summary": None,
+        "error_type": "ImportError",
+    }
+    events: list[str] = []
+    _install_gate2_green_mocks(monkeypatch, runner, datasets, events)
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["blocking_reasons"] == []
+    assert summary["next_required_change"] == "repair_gate2_benchmark_loader"
+    assert summary["checks"]["benchmark_loader"] is False
+    phases = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "phase-state.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert next(row for row in phases if row["phase"] == "primitive-audit")["status"] == "failed"
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "results.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    primitive = next(row for row in rows if row["suite"] == "primitive-audit")
+    assert primitive["reason"] == "repair_gate2_benchmark_loader"
+
+
+def test_gate2_code_failure_leaves_formal_phases_not_run_not_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    events: list[str] = []
+    _install_gate2_green_mocks(
+        monkeypatch,
+        runner,
+        _gate2_loaded_datasets(),
+        events,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_audit_focused_junit",
+        lambda path: {
+            "status": "failed",
+            "tests": 1,
+            "passed": 0,
+            "skipped": 0,
+            "failures": 1,
+            "errors": 0,
+        },
+    )
+
+    summary = runner.run_gate_benchmark(
+        _gate2_config(tmp_path),
+        tmp_path / "out",
+        REPO_ROOT,
+        execute_tests=True,
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "restore_gate2_focused_contracts"
+    assert events == ["focused", "full", "postflight"]
+    phases = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "phase-state.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    formal = {
+        row["phase"]: row["status"]
+        for row in phases
+        if row["phase"] in {"primitive-audit", "exact-map-quality", "standard-episodes"}
+    }
+    assert formal == {
+        "primitive-audit": "not_run",
+        "exact-map-quality": "not_run",
+        "standard-episodes": "not_run",
+    }
+
+
+def test_gate2_full_audit_allows_new_tests_but_not_baseline_loss_or_new_skips(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    baseline = tmp_path / "baseline.xml"
+    green = tmp_path / "green.xml"
+    too_few = tmp_path / "too-few.xml"
+    replacement = tmp_path / "replacement.xml"
+    extra_skip = tmp_path / "extra-skip.xml"
+    baseline_cases = [
+        case for case in _full_cases() if not case[0].startswith("tests/test_v2_")
+    ]
+    green_cases = baseline_cases + [
+        (f"tests/test_v2_new.py::test_added_{index}", "passed", "")
+        for index in range(10)
+    ]
+    _write_junit(baseline, baseline_cases)
+    _write_junit(green, green_cases)
+    _write_junit(too_few, green_cases[1:])
+    _write_junit(
+        replacement,
+        baseline_cases[1:]
+        + [("tests/test_unrelated.py::test_replacement", "passed", "")],
+    )
+    _write_junit(
+        extra_skip,
+        green_cases + [("tests/test_v2_new.py::test_skip", "skipped", "pydrake unavailable")],
+    )
+
+    kwargs = {
+        "expected_legacy": {"passed": 156, "skipped": 17, "failures": 0, "errors": 0},
+        "allowed_skip_dependency": "pydrake",
+        "baseline_evidence": {
+            "schema_version": "test-baseline/v1",
+            "path": baseline.as_posix(),
+            "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+            "test_count": len(baseline_cases),
+        },
+    }
+    assert runner._audit_gate2_full_junit(green, **kwargs)["status"] == "passed"
+    assert runner._audit_gate2_full_junit(too_few, **kwargs)["status"] == "failed"
+    replacement_audit = runner._audit_gate2_full_junit(replacement, **kwargs)
+    assert replacement_audit["status"] == "failed"
+    assert replacement_audit["missing_baseline_nodeids"] == [
+        "tests/test_legacy.py::test_pass_0"
+    ]
+    assert runner._audit_gate2_full_junit(extra_skip, **kwargs)["status"] == "failed"
+    drifted_evidence = deepcopy(kwargs)
+    drifted_evidence["baseline_evidence"]["sha256"] = "0" * 64
+    drifted = runner._audit_gate2_full_junit(green, **drifted_evidence)
+    assert drifted["status"] == "failed"
+    assert drifted["baseline_evidence"]["status"] == "failed"
+
+
+def test_checked_in_gate2_config_matches_frozen_test_contract(tmp_path: Path) -> None:
+    checked_in = json.loads(
+        (REPO_ROOT / "configs" / "xunce_path_v2_gate2_wheel_v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expected = json.loads(_gate2_config(tmp_path).read_text(encoding="utf-8"))
+
+    assert checked_in == expected
