@@ -63,6 +63,7 @@ GATE3_FOCUSED_TARGETS = [
     "tests/test_v2_contracts.py",
     "tests/test_hybrid_astar.py",
     "tests/test_astar.py",
+    "../tests/test_xunce_path_v2_gate_benchmark.py",
 ]
 GATE3_CASES = [
     "fine_only",
@@ -1902,9 +1903,18 @@ def test_gate3_dry_run_dispatch_writes_exact_artifacts_without_tests_or_probes(
         "boundary",
     }
     report = (output_root / "report.md").read_text(encoding="utf-8")
-    assert "v1 remains the default" in report
-    assert "v2 remains opt-in" in report
-    assert "no end-to-end accelerator use" in report
+    assert "# Path Planner v2 Gate 3 加速器证据" in report
+    assert "v1 仍为默认，v2 仍为 opt-in" in report
+    assert "当前组件均处于 disabled" in report
+    assert "not_integrated_into_provider" in report
+    assert "仅为 simulation proxy 组件证据" in report
+    assert "synthetic terrain 仅是 proxy，不是 physical obstacle 数据" in report
+    assert "不得标作 `physical_obstacle_cells`" in report
+    assert "不声明 runtime speedup 或成功率提升" in report
+    assert "不发布 checkpoint" in report
+    assert "不替换 default policy" in report
+    assert "不连接 executor" in report
+    assert "不启动 canary" in report
 
 
 def test_gate3_registry_entry_has_frozen_defaults() -> None:
@@ -2120,6 +2130,221 @@ _gate3_validation.validate_route_l2 = _gate3_timeout_after_successes
     assert all(
         not row["runtime_disabled_accelerators"] for row in result["rows"]
     )
+
+
+@pytest.mark.parametrize(
+    ("fault_mode", "expected_fatal_reason"),
+    [
+        pytest.param("wrong_type", "l2_authority_malformed", id="wrong-type"),
+        pytest.param("exception", "l2_authority_malformed", id="exception"),
+        pytest.param(
+            "typed_timeout",
+            "planning_deadline_expired",
+            id="typed-timeout",
+        ),
+        pytest.param("typed_rejection", "l2_rejected", id="typed-rejection"),
+        pytest.param(
+            "malformed_then_timeout",
+            "l2_authority_malformed",
+            id="lazy-fatal-short-circuits-cache",
+        ),
+    ],
+)
+def test_gate3_real_probe_rechecks_fine_l2_before_lazy_or_cache_fallback(
+    tmp_path: Path,
+    monkeypatch,
+    fault_mode: str,
+    expected_fatal_reason: str,
+) -> None:
+    runner = _runner()
+    fault_injection = f"""
+import path_planner.v2.validation as _gate3_validation
+
+_gate3_original_validate_route_l2 = _gate3_validation.validate_route_l2
+_gate3_l2_call_count = 0
+_gate3_fault_mode = {fault_mode!r}
+
+
+def _gate3_fault_after_initial_fine(*args, **kwargs):
+    global _gate3_l2_call_count
+    call_index = _gate3_l2_call_count
+    _gate3_l2_call_count += 1
+    if call_index < 2:
+        return _gate3_original_validate_route_l2(*args, **kwargs)
+    if _gate3_fault_mode == "malformed_then_timeout":
+        if call_index < 4:
+            return object()
+        return _gate3_validation._timeout(
+            _gate3_validation.WHEEL_ROUTE_VALIDATOR_ID_V2,
+            0,
+        )
+    if _gate3_fault_mode == "wrong_type":
+        return object()
+    if _gate3_fault_mode == "exception":
+        raise RuntimeError("injected L2 authority failure")
+    if _gate3_fault_mode == "typed_timeout":
+        return _gate3_validation._timeout(
+            _gate3_validation.WHEEL_ROUTE_VALIDATOR_ID_V2,
+            0,
+        )
+    return _gate3_validation._result(
+        _gate3_validation.WHEEL_ROUTE_VALIDATOR_ID_V2,
+        "primitive_structure_mismatch",
+    )
+
+
+_gate3_validation.validate_route_l2 = _gate3_fault_after_initial_fine
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(REPO_ROOT, tmp_path / "l2-recheck-probe")
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        expected_fatal_reason
+    }
+    assert all(
+        not row["runtime_disabled_accelerators"] for row in result["rows"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("fault_mode", "expected_fatal_reason"),
+    [
+        pytest.param(
+            "timeout",
+            "planning_deadline_expired",
+            id="timeout",
+        ),
+        pytest.param(
+            "exception",
+            "l2_authority_malformed",
+            id="exception",
+        ),
+    ],
+)
+def test_gate3_real_probe_classifies_initial_fine_l2_exceptions(
+    tmp_path: Path,
+    monkeypatch,
+    fault_mode: str,
+    expected_fatal_reason: str,
+) -> None:
+    runner = _runner()
+    fault_injection = f"""
+import path_planner.v2.validation as _gate3_validation
+
+_gate3_original_validate_route_l2 = _gate3_validation.validate_route_l2
+_gate3_l2_call_count = 0
+_gate3_fault_mode = {fault_mode!r}
+
+
+def _gate3_fail_initial_fine(*args, **kwargs):
+    global _gate3_l2_call_count
+    call_index = _gate3_l2_call_count
+    _gate3_l2_call_count += 1
+    if call_index == 0:
+        return _gate3_original_validate_route_l2(*args, **kwargs)
+    if _gate3_fault_mode == "timeout":
+        raise TimeoutError("injected initial fine deadline")
+    raise RuntimeError("injected initial fine L2 failure")
+
+
+_gate3_validation.validate_route_l2 = _gate3_fail_initial_fine
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(REPO_ROOT, tmp_path / "initial-fine-probe")
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"failed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {
+        expected_fatal_reason
+    }
+    assert all(
+        not row["runtime_disabled_accelerators"] for row in result["rows"]
+    )
+
+
+def test_gate3_real_probe_allows_component_fallback_after_exact_l2_recheck_passes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    fault_injection = """
+import path_planner.v2.validation as _gate3_validation
+
+
+def _gate3_component_failure(*args, **kwargs):
+    raise RuntimeError("injected optional component failure")
+
+
+_gate3_validation.validate_route = _gate3_component_failure
+"""
+    monkeypatch.setattr(
+        runner,
+        "GATE3_PROBE_CODE",
+        fault_injection + runner.GATE3_PROBE_CODE,
+    )
+    common_env = runner._common_env(REPO_ROOT, tmp_path / "component-fallback-probe")
+
+    result = runner._run_gate3_probe_process(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        worker_count=1,
+        hash_seed=11,
+        repeat=1,
+        common_env=common_env,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stable_failure_reason"] is None
+    assert {row["status"] for row in result["rows"]} == {"passed"}
+    assert {row["fatal_reason"] for row in result["rows"]} == {None}
+    disabled_by_case = {
+        row["case_id"]: [
+            item["accelerator_id"]
+            for item in row["runtime_disabled_accelerators"]
+        ]
+        for row in result["rows"]
+    }
+    assert disabled_by_case == {
+        "fine_only": [],
+        "multi_heuristic_only": [],
+        "hierarchy_only": [],
+        "lazy_validation_only": ["lazy_validation"],
+        "lazy_validation_plus_cache": [
+            "lazy_validation",
+            "validation_cache",
+        ],
+        "full_v2": ["lazy_validation", "validation_cache"],
+    }
 
 
 def test_gate3_real_probe_never_downgrades_hierarchy_timeout_to_fallback(

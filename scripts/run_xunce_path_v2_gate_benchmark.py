@@ -136,6 +136,7 @@ GATE3_FOCUSED_TARGETS = (
     "tests/test_v2_contracts.py",
     "tests/test_hybrid_astar.py",
     "tests/test_astar.py",
+    "../tests/test_xunce_path_v2_gate_benchmark.py",
 )
 GATE3_CASES = (
     "fine_only",
@@ -335,24 +336,62 @@ fine_result = None
 if fatal_reason is None:
     anchor = FineSafetyAnchorV2(terrain)
     deadline = PlanningDeadlineV2(0.0, 100.0, lambda: 0.0)
-    fine_result = validate_route_l2(
-        outcome.route,
-        request,
-        anchor,
-        wheel_profile,
-        deadline,
-    )
-    if type(fine_result) is not WheelValidationResultV2:
-        fatal_reason = "l2_authority_malformed"
-    elif (
-        fine_result.timed_out is True
-        or fine_result.reason_code == "planning_deadline_expired"
-    ):
+    try:
+        fine_result = validate_route_l2(
+            outcome.route,
+            request,
+            anchor,
+            wheel_profile,
+            deadline,
+        )
+    except TimeoutError:
         fatal_reason = "planning_deadline_expired"
-    elif not fine_result.evidence.passed:
-        fatal_reason = "l2_rejected"
-    elif fine_result.validated_route_hash is None:
+    except Exception:
         fatal_reason = "l2_authority_malformed"
+    else:
+        if type(fine_result) is not WheelValidationResultV2:
+            fatal_reason = "l2_authority_malformed"
+        elif (
+            fine_result.timed_out is True
+            or fine_result.reason_code == "planning_deadline_expired"
+        ):
+            fatal_reason = "planning_deadline_expired"
+        elif not fine_result.evidence.passed:
+            fatal_reason = "l2_rejected"
+        elif fine_result.validated_route_hash is None:
+            fatal_reason = "l2_authority_malformed"
+
+
+def recheck_fine_l2_authority():
+    try:
+        rechecked = validate_route_l2(
+            outcome.route,
+            request,
+            anchor,
+            wheel_profile,
+            PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+        )
+    except TimeoutError:
+        return "planning_deadline_expired"
+    except Exception:
+        return "l2_authority_malformed"
+    if type(rechecked) is not WheelValidationResultV2:
+        return "l2_authority_malformed"
+    if (
+        rechecked.timed_out is True
+        or rechecked.reason_code == "planning_deadline_expired"
+    ):
+        return "planning_deadline_expired"
+    if not rechecked.evidence.passed:
+        return "l2_rejected"
+    if (
+        rechecked.reason_code != fine_result.reason_code
+        or rechecked.validated_route_hash != fine_result.validated_route_hash
+        or rechecked.evidence.validator_id != fine_result.evidence.validator_id
+    ):
+        return "l2_authority_malformed"
+    return None
+
 
 entries = (
     SearchQueueEntryV2(
@@ -482,29 +521,39 @@ if fatal_reason is None:
     except TimeoutError:
         fatal_reason = "planning_deadline_expired"
     except Exception:
-        lazy_ok = False
+        recheck_reason = recheck_fine_l2_authority()
+        if recheck_reason is None:
+            lazy_ok = False
+        else:
+            fatal_reason = recheck_reason
+    cache_probe_enabled = fatal_reason is None
     try:
-        cache = ValidationCacheV2()
-        cached_first = validate_route(
-            outcome.route,
-            anchor,
-            wheel_profile,
-            ValidationLevelV2.L2,
-            request=request,
-            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
-            cache=cache,
-        )
-        cached_second = validate_route(
-            outcome.route,
-            anchor,
-            wheel_profile,
-            ValidationLevelV2.L2,
-            request=request,
-            deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
-            cache=cache,
-        )
+        if cache_probe_enabled:
+            cache = ValidationCacheV2()
+            cached_first = validate_route(
+                outcome.route,
+                anchor,
+                wheel_profile,
+                ValidationLevelV2.L2,
+                request=request,
+                deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+                cache=cache,
+            )
+            cached_second = validate_route(
+                outcome.route,
+                anchor,
+                wheel_profile,
+                ValidationLevelV2.L2,
+                request=request,
+                deadline=PlanningDeadlineV2(0.0, 100.0, lambda: 0.0),
+                cache=cache,
+            )
+        else:
+            cached_first = None
+            cached_second = None
         cache_ok = (
-            type(cached_first) is RouteValidationResultV2
+            cache_probe_enabled
+            and type(cached_first) is RouteValidationResultV2
             and type(cached_second) is RouteValidationResultV2
             and cached_first.success
             and cached_second.success
@@ -518,7 +567,9 @@ if fatal_reason is None:
             and cached_second.l2_result.validated_route_hash
             == fine_result.validated_route_hash
         )
-        if (
+        if not cache_probe_enabled:
+            pass
+        elif (
             type(cached_first) is not RouteValidationResultV2
             or type(cached_second) is not RouteValidationResultV2
         ):
@@ -569,7 +620,11 @@ if fatal_reason is None:
     except TimeoutError:
         fatal_reason = "planning_deadline_expired"
     except Exception:
-        cache_ok = False
+        recheck_reason = recheck_fine_l2_authority()
+        if recheck_reason is None:
+            cache_ok = False
+        else:
+            fatal_reason = recheck_reason
 
 accelerator_used = bool(
     getattr(getattr(outcome, "search_telemetry", None), "accelerator_used", True)
@@ -2766,19 +2821,21 @@ def _evaluate_gate3(
 
 
 def _gate3_report(summary: dict[str, Any]) -> str:
-    disabled = ", ".join(
-        item["accelerator_id"] for item in summary["disabled_accelerators"]
-    ) or "none"
+    disabled = "、".join(
+        f"{item['accelerator_id']} ({item['reason']})"
+        for item in summary["disabled_accelerators"]
+    ) or "无"
     return (
-        "# Path Planner v2 Gate 3 accelerator evidence\n\n"
-        f"- Status: `{summary['status']}`\n"
-        f"- Next route: `{summary['next_required_change']}`\n"
-        f"- Disabled accelerators: `{disabled}`\n\n"
-        "v1 remains the default and v2 remains opt-in. The listed components have "
-        "no end-to-end accelerator use in the wheel provider; component evidence does "
-        "not claim a runtime speedup or success-rate improvement. This Gate does not "
-        "publish a checkpoint, replace the default policy, connect an executor, or "
-        "start a canary.\n"
+        "# Path Planner v2 Gate 3 加速器证据\n\n"
+        f"- 状态：`{summary['status']}`\n"
+        f"- 下一路由：`{summary['next_required_change']}`\n"
+        f"- 禁用加速器：`{disabled}`\n\n"
+        "v1 仍为默认，v2 仍为 opt-in。当前组件均处于 disabled，原因按 "
+        "`not_integrated_into_provider` 明确披露，尚未接入 wheel provider 的端到端"
+        "加速路径。本 Gate 仅为 simulation proxy 组件证据，不声明 runtime speedup "
+        "或成功率提升。synthetic terrain 仅是 proxy，不是 physical obstacle 数据，"
+        "不得标作 `physical_obstacle_cells`。本 Gate 不发布 checkpoint、不替换 "
+        "default policy、不连接 executor、不启动 canary。\n"
     )
 
 

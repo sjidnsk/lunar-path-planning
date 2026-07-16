@@ -29,7 +29,8 @@
       "tests/test_v2_serialization.py",
       "tests/test_v2_contracts.py",
       "tests/test_hybrid_astar.py",
-      "tests/test_astar.py"
+      "tests/test_astar.py",
+      "../tests/test_xunce_path_v2_gate_benchmark.py"
     ]
   },
   "full": {
