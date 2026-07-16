@@ -5,7 +5,8 @@
   "expected_python_version": "3.12.13",
   "expected_git": {
     "branch": "codex/multiplatform-path-planner-v2",
-    "base_commit": "b2a36d31f3802eb5a37fcfcf594f74a499aa719b",
+    "base_commit": "b635740ee021258ef31811ec87c60add839fc5f9",
+    "gate_input_commit": "b2a36d31f3802eb5a37fcfcf594f74a499aa719b",
     "nested_branch": "codex/multiplatform-path-planner-v2"
   },
   "temp_root": "D:/xunce/tmp/path_v2_g1",

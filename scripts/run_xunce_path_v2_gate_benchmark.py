@@ -18,6 +18,19 @@ SCHEMA_VERSION = "xunce-path-v2-gate1-contract/v1"
 STAGE_ID = "xunce-path-v2-gate1-contract"
 FORMAL_PYTHON = Path("D:/conda_envs/lunar-explorer/python.exe")
 FORMAL_TEMP_ROOT = Path("D:/xunce/tmp/path_v2_g1")
+EXPECTED_BRANCH = "codex/multiplatform-path-planner-v2"
+ORIGINAL_BASE_COMMIT = "b635740ee021258ef31811ec87c60add839fc5f9"
+GATE_INPUT_COMMIT = "b2a36d31f3802eb5a37fcfcf594f74a499aa719b"
+EXPECTED_PYTHON_VERSION = "3.12.13"
+LEGACY_EXPECTED = {
+    "passed": 156,
+    "skipped": 17,
+    "failures": 0,
+    "errors": 0,
+}
+ALLOWED_SKIP_DEPENDENCY = "pydrake"
+PATH_PLANNER_WORKING_DIRECTORY = "path-planner"
+PATH_PLANNER_PYTHONPATH = ["path-planner/src"]
 PASS_ROUTE = "implement_path_v2_wheel_provider"
 FOCUSED_TARGETS = (
     "tests/test_v2_contracts.py",
@@ -294,10 +307,23 @@ def _audit_nested_git(repo_root: Path, expected_branch: str) -> dict[str, Any]:
     }
 
 
-def _python_matches(left: Path, right: Path) -> bool:
-    return os.path.normcase(str(Path(left).resolve())) == os.path.normcase(
-        str(Path(right).resolve())
-    )
+def _strict_equal(actual: Any, expected: Any) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(actual) == set(expected) and all(
+            _strict_equal(actual[key], value) for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _strict_equal(left, right) for left, right in zip(actual, expected, strict=True)
+        )
+    return actual == expected
+
+
+def _require_frozen(configured: Any, expected: Any, field: str) -> None:
+    if not _strict_equal(configured, expected):
+        raise ValueError(f"frozen {field} must equal {expected!r}")
 
 
 def _validate_config(config: dict[str, Any]) -> None:
@@ -305,14 +331,64 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"schema_version must be {SCHEMA_VERSION!r}")
     if config.get("stage_id") != STAGE_ID:
         raise ValueError(f"stage_id must be {STAGE_ID!r}")
-    if not _python_matches(Path(str(config.get("python"))), FORMAL_PYTHON):
-        raise ValueError(f"python must be {FORMAL_PYTHON.as_posix()}")
-    if not _python_matches(Path(str(config.get("temp_root"))), FORMAL_TEMP_ROOT):
-        raise ValueError(f"temp_root must be {FORMAL_TEMP_ROOT.as_posix()}")
-    if tuple(config.get("focused", {}).get("pytest_targets", ())) != FOCUSED_TARGETS:
-        raise ValueError("focused pytest_targets must be the exact six Gate 1 files")
-    if config.get("full", {}).get("pytest_targets") != ["tests"]:
-        raise ValueError("full pytest_targets must be exactly ['tests']")
+    expected_git = config.get("expected_git", {})
+    _require_frozen(expected_git.get("branch"), EXPECTED_BRANCH, "expected_git.branch")
+    _require_frozen(
+        expected_git.get("nested_branch"),
+        EXPECTED_BRANCH,
+        "expected_git.nested_branch",
+    )
+    _require_frozen(
+        expected_git.get("base_commit"),
+        ORIGINAL_BASE_COMMIT,
+        "expected_git.base_commit",
+    )
+    _require_frozen(
+        expected_git.get("gate_input_commit"),
+        GATE_INPUT_COMMIT,
+        "expected_git.gate_input_commit",
+    )
+    _require_frozen(config.get("python"), FORMAL_PYTHON.as_posix(), "python")
+    _require_frozen(
+        config.get("expected_python_version"),
+        EXPECTED_PYTHON_VERSION,
+        "expected_python_version",
+    )
+    _require_frozen(config.get("temp_root"), FORMAL_TEMP_ROOT.as_posix(), "temp_root")
+    focused = config.get("focused", {})
+    full = config.get("full", {})
+    _require_frozen(
+        focused.get("working_directory"),
+        PATH_PLANNER_WORKING_DIRECTORY,
+        "focused.working_directory",
+    )
+    _require_frozen(
+        focused.get("pythonpath"),
+        PATH_PLANNER_PYTHONPATH,
+        "focused.pythonpath",
+    )
+    _require_frozen(
+        focused.get("pytest_targets"),
+        list(FOCUSED_TARGETS),
+        "focused.pytest_targets",
+    )
+    _require_frozen(
+        full.get("working_directory"),
+        PATH_PLANNER_WORKING_DIRECTORY,
+        "full.working_directory",
+    )
+    _require_frozen(
+        full.get("pythonpath"),
+        PATH_PLANNER_PYTHONPATH,
+        "full.pythonpath",
+    )
+    _require_frozen(full.get("pytest_targets"), ["tests"], "full.pytest_targets")
+    _require_frozen(full.get("legacy_expected"), LEGACY_EXPECTED, "full.legacy_expected")
+    _require_frozen(
+        full.get("allowed_skip_dependency"),
+        ALLOWED_SKIP_DEPENDENCY,
+        "full.allowed_skip_dependency",
+    )
     byte_repeat = config.get("byte_repeat", {})
     repeat_count = byte_repeat.get("repeat_count")
     seeds = byte_repeat.get("python_hash_seeds")
@@ -329,21 +405,31 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"pass_route must be {PASS_ROUTE!r}")
 
 
-def _preflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
-    expected = config["expected_git"]
-    python = Path(str(config["python"]))
+def _runtime_audit(repo_root: Path) -> dict[str, Any]:
     superproject = gate0.audit_git_identity(
         repo_root,
-        str(expected["branch"]),
-        str(expected["base_commit"]),
+        EXPECTED_BRANCH,
+        ORIGINAL_BASE_COMMIT,
     )
-    nested = _audit_nested_git(repo_root, str(expected["nested_branch"]))
-    imports = gate0.audit_import_origins(python, repo_root)
-    python_version_matches = (
-        imports.get("python_version") == config.get("expected_python_version")
+    gate_input = gate0.audit_git_identity(
+        repo_root,
+        EXPECTED_BRANCH,
+        GATE_INPUT_COMMIT,
+    )
+    nested = _audit_nested_git(repo_root, EXPECTED_BRANCH)
+    imports = gate0.audit_import_origins(FORMAL_PYTHON, repo_root)
+    python_version_matches = imports.get("python_version") == EXPECTED_PYTHON_VERSION
+    original_base_is_ancestor = (
+        superproject.get("status") == "passed"
+        and superproject.get("base_is_ancestor") is True
+    )
+    gate_input_is_ancestor = (
+        gate_input.get("status") == "passed"
+        and gate_input.get("base_is_ancestor") is True
     )
     passed = (
-        superproject.get("status") == "passed"
+        original_base_is_ancestor
+        and gate_input_is_ancestor
         and nested.get("status") == "passed"
         and imports.get("status") == "passed"
         and python_version_matches
@@ -352,10 +438,78 @@ def _preflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
         "schema_version": "xunce-path-v2-gate1-preflight/v1",
         "status": "passed" if passed else "failed",
         "superproject_git": superproject,
+        "gate_input_git": gate_input,
         "nested_git": nested,
         "import_origins": imports,
         "python_version_matches": python_version_matches,
+        "original_base_is_ancestor": original_base_is_ancestor,
+        "gate_input_is_ancestor": gate_input_is_ancestor,
     }
+
+
+def _preflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    return _runtime_audit(repo_root)
+
+
+def _postflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    return _runtime_audit(repo_root)
+
+
+def _selected_identity(audit: dict[str, Any]) -> dict[str, Any]:
+    superproject = audit.get("superproject_git", {})
+    gate_input = audit.get("gate_input_git", {})
+    nested = audit.get("nested_git", {})
+    imports = audit.get("import_origins", {})
+    return {
+        "superproject": {
+            key: superproject.get(key)
+            for key in ("head", "branch", "git_dir", "git_common_dir")
+        },
+        "gate_input": {
+            key: gate_input.get(key)
+            for key in ("head", "branch", "git_dir", "git_common_dir")
+        },
+        "nested": {
+            key: nested.get(key)
+            for key in ("head", "branch", "gitlink")
+        },
+        "imports": {
+            "python": imports.get("python"),
+            "python_version": imports.get("python_version"),
+            "python_no_user_site": imports.get("python_no_user_site"),
+            "pythonpath": imports.get("pythonpath"),
+            "path_planner_origin": imports.get("path_planner", {}).get("origin"),
+            "ppo_origin": imports.get("lunar_exploration_ppo", {}).get("origin"),
+            "path_planner_from_worktree": imports.get("path_planner_from_worktree"),
+            "ppo_from_worktree": imports.get("ppo_from_worktree"),
+        },
+    }
+
+
+def _postflight_matches(
+    preflight: dict[str, Any],
+    postflight: dict[str, Any],
+) -> bool:
+    superproject = postflight.get("superproject_git", {})
+    gate_input = postflight.get("gate_input_git", {})
+    nested = postflight.get("nested_git", {})
+    imports = postflight.get("import_origins", {})
+    return (
+        postflight.get("status") == "passed"
+        and superproject.get("status") == "passed"
+        and superproject.get("clean_tree") is True
+        and gate_input.get("status") == "passed"
+        and gate_input.get("clean_tree") is True
+        and nested.get("status") == "passed"
+        and nested.get("clean_tree") is True
+        and nested.get("head_matches_gitlink") is True
+        and imports.get("status") == "passed"
+        and imports.get("python_no_user_site") is True
+        and postflight.get("python_version_matches") is True
+        and postflight.get("original_base_is_ancestor") is True
+        and postflight.get("gate_input_is_ancestor") is True
+        and _selected_identity(preflight) == _selected_identity(postflight)
+    )
 
 
 def _common_env(repo_root: Path, attempt_root: Path) -> dict[str, str]:
@@ -475,6 +629,7 @@ def _dry_run_payloads(config: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         "execute_gate1_contract" if boundary_ok else "restore_gate1_safety_boundaries"
     )
     preflight = {"status": "not_run"}
+    postflight = {"status": "not_run"}
     focused = {"status": "not_run", "tests": 0, "passed": 0, "skipped": 0, "failures": 0, "errors": 0}
     full = {
         "status": "not_run",
@@ -489,6 +644,15 @@ def _dry_run_payloads(config: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         "status": status,
         "next_required_change": next_change,
         "preflight": preflight,
+        "postflight": postflight,
+        "checks": {
+            "preflight": False,
+            "postflight": False,
+            "focused": False,
+            "full": False,
+            "byte_repeat": False,
+            "boundaries_strict_false": boundary_ok,
+        },
         "focused": focused,
         "full": full,
         "byte_repeat": byte_repeat,
@@ -506,6 +670,8 @@ def _dry_run_payloads(config: dict[str, Any]) -> tuple[dict[str, Any], ...]:
         "schema_version": "xunce-path-v2-gate1-review/v1",
         "status": "dry_run" if boundary_ok else "failed",
         "checks": {"boundaries_strict_false": boundary_ok},
+        "preflight": preflight,
+        "postflight": postflight,
     }
     routing = {
         "schema_version": "xunce-path-v2-gate1-routing/v1",
@@ -551,7 +717,7 @@ def run_gate_benchmark(
         focused_run = _run_pytest(
             python=python,
             repo_root=repo_root,
-            targets=config["focused"]["pytest_targets"],
+            targets=FOCUSED_TARGETS,
             junit_path=focused_junit,
             basetemp=attempt_root / "focused-basetemp",
             env=env,
@@ -567,15 +733,15 @@ def run_gate_benchmark(
         full_run = _run_pytest(
             python=python,
             repo_root=repo_root,
-            targets=config["full"]["pytest_targets"],
+            targets=("tests",),
             junit_path=full_junit,
             basetemp=attempt_root / "full-basetemp",
             env=env,
         )
         full = audit_full_junit(
             full_junit,
-            expected_legacy=config["full"]["legacy_expected"],
-            allowed_skip_dependency=str(config["full"]["allowed_skip_dependency"]),
+            expected_legacy=LEGACY_EXPECTED,
+            allowed_skip_dependency=ALLOWED_SKIP_DEPENDENCY,
         )
         full["returncode"] = full_run["returncode"]
         full["status"] = (
@@ -597,9 +763,12 @@ def run_gate_benchmark(
             and row["v1_route_schema"] == "path-planner-route/v1"
             for row in repeat_rows
         )
+        postflight = _postflight(config, repo_root)
+        postflight_ok = _postflight_matches(preflight, postflight)
         boundary_ok = boundaries_match(config.get("boundaries")) and probe_boundary_ok
         checks = {
             "preflight": preflight["status"] == "passed",
+            "postflight": postflight_ok,
             "focused": focused["status"] == "passed",
             "full": full["status"] == "passed",
             "byte_repeat": byte_repeat["status"] == "passed",
@@ -607,7 +776,9 @@ def run_gate_benchmark(
         }
         passed = all(checks.values())
         status = "passed" if passed else "failed"
-        if not boundaries_match(config.get("boundaries")):
+        if not postflight_ok:
+            next_change = "restore_gate1_runtime_isolation"
+        elif not boundaries_match(config.get("boundaries")):
             next_change = "restore_gate1_safety_boundaries"
         elif not focused["status"] == "passed":
             next_change = "restore_gate1_focused_contracts"
@@ -624,6 +795,8 @@ def run_gate_benchmark(
             "status": status,
             "next_required_change": next_change,
             "preflight": preflight,
+            "postflight": postflight,
+            "checks": checks,
             "focused": focused,
             "full": full,
             "byte_repeat": byte_repeat,
@@ -638,9 +811,10 @@ def run_gate_benchmark(
         }
         rows = [
             {"suite": "preflight", "check": "git_import_identity", "status": preflight["status"]},
+            {"suite": "boundary-review", "check": "runtime_postflight", "status": "passed" if postflight_ok else "failed"},
             {"suite": "focused", "check": "pytest", "status": focused["status"], "passed": focused["passed"], "skipped": focused["skipped"]},
             {"suite": "full", "check": "pytest", "status": full["status"], **full["total"]},
-            {"suite": "full", "check": "legacy_counts", "status": "passed" if full["legacy"] == {key: int(config["full"]["legacy_expected"][key]) for key in ("passed", "skipped", "failures", "errors")} else "failed", **full["legacy"]},
+            {"suite": "full", "check": "legacy_counts", "status": "passed" if full["legacy"] == LEGACY_EXPECTED else "failed", **full["legacy"]},
             {"suite": "full", "check": "legacy_skips", "status": "passed" if full["legacy_skip_contract"] else "failed", "skipped": full["legacy"]["skipped"]},
             *repeat_rows,
             *[
@@ -655,12 +829,36 @@ def run_gate_benchmark(
             {"phase": "focused", "status": "completed" if focused["status"] == "passed" else "failed"},
             {"phase": "full", "status": "completed" if full["status"] == "passed" else "failed"},
             {"phase": "byte-repeat", "status": "completed" if byte_repeat["status"] == "passed" else "failed"},
-            {"phase": "boundary-review", "status": "completed" if boundary_ok else "failed"},
+            {"phase": "boundary-review", "status": "completed" if boundary_ok and postflight_ok else "failed"},
         ]
+        isolation_env = {
+            key: env[key]
+            for key in (
+                "PYTHONNOUSERSITE",
+                "PYTHONDONTWRITEBYTECODE",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+                "PYTHONPATH",
+                "TEMP",
+                "TMP",
+                "MPLCONFIGDIR",
+            )
+        }
         review = {
             "schema_version": "xunce-path-v2-gate1-review/v1",
             "status": status,
             "checks": checks,
+            "preflight": preflight,
+            "postflight": postflight,
+            "execution": {
+                "attempt_root": str(attempt_root),
+                "isolation_env": isolation_env,
+                "focused_command_result": focused_run,
+                "full_command_result": full_run,
+            },
+            "focused_junit": focused,
+            "full_junit": full,
+            "repeat_rows": repeat_rows,
+            "byte_repeat": byte_repeat,
             "probe_boundary_ok": probe_boundary_ok,
         }
 
