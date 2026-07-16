@@ -463,7 +463,7 @@ class WheelMotionPrimitiveV2:
     energy_cost: float
 
 class WheelPrimitiveProviderV2:
-    plan: Callable[[PlanningRequestV2, FineSafetyAnchorV2], PlanningOutcomeV2]
+    plan: Callable[[PlanningRequestV2, FineSafetyAnchorV2, PlanningDeadlineV2], PlanningOutcomeV2]
 ```
 
 `WheelProfileV2` 显式冻结差速/滑移转向、`0.612m x 0.580m` 包络、margin、倒车/原地转向、速度、角速度、integration dt、目标容差、`30.0deg` 坡度硬边界和版本化相对能耗 proxy；`.profile` 仍暴露精确 `PlatformProfileV2`。
