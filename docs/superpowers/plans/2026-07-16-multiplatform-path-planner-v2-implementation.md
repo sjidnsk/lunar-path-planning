@@ -380,16 +380,59 @@ Expected route: `implement_path_v2_wheel_provider`。
 
 ---
 
-### Task 4: Gate 2A — Typed wheel route and Hybrid A* adapter
+### Task 4A: Gate 2A — Public Hybrid replay, rejection hook and runtime contracts
+
+**Files:**
+- Modify: `path-planner/src/path_planner/core/models.py`
+- Modify: `path-planner/src/path_planner/search/hybrid_astar.py`
+- Modify: `path-planner/src/path_planner/search/__init__.py`
+- Modify: `path-planner/src/path_planner/v2/contracts.py`
+- Modify: `path-planner/src/path_planner/v2/profiles.py`
+- Create: `path-planner/src/path_planner/v2/runtime.py`
+- Modify: `path-planner/src/path_planner/v2/providers/base.py`
+- Modify: `path-planner/src/path_planner/v2/api.py`
+- Modify: `path-planner/src/path_planner/v2/__init__.py`
+- Modify: `path-planner/tests/test_hybrid_astar.py`
+- Modify: `path-planner/tests/test_v2_contracts.py`
+- Modify: `path-planner/tests/test_v2_profiles.py`
+- Modify: `path-planner/tests/test_v2_api.py`
+
+**Interfaces:**
+- Produces: public `PoseTransition`, `PoseSearchAudit`, `replay_motion_primitive()` and opt-in pose/transition validators on `HybridAStarPlanner.plan()`.
+- Produces: `PlanningDeadlineV2`; provider execution receives the same absolute monotonic deadline created by `plan_v2()`.
+
+- [ ] **Step 1: Write RED compatibility and rejection-continuation tests**
+
+Public replay must include exact start/end samples and match the existing integration math. A rejected transition must not enter dominance/open state, and another transition/path must remain searchable. With validators omitted, v1 route/control/serialization semantics remain unchanged. Deadline expiry during grid heuristic preprocessing or search returns `FailureReason.TIMEOUT` with an empty route and truthful audit.
+
+- [ ] **Step 2: Freeze goal and objective contracts**
+
+`PlatformProfileV2` adds explicit `goal_position_tolerance_m` and `goal_heading_tolerance_rad`, both defaulting to zero. `plan_v2()` independently checks Euclidean position and wrap-safe heading without snapping the provider endpoint. `ObjectiveProfileV2` defaults to `energy_weight=0.5` and `time_weight=0.5`, with distance/risk zero, and rejects the all-zero objective.
+
+The effective deadline is `min(request.timeout_s, 2.0)` from API entry. Late success is replaced by typed timeout failure. Existing v1 entry points and `DEFAULT_PLATFORM_KEY="yutu2"` remain unchanged.
+
+- [ ] **Step 3: Run focused contracts and v1 Hybrid regression**
+
+Run: `cd path-planner; D:/conda_envs/lunar-explorer/python.exe -m pytest -q tests/test_hybrid_astar.py tests/test_v2_contracts.py tests/test_v2_profiles.py tests/test_v2_api.py tests/test_astar.py`
+
+- [ ] **Step 4: Commit**
+
+Commit: `feat: add safe Hybrid transition hooks for path planner v2`
+
+---
+
+### Task 4B: Gate 2A — Typed wheel route and full-route L2 validation
 
 **Files:**
 - Create: `path-planner/src/path_planner/v2/providers/wheel.py`
+- Create: `path-planner/src/path_planner/v2/geometry.py`
 - Create: `path-planner/src/path_planner/v2/validation.py`
+- Create: `path-planner/tests/test_v2_geometry.py`
 - Create: `path-planner/tests/test_v2_wheel_provider.py`
 - Create: `path-planner/tests/test_v2_route_validation.py`
 - Modify: `path-planner/src/path_planner/v2/profiles.py`
 - Modify: `path-planner/src/path_planner/v2/providers/__init__.py`
-- Modify: `path-planner/src/path_planner/v2/api.py`
+- Modify: `path-planner/src/path_planner/v2/__init__.py`
 
 **Interfaces:**
 - Produces: `WheelProfileV2`, `WheelMotionPrimitiveV2`, `WheelPrimitiveProviderV2`, `validate_route_l2()`。
@@ -397,11 +440,11 @@ Expected route: `implement_path_v2_wheel_provider`。
 - [ ] **Step 1: Write RED tests for pose semantics and boundaries**
 
 ```python
-assert result.route.primitives[0].kind == "wheel_motion"
-assert result.validation_evidence.level == "L2"
+assert result.route.primitives[0].kind is PrimitiveKindV2.WHEEL_MOTION
+assert result.validation_evidence.level is ValidationLevelV2.L2
 assert result.validation_evidence.passed is True
 assert result.search_telemetry.ackermann_feasible_claimed is False
-assert DEFAULT_PLATFORM_PROFILE_ID_V1 == "yutu2"
+assert DEFAULT_PLATFORM_KEY == "yutu2"
 ```
 
 增加端点安全但中间 footprint 碰撞、unknown sweep、目标 theta 不可达、倒车开关和 30deg/30deg+epsilon 坡度测试。
@@ -414,20 +457,24 @@ class WheelMotionPrimitiveV2:
     control_name: str
     start_state: PoseStateV2
     end_state: PoseStateV2
-    samples: Sequence[PoseStateV2]
+    samples: tuple[PoseStateV2, ...]
     duration_s: float
     distance_m: float
-    energy: float
+    energy_cost: float
 
 class WheelPrimitiveProviderV2:
     plan: Callable[[PlanningRequestV2, FineSafetyAnchorV2], PlanningOutcomeV2]
 ```
 
-使用现有 `HybridAStarPlanner` 与 `default_scout_mini_primitives()` 生成 opt-in pose route；按相同 integration 参数确定性 replay controls，生成 typed segments，再独立执行整条 L2 validation。不得导入或调用其私有 `_apply_primitive`/`_footprint_cells`。
+`WheelProfileV2` 显式冻结差速/滑移转向、`0.612m x 0.580m` 包络、margin、倒车/原地转向、速度、角速度、integration dt、目标容差、`30.0deg` 坡度硬边界和版本化相对能耗 proxy；`.profile` 仍暴露精确 `PlatformProfileV2`。
+
+使用现有 `HybridAStarPlanner`、`default_scout_mini_primitives()` 和 Task 4A 的公共 replay/transition validator 生成 opt-in pose route。每个候选边在入队前按 v2 cell-center rotated-footprint sweep 执行 fine L2；被拒边继续搜索。成功候选再独立 replay 并执行整条 L2 validation。不得导入或调用私有 `_apply_primitive`/`_footprint_cells`，不得读取 unknown truth 生成搜索代价。
+
+`WheelMotionPrimitiveV2` 继承 `RoutePrimitiveV2`，额外冻结 control、samples、速度、角速度、倒车和原地转向字段。`start==goal` 返回一个零时长、零距离、零能耗且 L2 通过的 `hold` primitive。primitive `energy_cost` 是未加权的相对能耗；`CostBreakdownV2` 保存 objective 加权后的 component。真实 FOV/LOS 延后实现时，observation projection 必须明确标记“收益未计算”并返回零，不能伪造覆盖收益。
 
 - [ ] **Step 3: Run focused tests and v1 regression**
 
-Run: `cd path-planner; D:/conda_envs/lunar-explorer/python.exe -m pytest -q tests/test_v2_wheel_provider.py tests/test_v2_route_validation.py tests/test_hybrid_astar.py tests/test_astar.py`
+Run: `cd path-planner; D:/conda_envs/lunar-explorer/python.exe -m pytest -q tests/test_v2_geometry.py tests/test_v2_wheel_provider.py tests/test_v2_route_validation.py tests/test_hybrid_astar.py tests/test_astar.py`
 
 - [ ] **Step 4: Commit**
 

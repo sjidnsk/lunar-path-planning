@@ -111,7 +111,7 @@ PlanningRequestV2
   determinism_seed
 ```
 
-`start_state` 与 `goal_state` 至少包含 world `(x, y, theta)`；平台 provider 可以声明额外状态，但必须通过版本化 schema 显式出现。
+`start_state` 与 `goal_state` 至少包含 world `(x, y, theta)`；平台 provider 可以声明额外状态，但必须通过版本化 schema 显式出现。目标到达容差由版本化 platform profile 显式声明，基础 profile 默认位置与朝向容差均为 `0`。成功路线的实际末状态必须位于该容差内，且不得把未被原语 replay 到达的请求目标静默写成路线末状态；朝向比较使用 wrap-safe 最小角差。
 
 ### 5.2 成功模型
 
@@ -261,6 +261,7 @@ objective_profile_hash (仅成本相关缓存)
 - 初始实现复用现有 Hybrid A* 位姿状态、运动原语和碰撞检查。
 - `max_traversable_slope_deg=30.0` 保持当前硬边界。
 - 支持倒车与否、最小转弯语义、车体包络和代价由 profile 显式声明。
+- 轮式首版使用 profile-bound 的版本化相对运动能耗 proxy；该 proxy 不声称物理 Joule，归一化常量不得依赖本次候选集合。
 - 不声明 Ackermann feasible。
 - v2 轮式路径是 opt-in；v1 默认 A* 不被替换。
 
