@@ -843,6 +843,19 @@
         "--output-root", "{output_root}",
         "--config", "{config}"
       ]
+    },
+    "xunce-path-v2-gate1-contract": {
+      "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate1_contract_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g1",
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
+      ]
     }
   }
 }
