@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = REPO_ROOT / "scripts"
@@ -225,6 +227,213 @@ def test_manifest_hashes_every_artifact_except_itself(tmp_path: Path) -> None:
         content = (output_root / relative_path).read_bytes()
         assert entry["sha256"] == hashlib.sha256(content).hexdigest()
         assert entry["size"] == len(content)
+
+
+ATOMIC_ARTIFACT_NAMES = {
+    "config.json",
+    "summary.json",
+    "routing.json",
+    "results.jsonl",
+    "phase-state.jsonl",
+    "review.json",
+    "report.md",
+    "manifest.json",
+}
+
+
+def _atomic_artifact_kwargs(output_root: Path) -> dict:
+    return {
+        "output_root": output_root,
+        "config": {"schema_version": "config/v1"},
+        "summary": {"status": "passed", **BOUNDARY_FIELDS},
+        "routing": {"route": "gate-passed"},
+        "rows": [{"suite": "gate", "status": "passed"}],
+        "phases": [{"phase": "evidence", "status": "completed"}],
+        "review": {"status": "passed"},
+        "report": "# Gate evidence\n",
+    }
+
+
+def _atomic_staging_roots(output_root: Path) -> list[Path]:
+    return sorted(
+        output_root.parent.glob(f".{output_root.name}.staging-*"),
+        key=lambda path: path.name,
+    )
+
+
+def test_atomic_gate_artifact_publish_succeeds_with_exact_valid_manifest(
+    tmp_path: Path,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "atomic-success"
+
+    manifest = gate_artifacts.write_gate_artifacts_atomically(
+        **_atomic_artifact_kwargs(output_root)
+    )
+
+    assert {path.name for path in output_root.iterdir()} == ATOMIC_ARTIFACT_NAMES
+    assert all(path.is_file() for path in output_root.iterdir())
+    stored_manifest = json.loads(
+        (output_root / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest == stored_manifest
+    assert stored_manifest == gate_artifacts.build_manifest_without_self_hash(
+        output_root
+    )
+    assert stored_manifest["artifact_count"] == 7
+    assert _atomic_staging_roots(output_root) == []
+
+
+def test_atomic_gate_artifact_partial_write_keeps_unique_staging_and_no_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "atomic-partial"
+    observed: list[Path] = []
+
+    def partial_writer(*, output_root, **kwargs):
+        staging_root = Path(output_root)
+        observed.append(staging_root)
+        staging_root.mkdir(parents=True, exist_ok=True)
+        (staging_root / "config.json").write_bytes(b"partial")
+        raise OSError("injected partial write")
+
+    monkeypatch.setattr(gate_artifacts, "write_gate_artifacts", partial_writer)
+
+    for _ in range(2):
+        with pytest.raises(
+            RuntimeError,
+            match="atomic gate artifact staging write failed",
+        ):
+            gate_artifacts.write_gate_artifacts_atomically(
+                **_atomic_artifact_kwargs(output_root)
+            )
+
+    assert not output_root.exists()
+    assert len(observed) == 2
+    assert len(set(observed)) == 2
+    assert all(path.parent == output_root.parent for path in observed)
+    assert _atomic_staging_roots(output_root) == sorted(
+        observed,
+        key=lambda path: path.name,
+    )
+    assert all((path / "config.json").read_bytes() == b"partial" for path in observed)
+
+
+def test_atomic_gate_artifact_publish_rejects_invalid_staged_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "atomic-invalid-manifest"
+    original_writer = gate_artifacts.write_gate_artifacts
+
+    def invalid_manifest_writer(*, output_root, **kwargs):
+        manifest = original_writer(output_root=output_root, **kwargs)
+        (Path(output_root) / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "xunce-path-v2-gate-manifest/v1",
+                    "artifact_count": 0,
+                    "artifacts": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return manifest
+
+    monkeypatch.setattr(
+        gate_artifacts,
+        "write_gate_artifacts",
+        invalid_manifest_writer,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="atomic gate artifact staging validation failed",
+    ):
+        gate_artifacts.write_gate_artifacts_atomically(
+            **_atomic_artifact_kwargs(output_root)
+        )
+
+    assert not output_root.exists()
+    staging_roots = _atomic_staging_roots(output_root)
+    assert len(staging_roots) == 1
+    staging_root = staging_roots[0]
+    assert {path.name for path in staging_root.iterdir()} == ATOMIC_ARTIFACT_NAMES
+    assert json.loads(
+        (staging_root / "manifest.json").read_text(encoding="utf-8")
+    )["artifact_count"] == 0
+
+
+def test_atomic_gate_artifact_publish_preserves_staging_when_rename_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "atomic-rename-failure"
+    rename_calls: list[tuple[object, object]] = []
+
+    def failed_rename(source, destination):
+        rename_calls.append((source, destination))
+        raise OSError("injected rename failure")
+
+    monkeypatch.setattr(gate_artifacts.os, "rename", failed_rename)
+
+    with pytest.raises(
+        RuntimeError,
+        match="atomic gate artifact publish rename failed",
+    ):
+        gate_artifacts.write_gate_artifacts_atomically(
+            **_atomic_artifact_kwargs(output_root)
+        )
+
+    assert len(rename_calls) == 1
+    assert not output_root.exists()
+    staging_roots = _atomic_staging_roots(output_root)
+    assert len(staging_roots) == 1
+    assert {path.name for path in staging_roots[0].iterdir()} == ATOMIC_ARTIFACT_NAMES
+
+
+def test_atomic_gate_artifact_publish_does_not_overwrite_racing_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "atomic-race"
+    original_writer = gate_artifacts.write_gate_artifacts
+    rename_called = False
+
+    def racing_writer(*, output_root: Path, **kwargs):
+        manifest = original_writer(output_root=output_root, **kwargs)
+        race_root = tmp_path / "atomic-race"
+        race_root.mkdir()
+        (race_root / "racer.bin").write_bytes(b"racer-wins")
+        return manifest
+
+    def forbidden_rename(source, destination):
+        nonlocal rename_called
+        rename_called = True
+        raise AssertionError("rename must not run after target appears")
+
+    monkeypatch.setattr(gate_artifacts, "write_gate_artifacts", racing_writer)
+    monkeypatch.setattr(gate_artifacts.os, "rename", forbidden_rename)
+
+    with pytest.raises(
+        RuntimeError,
+        match="atomic gate artifact publish target appeared",
+    ):
+        gate_artifacts.write_gate_artifacts_atomically(
+            **_atomic_artifact_kwargs(output_root)
+        )
+
+    assert rename_called is False
+    assert {path.name for path in output_root.iterdir()} == {"racer.bin"}
+    assert (output_root / "racer.bin").read_bytes() == b"racer-wins"
+    staging_roots = _atomic_staging_roots(output_root)
+    assert len(staging_roots) == 1
+    assert {path.name for path in staging_roots[0].iterdir()} == ATOMIC_ARTIFACT_NAMES
 
 
 def _git(repo: Path, *args: str) -> str:
