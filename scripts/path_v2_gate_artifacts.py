@@ -27,6 +27,7 @@ GATE_ARTIFACT_NAMES = frozenset(
         "manifest.json",
     }
 )
+_ATOMIC_STAGING_RESERVATION_ATTEMPTS = 16
 
 
 def build_manifest_without_self_hash(output_root: Path) -> dict[str, Any]:
@@ -94,6 +95,21 @@ def _validate_staged_gate_artifacts(staging_root: Path) -> dict[str, Any]:
     return stored_manifest
 
 
+def _reserve_atomic_staging_root(target: Path) -> Path:
+    for _ in range(_ATOMIC_STAGING_RESERVATION_ATTEMPTS):
+        staging = target.parent / f".{target.name}.staging-{uuid.uuid4().hex}"
+        try:
+            os.mkdir(artifact_io.windows_safe_path(staging))
+        except FileExistsError:
+            continue
+        except Exception as exc:
+            raise RuntimeError(
+                "atomic gate artifact staging reservation failed"
+            ) from exc
+        return staging
+    raise RuntimeError("atomic gate artifact staging reservation failed")
+
+
 def write_gate_artifacts_atomically(
     *,
     output_root: Path,
@@ -109,8 +125,11 @@ def write_gate_artifacts_atomically(
     safe_target = artifact_io.windows_safe_path(target)
     if os.path.lexists(safe_target):
         raise RuntimeError("atomic gate artifact publish target already exists")
-    staging = target.parent / f".{target.name}.staging-{uuid.uuid4().hex}"
-    artifact_io.make_dirs(staging)
+    try:
+        artifact_io.make_dirs(target.parent)
+    except Exception as exc:
+        raise RuntimeError("atomic gate artifact staging reservation failed") from exc
+    staging = _reserve_atomic_staging_root(target)
     try:
         manifest = write_gate_artifacts(
             output_root=staging,

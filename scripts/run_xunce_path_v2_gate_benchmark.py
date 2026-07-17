@@ -3252,7 +3252,7 @@ def _run_gate3_benchmark(
             "full_junit": full,
             "probe_audit": public_probe_audit,
         }
-    gate_artifacts.write_gate_artifacts(
+    gate_artifacts.write_gate_artifacts_atomically(
         output_root=output_root,
         config=config,
         summary=summary,

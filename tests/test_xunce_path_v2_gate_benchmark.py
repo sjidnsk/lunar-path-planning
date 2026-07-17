@@ -1884,6 +1884,13 @@ def test_gate3_dry_run_dispatch_writes_exact_artifacts_without_tests_or_probes(
     assert summary["checks"]["boundaries_strict_false"] is True
     assert all(summary[field] is False for field in BOUNDARIES)
     assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+    stored_manifest = json.loads(
+        (output_root / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert stored_manifest == runner.gate_artifacts.build_manifest_without_self_hash(
+        output_root
+    )
+    assert list(output_root.parent.glob(f".{output_root.name}.staging-*")) == []
     rows = [
         json.loads(line)
         for line in (output_root / "results.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1921,6 +1928,164 @@ def test_gate3_dry_run_dispatch_writes_exact_artifacts_without_tests_or_probes(
     assert "不替换 default policy" in report
     assert "不连接 executor" in report
     assert "不启动 canary" in report
+
+
+def test_gate3_dry_run_dispatch_calls_atomic_publisher_not_direct_writer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    output_root = tmp_path / "out"
+    atomic_calls: list[dict] = []
+
+    def fake_atomic_publisher(**kwargs):
+        atomic_calls.append(kwargs)
+        return {"artifact_count": 7, "artifacts": []}
+
+    def forbidden_direct_writer(**kwargs):
+        raise AssertionError("Gate 3 called the legacy direct artifact writer")
+
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts_atomically",
+        fake_atomic_publisher,
+    )
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts",
+        forbidden_direct_writer,
+    )
+
+    summary = runner.run_gate_benchmark(
+        _gate3_config(tmp_path),
+        output_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "dry_run"
+    assert len(atomic_calls) == 1
+    assert atomic_calls[0]["output_root"] == output_root.resolve()
+
+
+@pytest.mark.parametrize(
+    "config_factory",
+    [
+        pytest.param(_config, id="gate1"),
+        pytest.param(_gate2_config, id="gate2"),
+    ],
+)
+def test_gate1_and_gate2_dry_runs_keep_legacy_direct_writer(
+    tmp_path: Path,
+    monkeypatch,
+    config_factory,
+) -> None:
+    runner = _runner()
+    output_root = tmp_path / "out"
+    direct_calls: list[Path] = []
+    original_direct_writer = runner.gate_artifacts.write_gate_artifacts
+
+    def tracking_direct_writer(**kwargs):
+        direct_calls.append(Path(kwargs["output_root"]))
+        return original_direct_writer(**kwargs)
+
+    def forbidden_atomic_publisher(**kwargs):
+        raise AssertionError("Gate 1/2 called the Gate 3 atomic publisher")
+
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts",
+        tracking_direct_writer,
+    )
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts_atomically",
+        forbidden_atomic_publisher,
+    )
+
+    summary = runner.run_gate_benchmark(
+        config_factory(tmp_path),
+        output_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "dry_run"
+    assert [path.resolve() for path in direct_calls] == [output_root.resolve()]
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+
+
+def test_gate3_dry_run_partial_writer_never_exposes_canonical_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    output_root = tmp_path / "out"
+
+    def partial_writer(*, output_root, **kwargs):
+        staging_root = Path(output_root)
+        staging_root.mkdir(parents=True, exist_ok=True)
+        (staging_root / "config.json").write_bytes(b"partial")
+        raise OSError("injected Gate 3 partial writer")
+
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts",
+        partial_writer,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="atomic gate artifact staging write failed",
+    ):
+        runner.run_gate_benchmark(
+            _gate3_config(tmp_path),
+            output_root,
+            REPO_ROOT,
+            execute_tests=False,
+        )
+
+    assert not output_root.exists()
+    staging_roots = list(
+        output_root.parent.glob(f".{output_root.name}.staging-*")
+    )
+    assert len(staging_roots) == 1
+    assert (staging_roots[0] / "config.json").read_bytes() == b"partial"
+
+
+def test_gate3_dry_run_rename_failure_never_exposes_canonical_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    output_root = tmp_path / "out"
+    rename_calls = 0
+
+    def failed_rename(source, destination):
+        nonlocal rename_calls
+        rename_calls += 1
+        raise OSError("injected Gate 3 rename failure")
+
+    monkeypatch.setattr(runner.gate_artifacts.os, "rename", failed_rename)
+
+    with pytest.raises(
+        RuntimeError,
+        match="atomic gate artifact publish rename failed",
+    ):
+        runner.run_gate_benchmark(
+            _gate3_config(tmp_path),
+            output_root,
+            REPO_ROOT,
+            execute_tests=False,
+        )
+
+    assert rename_calls == 1
+    assert not output_root.exists()
+    staging_roots = list(
+        output_root.parent.glob(f".{output_root.name}.staging-*")
+    )
+    assert len(staging_roots) == 1
+    assert {path.name for path in staging_roots[0].iterdir()} == CANONICAL_ARTIFACTS
 
 
 def test_gate3_registry_entry_has_frozen_defaults() -> None:

@@ -284,6 +284,92 @@ def test_atomic_gate_artifact_publish_succeeds_with_exact_valid_manifest(
     assert _atomic_staging_roots(output_root) == []
 
 
+def test_atomic_gate_artifact_publish_creates_missing_parent_chain(
+    tmp_path: Path,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "missing" / "nested" / "atomic-success"
+    assert not output_root.parent.exists()
+
+    manifest = gate_artifacts.write_gate_artifacts_atomically(
+        **_atomic_artifact_kwargs(output_root)
+    )
+
+    assert manifest == gate_artifacts.build_manifest_without_self_hash(output_root)
+    assert {path.name for path in output_root.iterdir()} == ATOMIC_ARTIFACT_NAMES
+    assert _atomic_staging_roots(output_root) == []
+
+
+def test_atomic_gate_artifact_publish_never_reuses_colliding_staging_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "atomic-collision"
+    colliding_root = output_root.parent / f".{output_root.name}.staging-collision"
+    colliding_root.mkdir()
+    sentinel = colliding_root / "sentinel.bin"
+    sentinel.write_bytes(b"preserve-existing-staging")
+    uuid_hexes = iter(("collision", "fresh"))
+
+    class FixedUuid:
+        def __init__(self, hex_value: str) -> None:
+            self.hex = hex_value
+
+    monkeypatch.setattr(
+        gate_artifacts.uuid,
+        "uuid4",
+        lambda: FixedUuid(next(uuid_hexes)),
+    )
+
+    manifest = gate_artifacts.write_gate_artifacts_atomically(
+        **_atomic_artifact_kwargs(output_root)
+    )
+
+    assert manifest == gate_artifacts.build_manifest_without_self_hash(output_root)
+    assert {path.name for path in output_root.iterdir()} == ATOMIC_ARTIFACT_NAMES
+    assert {path.name for path in colliding_root.iterdir()} == {"sentinel.bin"}
+    assert sentinel.read_bytes() == b"preserve-existing-staging"
+    assert _atomic_staging_roots(output_root) == [colliding_root]
+
+
+def test_atomic_gate_artifact_publish_fails_stably_after_staging_collisions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "atomic-collision-exhausted"
+    colliding_root = output_root.parent / f".{output_root.name}.staging-collision"
+    colliding_root.mkdir()
+    sentinel = colliding_root / "sentinel.bin"
+    sentinel.write_bytes(b"preserve-all-collisions")
+    uuid_call_count = 0
+
+    class FixedUuid:
+        hex = "collision"
+
+    def colliding_uuid():
+        nonlocal uuid_call_count
+        uuid_call_count += 1
+        return FixedUuid()
+
+    monkeypatch.setattr(gate_artifacts.uuid, "uuid4", colliding_uuid)
+
+    with pytest.raises(
+        RuntimeError,
+        match="atomic gate artifact staging reservation failed",
+    ):
+        gate_artifacts.write_gate_artifacts_atomically(
+            **_atomic_artifact_kwargs(output_root)
+        )
+
+    assert uuid_call_count > 1
+    assert not output_root.exists()
+    assert {path.name for path in colliding_root.iterdir()} == {"sentinel.bin"}
+    assert sentinel.read_bytes() == b"preserve-all-collisions"
+    assert _atomic_staging_roots(output_root) == [colliding_root]
+
+
 def test_atomic_gate_artifact_partial_write_keeps_unique_staging_and_no_target(
     tmp_path: Path,
     monkeypatch,
