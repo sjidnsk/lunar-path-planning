@@ -2183,6 +2183,17 @@ def test_gate3_timeout_fine_anchor_and_l2_failures_are_never_swallowed(
     assert audit["status"] == "failed"
     assert audit["fatal_authority_clean"] is False
     assert fatal_reason in audit["fatal_reasons"]
+    status, route, checks = runner._evaluate_gate3(
+        preflight={"status": "passed"},
+        postflight_ok=True,
+        focused={"status": "passed"},
+        full={"status": "passed"},
+        probe_audit=audit,
+        boundary_ok=True,
+    )
+    assert status == "failed"
+    assert route == "restore_gate3_fine_l2_authority"
+    assert checks["fatal_authority_clean"] is False
 
 
 def test_gate3_runtime_fallback_cannot_disable_an_unrelated_accelerator() -> None:
@@ -2241,6 +2252,63 @@ def test_gate3_real_probe_is_isolated_and_exercises_component_safety_contracts(
         assert row["accelerator_used"] is False
 
 
+def test_gate3_real_probe_orchestrator_runs_complete_ordered_matrix(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    expected_command_keys = [
+        (worker_count, hash_seed, repeat)
+        for worker_count in (1, 4)
+        for hash_seed in (11, 29, 47)
+        for repeat in (1, 2, 3)
+    ]
+    expected_row_keys = [
+        (case_id, worker_count, hash_seed, repeat)
+        for case_id in GATE3_CASES
+        for worker_count in (1, 4)
+        for hash_seed in (11, 29, 47)
+        for repeat in (1, 2, 3)
+    ]
+
+    result = runner._run_gate3_probes(
+        python=Path("D:/conda_envs/lunar-explorer/python.exe"),
+        repo_root=REPO_ROOT,
+        common_env=runner._common_env(REPO_ROOT, tmp_path / "probe-matrix-real"),
+        timeout_s=30.0,
+    )
+
+    assert len(result["commands"]) == 18
+    assert [
+        (
+            command["worker_count"],
+            command["python_hash_seed"],
+            command["repeat"],
+        )
+        for command in result["commands"]
+    ] == expected_command_keys
+    assert all(command["returncode"] == 0 for command in result["commands"])
+    assert all(
+        command["stable_failure_reason"] is None
+        for command in result["commands"]
+    )
+    assert len(result["rows"]) == 108
+    assert [
+        (
+            row["case_id"],
+            row["worker_count"],
+            row["python_hash_seed"],
+            row["repeat"],
+        )
+        for row in result["rows"]
+    ] == expected_row_keys
+    assert {row["status"] for row in result["rows"]} == {"passed"}
+    assert len({row["decision_digest"] for row in result["rows"]}) == 1
+    assert result["one_decision_digest"] is True
+    assert result["fatal_reasons"] == []
+    assert result["runtime_fallback_count"] == 0
+    assert result["status"] == "passed"
+
+
 def test_gate3_probe_subprocess_timeout_has_stable_failure_sentinel(
     tmp_path: Path,
     monkeypatch,
@@ -2279,43 +2347,64 @@ def test_gate3_probe_subprocess_timeout_has_stable_failure_sentinel(
     assert result["repeat"] == 2
 
 
-def test_gate3_probe_timeout_fills_six_rows_and_routes_to_probe_repair(
+@pytest.mark.parametrize(
+    ("stable_failure_reason", "failure_returncode"),
+    [
+        pytest.param("probe_subprocess_timeout", 124, id="timeout"),
+        pytest.param("probe_subprocess_failed", 17, id="subprocess-failed"),
+        pytest.param("probe_output_invalid", 0, id="invalid-output"),
+    ],
+)
+def test_gate3_probe_failure_fills_six_rows_and_routes_to_probe_repair(
     tmp_path: Path,
     monkeypatch,
+    stable_failure_reason: str,
+    failure_returncode: int,
 ) -> None:
     runner = _runner()
-    timeout_key = (4, 29, 2)
+    failure_key = (4, 29, 2)
     calls: list[tuple[int, int, int]] = []
-    complete_rows = _gate3_probe_rows()
+    child_row_counts: list[tuple[tuple[int, int, int], int]] = []
 
     def fake_probe_process(*, worker_count, hash_seed, repeat, **kwargs):
         key = (worker_count, hash_seed, repeat)
         calls.append(key)
-        stable_failure_reason = (
-            "probe_subprocess_timeout" if key == timeout_key else None
-        )
+        reason = stable_failure_reason if key == failure_key else None
         rows = (
             []
-            if stable_failure_reason is not None
+            if reason is not None
             else [
-                deepcopy(row)
-                for row in complete_rows
-                if (
-                    row["worker_count"],
-                    row["python_hash_seed"],
-                    row["repeat"],
-                )
-                == key
+                {
+                    "case_id": case_id,
+                    "worker_count": worker_count,
+                    "python_hash_seed": hash_seed,
+                    "repeat": repeat,
+                    "status": "passed",
+                    "decision_digest": "a" * 64,
+                    "fine_only_digest": "a" * 64,
+                    "safety_equivalent": True,
+                    "authoritative_order_preserved": True,
+                    "suggestion_non_authoritative": True,
+                    "hierarchy_conservative": True,
+                    "cache_l2_equivalent": True,
+                    "l2_authority_preserved": True,
+                    "fallback_isolated": True,
+                    "fatal_reason": None,
+                    "accelerator_used": False,
+                    "runtime_disabled_accelerators": [],
+                }
+                for case_id in GATE3_CASES
             ]
         )
+        child_row_counts.append((key, len(rows)))
         return {
             "command": ["python", "-c", "<gate3-probe>"],
             "environment": {},
             "worker_count": worker_count,
             "python_hash_seed": hash_seed,
             "repeat": repeat,
-            "returncode": 124 if stable_failure_reason is not None else 0,
-            "stable_failure_reason": stable_failure_reason,
+            "returncode": failure_returncode if reason is not None else 0,
+            "stable_failure_reason": reason,
             "rows": rows,
         }
 
@@ -2338,9 +2427,54 @@ def test_gate3_probe_timeout_fills_six_rows_and_routes_to_probe_repair(
         for repeat in (1, 2, 3)
     ]
     assert calls == expected_calls
+    assert child_row_counts == [
+        (key, 0 if key == failure_key else 6) for key in expected_calls
+    ]
     assert len(result["commands"]) == 18
+    assert [
+        (
+            command["worker_count"],
+            command["python_hash_seed"],
+            command["repeat"],
+        )
+        for command in result["commands"]
+    ] == expected_calls
+    failure_commands = [
+        command
+        for command in result["commands"]
+        if (
+            command["worker_count"],
+            command["python_hash_seed"],
+            command["repeat"],
+        )
+        == failure_key
+    ]
+    assert len(failure_commands) == 1
+    assert failure_commands[0]["returncode"] == failure_returncode
+    assert failure_commands[0]["stable_failure_reason"] == stable_failure_reason
+    assert all(
+        command["returncode"] == 0
+        and command["stable_failure_reason"] is None
+        for command in result["commands"]
+        if command is not failure_commands[0]
+    )
     assert len(result["rows"]) == 108
-    timeout_rows = [
+    assert [
+        (
+            row["case_id"],
+            row["worker_count"],
+            row["python_hash_seed"],
+            row["repeat"],
+        )
+        for row in result["rows"]
+    ] == [
+        (case_id, worker_count, hash_seed, repeat)
+        for case_id in GATE3_CASES
+        for worker_count in (1, 4)
+        for hash_seed in (11, 29, 47)
+        for repeat in (1, 2, 3)
+    ]
+    failure_rows = [
         row
         for row in result["rows"]
         if (
@@ -2348,20 +2482,20 @@ def test_gate3_probe_timeout_fills_six_rows_and_routes_to_probe_repair(
             row["python_hash_seed"],
             row["repeat"],
         )
-        == timeout_key
+        == failure_key
     ]
-    assert len(timeout_rows) == 6
-    assert [row["case_id"] for row in timeout_rows] == GATE3_CASES
-    assert {row["status"] for row in timeout_rows} == {"failed"}
-    assert {row["fatal_reason"] for row in timeout_rows} == {
-        "probe_subprocess_timeout"
+    assert len(failure_rows) == 6
+    assert [row["case_id"] for row in failure_rows] == GATE3_CASES
+    assert {row["status"] for row in failure_rows} == {"failed"}
+    assert {row["fatal_reason"] for row in failure_rows} == {
+        stable_failure_reason
     }
-    assert all(not row["runtime_disabled_accelerators"] for row in timeout_rows)
+    assert all(not row["runtime_disabled_accelerators"] for row in failure_rows)
     assert result["status"] == "failed"
     assert result["matrix_complete"] is True
     assert result["stable_row_order"] is True
     assert result["runtime_fallback_count"] == 0
-    assert result["fatal_reasons"] == ["probe_subprocess_timeout"]
+    assert result["fatal_reasons"] == [stable_failure_reason]
 
     status, route, checks = runner._evaluate_gate3(
         preflight={"status": "passed"},

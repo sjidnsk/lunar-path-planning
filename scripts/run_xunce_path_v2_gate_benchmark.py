@@ -2850,7 +2850,14 @@ def _evaluate_gate3(
         route = "restore_gate3_focused_contracts"
     elif not checks["full"]:
         route = "restore_path_planner_v1_regression"
-    elif "probe_subprocess_timeout" in probe_audit.get("fatal_reasons", ()):
+    elif any(
+        reason in probe_audit.get("fatal_reasons", ())
+        for reason in (
+            "probe_subprocess_timeout",
+            "probe_subprocess_failed",
+            "probe_output_invalid",
+        )
+    ):
         route = "repair_gate3_deterministic_component_probes"
     elif not checks["fatal_authority_clean"]:
         route = "restore_gate3_fine_l2_authority"
