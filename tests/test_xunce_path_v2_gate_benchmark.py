@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib
-import inspect
 import json
 import sys
 from copy import deepcopy
@@ -173,6 +172,12 @@ GATE4_BENCHMARK_AGGREGATES = (
     "aggregate_exact_map_quality_v2",
     "aggregate_standard_episodes_v2",
 )
+GATE4_BENCHMARK_CONTRACT_AUDIT = {
+    "schema_version": "xunce-path-v2-gate4-benchmark-contract-audit/v1",
+    "status": "passed",
+    "hard_timeout_ms": 2000.0,
+    "typed_row_api": True,
+}
 GATE4_PHASES = [
     "preflight",
     "focused",
@@ -3726,6 +3731,20 @@ def _gate4_tampers() -> list:
     )
     cases.extend(
         pytest.param(
+            ("thresholds", name),
+            (
+                value + 1
+                if isinstance(value, int)
+                else value - 0.01
+                if value <= 1.10
+                else value + 1.0
+            ),
+            id=f"threshold-numeric-drift-{name}",
+        )
+        for name, value in GATE4_THRESHOLDS.items()
+    )
+    cases.extend(
+        pytest.param(
             ("capability_disclosure", name),
             (not value if isinstance(value, bool) else "tampered"),
             id=f"capability-{name}",
@@ -3777,6 +3796,9 @@ def _set_nested_value(payload: dict, field_path: tuple[str, ...], value) -> None
 
 
 def _install_gate4_synthetic_contract(monkeypatch, runner, tmp_path: Path):
+    assert runner.GATE4_FORMAL_OUTPUT_ROOT == Path("D:/xunce/out/path_v2/g4")
+    assert runner.GATE4_FORMAL_TEMP_ROOT == Path("D:/xunce/tmp/path_v2_g4")
+    assert runner.GATE4_INPUTS == GATE4_INPUTS
     formal_root = (tmp_path / "formal-g4").resolve()
     temp_root = (tmp_path / "attempts").resolve()
     input_root = (tmp_path / "inputs").resolve()
@@ -3871,10 +3893,8 @@ def _install_gate4_green_code_mocks(
         "_audit_gate4_benchmark_contract",
         lambda repo_root: events.append("benchmark-contract")
         or {
-            "schema_version": "xunce-path-v2-gate4-benchmark-contract-audit/v1",
+            **GATE4_BENCHMARK_CONTRACT_AUDIT,
             "status": contract_status,
-            "hard_timeout_ms": 2000.0,
-            "typed_row_api": True,
         },
     )
     monkeypatch.setattr(
@@ -4114,7 +4134,10 @@ def test_gate4_public_mode_rejects_wrong_root_before_existence_or_writer(
     assert not (tmp_path / "not-formal").exists()
 
 
-@pytest.mark.parametrize("root_kind", ["directory", "file"])
+@pytest.mark.parametrize(
+    "root_kind",
+    ["empty", "file", "old-artifacts", "extra-child"],
+)
 def test_gate4_formal_root_must_be_fresh_before_any_code_work(
     tmp_path: Path,
     monkeypatch,
@@ -4122,10 +4145,42 @@ def test_gate4_formal_root_must_be_fresh_before_any_code_work(
 ) -> None:
     runner = _runner()
     config, formal_root, _ = _install_gate4_synthetic_contract(monkeypatch, runner, tmp_path)
-    if root_kind == "directory":
+    config_path = tmp_path / "existing-root-gate4.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    if root_kind == "empty":
         formal_root.mkdir()
-    else:
+    elif root_kind == "file":
         formal_root.write_bytes(b"preserve")
+    elif root_kind == "old-artifacts":
+        runner.gate_artifacts.write_gate_artifacts(
+            output_root=formal_root,
+            config={"old": "config"},
+            summary={"status": "blocked", "old": True},
+            routing={"status": "blocked", "route": "old-route"},
+            rows=[{"status": "blocked", "old": True}],
+            phases=[{"phase": "old", "status": "completed"}],
+            review={"status": "blocked", "old": True},
+            report="# old blocked snapshot\n",
+        )
+    else:
+        child = formal_root / "extra-child"
+        child.mkdir(parents=True)
+        (child / "marker.bin").write_bytes(b"preserve-child")
+
+    def snapshot() -> tuple[tuple[str, str, bytes | None], ...]:
+        if formal_root.is_file():
+            return (("file", ".", formal_root.read_bytes()),)
+        records: list[tuple[str, str, bytes | None]] = [("directory", ".", None)]
+        for path in sorted(formal_root.rglob("*"), key=lambda item: item.as_posix()):
+            relative = path.relative_to(formal_root).as_posix()
+            records.append(
+                ("directory", relative, None)
+                if path.is_dir()
+                else ("file", relative, path.read_bytes())
+            )
+        return tuple(records)
+
+    before = snapshot()
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Gate 4 code work ran before fresh-root rejection")
@@ -4134,12 +4189,13 @@ def test_gate4_formal_root_must_be_fresh_before_any_code_work(
     monkeypatch.setattr(runner, "_run_pytest", forbidden)
     monkeypatch.setattr(runner.gate_artifacts, "write_gate_artifacts_atomically", forbidden)
     with pytest.raises(RuntimeError, match="Gate 4 output_root already exists"):
-        runner._run_gate4_benchmark(
-            config=config,
+        runner.run_gate_benchmark(
+            config_path=config_path,
             output_root=formal_root,
             repo_root=REPO_ROOT,
             execute_tests=True,
         )
+    assert snapshot() == before
 
 
 def _run_captured_gate4_formal(
@@ -4147,6 +4203,7 @@ def _run_captured_gate4_formal(
     monkeypatch,
     *,
     present: bool = False,
+    present_datasets: set[str] | None = None,
     guard_input_reads: bool = False,
 ):
     runner = _runner()
@@ -4155,8 +4212,11 @@ def _run_captured_gate4_formal(
     )
     config_path = tmp_path / "synthetic-gate4.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
-    if present:
-        for index, path_string in enumerate(inputs.values()):
+    selected_datasets = (
+        set(inputs) if present else set() if present_datasets is None else present_datasets
+    )
+    for index, (dataset, path_string) in enumerate(inputs.items()):
+        if dataset in selected_datasets:
             path = Path(path_string)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"\xffmalicious self-reported pass" + bytes([index]))
@@ -4237,6 +4297,65 @@ def _run_captured_gate4_formal(
     return runner, summary, captured, events, inputs
 
 
+def _assert_gate4_blocked_artifacts(
+    *,
+    runner,
+    summary: dict,
+    captured: dict,
+    inputs: dict[str, str],
+    dataset_statuses: dict[str, str],
+) -> None:
+    assert summary["status"] == "blocked"
+    assert summary["next_required_change"] == GATE4_BLOCKERS[0]
+    assert summary["blocking_reasons"] == GATE4_BLOCKERS
+    assert summary["formal_metrics_status"] == "not_evaluated"
+    assert captured["review"]["formal_metrics_status"] == "not_evaluated"
+    assert summary["benchmark_contract"] == GATE4_BENCHMARK_CONTRACT_AUDIT
+    assert captured["review"]["benchmark_contract"] == GATE4_BENCHMARK_CONTRACT_AUDIT
+    assert json.loads(json.dumps(summary["benchmark_contract"])) == (
+        GATE4_BENCHMARK_CONTRACT_AUDIT
+    )
+    assert json.loads(json.dumps(captured["review"]["benchmark_contract"])) == (
+        GATE4_BENCHMARK_CONTRACT_AUDIT
+    )
+    assert {
+        name: summary["datasets"][name]["status"] for name in GATE4_INPUTS
+    } == dataset_statuses
+    assert all(
+        summary["datasets"][name]["content_read"] is False for name in GATE4_INPUTS
+    )
+    formal_rows = [
+        row for row in captured["rows"] if row.get("suite") == "formal-input"
+    ]
+    assert formal_rows == [
+        {
+            "suite": "formal-input",
+            "dataset": dataset,
+            "path": inputs[dataset],
+            "status": dataset_statuses[dataset],
+            "content_read": False,
+            "reason": blocker,
+        }
+        for dataset, blocker in zip(GATE4_INPUTS, GATE4_BLOCKERS, strict=True)
+    ]
+    for row in captured["rows"]:
+        assert row.get("suite") not in {"metric", "formal-metric", "formal_metric"}
+        assert row.get("check") not in {"metric", "formal_metric", "formal-metric"}
+        assert not any(key.startswith("actual_") for key in row)
+    assert captured["routing"]["route"] == GATE4_BLOCKERS[0]
+    assert captured["routing"]["blocking_reasons"] == GATE4_BLOCKERS
+    assert captured["routing"]["route"] != (
+        "implement_path_v2_lunar_ballistics_and_hopper_proxy_profile"
+    )
+    assert "pass_route" not in json.dumps(captured["routing"], sort_keys=True)
+    report = captured["report"]
+    assert "formal_metrics_status=not_evaluated" in report
+    assert "actual_" not in report.lower()
+    assert "=N/A" not in report.upper()
+    assert ": N/A" not in report.upper()
+    assert runner.status_exit_code(summary["status"]) == 0
+
+
 def test_gate4_public_exact_formal_root_blocks_after_all_code_audits(
     tmp_path: Path,
     monkeypatch,
@@ -4254,48 +4373,17 @@ def test_gate4_public_exact_formal_root_blocks_after_all_code_audits(
         "presence:standard_episodes",
         "postflight",
     ]
-    assert summary["status"] == "blocked"
-    assert summary["next_required_change"] == GATE4_BLOCKERS[0]
-    assert summary["blocking_reasons"] == GATE4_BLOCKERS
-    assert [summary["datasets"][name]["status"] for name in GATE4_INPUTS] == [
-        "missing",
-        "missing",
-        "missing",
-    ]
-    assert summary["formal_metrics_status"] == "not_evaluated"
+    _assert_gate4_blocked_artifacts(
+        runner=runner,
+        summary=summary,
+        captured=captured,
+        inputs=inputs,
+        dataset_statuses={name: "missing" for name in GATE4_INPUTS},
+    )
     assert "implement_path_v2_lunar_ballistics_and_hopper_proxy_profile" not in json.dumps(
         {key: value for key, value in summary.items() if key != "config"}
     )
-    assert runner.status_exit_code(summary["status"]) == 0
     assert [phase["phase"] for phase in captured["phases"]] == GATE4_PHASES
-    formal_rows = [
-        row for row in captured["rows"] if row.get("suite") == "formal-input"
-    ]
-    assert formal_rows == [
-        {
-            "suite": "formal-input",
-            "dataset": dataset,
-            "path": inputs[dataset],
-            "status": "missing",
-            "content_read": False,
-            "reason": blocker,
-        }
-        for dataset, blocker in zip(GATE4_INPUTS, GATE4_BLOCKERS, strict=True)
-    ]
-    assert all(row.get("suite") != "metric" for row in captured["rows"])
-    assert all(
-        not any(key.startswith("actual") for key in row)
-        for row in captured["rows"]
-    )
-    assert captured["routing"]["route"] == GATE4_BLOCKERS[0]
-    assert captured["routing"]["blocking_reasons"] == GATE4_BLOCKERS
-    assert captured["routing"]["route"] != (
-        "implement_path_v2_lunar_ballistics_and_hopper_proxy_profile"
-    )
-    assert "pass_route" not in json.dumps(captured["routing"], sort_keys=True)
-    assert "formal_metrics_status=not_evaluated" in captured["report"]
-    assert "actual" not in captured["report"].lower()
-    assert "N/A" not in captured["report"]
 
 
 def test_gate4_present_unapproved_files_are_untrusted_and_never_read_or_parsed(
@@ -4308,18 +4396,17 @@ def test_gate4_present_unapproved_files_are_untrusted_and_never_read_or_parsed(
         raise AssertionError("Gate 4B read or parsed unapproved formal input")
 
     monkeypatch.setattr(runner, "_load_gate2_dataset", forbidden)
-    runner, summary, captured, _, _ = _run_captured_gate4_formal(
+    runner, summary, captured, _, inputs = _run_captured_gate4_formal(
         tmp_path, monkeypatch, present=True, guard_input_reads=True
     )
 
-    assert summary["status"] == "blocked"
-    assert summary["blocking_reasons"] == GATE4_BLOCKERS
-    assert [summary["datasets"][name]["status"] for name in GATE4_INPUTS] == [
-        "untrusted",
-        "untrusted",
-        "untrusted",
-    ]
-    assert all(item["content_read"] is False for item in summary["datasets"].values())
+    _assert_gate4_blocked_artifacts(
+        runner=runner,
+        summary=summary,
+        captured=captured,
+        inputs=inputs,
+        dataset_statuses={name: "untrusted" for name in GATE4_INPUTS},
+    )
     assert all(
         item["trusted_input"] == GATE4_TRUSTED_INPUT
         for item in summary["datasets"].values()
@@ -4347,24 +4434,38 @@ def test_gate4_present_unapproved_files_are_untrusted_and_never_read_or_parsed(
     }
 
 
-def test_gate4_blocked_intake_static_io_scope_is_presence_only() -> None:
+@pytest.mark.parametrize("present_dataset", list(GATE4_INPUTS))
+def test_gate4_mixed_presence_keeps_all_blockers_and_never_reads_content(
+    tmp_path: Path,
+    monkeypatch,
+    present_dataset: str,
+) -> None:
     runner = _runner()
-    source = "\n".join(
-        inspect.getsource(function)
-        for function in (runner._gate4_dataset_status, runner._run_gate4_benchmark)
+    monkeypatch.setattr(
+        runner,
+        "_load_gate2_dataset",
+        lambda *args, **kwargs: pytest.fail("Gate 4B reused the Gate 2 parser"),
     )
-    assert "artifact_io.path_is_file" in source
-    for forbidden_token in (
-        "artifact_io.read_bytes",
-        "artifact_io.read_text",
-        "artifact_io.read_json(",
-        "artifact_io.read_jsonl",
-        ".read_bytes(",
-        ".read_text(",
-        ".open(",
-        "builtins.open",
-    ):
-        assert forbidden_token not in source
+    runner, summary, captured, _, inputs = _run_captured_gate4_formal(
+        tmp_path,
+        monkeypatch,
+        present_datasets={present_dataset},
+        guard_input_reads=True,
+    )
+    statuses = {
+        name: "untrusted" if name == present_dataset else "missing"
+        for name in GATE4_INPUTS
+    }
+    _assert_gate4_blocked_artifacts(
+        runner=runner,
+        summary=summary,
+        captured=captured,
+        inputs=inputs,
+        dataset_statuses=statuses,
+    )
+    assert summary["next_required_change"] == GATE4_BLOCKERS[0]
+    assert summary["blocking_reasons"] == GATE4_BLOCKERS
+    assert runner.status_exit_code(summary["status"]) == 0
 
 
 def test_gate4_benchmark_contract_failure_precedes_missing_input_blockers(
