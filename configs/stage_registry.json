@@ -882,6 +882,19 @@
         "--repo-root",
         "{repo_root}"
       ]
+    },
+    "xunce-path-v2-gate4-legged": {
+      "runner": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate4_legged_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g4",
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
+      ]
     }
   }
 }

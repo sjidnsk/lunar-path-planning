@@ -157,6 +157,116 @@ GATE3_DISABLED_ACCELERATORS = (
     {"accelerator_id": "multi_heuristic", "reason": "not_integrated_into_provider"},
     {"accelerator_id": "validation_cache", "reason": "not_integrated_into_provider"},
 )
+
+GATE4_SCHEMA_VERSION = "xunce-path-v2-gate4-legged/v1"
+GATE4_STAGE_ID = "xunce-path-v2-gate4-legged"
+GATE4_INPUT_COMMIT = "b7271935d0ad39a597df789e51aa62caa525eec6"
+GATE4_FORMAL_OUTPUT_ROOT = Path("D:/xunce/out/path_v2/g4")
+GATE4_FORMAL_TEMP_ROOT = Path("D:/xunce/tmp/path_v2_g4")
+GATE4_PASS_ROUTE = "implement_path_v2_lunar_ballistics_and_hopper_proxy_profile"
+GATE4_EXECUTE_ROUTE = "execute_gate4_legged_evidence"
+GATE4_FOCUSED_TARGETS = (
+    "tests/test_v2_benchmark.py",
+    "tests/test_v2_legged_oracle.py",
+    "tests/test_v2_legged_provider.py",
+    "tests/test_v2_route_validation.py",
+    "tests/test_v2_profiles.py",
+    "tests/test_v2_geometry.py",
+    "tests/test_v2_search.py",
+    "tests/test_v2_api.py",
+    "tests/test_v2_runtime.py",
+    "tests/test_v2_contracts.py",
+    "tests/test_v2_serialization.py",
+    "tests/test_v2_fine_safety_anchor.py",
+    "tests/test_hybrid_astar.py",
+    "tests/test_astar.py",
+    "../tests/test_xunce_path_v2_gate_benchmark.py",
+)
+GATE4_INPUTS = {
+    "primitive_audit": "D:/xunce/inputs/path_v2/g4/independent_legged_oracle_labels.jsonl",
+    "exact_map_quality": "D:/xunce/inputs/path_v2/g4/independent_legged_exact_map_optima.jsonl",
+    "standard_episodes": "D:/xunce/inputs/path_v2/g4/standard_legged_schedule.jsonl",
+}
+GATE4_THRESHOLDS = {
+    "min_primitive_independent_samples": 10000,
+    "max_primitive_false_positives": 0,
+    "min_primitive_recall": 0.98,
+    "min_primitive_complete_l2_ratio": 1.0,
+    "min_exact_map_independent_cases": 1,
+    "min_exact_map_success_ratio": 1.0,
+    "min_exact_map_resource_cost_ratio": 1.0,
+    "max_exact_map_resource_cost_ratio": 1.10,
+    "min_exact_map_complete_l2_ratio": 1.0,
+    "min_standard_independent_episodes": 100,
+    "min_standard_reachable_success_ratio": 0.99,
+    "max_standard_unreachable_successes": 0,
+    "min_standard_complete_l2_ratio": 1.0,
+    "max_standard_p95_runtime_ms": 250.0,
+    "hard_timeout_ms": 2000.0,
+    "max_hard_timeout_violations": 0,
+}
+GATE4_CAPABILITY_DISCLOSURE = {
+    "platform_kind": "legged",
+    "platform_type": "legged_static_crawl",
+    "capability": "simulation_proxy",
+    "capability_revision": "simulation_proxy_static_crawl/v1",
+    "primitive_capability": "simulation_proxy",
+    "resource_proxy_id": "legged_static_crawl_relative_resource/v1",
+    "route_validator_id": "path-planner-v2-legged-route-l2/v1",
+    "dynamic_gait_claimed": False,
+    "real_robot_stability_claimed": False,
+}
+GATE4_DATASET_CONTRACT = {
+    "schema_version": "xunce-path-v2-gate4b-blocked-intake/v1",
+    "accepts_formal_inputs": False,
+    "future_stage_required": "xunce-path-v2-gate4c-legged-evidence",
+    "formal_sources": {
+        "primitive_audit": "independent-legged-oracle/v1",
+        "exact_map_quality": "independent-legged-exact-solver/v1",
+        "standard_episodes": "independent-standard-legged/v1",
+    },
+}
+GATE4_TRUSTED_INPUT = {
+    "approved_input_sha256": None,
+    "approved_case_envelope_sha256": None,
+    "approved_producer_id": None,
+    "approved_producer_revision": None,
+    "approval_id": None,
+    "approved_provider_source_commit": "7d5c4dfc8e2a374855e6d8b962b69466c3353265",
+    "approved_provider_build_id": None,
+    "approved_collector_id": None,
+    "approved_collector_revision": None,
+    "approved_profile_id": "legged-static-crawl/v1",
+    "approved_capability_revision": "simulation_proxy_static_crawl/v1",
+    "approved_step_validator_id": "path-planner-v2-legged-static-stability/v1",
+    "approved_route_validator_id": "path-planner-v2-legged-route-l2/v1",
+}
+GATE4_BLOCKERS = (
+    ("primitive_audit", "provide_independent_legged_oracle_labels"),
+    ("exact_map_quality", "provide_independent_legged_exact_map_optima"),
+    ("standard_episodes", "provide_standard_legged_schedule"),
+)
+GATE4_BENCHMARK_ROW_CLASSES = (
+    "PrimitiveAuditRowV2",
+    "ExactMapQualityRowV2",
+    "StandardEpisodeRowV2",
+)
+GATE4_BENCHMARK_AGGREGATES = (
+    "aggregate_primitive_audit_v2",
+    "aggregate_exact_map_quality_v2",
+    "aggregate_standard_episodes_v2",
+)
+GATE4_PHASES = (
+    "preflight",
+    "focused",
+    "full",
+    "primitive-audit",
+    "exact-map-quality",
+    "standard-episodes",
+    "boundary-review",
+)
+
+
 class _Gate2LoaderContractError(RuntimeError):
     pass
 
@@ -913,6 +1023,12 @@ def _assert_gate3_output_root_absent(output_root: Path) -> None:
         raise RuntimeError("Gate 3 output_root already exists")
 
 
+def _assert_gate4_output_root_absent(output_root: Path) -> None:
+    root = Path(output_root).resolve()
+    if os.path.lexists(artifact_io.windows_safe_path(root)):
+        raise RuntimeError("Gate 4 output_root already exists")
+
+
 def _git(repo_root: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],
@@ -1229,6 +1345,114 @@ def _validate_gate3_config(config: dict[str, Any]) -> None:
     _require_frozen(config.get("pass_route"), GATE3_PASS_ROUTE, "pass_route")
 
 
+def _validate_gate4_config(config: dict[str, Any]) -> None:
+    expected_keys = {
+        "schema_version",
+        "stage_id",
+        "python",
+        "expected_python_version",
+        "expected_git",
+        "formal_output_root",
+        "temp_root",
+        "focused",
+        "full",
+        "inputs",
+        "baseline_evidence",
+        "thresholds",
+        "capability_disclosure",
+        "dataset_contract",
+        "trusted_inputs",
+        "boundaries",
+        "pass_route",
+    }
+    _require_frozen(set(config), expected_keys, "top-level keys")
+    _require_frozen(config.get("schema_version"), GATE4_SCHEMA_VERSION, "schema_version")
+    _require_frozen(config.get("stage_id"), GATE4_STAGE_ID, "stage_id")
+    _require_frozen(config.get("python"), FORMAL_PYTHON.as_posix(), "python")
+    _require_frozen(
+        config.get("expected_python_version"),
+        EXPECTED_PYTHON_VERSION,
+        "expected_python_version",
+    )
+    _require_frozen(
+        config.get("expected_git"),
+        {
+            "branch": EXPECTED_BRANCH,
+            "base_commit": ORIGINAL_BASE_COMMIT,
+            "gate_input_commit": GATE4_INPUT_COMMIT,
+            "nested_branch": EXPECTED_BRANCH,
+        },
+        "expected_git",
+    )
+    _require_frozen(
+        config.get("formal_output_root"),
+        GATE4_FORMAL_OUTPUT_ROOT.as_posix(),
+        "formal_output_root",
+    )
+    _require_frozen(
+        config.get("temp_root"),
+        GATE4_FORMAL_TEMP_ROOT.as_posix(),
+        "temp_root",
+    )
+    _require_frozen(
+        config.get("focused"),
+        {
+            "working_directory": PATH_PLANNER_WORKING_DIRECTORY,
+            "pythonpath": PATH_PLANNER_PYTHONPATH,
+            "pytest_targets": list(GATE4_FOCUSED_TARGETS),
+        },
+        "focused",
+    )
+    _require_frozen(
+        config.get("full"),
+        {
+            "working_directory": PATH_PLANNER_WORKING_DIRECTORY,
+            "pythonpath": PATH_PLANNER_PYTHONPATH,
+            "pytest_targets": ["tests"],
+            "legacy_expected": LEGACY_EXPECTED,
+            "allowed_skip_dependency": ALLOWED_SKIP_DEPENDENCY,
+        },
+        "full",
+    )
+    _require_frozen(config.get("inputs"), GATE4_INPUTS, "inputs")
+    _require_frozen(
+        config.get("baseline_evidence"),
+        GATE2_BASELINE_EVIDENCE,
+        "baseline_evidence",
+    )
+    _require_frozen(config.get("thresholds"), GATE4_THRESHOLDS, "thresholds")
+    _require_frozen(
+        config.get("capability_disclosure"),
+        GATE4_CAPABILITY_DISCLOSURE,
+        "capability_disclosure",
+    )
+    _require_frozen(
+        config.get("dataset_contract"),
+        GATE4_DATASET_CONTRACT,
+        "dataset_contract",
+    )
+    _require_frozen(
+        config.get("trusted_inputs"),
+        {name: dict(GATE4_TRUSTED_INPUT) for name in GATE4_INPUTS},
+        "trusted_inputs",
+    )
+    _require_frozen(
+        config.get("boundaries"),
+        gate_artifacts.BOUNDARY_FIELDS,
+        "boundaries",
+    )
+    _require_frozen(config.get("pass_route"), GATE4_PASS_ROUTE, "pass_route")
+
+
+def _validate_gate4_output_mode(output_root: Path, *, execute_tests: bool) -> None:
+    resolved_output = Path(output_root).resolve()
+    resolved_formal = GATE4_FORMAL_OUTPUT_ROOT.resolve()
+    if execute_tests and resolved_output != resolved_formal:
+        raise ValueError("Gate 4 formal execution requires exact formal_output_root")
+    if not execute_tests and resolved_output == resolved_formal:
+        raise ValueError("Gate 4 dry run must not use formal_output_root")
+
+
 def _junit_records(
     content: bytes,
 ) -> tuple[list[ET.Element], dict[str, dict[str, str]], list[str]]:
@@ -1449,6 +1673,25 @@ def _audit_gate3_full_junit(
     }
 
 
+def _audit_gate4_full_junit(
+    path: Path,
+    *,
+    expected_legacy: dict[str, Any],
+    allowed_skip_dependency: str,
+    baseline_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    audit = _audit_gate2_full_junit(
+        path,
+        expected_legacy=expected_legacy,
+        allowed_skip_dependency=allowed_skip_dependency,
+        baseline_evidence=baseline_evidence,
+    )
+    return {
+        **audit,
+        "schema_version": "xunce-path-v2-gate4-full-junit-audit/v1",
+    }
+
+
 def _gate3_runtime_audit(repo_root: Path) -> dict[str, Any]:
     superproject = gate0.audit_git_identity(
         repo_root,
@@ -1489,6 +1732,56 @@ def _gate3_runtime_audit(repo_root: Path) -> dict[str, Any]:
         "original_base_is_ancestor": original_base_is_ancestor,
         "gate_input_is_ancestor": gate_input_is_ancestor,
     }
+
+
+def _gate4_runtime_audit(repo_root: Path) -> dict[str, Any]:
+    superproject = gate0.audit_git_identity(
+        repo_root,
+        EXPECTED_BRANCH,
+        ORIGINAL_BASE_COMMIT,
+    )
+    gate_input = gate0.audit_git_identity(
+        repo_root,
+        EXPECTED_BRANCH,
+        GATE4_INPUT_COMMIT,
+    )
+    nested = _audit_nested_git(repo_root, EXPECTED_BRANCH)
+    imports = gate0.audit_import_origins(FORMAL_PYTHON, repo_root)
+    python_version_matches = imports.get("python_version") == EXPECTED_PYTHON_VERSION
+    original_base_is_ancestor = (
+        superproject.get("status") == "passed"
+        and superproject.get("base_is_ancestor") is True
+    )
+    gate_input_is_ancestor = (
+        gate_input.get("status") == "passed"
+        and gate_input.get("base_is_ancestor") is True
+    )
+    passed = (
+        original_base_is_ancestor
+        and gate_input_is_ancestor
+        and nested.get("status") == "passed"
+        and imports.get("status") == "passed"
+        and python_version_matches
+    )
+    return {
+        "schema_version": "xunce-path-v2-gate4-runtime-audit/v1",
+        "status": "passed" if passed else "failed",
+        "superproject_git": superproject,
+        "gate_input_git": gate_input,
+        "nested_git": nested,
+        "import_origins": imports,
+        "python_version_matches": python_version_matches,
+        "original_base_is_ancestor": original_base_is_ancestor,
+        "gate_input_is_ancestor": gate_input_is_ancestor,
+    }
+
+
+def _gate4_preflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    return _gate4_runtime_audit(repo_root)
+
+
+def _gate4_postflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    return _gate4_runtime_audit(repo_root)
 
 
 def _gate3_preflight(config: dict[str, Any], repo_root: Path) -> dict[str, Any]:
@@ -1628,6 +1921,83 @@ def _common_env(repo_root: Path, attempt_root: Path) -> dict[str, str]:
         }
     )
     return env
+
+
+def _gate4_benchmark_contract_not_run() -> dict[str, Any]:
+    return {
+        "schema_version": "xunce-path-v2-gate4-benchmark-contract-audit/v1",
+        "status": "not_run",
+        "hard_timeout_ms": GATE4_THRESHOLDS["hard_timeout_ms"],
+        "typed_row_api": False,
+    }
+
+
+def _audit_gate4_benchmark_contract(repo_root: Path) -> dict[str, Any]:
+    base = {
+        "schema_version": "xunce-path-v2-gate4-benchmark-contract-audit/v1",
+        "status": "failed",
+        "hard_timeout_ms": GATE4_THRESHOLDS["hard_timeout_ms"],
+        "typed_row_api": False,
+        "repair_route": "repair_gate4_benchmark_contract",
+    }
+    try:
+        nested_src = str((Path(repo_root) / "path-planner" / "src").resolve())
+        if not sys.path or sys.path[0] != nested_src:
+            sys.path.insert(0, nested_src)
+        benchmark = importlib.import_module("path_planner.v2.benchmark")
+        expected_origin = (
+            Path(repo_root)
+            / "path-planner"
+            / "src"
+            / "path_planner"
+            / "v2"
+            / "benchmark.py"
+        ).resolve()
+        actual_origin = Path(str(getattr(benchmark, "__file__", ""))).resolve()
+        if actual_origin != expected_origin:
+            raise ImportError("Gate 4 benchmark module origin is outside the worktree")
+        hard_timeout_ms = getattr(benchmark, "HARD_TIMEOUT_MS_V2")
+        if type(hard_timeout_ms) is not float or hard_timeout_ms != GATE4_THRESHOLDS[
+            "hard_timeout_ms"
+        ]:
+            raise TypeError("Gate 4 benchmark hard timeout contract drifted")
+        for name in GATE4_BENCHMARK_ROW_CLASSES:
+            row_type = getattr(benchmark, name)
+            if (
+                type(row_type) is not type
+                or row_type.__name__ != name
+                or row_type.__module__ != "path_planner.v2.benchmark"
+            ):
+                raise TypeError(f"Gate 4 benchmark row contract drifted: {name}")
+        for name in GATE4_BENCHMARK_AGGREGATES:
+            if not callable(getattr(benchmark, name)):
+                raise TypeError(f"Gate 4 benchmark aggregate contract drifted: {name}")
+    except Exception as exc:
+        return {**base, "error_type": type(exc).__name__}
+    return {
+        "schema_version": "xunce-path-v2-gate4-benchmark-contract-audit/v1",
+        "status": "passed",
+        "hard_timeout_ms": GATE4_THRESHOLDS["hard_timeout_ms"],
+        "typed_row_api": True,
+    }
+
+
+def _gate4_dataset_status(
+    *,
+    dataset_name: str,
+    path: Path,
+    trusted_input: dict[str, Any],
+    formal_source: str,
+) -> dict[str, Any]:
+    input_path = Path(path)
+    return {
+        "dataset_name": dataset_name,
+        "path": input_path.as_posix(),
+        "status": "untrusted" if artifact_io.path_is_file(input_path) else "missing",
+        "content_read": False,
+        "formal_source": formal_source,
+        "trusted_input": dict(trusted_input),
+    }
 
 
 def _run_pytest(
@@ -3272,6 +3642,427 @@ def _run_gate3_benchmark(
     return summary
 
 
+def _gate4_dataset_not_run(config: dict[str, Any], name: str) -> dict[str, Any]:
+    return {
+        "dataset_name": name,
+        "path": config["inputs"][name],
+        "status": "not_run",
+        "content_read": False,
+        "formal_source": config["dataset_contract"]["formal_sources"][name],
+        "trusted_input": dict(config["trusted_inputs"][name]),
+    }
+
+
+def _gate4_report(summary: dict[str, Any]) -> str:
+    blockers = summary.get("blocking_reasons", [])
+    blocker_text = "、".join(f"`{item}`" for item in blockers) if blockers else "无"
+    dataset_lines = "".join(
+        f"- {name}: path=`{item['path']}`, status=`{item['status']}`, "
+        f"content_read={str(item['content_read']).lower()}\n"
+        for name, item in summary["datasets"].items()
+    )
+    threshold_lines = "".join(
+        f"- {name}={value}\n" for name, value in summary["thresholds"].items()
+    )
+    capability_lines = "".join(
+        f"- {name}={str(value).lower() if isinstance(value, bool) else value}\n"
+        for name, value in summary["capability_disclosure"].items()
+    )
+    boundary_lines = "".join(
+        f"- {name}=false\n" for name in gate_artifacts.BOUNDARY_FIELDS
+    )
+    return (
+        "# Path Planner v2 Gate 4B 足式正式证据快照\n\n"
+        f"- Gate 状态：`{summary['status']}`\n"
+        f"- 下一路由：`{summary['next_required_change']}`\n"
+        f"- 完整阻塞项：{blocker_text}\n"
+        "- formal_metrics_status=not_evaluated\n\n"
+        "## 正式输入\n\n"
+        f"{dataset_lines}\n"
+        "正式独立证据未获批准，本次未读取输入内容。未取得 Gate 4 formal pass；"
+        "未读取或聚合正式输入；不构成动态步态或实机稳定性证据。\n\n"
+        "## 冻结目标门槛\n\n"
+        f"{threshold_lines}\n"
+        "## 能力披露\n\n"
+        f"{capability_lines}\n"
+        "## 安全边界\n\n"
+        f"{boundary_lines}\n"
+        "v1 仍为默认，v2 仍为 opt-in；不发布 checkpoint、不替换 default policy、"
+        "不连接 executor、不启动 canary。\n"
+    )
+
+
+def _gate4_dry_run_payloads(config: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    datasets = {
+        name: _gate4_dataset_not_run(config, name) for name in GATE4_INPUTS
+    }
+    benchmark_contract = _gate4_benchmark_contract_not_run()
+    checks = {
+        "preflight": False,
+        "postflight": False,
+        "focused": False,
+        "full": False,
+        "benchmark_contract": False,
+        "boundaries_strict_false": True,
+    }
+    summary = {
+        "schema_version": GATE4_SCHEMA_VERSION,
+        "stage_id": GATE4_STAGE_ID,
+        "status": "dry_run",
+        "next_required_change": GATE4_EXECUTE_ROUTE,
+        "blocking_reasons": [],
+        "formal_metrics_status": "not_evaluated",
+        "thresholds": dict(GATE4_THRESHOLDS),
+        "capability_disclosure": dict(GATE4_CAPABILITY_DISCLOSURE),
+        "dataset_contract": config["dataset_contract"],
+        "benchmark_contract": benchmark_contract,
+        "preflight": {"status": "not_run"},
+        "postflight": {"status": "not_run"},
+        "checks": checks,
+        "focused": {"status": "not_run"},
+        "full": {"status": "not_run"},
+        "datasets": datasets,
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    routing = {
+        "schema_version": "xunce-path-v2-gate4-routing/v1",
+        "stage_id": GATE4_STAGE_ID,
+        "status": "dry_run",
+        "route": GATE4_EXECUTE_ROUTE,
+        "blocking_reasons": [],
+        "formal_metrics_status": "not_evaluated",
+        "capability_disclosure": dict(GATE4_CAPABILITY_DISCLOSURE),
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    rows = [
+        {
+            "suite": "formal-input",
+            "dataset": name,
+            "path": config["inputs"][name],
+            "status": "not_run",
+            "content_read": False,
+        }
+        for name in GATE4_INPUTS
+    ]
+    rows.extend(
+        {
+            "suite": "boundary-review",
+            "check": field,
+            "status": "passed",
+            "value": False,
+        }
+        for field in sorted(gate_artifacts.BOUNDARY_FIELDS)
+    )
+    phases = [
+        {
+            "phase": phase,
+            "status": "completed" if phase == "boundary-review" else "not_run",
+        }
+        for phase in GATE4_PHASES
+    ]
+    review = {
+        "schema_version": "xunce-path-v2-gate4-review/v1",
+        "status": "dry_run",
+        "formal_metrics_status": "not_evaluated",
+        "thresholds": dict(GATE4_THRESHOLDS),
+        "capability_disclosure": dict(GATE4_CAPABILITY_DISCLOSURE),
+        "dataset_contract": config["dataset_contract"],
+        "benchmark_contract": benchmark_contract,
+        "checks": checks,
+        "preflight": summary["preflight"],
+        "postflight": summary["postflight"],
+        "datasets": datasets,
+        "execution": {"status": "not_run", "commands": [], "environment": {}},
+    }
+    return summary, routing, rows, phases, review
+
+
+def _evaluate_gate4(
+    *,
+    preflight: dict[str, Any],
+    postflight_ok: bool,
+    focused: dict[str, Any],
+    full: dict[str, Any],
+    benchmark_contract: dict[str, Any],
+) -> tuple[str, str, list[str], dict[str, bool]]:
+    checks = {
+        "preflight": preflight.get("status") == "passed",
+        "postflight": postflight_ok,
+        "focused": focused.get("status") == "passed",
+        "full": full.get("status") == "passed",
+        "benchmark_contract": benchmark_contract.get("status") == "passed",
+        "boundaries_strict_false": True,
+    }
+    if not checks["preflight"] or not checks["postflight"]:
+        return "failed", "restore_gate4_runtime_isolation", [], checks
+    if not checks["focused"]:
+        return "failed", "restore_gate4_focused_contracts", [], checks
+    if not checks["full"]:
+        return "failed", "restore_path_planner_v1_regression", [], checks
+    if not checks["benchmark_contract"]:
+        return "failed", "repair_gate4_benchmark_contract", [], checks
+    blockers = [blocker for _, blocker in GATE4_BLOCKERS]
+    return "blocked", blockers[0], blockers, checks
+
+
+def _gate4_phase_status(
+    phase: str,
+    *,
+    preflight: dict[str, Any],
+    focused: dict[str, Any],
+    full: dict[str, Any],
+    datasets: dict[str, dict[str, Any]],
+    postflight_ok: bool,
+) -> str:
+    if phase == "preflight":
+        return "completed" if preflight.get("status") == "passed" else "failed"
+    if phase == "focused":
+        status = focused.get("status", "not_run")
+        return "completed" if status == "passed" else status
+    if phase == "full":
+        status = full.get("status", "not_run")
+        return "completed" if status == "passed" else status
+    if phase == "boundary-review":
+        return "completed" if postflight_ok else "failed"
+    dataset_name = phase.replace("-", "_")
+    status = datasets[dataset_name]["status"]
+    return "blocked" if status in {"missing", "untrusted"} else "not_run"
+
+
+def _run_gate4_benchmark(
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    repo_root: Path,
+    execute_tests: bool,
+) -> dict[str, Any]:
+    _validate_gate4_config(config)
+    _validate_gate4_output_mode(output_root, execute_tests=execute_tests)
+    _assert_gate4_output_root_absent(output_root)
+    if not execute_tests:
+        summary, routing, rows, phases, review = _gate4_dry_run_payloads(config)
+    else:
+        datasets = {
+            name: _gate4_dataset_not_run(config, name) for name in GATE4_INPUTS
+        }
+        benchmark_contract = _gate4_benchmark_contract_not_run()
+        focused_run: dict[str, Any] = {"status": "not_run", "returncode": None}
+        full_run: dict[str, Any] = {"status": "not_run", "returncode": None}
+        focused: dict[str, Any] = {"status": "not_run"}
+        full: dict[str, Any] = {"status": "not_run"}
+        attempt_root: Path | None = None
+        env: dict[str, str] = {}
+
+        preflight = _gate4_preflight(config, repo_root)
+        if preflight.get("status") == "passed":
+            attempt_id = (
+                datetime.now(timezone.utc).strftime("attempt-%Y%m%dT%H%M%SZ")
+                + f"-{os.getpid()}"
+            )
+            attempt_root = Path(str(config["temp_root"])) / attempt_id
+            artifact_io.make_dirs(attempt_root / "mpl")
+            env = _common_env(repo_root, attempt_root)
+            python = Path(str(config["python"])).resolve()
+            focused_junit = attempt_root / "focused.junit.xml"
+            full_junit = attempt_root / "full.junit.xml"
+            focused_run = _run_pytest(
+                python=python,
+                repo_root=repo_root,
+                targets=GATE4_FOCUSED_TARGETS,
+                junit_path=focused_junit,
+                basetemp=attempt_root / "focused-basetemp",
+                env=env,
+            )
+            focused = _audit_focused_junit(focused_junit)
+            focused["returncode"] = focused_run["returncode"]
+            focused["status"] = (
+                "passed"
+                if focused.get("status") == "passed"
+                and focused_run["returncode"] == 0
+                else "failed"
+            )
+            full_run = _run_pytest(
+                python=python,
+                repo_root=repo_root,
+                targets=("tests",),
+                junit_path=full_junit,
+                basetemp=attempt_root / "full-basetemp",
+                env=env,
+            )
+            full = _audit_gate4_full_junit(
+                full_junit,
+                expected_legacy=LEGACY_EXPECTED,
+                allowed_skip_dependency=ALLOWED_SKIP_DEPENDENCY,
+                baseline_evidence=config["baseline_evidence"],
+            )
+            full["returncode"] = full_run["returncode"]
+            full["status"] = (
+                "passed"
+                if full.get("status") == "passed" and full_run["returncode"] == 0
+                else "failed"
+            )
+            if focused["status"] == "passed" and full["status"] == "passed":
+                benchmark_contract = _audit_gate4_benchmark_contract(repo_root)
+                if benchmark_contract.get("status") == "passed":
+                    datasets = {
+                        name: _gate4_dataset_status(
+                            dataset_name=name,
+                            path=Path(config["inputs"][name]),
+                            trusted_input=config["trusted_inputs"][name],
+                            formal_source=config["dataset_contract"]["formal_sources"][name],
+                        )
+                        for name in GATE4_INPUTS
+                    }
+
+        postflight = _gate4_postflight(config, repo_root)
+        postflight_ok = _postflight_matches(preflight, postflight)
+        status, route, blockers, checks = _evaluate_gate4(
+            preflight=preflight,
+            postflight_ok=postflight_ok,
+            focused=focused,
+            full=full,
+            benchmark_contract=benchmark_contract,
+        )
+        summary = {
+            "schema_version": GATE4_SCHEMA_VERSION,
+            "stage_id": GATE4_STAGE_ID,
+            "status": status,
+            "next_required_change": route,
+            "blocking_reasons": blockers,
+            "formal_metrics_status": "not_evaluated",
+            "thresholds": dict(GATE4_THRESHOLDS),
+            "capability_disclosure": dict(GATE4_CAPABILITY_DISCLOSURE),
+            "dataset_contract": config["dataset_contract"],
+            "benchmark_contract": benchmark_contract,
+            "preflight": preflight,
+            "postflight": postflight,
+            "checks": checks,
+            "focused": focused,
+            "full": full,
+            "datasets": datasets,
+            **gate_artifacts.BOUNDARY_FIELDS,
+        }
+        routing = {
+            "schema_version": "xunce-path-v2-gate4-routing/v1",
+            "stage_id": GATE4_STAGE_ID,
+            "status": status,
+            "route": route,
+            "blocking_reasons": blockers,
+            "formal_metrics_status": "not_evaluated",
+            "capability_disclosure": dict(GATE4_CAPABILITY_DISCLOSURE),
+            **gate_artifacts.BOUNDARY_FIELDS,
+        }
+        rows = [
+            {
+                "suite": "preflight",
+                "check": "git_import_identity",
+                "status": preflight.get("status", "failed"),
+            },
+            {
+                "suite": "focused",
+                "check": "pytest",
+                "status": focused.get("status", "not_run"),
+                "passed": focused.get("passed", 0),
+                "skipped": focused.get("skipped", 0),
+            },
+            {
+                "suite": "full",
+                "check": "pytest",
+                "status": full.get("status", "not_run"),
+                **full.get("total", _empty_counts()),
+            },
+            {
+                "suite": "benchmark-contract",
+                "check": "typed-evidence-api",
+                "status": benchmark_contract.get("status", "not_run"),
+            },
+        ]
+        rows.extend(
+            {
+                "suite": "formal-input",
+                "dataset": name,
+                "path": config["inputs"][name],
+                "status": datasets[name]["status"],
+                "content_read": False,
+                "reason": blocker,
+            }
+            for name, blocker in GATE4_BLOCKERS
+        )
+        rows.append(
+            {
+                "suite": "boundary-review",
+                "check": "runtime_postflight",
+                "status": "passed" if postflight_ok else "failed",
+            }
+        )
+        rows.extend(
+            {
+                "suite": "boundary-review",
+                "check": field,
+                "status": "passed",
+                "value": False,
+            }
+            for field in sorted(gate_artifacts.BOUNDARY_FIELDS)
+        )
+        phases = [
+            {
+                "phase": phase,
+                "status": _gate4_phase_status(
+                    phase,
+                    preflight=preflight,
+                    focused=focused,
+                    full=full,
+                    datasets=datasets,
+                    postflight_ok=postflight_ok,
+                ),
+            }
+            for phase in GATE4_PHASES
+        ]
+        isolation_env = {
+            key: env[key]
+            for key in (
+                "PYTHONNOUSERSITE",
+                "PYTHONDONTWRITEBYTECODE",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+                "PYTHONPATH",
+                "TEMP",
+                "TMP",
+                "MPLCONFIGDIR",
+            )
+            if key in env
+        }
+        review = {
+            "schema_version": "xunce-path-v2-gate4-review/v1",
+            "status": status,
+            "formal_metrics_status": "not_evaluated",
+            "thresholds": dict(GATE4_THRESHOLDS),
+            "capability_disclosure": dict(GATE4_CAPABILITY_DISCLOSURE),
+            "dataset_contract": config["dataset_contract"],
+            "benchmark_contract": benchmark_contract,
+            "checks": checks,
+            "preflight": preflight,
+            "postflight": postflight,
+            "datasets": datasets,
+            "execution": {
+                "attempt_root": str(attempt_root) if attempt_root is not None else None,
+                "isolation_env": isolation_env,
+                "focused_command_result": focused_run,
+                "full_command_result": full_run,
+            },
+        }
+    gate_artifacts.write_gate_artifacts_atomically(
+        output_root=output_root,
+        config=config,
+        summary=summary,
+        routing=routing,
+        rows=rows,
+        phases=phases,
+        review=review,
+        report=_gate4_report(summary),
+    )
+    return summary
+
+
 def run_gate_benchmark(
     config_path: Path,
     output_root: Path,
@@ -3282,6 +4073,13 @@ def run_gate_benchmark(
     repo_root = Path(repo_root).resolve()
     output_root = validate_output_root(repo_root, output_root)
     config = artifact_io.read_json(config_path)
+    if config.get("schema_version") == GATE4_SCHEMA_VERSION:
+        return _run_gate4_benchmark(
+            config=config,
+            output_root=output_root,
+            repo_root=repo_root,
+            execute_tests=execute_tests,
+        )
     if config.get("schema_version") == GATE3_SCHEMA_VERSION:
         return _run_gate3_benchmark(
             config=config,
