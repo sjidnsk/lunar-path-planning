@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -3969,6 +3970,52 @@ def test_gate4_schema_tamper_is_rejected_without_requiring_frozen_wording(
     assert not (tmp_path / "out").exists()
 
 
+@pytest.mark.parametrize(
+    ("tampered_field", "tampered_value"),
+    [
+        pytest.param(
+            "schema_version",
+            "xunce-path-v2-gate4-legged/v2",
+            id="stage-match",
+        ),
+        pytest.param(
+            "stage_id",
+            "xunce-path-v2-gate4-legged-other",
+            id="schema-match",
+        ),
+    ],
+)
+def test_gate4_like_tampered_config_precedes_illegal_repo_output_root(
+    tmp_path: Path,
+    monkeypatch,
+    tampered_field: str,
+    tampered_value: str,
+) -> None:
+    runner = _runner()
+    payload = _gate4_payload()
+    payload[tampered_field] = tampered_value
+    config_path = tmp_path / f"tampered-{tampered_field}.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Gate 4 root handling ran before frozen config rejection")
+
+    monkeypatch.setattr(runner, "_validate_gate4_output_mode", forbidden)
+    monkeypatch.setattr(runner, "_assert_gate4_output_root_absent", forbidden)
+    monkeypatch.setattr(runner, "validate_output_root", forbidden)
+    monkeypatch.setattr(
+        runner.gate_artifacts, "write_gate_artifacts_atomically", forbidden
+    )
+
+    with pytest.raises(ValueError, match="frozen"):
+        runner.run_gate_benchmark(
+            config_path,
+            REPO_ROOT / "illegal-gate4-output",
+            REPO_ROOT,
+            execute_tests=False,
+        )
+
+
 def test_gate4_rejects_joint_runtime_attempt_to_approve_every_null_anchor(
     tmp_path: Path,
     monkeypatch,
@@ -4089,10 +4136,12 @@ def test_gate4_dry_run_is_atomic_exact_eight_byte_stable_and_never_inspects_inpu
         assert review["capability_disclosure"] == GATE4_CAPABILITY_DISCLOSURE
         assert review["formal_metrics_status"] == "not_evaluated"
         phases = [
-            json.loads(line)["phase"]
+            json.loads(line)
             for line in (output / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
         ]
-        assert phases == GATE4_PHASES
+        assert phases == [
+            {"phase": phase, "status": "not_run"} for phase in GATE4_PHASES
+        ]
         report = (output / "report.md").read_text(encoding="utf-8")
         assert "simulation_proxy_static_crawl/v1" in report
         assert "dynamic_gait_claimed=false" in report
@@ -4132,6 +4181,53 @@ def test_gate4_public_mode_rejects_wrong_root_before_existence_or_writer(
             _gate4_config(tmp_path), output, REPO_ROOT, execute_tests=execute_tests
         )
     assert not (tmp_path / "not-formal").exists()
+
+
+def _windows_safe_lexical_test_path(path: Path) -> str:
+    absolute = os.path.abspath(os.fspath(path))
+    if os.name == "nt":
+        if absolute.startswith("\\\\?\\"):
+            return absolute
+        if absolute.startswith("\\\\"):
+            return "\\\\?\\UNC\\" + absolute[2:]
+        return "\\\\?\\" + absolute
+    return absolute
+
+
+def test_gate4_public_fresh_root_checks_raw_lexical_path_even_after_mode_resolve(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    raw_output = tmp_path / "lexical-parent" / ".." / "dangling-gate4"
+    expected_lexical = _windows_safe_lexical_test_path(raw_output)
+    original_resolve = Path.resolve
+    resolved_alias = tmp_path / "resolved-target-that-does-not-exist"
+    lexists_paths: list[str] = []
+
+    def tracked_resolve(path: Path, *args, **kwargs):
+        if str(path) == str(raw_output):
+            return resolved_alias
+        return original_resolve(path, *args, **kwargs)
+
+    def fake_lexists(path) -> bool:
+        lexists_paths.append(str(path))
+        assert str(path) == expected_lexical
+        return True
+
+    monkeypatch.setattr(Path, "resolve", tracked_resolve)
+    monkeypatch.setattr(runner.os.path, "lexists", fake_lexists)
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts_atomically",
+        lambda **kwargs: pytest.fail("existing lexical Gate 4 root reached writer"),
+    )
+
+    with pytest.raises(RuntimeError, match="Gate 4 output_root already exists"):
+        runner.run_gate_benchmark(
+            _gate4_config(tmp_path), raw_output, REPO_ROOT, execute_tests=False
+        )
+    assert lexists_paths == [expected_lexical]
 
 
 @pytest.mark.parametrize(

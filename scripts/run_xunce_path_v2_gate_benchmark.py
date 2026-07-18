@@ -1023,9 +1023,17 @@ def _assert_gate3_output_root_absent(output_root: Path) -> None:
         raise RuntimeError("Gate 3 output_root already exists")
 
 
+def _windows_safe_lexical_absolute_path(path: str | Path) -> str:
+    absolute = os.path.abspath(os.fspath(path))
+    if os.name != "nt" or absolute.startswith("\\\\?\\"):
+        return absolute
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
 def _assert_gate4_output_root_absent(output_root: Path) -> None:
-    root = Path(output_root).resolve()
-    if os.path.lexists(artifact_io.windows_safe_path(root)):
+    if os.path.lexists(_windows_safe_lexical_absolute_path(output_root)):
         raise RuntimeError("Gate 4 output_root already exists")
 
 
@@ -3756,7 +3764,7 @@ def _gate4_dry_run_payloads(config: dict[str, Any]) -> tuple[dict[str, Any], ...
     phases = [
         {
             "phase": phase,
-            "status": "completed" if phase == "boundary-review" else "not_run",
+            "status": "not_run",
         }
         for phase in GATE4_PHASES
     ]
@@ -3836,9 +3844,11 @@ def _run_gate4_benchmark(
     repo_root: Path,
     execute_tests: bool,
 ) -> dict[str, Any]:
+    output_root = Path(output_root)
     _validate_gate4_config(config)
     _validate_gate4_output_mode(output_root, execute_tests=execute_tests)
     _assert_gate4_output_root_absent(output_root)
+    output_root = validate_output_root(repo_root, output_root)
     if not execute_tests:
         summary, routing, rows, phases, review = _gate4_dry_run_payloads(config)
     else:
@@ -4071,15 +4081,18 @@ def run_gate_benchmark(
 ) -> dict[str, Any]:
     config_path = Path(config_path).resolve()
     repo_root = Path(repo_root).resolve()
-    output_root = validate_output_root(repo_root, output_root)
     config = artifact_io.read_json(config_path)
-    if config.get("schema_version") == GATE4_SCHEMA_VERSION:
+    if (
+        config.get("schema_version") == GATE4_SCHEMA_VERSION
+        or config.get("stage_id") == GATE4_STAGE_ID
+    ):
         return _run_gate4_benchmark(
             config=config,
-            output_root=output_root,
+            output_root=Path(output_root),
             repo_root=repo_root,
             execute_tests=execute_tests,
         )
+    output_root = validate_output_root(repo_root, output_root)
     if config.get("schema_version") == GATE3_SCHEMA_VERSION:
         return _run_gate3_benchmark(
             config=config,
