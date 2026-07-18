@@ -6,6 +6,7 @@ import json
 import sys
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,7 @@ ORIGINAL_BASE_COMMIT = "b635740ee021258ef31811ec87c60add839fc5f9"
 GATE_INPUT_COMMIT = "b2a36d31f3802eb5a37fcfcf594f74a499aa719b"
 GATE2_INPUT_COMMIT = "0cc3eb9728a77473dd436dc2b05e2df009a296c7"
 GATE3_INPUT_COMMIT = "d6b6b93c7e2c148195cd907010f46bd88e97ce2b"
+GATE4_INPUT_COMMIT = "b7271935d0ad39a597df789e51aa62caa525eec6"
 EXPECTED_PYTHON_VERSION = "3.12.13"
 FOCUSED_TARGETS = [
     "tests/test_v2_contracts.py",
@@ -78,6 +80,96 @@ GATE3_DISABLED_ACCELERATORS = [
     {"accelerator_id": "lazy_validation", "reason": "not_integrated_into_provider"},
     {"accelerator_id": "multi_heuristic", "reason": "not_integrated_into_provider"},
     {"accelerator_id": "validation_cache", "reason": "not_integrated_into_provider"},
+]
+GATE4_FOCUSED_TARGETS = [
+    "tests/test_v2_benchmark.py",
+    "tests/test_v2_legged_oracle.py",
+    "tests/test_v2_legged_provider.py",
+    "tests/test_v2_route_validation.py",
+    "tests/test_v2_profiles.py",
+    "tests/test_v2_geometry.py",
+    "tests/test_v2_search.py",
+    "tests/test_v2_api.py",
+    "tests/test_v2_runtime.py",
+    "tests/test_v2_contracts.py",
+    "tests/test_v2_serialization.py",
+    "tests/test_v2_fine_safety_anchor.py",
+    "tests/test_hybrid_astar.py",
+    "tests/test_astar.py",
+    "../tests/test_xunce_path_v2_gate_benchmark.py",
+]
+GATE4_INPUTS = {
+    "primitive_audit": "D:/xunce/inputs/path_v2/g4/independent_legged_oracle_labels.jsonl",
+    "exact_map_quality": "D:/xunce/inputs/path_v2/g4/independent_legged_exact_map_optima.jsonl",
+    "standard_episodes": "D:/xunce/inputs/path_v2/g4/standard_legged_schedule.jsonl",
+}
+GATE4_THRESHOLDS = {
+    "min_primitive_independent_samples": 10000,
+    "max_primitive_false_positives": 0,
+    "min_primitive_recall": 0.98,
+    "min_primitive_complete_l2_ratio": 1.0,
+    "min_exact_map_independent_cases": 1,
+    "min_exact_map_success_ratio": 1.0,
+    "min_exact_map_resource_cost_ratio": 1.0,
+    "max_exact_map_resource_cost_ratio": 1.10,
+    "min_exact_map_complete_l2_ratio": 1.0,
+    "min_standard_independent_episodes": 100,
+    "min_standard_reachable_success_ratio": 0.99,
+    "max_standard_unreachable_successes": 0,
+    "min_standard_complete_l2_ratio": 1.0,
+    "max_standard_p95_runtime_ms": 250.0,
+    "hard_timeout_ms": 2000.0,
+    "max_hard_timeout_violations": 0,
+}
+GATE4_CAPABILITY_DISCLOSURE = {
+    "platform_kind": "legged",
+    "platform_type": "legged_static_crawl",
+    "capability": "simulation_proxy",
+    "capability_revision": "simulation_proxy_static_crawl/v1",
+    "primitive_capability": "simulation_proxy",
+    "resource_proxy_id": "legged_static_crawl_relative_resource/v1",
+    "route_validator_id": "path-planner-v2-legged-route-l2/v1",
+    "dynamic_gait_claimed": False,
+    "real_robot_stability_claimed": False,
+}
+GATE4_DATASET_CONTRACT = {
+    "schema_version": "xunce-path-v2-gate4b-blocked-intake/v1",
+    "accepts_formal_inputs": False,
+    "future_stage_required": "xunce-path-v2-gate4c-legged-evidence",
+    "formal_sources": {
+        "primitive_audit": "independent-legged-oracle/v1",
+        "exact_map_quality": "independent-legged-exact-solver/v1",
+        "standard_episodes": "independent-standard-legged/v1",
+    },
+}
+GATE4_TRUSTED_INPUT = {
+    "approved_input_sha256": None,
+    "approved_case_envelope_sha256": None,
+    "approved_producer_id": None,
+    "approved_producer_revision": None,
+    "approval_id": None,
+    "approved_provider_source_commit": "7d5c4dfc8e2a374855e6d8b962b69466c3353265",
+    "approved_provider_build_id": None,
+    "approved_collector_id": None,
+    "approved_collector_revision": None,
+    "approved_profile_id": "legged-static-crawl/v1",
+    "approved_capability_revision": "simulation_proxy_static_crawl/v1",
+    "approved_step_validator_id": "path-planner-v2-legged-static-stability/v1",
+    "approved_route_validator_id": "path-planner-v2-legged-route-l2/v1",
+}
+GATE4_BLOCKERS = [
+    "provide_independent_legged_oracle_labels",
+    "provide_independent_legged_exact_map_optima",
+    "provide_standard_legged_schedule",
+]
+GATE4_PHASES = [
+    "preflight",
+    "focused",
+    "full",
+    "primitive-audit",
+    "exact-map-quality",
+    "standard-episodes",
+    "boundary-review",
 ]
 CANONICAL_ARTIFACTS = {
     "config.json",
@@ -300,6 +392,84 @@ def _gate3_config(tmp_path: Path, *, boundaries=None) -> Path:
     }
     path = tmp_path / "gate3.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _gate4_payload(
+    *,
+    formal_output_root: str = "D:/xunce/out/path_v2/g4",
+    temp_root: str = "D:/xunce/tmp/path_v2_g4",
+    inputs: dict[str, str] | None = None,
+    boundaries=None,
+) -> dict:
+    return {
+        "schema_version": "xunce-path-v2-gate4-legged/v1",
+        "stage_id": "xunce-path-v2-gate4-legged",
+        "python": "D:/conda_envs/lunar-explorer/python.exe",
+        "expected_python_version": "3.12.13",
+        "expected_git": {
+            "branch": EXPECTED_BRANCH,
+            "base_commit": ORIGINAL_BASE_COMMIT,
+            "gate_input_commit": GATE4_INPUT_COMMIT,
+            "nested_branch": EXPECTED_BRANCH,
+        },
+        "formal_output_root": formal_output_root,
+        "temp_root": temp_root,
+        "focused": {
+            "working_directory": "path-planner",
+            "pythonpath": ["path-planner/src"],
+            "pytest_targets": list(GATE4_FOCUSED_TARGETS),
+        },
+        "full": {
+            "working_directory": "path-planner",
+            "pythonpath": ["path-planner/src"],
+            "pytest_targets": ["tests"],
+            "legacy_expected": {
+                "passed": 156,
+                "skipped": 17,
+                "failures": 0,
+                "errors": 0,
+            },
+            "allowed_skip_dependency": "pydrake",
+        },
+        "inputs": dict(GATE4_INPUTS if inputs is None else inputs),
+        "baseline_evidence": {
+            "schema_version": "xunce-path-v2-gate0-path-planner-junit/v1",
+            "path": "D:/xunce/out/path_v2/g0/path_planner_baseline.junit.xml",
+            "sha256": "90a02eb6af78805bfdf2fcce4828283cb3f4d77f30aae55519f533896a06e676",
+            "test_count": 173,
+        },
+        "thresholds": dict(GATE4_THRESHOLDS),
+        "capability_disclosure": dict(GATE4_CAPABILITY_DISCLOSURE),
+        "dataset_contract": deepcopy(GATE4_DATASET_CONTRACT),
+        "trusted_inputs": {
+            dataset: dict(GATE4_TRUSTED_INPUT) for dataset in GATE4_INPUTS
+        },
+        "boundaries": dict(BOUNDARIES if boundaries is None else boundaries),
+        "pass_route": "implement_path_v2_lunar_ballistics_and_hopper_proxy_profile",
+    }
+
+
+def _gate4_config(
+    tmp_path: Path,
+    *,
+    formal_output_root: str = "D:/xunce/out/path_v2/g4",
+    temp_root: str = "D:/xunce/tmp/path_v2_g4",
+    inputs: dict[str, str] | None = None,
+    boundaries=None,
+) -> Path:
+    path = tmp_path / "gate4.json"
+    path.write_text(
+        json.dumps(
+            _gate4_payload(
+                formal_output_root=formal_output_root,
+                temp_root=temp_root,
+                inputs=inputs,
+                boundaries=boundaries,
+            )
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -3511,3 +3681,682 @@ def test_gate3_rejects_every_existing_output_root_before_side_effects(
     assert forbidden_calls == []
     assert output_root.is_dir()
     assert snapshot() == before
+
+
+def _gate4_tampers() -> list:
+    cases = [
+        pytest.param(("schema_version",), "xunce-path-v2-gate4-legged/v2", id="schema"),
+        pytest.param(("stage_id",), "other", id="stage"),
+        pytest.param(("python",), "D:/other/python.exe", id="python"),
+        pytest.param(("expected_python_version",), "0.0.0", id="python-version"),
+        pytest.param(("expected_git", "branch"), "codex/other", id="branch"),
+        pytest.param(("expected_git", "base_commit"), GATE4_INPUT_COMMIT, id="base"),
+        pytest.param(("expected_git", "gate_input_commit"), ORIGINAL_BASE_COMMIT, id="input-commit"),
+        pytest.param(("expected_git", "nested_branch"), "codex/other", id="nested-branch"),
+        pytest.param(("formal_output_root",), "D:/xunce/out/path_v2/g4-other", id="formal-root"),
+        pytest.param(("temp_root",), "D:/xunce/tmp/path_v2_g4_other", id="temp-root"),
+        pytest.param(("focused", "working_directory"), ".", id="focused-cwd"),
+        pytest.param(("focused", "pythonpath"), ["src"], id="focused-pythonpath"),
+        pytest.param(("focused", "pytest_targets"), GATE4_FOCUSED_TARGETS[:-1], id="focused-targets"),
+        pytest.param(("full", "working_directory"), ".", id="full-cwd"),
+        pytest.param(("full", "pythonpath"), ["src"], id="full-pythonpath"),
+        pytest.param(("full", "pytest_targets"), ["tests", "extra"], id="full-targets"),
+        pytest.param(("full", "legacy_expected", "passed"), 157, id="legacy-count"),
+        pytest.param(("full", "allowed_skip_dependency"), "numpy", id="skip-dependency"),
+        pytest.param(("baseline_evidence", "sha256"), "0" * 64, id="baseline-hash"),
+        pytest.param(("pass_route",), "release_default_policy", id="pass-route"),
+    ]
+    cases.extend(
+        pytest.param(("inputs", name), f"D:/wrong/{name}.jsonl", id=f"input-{name}")
+        for name in GATE4_INPUTS
+    )
+    cases.extend(
+        pytest.param(("thresholds", name), True, id=f"threshold-{name}")
+        for name in GATE4_THRESHOLDS
+    )
+    cases.extend(
+        pytest.param(
+            ("capability_disclosure", name),
+            (not value if isinstance(value, bool) else "tampered"),
+            id=f"capability-{name}",
+        )
+        for name, value in GATE4_CAPABILITY_DISCLOSURE.items()
+    )
+    cases.extend(
+        pytest.param(
+            ("dataset_contract", "formal_sources", name),
+            "self-labelled/v1",
+            id=f"source-{name}",
+        )
+        for name in GATE4_INPUTS
+    )
+    cases.extend(
+        [
+            pytest.param(
+                ("dataset_contract", "accepts_formal_inputs"), True, id="accepts-inputs"
+            ),
+            pytest.param(
+                ("dataset_contract", "schema_version"), "other", id="intake-schema"
+            ),
+            pytest.param(
+                ("dataset_contract", "future_stage_required"), "this-stage", id="future-stage"
+            ),
+        ]
+    )
+    cases.extend(
+        pytest.param(
+            ("trusted_inputs", dataset, name),
+            "runtime-self-report" if value is None else "tampered",
+            id=f"trust-{dataset}-{name}",
+        )
+        for dataset in GATE4_INPUTS
+        for name, value in GATE4_TRUSTED_INPUT.items()
+    )
+    cases.extend(
+        pytest.param(("boundaries", name), True, id=f"boundary-{name}")
+        for name in BOUNDARIES
+    )
+    return cases
+
+
+def _set_nested_value(payload: dict, field_path: tuple[str, ...], value) -> None:
+    target = payload
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = value
+
+
+def _install_gate4_synthetic_contract(monkeypatch, runner, tmp_path: Path):
+    formal_root = (tmp_path / "formal-g4").resolve()
+    temp_root = (tmp_path / "attempts").resolve()
+    input_root = (tmp_path / "inputs").resolve()
+    inputs = {
+        "primitive_audit": (input_root / "primitive.jsonl").as_posix(),
+        "exact_map_quality": (input_root / "exact.jsonl").as_posix(),
+        "standard_episodes": (input_root / "standard.jsonl").as_posix(),
+    }
+    monkeypatch.setattr(runner, "GATE4_FORMAL_OUTPUT_ROOT", formal_root, raising=False)
+    monkeypatch.setattr(runner, "GATE4_FORMAL_TEMP_ROOT", temp_root, raising=False)
+    monkeypatch.setattr(runner, "GATE4_INPUTS", dict(inputs), raising=False)
+    config = _gate4_payload(
+        formal_output_root=formal_root.as_posix(),
+        temp_root=temp_root.as_posix(),
+        inputs=inputs,
+    )
+    return config, formal_root, inputs
+
+
+def _install_gate4_green_code_mocks(
+    monkeypatch,
+    runner,
+    events: list[str],
+    *,
+    preflight_status: str = "passed",
+    focused_status: str = "passed",
+    full_status: str = "passed",
+    contract_status: str = "passed",
+    postflight_ok: bool = True,
+) -> None:
+    monkeypatch.setattr(
+        runner,
+        "_gate4_preflight",
+        lambda config, repo_root: events.append("preflight")
+        or {"status": preflight_status},
+        raising=False,
+    )
+
+    def fake_pytest(*, targets, **kwargs):
+        suite = "focused" if tuple(targets) == tuple(GATE4_FOCUSED_TARGETS) else "full"
+        events.append(suite)
+        status = focused_status if suite == "focused" else full_status
+        return {"command": ["pytest", *targets], "returncode": 0 if status == "passed" else 1}
+
+    monkeypatch.setattr(runner, "_run_pytest", fake_pytest)
+    monkeypatch.setattr(
+        runner,
+        "_audit_focused_junit",
+        lambda path: {"status": focused_status, "passed": 1, "skipped": 0},
+    )
+    monkeypatch.setattr(
+        runner,
+        "_audit_gate4_full_junit",
+        lambda *args, **kwargs: {
+            "schema_version": "xunce-path-v2-gate4-full-junit-audit/v1",
+            "status": full_status,
+            "total": {"passed": 200, "skipped": 17, "failures": 0, "errors": 0},
+            "baseline_not_reduced": full_status == "passed",
+            "v2": {"passed": 27, "skipped": 0, "failures": 0, "errors": 0},
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_audit_gate4_benchmark_contract",
+        lambda repo_root: events.append("benchmark-contract")
+        or {
+            "schema_version": "xunce-path-v2-gate4-benchmark-contract-audit/v1",
+            "status": contract_status,
+            "hard_timeout_ms": 2000.0,
+            "typed_row_api": True,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_gate4_postflight",
+        lambda config, repo_root: events.append("postflight") or {"status": "passed"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_postflight_matches",
+        lambda preflight, postflight: postflight_ok,
+    )
+
+
+@pytest.mark.parametrize(("field_path", "tampered"), _gate4_tampers())
+def test_gate4_frozen_config_rejects_every_tamper_before_side_effects(
+    tmp_path: Path,
+    monkeypatch,
+    field_path,
+    tampered,
+) -> None:
+    runner = _runner()
+    payload = _gate4_payload()
+    _set_nested_value(payload, field_path, tampered)
+    config_path = tmp_path / "tampered-gate4.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Gate 4 side effect occurred before config rejection")
+
+    monkeypatch.setattr(runner, "_gate4_preflight", forbidden, raising=False)
+    monkeypatch.setattr(runner, "_audit_gate4_benchmark_contract", forbidden, raising=False)
+    monkeypatch.setattr(runner, "_gate4_dataset_status", forbidden, raising=False)
+    monkeypatch.setattr(runner, "_assert_gate4_output_root_absent", forbidden, raising=False)
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
+    monkeypatch.setattr(runner.artifact_io, "make_dirs", forbidden)
+    monkeypatch.setattr(runner.gate_artifacts, "write_gate_artifacts_atomically", forbidden)
+
+    with pytest.raises(ValueError, match="frozen"):
+        runner.run_gate_benchmark(
+            config_path,
+            tmp_path / "out",
+            REPO_ROOT,
+            execute_tests=False,
+        )
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
+def test_gate4_config_rejects_missing_or_extra_top_level_key(
+    tmp_path: Path,
+    monkeypatch,
+    mutation: str,
+) -> None:
+    runner = _runner()
+    payload = _gate4_payload()
+    if mutation == "missing":
+        payload.pop("dataset_contract")
+    else:
+        payload["runtime_trust_override"] = True
+    config_path = tmp_path / "bad-keys.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts_atomically",
+        lambda **kwargs: pytest.fail("malformed Gate 4 config wrote artifacts"),
+    )
+    with pytest.raises(ValueError, match="top-level keys"):
+        runner.run_gate_benchmark(config_path, tmp_path / "out", REPO_ROOT, execute_tests=False)
+
+
+def test_checked_in_gate4_config_and_registry_match_exact_frozen_contract(tmp_path: Path) -> None:
+    checked_in = json.loads(
+        (REPO_ROOT / "configs" / "xunce_path_v2_gate4_legged_v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert checked_in == _gate4_payload()
+    registry = json.loads(
+        (REPO_ROOT / "configs" / "stage_registry.json").read_text(encoding="utf-8")
+    )
+    assert registry["stages"]["xunce-path-v2-gate4-legged"] == {
+        "runner": "scripts/run_xunce_path_v2_gate_benchmark.py",
+        "default_config": "configs/xunce_path_v2_gate4_legged_v1.json",
+        "default_output_root": "D:/xunce/out/path_v2/g4",
+        "args": [
+            "--config",
+            "{config}",
+            "--output-root",
+            "{output_root}",
+            "--repo-root",
+            "{repo_root}",
+        ],
+    }
+
+
+def test_gate4_dry_run_is_atomic_exact_eight_byte_stable_and_never_inspects_inputs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Gate 4 dry run performed code audit or input inspection")
+
+    monkeypatch.setattr(runner, "_gate4_preflight", forbidden, raising=False)
+    monkeypatch.setattr(runner, "_run_pytest", forbidden)
+    monkeypatch.setattr(runner, "_audit_gate4_benchmark_contract", forbidden, raising=False)
+    monkeypatch.setattr(runner, "_gate4_dataset_status", forbidden, raising=False)
+    monkeypatch.setattr(runner.artifact_io, "path_is_file", forbidden)
+    outputs = [tmp_path / "dry-a", tmp_path / "dry-b"]
+    summaries = [
+        runner.run_gate_benchmark(
+            _gate4_config(tmp_path), output, REPO_ROOT, execute_tests=False
+        )
+        for output in outputs
+    ]
+
+    for summary, output in zip(summaries, outputs, strict=True):
+        assert summary["status"] == "dry_run"
+        assert summary["next_required_change"] == "execute_gate4_legged_evidence"
+        assert summary["blocking_reasons"] == []
+        assert summary["formal_metrics_status"] == "not_evaluated"
+        assert summary["thresholds"] == GATE4_THRESHOLDS
+        assert summary["capability_disclosure"] == GATE4_CAPABILITY_DISCLOSURE
+        assert all(item["status"] == "not_run" for item in summary["datasets"].values())
+        assert all(item["content_read"] is False for item in summary["datasets"].values())
+        assert all(
+            item["trusted_input"] == GATE4_TRUSTED_INPUT
+            for item in summary["datasets"].values()
+        )
+        assert {path.name for path in output.iterdir()} == CANONICAL_ARTIFACTS
+        routing = json.loads((output / "routing.json").read_text(encoding="utf-8"))
+        review = json.loads((output / "review.json").read_text(encoding="utf-8"))
+        assert routing["capability_disclosure"] == GATE4_CAPABILITY_DISCLOSURE
+        assert review["capability_disclosure"] == GATE4_CAPABILITY_DISCLOSURE
+        assert review["formal_metrics_status"] == "not_evaluated"
+        phases = [
+            json.loads(line)["phase"]
+            for line in (output / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert phases == GATE4_PHASES
+        report = (output / "report.md").read_text(encoding="utf-8")
+        assert "simulation_proxy_static_crawl/v1" in report
+        assert "dynamic_gait_claimed=false" in report
+        assert "real_robot_stability_claimed=false" in report
+        assert "v1 仍为默认，v2 仍为 opt-in" in report
+        assert "不发布 checkpoint" in report
+        assert "不替换 default policy" in report
+        assert "不连接 executor" in report
+        assert "不启动 canary" in report
+        assert list(output.parent.glob(f".{output.name}.staging-*")) == []
+    assert {
+        path.name: path.read_bytes() for path in outputs[0].iterdir()
+    } == {path.name: path.read_bytes() for path in outputs[1].iterdir()}
+
+
+@pytest.mark.parametrize(
+    ("execute_tests", "use_formal_root"),
+    [(False, True), (True, False)],
+    ids=["dry-run-cannot-occupy-formal", "formal-requires-exact-root"],
+)
+def test_gate4_public_mode_rejects_wrong_root_before_existence_or_writer(
+    tmp_path: Path,
+    monkeypatch,
+    execute_tests: bool,
+    use_formal_root: bool,
+) -> None:
+    runner = _runner()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("wrong Gate 4 mode/root reached a side effect")
+
+    monkeypatch.setattr(runner, "_assert_gate4_output_root_absent", forbidden, raising=False)
+    monkeypatch.setattr(runner.gate_artifacts, "write_gate_artifacts_atomically", forbidden)
+    output = Path("D:/xunce/out/path_v2/g4") if use_formal_root else tmp_path / "not-formal"
+    with pytest.raises(ValueError, match="formal_output_root"):
+        runner.run_gate_benchmark(
+            _gate4_config(tmp_path), output, REPO_ROOT, execute_tests=execute_tests
+        )
+    assert not (tmp_path / "not-formal").exists()
+
+
+@pytest.mark.parametrize("root_kind", ["directory", "file"])
+def test_gate4_formal_root_must_be_fresh_before_any_code_work(
+    tmp_path: Path,
+    monkeypatch,
+    root_kind: str,
+) -> None:
+    runner = _runner()
+    config, formal_root, _ = _install_gate4_synthetic_contract(monkeypatch, runner, tmp_path)
+    if root_kind == "directory":
+        formal_root.mkdir()
+    else:
+        formal_root.write_bytes(b"preserve")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Gate 4 code work ran before fresh-root rejection")
+
+    monkeypatch.setattr(runner, "_gate4_preflight", forbidden, raising=False)
+    monkeypatch.setattr(runner, "_run_pytest", forbidden)
+    monkeypatch.setattr(runner.gate_artifacts, "write_gate_artifacts_atomically", forbidden)
+    with pytest.raises(RuntimeError, match="Gate 4 output_root already exists"):
+        runner._run_gate4_benchmark(
+            config=config,
+            output_root=formal_root,
+            repo_root=REPO_ROOT,
+            execute_tests=True,
+        )
+
+
+def _run_captured_gate4_formal(tmp_path: Path, monkeypatch, *, present: bool = False):
+    runner = _runner()
+    config, formal_root, inputs = _install_gate4_synthetic_contract(
+        monkeypatch, runner, tmp_path
+    )
+    if present:
+        for index, path_string in enumerate(inputs.values()):
+            path = Path(path_string)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\xffmalicious self-reported pass" + bytes([index]))
+    events: list[str] = []
+    original_is_file = runner.artifact_io.path_is_file
+    input_names = {str(Path(path).resolve()): name for name, path in inputs.items()}
+
+    def tracked_is_file(path):
+        events.append(f"presence:{input_names[str(Path(path).resolve())]}")
+        return original_is_file(path)
+
+    monkeypatch.setattr(runner.artifact_io, "path_is_file", tracked_is_file)
+    _install_gate4_green_code_mocks(monkeypatch, runner, events)
+    captured: dict = {}
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        return {"schema_version": "xunce-path-v2-gate-manifest/v1", "artifact_count": 7}
+
+    monkeypatch.setattr(runner.gate_artifacts, "write_gate_artifacts_atomically", capture)
+    summary = runner._run_gate4_benchmark(
+        config=config,
+        output_root=formal_root,
+        repo_root=REPO_ROOT,
+        execute_tests=True,
+    )
+    return runner, summary, captured, events, inputs
+
+
+def test_gate4_all_missing_blocks_in_fixed_order_only_after_all_code_audits(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner, summary, captured, events, _ = _run_captured_gate4_formal(
+        tmp_path, monkeypatch
+    )
+    assert events == [
+        "preflight",
+        "focused",
+        "full",
+        "benchmark-contract",
+        "presence:primitive_audit",
+        "presence:exact_map_quality",
+        "presence:standard_episodes",
+        "postflight",
+    ]
+    assert summary["status"] == "blocked"
+    assert summary["next_required_change"] == GATE4_BLOCKERS[0]
+    assert summary["blocking_reasons"] == GATE4_BLOCKERS
+    assert [summary["datasets"][name]["status"] for name in GATE4_INPUTS] == [
+        "missing",
+        "missing",
+        "missing",
+    ]
+    assert summary["formal_metrics_status"] == "not_evaluated"
+    assert "implement_path_v2_lunar_ballistics_and_hopper_proxy_profile" not in json.dumps(
+        {key: value for key, value in summary.items() if key != "config"}
+    )
+    assert runner.status_exit_code(summary["status"]) == 0
+    assert [phase["phase"] for phase in captured["phases"]] == GATE4_PHASES
+    assert [
+        row["dataset"]
+        for row in captured["rows"]
+        if row.get("suite") == "formal-input"
+    ] == list(GATE4_INPUTS)
+    assert "formal_metrics_status=not_evaluated" in captured["report"]
+
+
+def test_gate4_present_unapproved_files_are_untrusted_and_never_read_or_parsed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Gate 4B read or parsed unapproved formal input")
+
+    monkeypatch.setattr(runner.artifact_io, "read_bytes", forbidden)
+    monkeypatch.setattr(runner.artifact_io, "read_json", forbidden)
+    monkeypatch.setattr(runner.artifact_io, "read_jsonl", forbidden)
+    monkeypatch.setattr(runner, "_load_gate2_dataset", forbidden)
+    runner, summary, captured, _, _ = _run_captured_gate4_formal(
+        tmp_path, monkeypatch, present=True
+    )
+
+    assert summary["status"] == "blocked"
+    assert summary["blocking_reasons"] == GATE4_BLOCKERS
+    assert [summary["datasets"][name]["status"] for name in GATE4_INPUTS] == [
+        "untrusted",
+        "untrusted",
+        "untrusted",
+    ]
+    assert all(item["content_read"] is False for item in summary["datasets"].values())
+    assert all(
+        item["trusted_input"] == GATE4_TRUSTED_INPUT
+        for item in summary["datasets"].values()
+    )
+    public = json.dumps(
+        {
+            "summary": summary,
+            "routing": captured["routing"],
+            "review": captured["review"],
+            "rows": captured["rows"],
+        },
+        sort_keys=True,
+    )
+    for forbidden_key in (
+        "actual_input_sha256",
+        "actual_hash",
+        "actual_rows",
+        "metric_summary",
+        '"metrics"',
+        '"provenance"',
+    ):
+        assert forbidden_key not in public
+    assert "passed" not in {
+        row.get("status") for row in captured["rows"] if row.get("suite") == "formal-input"
+    }
+
+
+def test_gate4_benchmark_contract_failure_precedes_missing_input_blockers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    config, formal_root, _ = _install_gate4_synthetic_contract(monkeypatch, runner, tmp_path)
+    events: list[str] = []
+    _install_gate4_green_code_mocks(
+        monkeypatch, runner, events, contract_status="failed"
+    )
+    monkeypatch.setattr(
+        runner.artifact_io,
+        "path_is_file",
+        lambda path: pytest.fail("input presence checked after benchmark contract failure"),
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts_atomically",
+        lambda **kwargs: captured.update(kwargs) or {},
+    )
+    summary = runner._run_gate4_benchmark(
+        config=config, output_root=formal_root, repo_root=REPO_ROOT, execute_tests=True
+    )
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == "repair_gate4_benchmark_contract"
+    assert summary["blocking_reasons"] == []
+    assert all(item["status"] == "not_run" for item in summary["datasets"].values())
+    assert runner.status_exit_code(summary["status"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_route"),
+    [
+        ("origin", "repair_gate4_benchmark_contract"),
+        ("timeout", "repair_gate4_benchmark_contract"),
+        ("row-class", "repair_gate4_benchmark_contract"),
+        ("aggregate", "repair_gate4_benchmark_contract"),
+    ],
+)
+def test_gate4_benchmark_contract_audit_fails_closed_without_calling_aggregates(
+    monkeypatch,
+    mutation: str,
+    expected_route: str,
+) -> None:
+    runner = _runner()
+
+    class PrimitiveAuditRowV2:
+        pass
+
+    class ExactMapQualityRowV2:
+        pass
+
+    class StandardEpisodeRowV2:
+        pass
+
+    def aggregate_must_not_run(*args, **kwargs):
+        raise AssertionError("Gate 4B benchmark audit called an aggregate")
+
+    module = SimpleNamespace(
+        __file__=str(REPO_ROOT / "path-planner/src/path_planner/v2/benchmark.py"),
+        HARD_TIMEOUT_MS_V2=2000.0,
+        PrimitiveAuditRowV2=PrimitiveAuditRowV2,
+        ExactMapQualityRowV2=ExactMapQualityRowV2,
+        StandardEpisodeRowV2=StandardEpisodeRowV2,
+        aggregate_primitive_audit_v2=aggregate_must_not_run,
+        aggregate_exact_map_quality_v2=aggregate_must_not_run,
+        aggregate_standard_episodes_v2=aggregate_must_not_run,
+    )
+    if mutation == "origin":
+        module.__file__ = "D:/other/benchmark.py"
+    elif mutation == "timeout":
+        module.HARD_TIMEOUT_MS_V2 = 1999.0
+    elif mutation == "row-class":
+        module.PrimitiveAuditRowV2 = None
+    else:
+        module.aggregate_primitive_audit_v2 = None
+    monkeypatch.setattr(runner.importlib, "import_module", lambda name: module)
+    audit = runner._audit_gate4_benchmark_contract(REPO_ROOT)
+    assert audit["status"] == "failed"
+    assert audit["repair_route"] == expected_route
+
+
+@pytest.mark.parametrize(
+    ("failure", "route"),
+    [
+        ("preflight", "restore_gate4_runtime_isolation"),
+        ("focused", "restore_gate4_focused_contracts"),
+        ("full", "restore_path_planner_v1_regression"),
+        ("postflight", "restore_gate4_runtime_isolation"),
+    ],
+)
+def test_gate4_code_failures_take_precedence_over_external_blockers(
+    tmp_path: Path,
+    monkeypatch,
+    failure: str,
+    route: str,
+) -> None:
+    runner = _runner()
+    config, formal_root, _ = _install_gate4_synthetic_contract(monkeypatch, runner, tmp_path)
+    events: list[str] = []
+    _install_gate4_green_code_mocks(
+        monkeypatch,
+        runner,
+        events,
+        preflight_status="failed" if failure == "preflight" else "passed",
+        focused_status="failed" if failure == "focused" else "passed",
+        full_status="failed" if failure == "full" else "passed",
+        postflight_ok=failure != "postflight",
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts_atomically",
+        lambda **kwargs: captured.update(kwargs) or {},
+    )
+    summary = runner._run_gate4_benchmark(
+        config=config, output_root=formal_root, repo_root=REPO_ROOT, execute_tests=True
+    )
+    assert summary["status"] == "failed"
+    assert summary["next_required_change"] == route
+    assert summary["blocking_reasons"] == []
+    if failure != "postflight":
+        assert all(item["status"] == "not_run" for item in summary["datasets"].values())
+
+
+def test_gate4_dry_run_requires_atomic_publisher_and_never_falls_back_to_direct_write(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = _runner()
+    output_root = tmp_path / "gate4-atomic"
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts",
+        lambda **kwargs: pytest.fail("Gate 4 fell back to the legacy direct writer"),
+    )
+    monkeypatch.setattr(
+        runner.gate_artifacts,
+        "write_gate_artifacts_atomically",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("injected atomic failure")),
+    )
+    with pytest.raises(RuntimeError, match="injected atomic failure"):
+        runner.run_gate_benchmark(
+            _gate4_config(tmp_path), output_root, REPO_ROOT, execute_tests=False
+        )
+    assert not output_root.exists()
+
+
+def test_gate4_full_audit_preserves_gate0_nodeids_and_only_allows_new_v2_passes(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    baseline = tmp_path / "baseline.xml"
+    current = tmp_path / "current.xml"
+    missing = tmp_path / "missing.xml"
+    baseline_cases = _full_cases()[:173]
+    current_cases = baseline_cases + [
+        (f"tests/test_v2_gate4.py::test_new_{index}", "passed", "")
+        for index in range(20)
+    ]
+    _write_junit(baseline, baseline_cases)
+    _write_junit(current, current_cases)
+    _write_junit(missing, current_cases[1:])
+    kwargs = {
+        "expected_legacy": {"passed": 156, "skipped": 17, "failures": 0, "errors": 0},
+        "allowed_skip_dependency": "pydrake",
+        "baseline_evidence": {
+            "schema_version": "test-baseline/v1",
+            "path": baseline.as_posix(),
+            "sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+            "test_count": 173,
+        },
+    }
+    green = runner._audit_gate4_full_junit(current, **kwargs)
+    drifted = runner._audit_gate4_full_junit(missing, **kwargs)
+    assert green["schema_version"] == "xunce-path-v2-gate4-full-junit-audit/v1"
+    assert green["status"] == "passed"
+    assert green["baseline_not_reduced"] is True
+    assert green["v2"]["skipped"] == 0
+    assert drifted["status"] == "failed"
+    assert drifted["missing_baseline_nodeids"]
