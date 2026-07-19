@@ -124,11 +124,18 @@ z(t) = start.z_m + speed_mps * sin(elevation_rad) * t - 0.5 * g_mps2 * t^2
 - 时间严格递增，相邻时间差不大于 `dt_s`；
 - 非整除时只缩短最后一个区间，不丢失着地点、不重复末样本；
 - `3.0m/s @ 45deg @ g=1.62m/s^2` 的水平距离为 `9/1.62`，约 `5.56m`；
-- `interval_count = ceil(t_f / dt_s)`，`sample_count = interval_count + 1`；
-- `MAX_BALLISTIC_SAMPLES_V2 = 100_000` 约束 `sample_count`，并在 `ceil`、整数转换和分配前检查；
+- 从 exact binary64 比值计算 `interval_count = ceil(t_f / dt_s)`；它是最小 interval count，
+  `interval_count + 1` 只是最小 sample count，不必然等于实际 sample count；
+- 独立冻结 nominal anchor `i * dt_s`。nominal 最多可向下移动 4 ULP；若 binary64 表示无法同时
+  满足严格递增和 `gap <= dt_s`，只能插入固定数量的有界局部 repair sample；
+- 最后 nominal 与 exact endpoint 碰撞或距离 endpoint 不超过 4 ULP 时，endpoint 拥有该 anchor；任何
+  必需 bridge 都必须有界并计入公开 cap；
+- 最终实际 sample count 必须满足 `exact lower bound <= actual count <= 100_000`。所有 repair 都计入
+  `MAX_BALLISTIC_SAMPLES_V2`，并在 append 或 allocation 前检查，而不仅在 `ceil`、整数转换或初始分配前检查；
 - 速度分量、`t_f`、`t_f / dt_s`、水平落点、最高点和每个派生 sample 坐标都必须有限，且
-  `t_f > 0`；有限输入导致上溢、下溢或不可表示结果时稳定抛出 `ValueError`，不得泄漏
-  `OverflowError`、生成 `inf` 或产生重复端点。
+  `t_f > 0`；正的派生 scalar、x/y direction-to-velocity product、x/y velocity-to-displacement product，
+  以及被大 origin 吸收的非零 coordinate offset 都必须 fail-closed 地可表示。有限输入导致上溢、下溢或
+  不可表示结果时稳定抛出 `ValueError`，不得泄漏 `OverflowError`、生成 `inf` 或产生重复端点。
 
 `BallisticSampleV2` 不重复保存速度。Task11 可从冻结输入和时间解析速度；Gate5A 不提前定义着陆停止模型。
 
@@ -199,6 +206,9 @@ P(cell) = P(x_lo <= X < x_hi) * P(y_lo <= Y < y_hi)
   `fsum(prefix[:-1]) < threshold`、所有未见 cell 的严格质量上界小于末 cell 的
   `probability_mass`；严格小于同时排除遗漏同质量 tie 对前缀顺序的影响；
 - 实现必须用确定性扩展和解析尾界证明上述不变量。
+  landing candidate traversal 只遍历同心正方形 perimeter；每个 cell 恰好访问一次，禁止重复 full-square
+  rescan。对 N 个已评估 candidate，生成/访问工作为 Theta(N)，保留的逐 cell state 为 O(N)（排序仍可为
+  O(N log N)）；
   `MAX_LANDING_ZONE_CANDIDATES_V2 = 1_000_000` 统计进入生成、质量求值、排序、visited 或
   frontier 任一状态的不同 cell 总数；
   每个 cell 只计一次，任何追加或扩容前检查，不得只统计 selected cells，也不得保留超过
@@ -375,7 +385,11 @@ Gate5A 的 sample tuple 是确定性物理轨迹表示，不是安全证明。Ta
 - RED 覆盖首尾精确、同高着陆、时间单调、最后短区间、四象限方位与重复字节稳定。
 - 验证 `3m/s @ 45deg` 水平距离 `9/1.62`。
 - 参数化拒绝 bool、NaN、无穷、非正 speed/g/dt、无效仰角、超样本上限，以及会让
-  `t_f`、sample count、落点或最高点不可表示的极端有限组合。
+  `t_f`、exact-rational lower bound、sample count、落点或最高点不可表示的极端有限组合。
+- 覆盖 exact binary64 lower bound、4-ULP nominal downward repair、endpoint anchor ownership、有界 bridge，
+  以及每次 repair append/allocation 前的 public-cap fail-closed 检查。
+- 覆盖正派生 scalar、x/y direction-to-velocity product、x/y velocity-to-displacement product 与大 origin
+  吸收非零 coordinate offset 时的 representability guard。
 - 覆盖 exact 外层 `BallisticStartV2` 被篡改内部字段的 deep-validation 拒绝路径。
 
 ### 12.2 正态质量
@@ -395,6 +409,8 @@ Gate5A 的 sample tuple 是确定性物理轨迹表示，不是安全证明。Ta
   fail closed、无静默截断。
 - 覆盖 `math.fsum` 累计、严格 unseen-mass 终止证明、forged exact `WorldPoint`/geometry 与
   candidate cap 对全部逐-cell 状态的计数。
+- 覆盖只访问同心 square perimeter、每 cell 一次、无 repeated full-square rescan，以及 N candidate 的
+  Theta(N) generation/visit 与 O(N) retained per-cell state 回归。
 
 ### 12.4 Profile
 

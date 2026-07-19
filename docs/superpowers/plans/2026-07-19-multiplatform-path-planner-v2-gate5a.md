@@ -35,7 +35,7 @@
 - 规格 §6–7（一维正态质量与二维未条件化落区）：由 Task 2 的尾部稳定性、全局排序、最短前缀、越界质量保留、未见单格上界与资源上限测试覆盖。
 - 规格 §8（Hopper Profile）：由 Task 3 的冻结常量、深层 base-profile 审计、六项显式 `None` 缺口和 test-only 标识测试覆盖。
 - 规格 §9（Profile 结构审计）：由 Task 4 的 canonical missing 顺序、complete-only 语义、自洽 audit 值对象和 forged-object 测试覆盖。
-- 规格 §10（连续安全边界）：本计划只保留 `minimum_clearance_m=None`，不实现 jump primitive、terrain truth、连续 capsule 净空或 landing feasibility；这些能力必须进入另行批准的 Gate5B 规格与计划。
+- 规格 §10（连续安全边界）：本计划保持 `body_envelope_radius_m`、`launch_reference_height_m`、`arc_clearance_margin_m`、`landing_footprint_radius_m`、`stop_condition` 与 `energy_model` 六个 nullable 字段为 `None`，不实现 jump primitive、terrain truth、连续 capsule 净空或 landing feasibility；这些能力必须进入另行批准的 Gate5B 规格与计划。
 - 规格 §11（错误处理与确定性）：贯穿 Task 1–4 的 exact-type、finite、deep trust-boundary、稳定错误消息、不可变返回值和 byte-stability 测试。
 - 规格 §12（TDD 与验收矩阵）：由各任务 RED→GREEN 提交、Task 4 聚焦测试及 Task 5 v2/full regression 落地。
 - 规格 §13（完成条件）：由 Task 5 的范围、禁区、D 盘临时目录、PPO allowlist、父仓 gitlink-only 集成和最终 clean-tree 审计覆盖。
@@ -1620,6 +1620,10 @@ Expected: the commit changes only `src/path_planner/v2/profiles.py`; every Gate5
 
 ---
 
+### Review-correction addendum
+
+本 addendum 优先于早先 Task 1/2 中仅作说明的 loop；如有冲突，以此处及已审阅设计稿为准。弹道下界是由 exact binary64 ratio 得到的 exact-rational lower bound：`ceil(t_f / dt_s)` 是 minimum interval count，而 `ceil + 1` 只是 minimum sample count。独立 nominal anchor `i * dt_s` 最多向下修复 4 ULP；若 strict order 与 `gap <= dt_s` 不可同时表示，只能插入固定数量的 bounded local repair。endpoint 在与最后 nominal collision 或 4 ULP 内时拥有该 anchor，所有 bridge/repair 都必须在 append/allocation 前计入 public cap。所有正派生 scalar、x/y direction-to-velocity product、x/y velocity-to-displacement product 和大 origin 吸收的非零 coordinate offset 必须由 representability guard fail closed。落区 candidate generation 只遍历同心 square perimeter，每 cell 恰好一次；N 个 evaluated candidate 的 generation/visit 为 Theta(N)，retained per-cell state 为 O(N)，不得 repeated full-square rescan。
+
 ### Task 5: Gate5A scope audit, full regression, PPO allowlist, and parent gitlink integration
 
 **Files:**
@@ -1629,7 +1633,7 @@ Expected: the commit changes only `src/path_planner/v2/profiles.py`; every Gate5
 
 **Interfaces:**
 - Consumes: Tasks 1–4 nested commits and the Gate4 baselines `1524 passed / 17 skipped`, `1368 v2 passed / 0 skipped`, root Gate benchmark tests `304 passed` plus Gate0 isolation tests `18 passed`, and the PPO Stage1 13-nodeid failure allowlist.
-- Produces: one clean parent commit that advances only the `path-planner` gitlink to the verified Gate5A nested HEAD.
+- Produces: 现有 initial gitlink-only integration 加上 final review-fix gitlink-only commit；每个 parent integration commit 都只改变 `path-planner`，不得声称单一 integration commit 或改写历史。
 - Completion claim: Gate5A foundation implemented; formal Gate5 remains unexecuted and cannot be called passed.
 
 - [ ] **Step 1: Audit exact nested scope and repository identity before broad tests**
@@ -1684,11 +1688,11 @@ try {
 }
 ```
 
-Expected: exit code `0`; no failures, errors, or skips in the selected suite.
+Expected: `415 passed`; no failures, errors, or skips in the selected suite.
 
 - [ ] **Step 3: Run nested v2 and full regression with frozen count deltas**
 
-The reviewed implementation adds exactly 98 collected passing cases over the Gate4 baseline: all 51 cases in the new `test_v2_ballistics.py`, plus 47 added cases in `test_v2_profiles.py`. The extra cases beyond the original draft are review-driven missing-field, float-boundary, and bounded-prefix-work regressions. Run from the parent worktree:
+The reviewed implementation adds exactly 112 collected passing cases over the Gate4 full baseline: all 65 cases in the new `test_v2_ballistics.py`, plus 47 added cases in `test_v2_profiles.py`. The extra cases beyond the original draft are review-driven numeric/cap/perimeter, missing-field, float-boundary, and bounded-prefix-work regressions. Run from the parent worktree:
 
 ```powershell
 $tempRoot = "D:/xunce/tmp/path_v2_g5a_regression"
@@ -1715,7 +1719,7 @@ try {
 }
 ```
 
-Expected named-v2 result: `1442 passed`, `0 failed`, `0 errors`, `0 skipped`. Expected full result: `1622 passed`, `17 skipped`, `0 failed`, `0 errors`; every skip remains attributable to optional `pydrake`. Relative to Gate4, the full collected count moves from `1541` (`1524 passed + 17 skipped`) to `1639`, exactly the 98 reviewed additions.
+Expected named-v2 result: `1456 passed`, `0 failed`, `0 errors`, `0 skipped`. Expected full result: `1636 passed`, `17 optional pydrake skips`, `0 failed`, `0 errors`, hence `1653 collected`; every skip remains attributable to optional `pydrake`. Relative to the Gate4 full baseline, this is exactly the 112 reviewed additions.
 
 If pytest collection count differs because a RED parameterization was corrected during implementation, update this plan's two deltas to the actual reviewed test design before accepting the run; never weaken the no-new-fail/error/skip rule.
 
@@ -1756,13 +1760,13 @@ git status --porcelain=v1 --untracked-files=all
 git add -- path-planner
 $staged = @(git diff --cached --name-only)
 if ($staged.Count -ne 1 -or $staged[0] -ne "path-planner") {
-  throw "parent integration must stage only the path-planner gitlink"
+  throw "each parent integration commit must stage only the path-planner gitlink"
 }
 git diff --cached --check
-git -c user.name=Codex -c user.email=codex@local commit -m "feat: integrate gate5a lunar ballistics"
+git -c user.name=Codex -c user.email=codex@local commit -m "fix: integrate gate5a review corrections"
 ```
 
-Expected: the parent commit changes one gitlink and contains no nested file content, runner, config, evidence, checkpoint, policy, executor, or canary change.
+Expected: the final review-fix parent commit changes one gitlink and contains no nested file content, runner, config, evidence, checkpoint, policy, executor, or canary change. It follows the existing initial gitlink-only integration; each integration commit changes only `path-planner`.
 
 - [ ] **Step 6: Run parent runner-contract regression**
 
@@ -1859,15 +1863,16 @@ Expected: parent and nested worktrees are clean; parent gitlink equals nested HE
 - [ ] Exact approved four-file nested scope only.
 - [ ] RED evidence observed before each production surface exists.
 - [ ] All returned containers are exact tuples and all public inputs are deeply re-audited.
-- [ ] Arc endpoints are exact, sample allocation is bounded, and all derived values remain finite.
+- [ ] Arc endpoints are exact; the exact-rational lower bound, 4-ULP/bounded repairs and endpoint ownership hold; actual count remains within the public cap before every append/allocation.
+- [ ] Positive derived scalars, x/y direction-to-velocity products, x/y velocity-to-displacement products, and nonzero offsets absorbed by large origins have fail-closed representability guards.
 - [ ] Far-tail normal interval mass survives without direct CDF cancellation.
-- [ ] Landing zone is a deterministic global shortest raw-mass prefix with OOB cells retained.
+- [ ] Landing zone is a deterministic global shortest raw-mass prefix with OOB cells retained and uses perimeter-only Theta(N) candidate generation/visit with O(N) retained per-cell state.
 - [ ] Hopper frozen proxy fields cannot drift; all six unapproved fields remain nullable by default.
 - [ ] Audit structural completion is explicitly weaker than provider support or safety approval.
 - [ ] Nested focused/v2/full regressions pass with no enlarged failure or skip set.
 - [ ] Parent runner-contract tests remain at 322 combined passed: 304 Gate benchmark plus 18 Gate0 isolation.
 - [ ] PPO Stage1 actual failure nodeids remain a subset of the frozen 13-nodeid allowlist, with no errors or skips.
-- [ ] Parent commit changes only the nested gitlink.
+- [ ] Existing initial integration and final review-fix integration are each gitlink-only parent commits that change only `path-planner`; no history is rewritten.
 - [ ] No Gate5 config, formal artifact, checkpoint publication, default-policy replacement, executor connection, or canary start.
 - [ ] Parent and nested worktrees are clean.
 
