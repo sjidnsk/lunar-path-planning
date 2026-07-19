@@ -1671,7 +1671,7 @@ $env:MPLCONFIGDIR = "$tempRoot/mpl"
 Push-Location path-planner
 try {
   $env:PYTHONPATH = (Resolve-Path "src").Path
-  D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q `
+  D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider -q `
     tests/test_v2_ballistics.py `
     tests/test_v2_profiles.py `
     tests/test_v2_terrain.py `
@@ -1697,10 +1697,10 @@ try {
   $v2Targets = Get-ChildItem -LiteralPath tests -Filter "test_v2_*.py" |
     Sort-Object FullName |
     ForEach-Object { $_.FullName }
-  D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q $v2Targets
+  D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider -q $v2Targets
   if ($LASTEXITCODE -ne 0) { throw "nested v2 regression failed" }
 
-  D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q tests
+  D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider -q tests
   if ($LASTEXITCODE -ne 0) { throw "nested full regression failed" }
 } finally {
   Pop-Location
@@ -1761,7 +1761,7 @@ Expected: the parent commit changes one gitlink and contains no nested file cont
 Run from the parent worktree:
 
 ```powershell
-D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q `
+D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider -q `
   tests/test_xunce_path_v2_g0_baseline_and_isolation.py `
   tests/test_xunce_path_v2_gate_benchmark.py
 ```
@@ -1777,7 +1777,7 @@ $repo = (Resolve-Path ".").Path
 $ppoRoot = "D:/xunce/tmp/path_v2_g5a_regression/ppo"
 New-Item -ItemType Directory -Force -Path $ppoRoot | Out-Null
 $env:PYTHONPATH = "$repo/src$([IO.Path]::PathSeparator)$repo/path-planner/src"
-D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q `
+D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider -q `
   tests/ppo_highres_frontier/test_stage1_smoke_env.py `
   --junitxml "$ppoRoot/stage1.junit.xml" `
   --basetemp "$ppoRoot/basetemp"
