@@ -1688,7 +1688,7 @@ Expected: exit code `0`; no failures, errors, or skips in the selected suite.
 
 - [ ] **Step 3: Run nested v2 and full regression with frozen count deltas**
 
-The plan adds exactly 75 collected passing cases: 37 in `test_v2_ballistics.py` and 38 parameterized cases in `test_v2_profiles.py`. Run from the parent worktree:
+The reviewed implementation adds exactly 98 collected passing cases over the Gate4 baseline: all 51 cases in the new `test_v2_ballistics.py`, plus 47 added cases in `test_v2_profiles.py`. The extra cases beyond the original draft are review-driven missing-field, float-boundary, and bounded-prefix-work regressions. Run from the parent worktree:
 
 ```powershell
 Push-Location path-planner
@@ -1707,7 +1707,7 @@ try {
 }
 ```
 
-Expected v2 result: `1443 passed`, `0 failed`, `0 errors`, `0 skipped`. Expected full result: `1599 passed`, `17 skipped`, `0 failed`, `0 errors`; every skip remains attributable to optional `pydrake`.
+Expected named-v2 result: `1442 passed`, `0 failed`, `0 errors`, `0 skipped`. Expected full result: `1622 passed`, `17 skipped`, `0 failed`, `0 errors`; every skip remains attributable to optional `pydrake`. Relative to Gate4, the full collected count moves from `1541` (`1524 passed + 17 skipped`) to `1639`, exactly the 98 reviewed additions.
 
 If pytest collection count differs because a RED parameterization was corrected during implementation, update this plan's two deltas to the actual reviewed test design before accepting the run; never weaken the no-new-fail/error/skip rule.
 
