@@ -1628,7 +1628,7 @@ Expected: the commit changes only `src/path_planner/v2/profiles.py`; every Gate5
 - Do not create: `configs/xunce_path_v2_gate5_hopper_v1.json` or `D:/xunce/out/path_v2/g5`.
 
 **Interfaces:**
-- Consumes: Tasks 1–4 nested commits and the Gate4 baselines `1524 passed / 17 skipped`, `1368 v2 passed / 0 skipped`, root runner tests `304 passed`, and the PPO Stage1 13-nodeid failure allowlist.
+- Consumes: Tasks 1–4 nested commits and the Gate4 baselines `1524 passed / 17 skipped`, `1368 v2 passed / 0 skipped`, root Gate benchmark tests `304 passed` plus Gate0 isolation tests `18 passed`, and the PPO Stage1 13-nodeid failure allowlist.
 - Produces: one clean parent commit that advances only the `path-planner` gitlink to the verified Gate5A nested HEAD.
 - Completion claim: Gate5A foundation implemented; formal Gate5 remains unexecuted and cannot be called passed.
 
@@ -1691,6 +1691,14 @@ Expected: exit code `0`; no failures, errors, or skips in the selected suite.
 The reviewed implementation adds exactly 98 collected passing cases over the Gate4 baseline: all 51 cases in the new `test_v2_ballistics.py`, plus 47 added cases in `test_v2_profiles.py`. The extra cases beyond the original draft are review-driven missing-field, float-boundary, and bounded-prefix-work regressions. Run from the parent worktree:
 
 ```powershell
+$tempRoot = "D:/xunce/tmp/path_v2_g5a_regression"
+New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+$env:PYTHONNOUSERSITE = "1"
+$env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
+$env:TEMP = $tempRoot
+$env:TMP = $tempRoot
+$env:MPLCONFIGDIR = "$tempRoot/mpl"
 Push-Location path-planner
 try {
   $env:PYTHONPATH = (Resolve-Path "src").Path
@@ -1761,12 +1769,20 @@ Expected: the parent commit changes one gitlink and contains no nested file cont
 Run from the parent worktree:
 
 ```powershell
+$tempRoot = "D:/xunce/tmp/path_v2_g5a_regression"
+New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+$env:PYTHONNOUSERSITE = "1"
+$env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
+$env:TEMP = $tempRoot
+$env:TMP = $tempRoot
+$env:MPLCONFIGDIR = "$tempRoot/mpl"
 D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider -q `
   tests/test_xunce_path_v2_g0_baseline_and_isolation.py `
   tests/test_xunce_path_v2_gate_benchmark.py
 ```
 
-Expected: `304 passed`, `0 failed`, `0 errors`, `0 skipped`; Gate5A has not changed either root test file.
+Expected combined result: `322 passed`, `0 failed`, `0 errors`, `0 skipped`; `test_xunce_path_v2_gate_benchmark.py` contributes `304 passed` and `test_xunce_path_v2_g0_baseline_and_isolation.py` contributes `18 passed`; Gate5A has not changed either root test file.
 
 - [ ] **Step 7: Re-run PPO Stage1 and prove its failure set does not expand**
 
@@ -1776,6 +1792,12 @@ Run from the parent worktree:
 $repo = (Resolve-Path ".").Path
 $ppoRoot = "D:/xunce/tmp/path_v2_g5a_regression/ppo"
 New-Item -ItemType Directory -Force -Path $ppoRoot | Out-Null
+$env:PYTHONNOUSERSITE = "1"
+$env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
+$env:TEMP = "D:/xunce/tmp/path_v2_g5a_regression"
+$env:TMP = "D:/xunce/tmp/path_v2_g5a_regression"
+$env:MPLCONFIGDIR = "D:/xunce/tmp/path_v2_g5a_regression/mpl"
 $env:PYTHONPATH = "$repo/src$([IO.Path]::PathSeparator)$repo/path-planner/src"
 D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider -q `
   tests/ppo_highres_frontier/test_stage1_smoke_env.py `
@@ -1843,7 +1865,7 @@ Expected: parent and nested worktrees are clean; parent gitlink equals nested HE
 - [ ] Hopper frozen proxy fields cannot drift; all six unapproved fields remain nullable by default.
 - [ ] Audit structural completion is explicitly weaker than provider support or safety approval.
 - [ ] Nested focused/v2/full regressions pass with no enlarged failure or skip set.
-- [ ] Parent runner-contract tests remain at 304 passed.
+- [ ] Parent runner-contract tests remain at 322 combined passed: 304 Gate benchmark plus 18 Gate0 isolation.
 - [ ] PPO Stage1 actual failure nodeids remain a subset of the frozen 13-nodeid allowlist, with no errors or skips.
 - [ ] Parent commit changes only the nested gitlink.
 - [ ] No Gate5 config, formal artifact, checkpoint publication, default-policy replacement, executor connection, or canary start.
