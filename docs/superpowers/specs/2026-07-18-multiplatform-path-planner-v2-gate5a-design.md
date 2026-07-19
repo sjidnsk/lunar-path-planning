@@ -122,7 +122,8 @@ z(t) = start.z_m + speed_mps * sin(elevation_rad) * t - 0.5 * g_mps2 * t^2
 - 首样本精确为 `(t=0, start.x_m, start.y_m, start.z_m)`；
 - 末样本精确使用 `t_f`，并把 `z_m` 规范为 `start.z_m`，避免浮点残差；
 - 时间严格递增，相邻时间差不大于 `dt_s`；
-- 非整除时只缩短最后一个区间，不丢失着地点、不重复末样本；
+- 无 representability repair 时，非整除只缩短最后一个 nominal interval；一旦需要 4-ULP correction、
+  bounded bridge/repair 或 endpoint anchor ownership，则以后续精确规则为准；始终不丢 endpoint、不重复末样本；
 - `3.0m/s @ 45deg @ g=1.62m/s^2` 的水平距离为 `9/1.62`，约 `5.56m`；
 - 从 exact binary64 比值计算 `interval_count = ceil(t_f / dt_s)`；它是最小 interval count，
   `interval_count + 1` 只是最小 sample count，不必然等于实际 sample count；
