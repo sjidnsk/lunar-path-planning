@@ -14,6 +14,7 @@
 - 父仓前置提交固定为 `cf2a6a20b51870e7161267baec075184f05f6418`；nested `path-planner` 前置提交固定为 `7d5c4dfc8e2a374855e6d8b962b69466c3353265`。
 - 已批准规格固定为 `docs/superpowers/specs/2026-07-18-multiplatform-path-planner-v2-gate5a-design.md`；任何实现歧义先回到该规格，不得自行扩大能力。
 - 保护 `C:/Users/77634/.codex/worktrees/ca49/lunar-path-planning` Stage6 dirty 工作树：不读取、不修改、不在其中运行命令。
+- 所有 nested Python/pytest 命令必须从本工作树的 `path-planner` 根运行；涉及子进程的测试还必须把 `PYTHONPATH` 精确绑定到本工作树的 `path-planner/src`，不得回退到 C 盘 editable 安装。
 - v1 保持默认；v2 只能显式 opt-in。本计划不得修改 v1 `AStarPlanner`、CLI、`PathPlannerAdapter`、default policy 或 executor。
 - 四项发布边界固定为 `publishes_checkpoint=false`、`replaces_default_policy=false`、`connects_real_executor=false`、`starts_online_canary=false`。
 - synthetic terrain 只能称为 proxy；不得生成或宣称 `physical_obstacle_cells`。
@@ -1669,6 +1670,7 @@ $env:TMP = $tempRoot
 $env:MPLCONFIGDIR = "$tempRoot/mpl"
 Push-Location path-planner
 try {
+  $env:PYTHONPATH = (Resolve-Path "src").Path
   D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q `
     tests/test_v2_ballistics.py `
     tests/test_v2_profiles.py `
@@ -1689,14 +1691,20 @@ Expected: exit code `0`; no failures, errors, or skips in the selected suite.
 The plan adds exactly 75 collected passing cases: 37 in `test_v2_ballistics.py` and 38 parameterized cases in `test_v2_profiles.py`. Run from the parent worktree:
 
 ```powershell
-$v2Targets = Get-ChildItem -LiteralPath path-planner/tests -Filter "test_v2_*.py" |
-  Sort-Object FullName |
-  ForEach-Object { $_.FullName }
-D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q $v2Targets
-if ($LASTEXITCODE -ne 0) { throw "nested v2 regression failed" }
+Push-Location path-planner
+try {
+  $env:PYTHONPATH = (Resolve-Path "src").Path
+  $v2Targets = Get-ChildItem -LiteralPath tests -Filter "test_v2_*.py" |
+    Sort-Object FullName |
+    ForEach-Object { $_.FullName }
+  D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q $v2Targets
+  if ($LASTEXITCODE -ne 0) { throw "nested v2 regression failed" }
 
-D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q path-planner/tests
-if ($LASTEXITCODE -ne 0) { throw "nested full regression failed" }
+  D:/conda_envs/lunar-explorer/python.exe -m pytest -p no:cacheprovider -q tests
+  if ($LASTEXITCODE -ne 0) { throw "nested full regression failed" }
+} finally {
+  Pop-Location
+}
 ```
 
 Expected v2 result: `1443 passed`, `0 failed`, `0 errors`, `0 skipped`. Expected full result: `1599 passed`, `17 skipped`, `0 failed`, `0 errors`; every skip remains attributable to optional `pydrake`.
