@@ -187,7 +187,7 @@ def landing_zone_cells(
 P(cell) = P(x_lo <= X < x_hi) * P(y_lo <= Y < y_hi)
 ```
 
-每个 cell 的世界边界由 `geometry.origin` 与 `geometry.resolution_m` 外推。候选域是整个整数 cell 平面 `Cell(x,y), x,y in Z`，不是仅地图内 cell。
+每个 cell 的世界边界由 `geometry.origin` 与 `geometry.resolution_m` 外推。用于公开 key 的 cell center 求值顺序冻结为 `origin + (index + 0.5) * resolution`；在 binary64 下代数等价的重排表达式不等价，禁止用于公开 key。每个 center 必须满足其已审计的 `lower < center < upper`；半 cell offset 被大 origin 吸收或 collapse 时必须以稳定 `ValueError` fail closed。候选域是整个整数 cell 平面 `Cell(x,y), x,y in Z`，不是仅地图内 cell。
 
 返回集合定义为全局排序后的最短前缀，使未归一化累计质量首次达到或超过 `probability_threshold`。全局排序 key 固定为：
 
@@ -402,6 +402,8 @@ Gate5A 的 sample tuple 是确定性物理轨迹表示，不是安全证明。Ta
 ### 12.3 落区
 
 - 覆盖非零 origin、0.5m fine geometry、mean 位于 cell 中心/边界、对称 tie-break 与稳定前缀。
+- 覆盖 exact nonzero-origin tie-order counterexample，并以 large-origin absorbed-center regression 验证冻结的
+  `origin + (index + 0.5) * resolution` 求值顺序及 `lower < center < upper` fail-closed 合同。
 - 验证二维 cell mass 精确等于两个一维 interval mass 的乘积。
 - 验证累计未条件化质量达到阈值，且去掉末 cell 后低于阈值。
 - 验证地图边缘 mean 会保留 `in_bounds=False` cell，且不重新归一化。
