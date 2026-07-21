@@ -4080,7 +4080,7 @@ def test_checked_in_gate4_config_and_registry_match_exact_frozen_contract(tmp_pa
         (REPO_ROOT / "configs" / "stage_registry.json").read_text(encoding="utf-8")
     )
     assert registry["stages"]["xunce-path-v2-gate4-legged"] == {
-        "runner": "scripts/run_xunce_path_v2_gate_benchmark.py",
+        "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
         "default_config": "configs/xunce_path_v2_gate4_legged_v1.json",
         "default_output_root": "D:/xunce/out/path_v2/g4",
         "args": [
