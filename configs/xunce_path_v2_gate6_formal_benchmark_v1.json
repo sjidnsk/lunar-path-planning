@@ -1,0 +1,80 @@
+{
+  "schema_version": "xunce-path-v2-gate6-formal-benchmark/v1",
+  "stage_id": "xunce-path-v2-gate6-formal-benchmark",
+  "python": "D:/conda_envs/lunar-explorer/python.exe",
+  "expected_python_version": "3.12.13",
+  "expected_git": {
+    "branch": "codex/multiplatform-path-planner-v2",
+    "base_commit": "b635740ee021258ef31811ec87c60add839fc5f9",
+    "gate_input_commit": "7ec0a85872d77edaf427416b0cd00145b448c1bf",
+    "nested_branch": "codex/multiplatform-path-planner-v2"
+  },
+  "formal_output_root": "D:/xunce/out/path_v2/g6",
+  "temp_root": "D:/xunce/tmp/path_v2_g6",
+  "execution_class": "blocked_formal_inputs_missing",
+  "primary_blocker": "provide_independent_10000_primitive_labels_per_platform",
+  "accepts_formal_inputs": false,
+  "formal_inputs": {
+    "independent_primitive_labels": null,
+    "independent_small_map_optima": null,
+    "standard_schedules": null,
+    "kilometer_schedules": null,
+    "ppo_targets": null
+  },
+  "requirements": {
+    "platforms": [
+      "wheel",
+      "legged",
+      "hopper"
+    ],
+    "minimum_rows_per_platform": {
+      "independent_primitive_labels": 10000,
+      "independent_small_map_optima": 1,
+      "standard_schedules": 100,
+      "kilometer_schedules": 30,
+      "ppo_targets": 1
+    },
+    "requires_independent_source": true
+  },
+  "phases": [
+    "primitive_audit",
+    "exact_quality",
+    "standard",
+    "kilometer",
+    "ablation",
+    "determinism_worker_cache",
+    "aggregate"
+  ],
+  "ablation": {
+    "cases": [
+      "v1_astar",
+      "wheel_hybrid_astar_opt_in",
+      "v2_fine_only",
+      "v2_plus_multi_heuristic",
+      "v2_plus_hierarchy",
+      "v2_plus_lazy_validation",
+      "v2_plus_cache",
+      "v2_full"
+    ],
+    "worker_counts": [
+      1,
+      4
+    ],
+    "cache_modes": [
+      false,
+      true
+    ],
+    "bootstrap_seed": 20260716,
+    "bootstrap_resamples": 10000,
+    "confidence_level": 0.95
+  },
+  "formal_metrics_status": "not_evaluated",
+  "formal_evidence_eligible": false,
+  "formal_row_count": 0,
+  "boundaries": {
+    "publishes_checkpoint": false,
+    "replaces_default_policy": false,
+    "connects_real_executor": false,
+    "starts_online_canary": false
+  }
+}

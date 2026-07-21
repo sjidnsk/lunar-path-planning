@@ -287,6 +287,44 @@ GATE5_DATASET_CONTRACT = {
 }
 GATE5_MANIFEST_METADATA = dict(gate_artifacts.GATE5_MANIFEST_METADATA)
 
+GATE6_SCHEMA_VERSION = "xunce-path-v2-gate6-formal-benchmark/v1"
+GATE6_STAGE_ID = "xunce-path-v2-gate6-formal-benchmark"
+GATE6_INPUT_COMMIT = "7ec0a85872d77edaf427416b0cd00145b448c1bf"
+GATE6_EXECUTION_CLASS = "blocked_formal_inputs_missing"
+GATE6_FORMAL_OUTPUT_ROOT = Path("D:/xunce/out/path_v2/g6")
+GATE6_FORMAL_TEMP_ROOT = Path("D:/xunce/tmp/path_v2_g6")
+GATE6_INPUT_BLOCKERS = (
+    (
+        "independent_primitive_labels",
+        "provide_independent_10000_primitive_labels_per_platform",
+    ),
+    ("independent_small_map_optima", "provide_independent_small_map_optima"),
+    ("standard_schedules", "provide_standard_100_episodes_per_platform"),
+    ("kilometer_schedules", "provide_kilometer_30_episodes_per_platform"),
+    ("ppo_targets", "provide_ppo_target_fixtures"),
+)
+GATE6_PHASES = (
+    "primitive_audit",
+    "exact_quality",
+    "standard",
+    "kilometer",
+    "ablation",
+    "determinism_worker_cache",
+    "aggregate",
+)
+GATE6_ABLATION_CASES = (
+    "v1_astar",
+    "wheel_hybrid_astar_opt_in",
+    "v2_fine_only",
+    "v2_plus_multi_heuristic",
+    "v2_plus_hierarchy",
+    "v2_plus_lazy_validation",
+    "v2_plus_cache",
+    "v2_full",
+)
+GATE6_BOOTSTRAP_SEED = 20260716
+GATE6_BOOTSTRAP_RESAMPLES = 10_000
+
 
 class _Gate2LoaderContractError(RuntimeError):
     pass
@@ -4244,6 +4282,192 @@ def _run_gate5_benchmark(
     return summary
 
 
+def _expected_gate6_config() -> dict[str, Any]:
+    return {
+        "schema_version": GATE6_SCHEMA_VERSION,
+        "stage_id": GATE6_STAGE_ID,
+        "python": FORMAL_PYTHON.as_posix(),
+        "expected_python_version": EXPECTED_PYTHON_VERSION,
+        "expected_git": {
+            "branch": EXPECTED_BRANCH,
+            "base_commit": ORIGINAL_BASE_COMMIT,
+            "gate_input_commit": GATE6_INPUT_COMMIT,
+            "nested_branch": EXPECTED_BRANCH,
+        },
+        "formal_output_root": GATE6_FORMAL_OUTPUT_ROOT.as_posix(),
+        "temp_root": GATE6_FORMAL_TEMP_ROOT.as_posix(),
+        "execution_class": GATE6_EXECUTION_CLASS,
+        "primary_blocker": GATE6_INPUT_BLOCKERS[0][1],
+        "accepts_formal_inputs": False,
+        "formal_inputs": {
+            input_kind: None for input_kind, _ in GATE6_INPUT_BLOCKERS
+        },
+        "requirements": {
+            "platforms": ["wheel", "legged", "hopper"],
+            "minimum_rows_per_platform": {
+                "independent_primitive_labels": 10_000,
+                "independent_small_map_optima": 1,
+                "standard_schedules": 100,
+                "kilometer_schedules": 30,
+                "ppo_targets": 1,
+            },
+            "requires_independent_source": True,
+        },
+        "phases": list(GATE6_PHASES),
+        "ablation": {
+            "cases": list(GATE6_ABLATION_CASES),
+            "worker_counts": [1, 4],
+            "cache_modes": [False, True],
+            "bootstrap_seed": GATE6_BOOTSTRAP_SEED,
+            "bootstrap_resamples": GATE6_BOOTSTRAP_RESAMPLES,
+            "confidence_level": 0.95,
+        },
+        "formal_metrics_status": "not_evaluated",
+        "formal_evidence_eligible": False,
+        "formal_row_count": 0,
+        "boundaries": dict(gate_artifacts.BOUNDARY_FIELDS),
+    }
+
+
+def _validate_gate6_config(config: dict[str, Any]) -> None:
+    if type(config) is not dict or config != _expected_gate6_config():
+        raise ValueError("Gate 6 config contract mismatch")
+
+
+def _validate_gate6_output_root(
+    config: dict[str, Any],
+    output_root: Path,
+) -> Path:
+    root = Path(output_root).resolve()
+    formal_root = Path(str(config["formal_output_root"])).resolve()
+    temp_root = Path(str(config["temp_root"])).resolve()
+    if root == formal_root:
+        raise ValueError("Gate 6 formal output root is not authorized")
+    if root == temp_root or not root.is_relative_to(temp_root):
+        raise ValueError("Gate 6 output_root must be a fresh temp_root child")
+    if root.drive.upper() != temp_root.drive.upper():
+        raise ValueError("Gate 6 output_root must share the configured temp drive")
+    if os.path.lexists(_windows_safe_lexical_absolute_path(root)):
+        raise RuntimeError("Gate 6 output_root already exists")
+    return root
+
+
+def _gate6_report(blockers: Sequence[str]) -> str:
+    blocker_lines = "".join(f"- blocker={blocker}\n" for blocker in blockers)
+    return (
+        "# Path Planner v2 Gate 6 formal benchmark blocked snapshot\n\n"
+        "- status=blocked\n"
+        f"- execution_class={GATE6_EXECUTION_CLASS}\n"
+        f"- primary_blocker={blockers[0]}\n"
+        "- accepts_formal_inputs=false\n"
+        "- formal_metrics_status=not_evaluated\n"
+        "- formal_evidence_eligible=false\n"
+        "- formal_row_count=0\n"
+        f"{blocker_lines}"
+        "- publishes_checkpoint=false\n"
+        "- replaces_default_policy=false\n"
+        "- connects_real_executor=false\n"
+        "- starts_online_canary=false\n"
+    )
+
+
+def _run_gate6_benchmark(
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    repo_root: Path,
+    execute_tests: bool,
+) -> dict[str, Any]:
+    del execute_tests
+    _validate_gate6_config(config)
+    validate_output_root(repo_root, output_root)
+    output_root = _validate_gate6_output_root(config, output_root)
+    blockers = [blocker for _, blocker in GATE6_INPUT_BLOCKERS]
+    primary_blocker = blockers[0]
+    common = {
+        "status": "blocked",
+        "execution_class": GATE6_EXECUTION_CLASS,
+        "primary_blocker": primary_blocker,
+        "formal_metrics_status": "not_evaluated",
+        "formal_evidence_eligible": False,
+        "formal_row_count": 0,
+    }
+    input_audit = {
+        input_kind: {
+            "status": "missing",
+            "reason": blocker,
+            "content_read": False,
+        }
+        for input_kind, blocker in GATE6_INPUT_BLOCKERS
+    }
+    summary = {
+        "schema_version": GATE6_SCHEMA_VERSION,
+        "stage_id": GATE6_STAGE_ID,
+        **common,
+        "blocking_reasons": blockers,
+        "next_required_change": primary_blocker,
+        "accepts_formal_inputs": False,
+        "inputs": input_audit,
+        "phases": list(GATE6_PHASES),
+        "ablation_cases": list(GATE6_ABLATION_CASES),
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    routing = {
+        "schema_version": "xunce-path-v2-gate6-routing/v1",
+        "stage_id": GATE6_STAGE_ID,
+        **common,
+        "route": primary_blocker,
+        "blocking_reasons": blockers,
+        "internal_pass_route": "path_v2_internal_validation_passed_no_release_authority",
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    rows = [
+        {
+            "suite": "formal_input",
+            "input_kind": input_kind,
+            "status": "missing",
+            "reason": blocker,
+        }
+        for input_kind, blocker in GATE6_INPUT_BLOCKERS
+    ]
+    phases = [
+        {
+            "phase": phase,
+            "status": (
+                "completed_blocked"
+                if phase == "aggregate"
+                else "not_run_due_to_missing_formal_inputs"
+            ),
+        }
+        for phase in GATE6_PHASES
+    ]
+    review = {
+        "schema_version": "xunce-path-v2-gate6-review/v1",
+        "stage_id": GATE6_STAGE_ID,
+        **common,
+        "blocking_reasons": blockers,
+        "accepts_formal_inputs": False,
+        "inputs": input_audit,
+        "execution": {
+            "pytest": "not_run_due_to_missing_formal_inputs",
+            "formal_input_reads": 0,
+            "commands": [],
+        },
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    gate_artifacts.write_gate_artifacts_atomically(
+        output_root=output_root,
+        config=config,
+        summary=summary,
+        routing=routing,
+        rows=rows,
+        phases=phases,
+        review=review,
+        report=_gate6_report(blockers),
+    )
+    return summary
+
+
 def run_gate_benchmark(
     config_path: Path,
     output_root: Path,
@@ -4253,6 +4477,16 @@ def run_gate_benchmark(
     config_path = Path(config_path).resolve()
     repo_root = Path(repo_root).resolve()
     config = artifact_io.read_json(config_path)
+    if (
+        config.get("schema_version") == GATE6_SCHEMA_VERSION
+        or config.get("stage_id") == GATE6_STAGE_ID
+    ):
+        return _run_gate6_benchmark(
+            config=config,
+            output_root=Path(output_root),
+            repo_root=repo_root,
+            execute_tests=execute_tests,
+        )
     if (
         config.get("schema_version") == GATE5_SCHEMA_VERSION
         or config.get("stage_id") == GATE5_STAGE_ID
