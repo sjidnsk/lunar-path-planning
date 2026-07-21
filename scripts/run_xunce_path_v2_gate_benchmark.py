@@ -4472,11 +4472,14 @@ def _load_gate6_formal_inputs(
         documents["standard_schedules"] is not None
         and documents["kilometer_schedules"] is not None
     ):
-        schedule_request_hashes = {
-            join["request_sha256"] for join in metric_joins
+        schedule_request_keys = {
+            (metric.platform_kind, join["request_sha256"])
+            for metric, join in zip(metric_rows, metric_joins, strict=True)
         }
         if any(
-            row["request_sha256"] not in schedule_request_hashes for row in ppo_rows
+            (row["platform_kind"], row["request_sha256"])
+            not in schedule_request_keys
+            for row in ppo_rows
         ):
             raise ValueError(
                 "Gate 6 PPO request_sha256 is not present in schedules"
@@ -4591,7 +4594,10 @@ def _read_gate6_formal_document(
         for line in text.splitlines():
             if not line.strip():
                 continue
-            record = json.loads(line)
+            record = json.loads(
+                line,
+                object_pairs_hook=_reject_duplicate_json_keys,
+            )
             if type(record) is not dict:
                 raise ValueError("Gate 6 JSONL records must be objects")
             records.append(record)
@@ -4615,7 +4621,10 @@ def _read_gate6_formal_document(
                 raise ValueError("Gate 6 JSONL row record is invalid")
             rows.append(item["row"])
     elif path.suffix.lower() == ".json":
-        payload = json.loads(text)
+        payload = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
         if type(payload) is not dict:
             raise ValueError("Gate 6 JSON root must be an object")
         document = _require_gate6_exact_keys(
@@ -5569,6 +5578,15 @@ def _gate6_ready_git_preflight(
     repo_root: Path,
 ) -> dict[str, Any]:
     nested_root = Path(repo_root).resolve() / "path-planner"
+
+    def is_ancestor(commit: str) -> bool:
+        return subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+        ).returncode == 0
+
     try:
         branch = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
         parent_status = _git(
@@ -5580,18 +5598,10 @@ def _gate6_ready_git_preflight(
         nested_status = _git(
             nested_root, "status", "--porcelain", "--untracked-files=all"
         )
-        ancestor = subprocess.run(
-            [
-                "git",
-                "merge-base",
-                "--is-ancestor",
-                config["expected_git"]["base_commit"],
-                "HEAD",
-            ],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-        ).returncode == 0
+        ancestor = is_ancestor(config["expected_git"]["base_commit"])
+        gate_input_ancestor = is_ancestor(
+            config["expected_git"]["gate_input_commit"]
+        )
     except (OSError, subprocess.CalledProcessError) as exc:
         return {
             "status": "failed",
@@ -5601,6 +5611,7 @@ def _gate6_ready_git_preflight(
     checks = {
         "branch_matches": branch == config["expected_git"]["branch"],
         "base_is_ancestor": ancestor,
+        "gate_input_is_ancestor": gate_input_ancestor,
         "parent_clean": not parent_status,
         "nested_branch_matches": (
             nested_branch == config["expected_git"]["nested_branch"]
