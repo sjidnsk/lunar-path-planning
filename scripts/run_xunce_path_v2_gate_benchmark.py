@@ -340,6 +340,7 @@ GATE6_BUNDLE_KEYS = {
     "primitive_rows",
     "exact_rows",
     "input_hashes",
+    "source_identities",
 }
 
 
@@ -4427,7 +4428,30 @@ def _load_gate6_formal_inputs(
             continue
         content = artifact_io.read_bytes(path)
         input_hashes[input_kind] = hashlib.sha256(content).hexdigest()
-        documents[input_kind] = _read_gate6_formal_document(path, input_kind)
+        documents[input_kind] = _read_gate6_formal_document(
+            path,
+            content,
+            input_kind,
+        )
+
+    present_documents = tuple(
+        document for document in documents.values() if document is not None
+    )
+    source_identity_pairs = {
+        (document["oracle_source_id"], document["provider_source_id"])
+        for document in present_documents
+    }
+    if len(source_identity_pairs) > 1:
+        raise ValueError("Gate 6 formal input source identity mismatch")
+    if source_identity_pairs:
+        oracle_source_id, provider_source_id = next(iter(source_identity_pairs))
+    else:
+        oracle_source_id = None
+        provider_source_id = None
+    source_identities = {
+        "oracle_source_id": oracle_source_id,
+        "provider_source_id": provider_source_id,
+    }
 
     primitive_rows = _gate6_primitive_rows(documents["independent_primitive_labels"])
     exact_rows = _gate6_exact_rows(documents["independent_small_map_optima"])
@@ -4444,6 +4468,19 @@ def _load_gate6_formal_inputs(
     ppo_rows = _gate6_ppo_rows(documents["ppo_targets"])
     metric_rows = standard_metrics + kilometer_metrics
     metric_joins = standard_joins + kilometer_joins
+    if (
+        documents["standard_schedules"] is not None
+        and documents["kilometer_schedules"] is not None
+    ):
+        schedule_request_hashes = {
+            join["request_sha256"] for join in metric_joins
+        }
+        if any(
+            row["request_sha256"] not in schedule_request_hashes for row in ppo_rows
+        ):
+            raise ValueError(
+                "Gate 6 PPO request_sha256 is not present in schedules"
+            )
 
     rows_by_input = {
         "independent_primitive_labels": primitive_rows,
@@ -4493,6 +4530,7 @@ def _load_gate6_formal_inputs(
         "primitive_rows": primitive_rows,
         "exact_rows": exact_rows,
         "input_hashes": input_hashes,
+        "source_identities": source_identities,
     }
 
 
@@ -4531,7 +4569,11 @@ def _gate6_positive_number(value: object, label: str) -> float:
     return float(value)
 
 
-def _read_gate6_formal_document(path: Path, input_kind: str) -> dict[str, Any]:
+def _read_gate6_formal_document(
+    path: Path,
+    content: bytes,
+    input_kind: str,
+) -> dict[str, Any]:
     header_keys = {
         "schema_version",
         "input_kind",
@@ -4540,8 +4582,19 @@ def _read_gate6_formal_document(path: Path, input_kind: str) -> dict[str, Any]:
         "oracle_source_id",
         "provider_source_id",
     }
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Gate 6 formal input must be UTF-8") from exc
     if path.suffix.lower() == ".jsonl":
-        records = artifact_io.read_jsonl(path)
+        records = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if type(record) is not dict:
+                raise ValueError("Gate 6 JSONL records must be objects")
+            records.append(record)
         if not records:
             raise ValueError("Gate 6 JSONL formal input must contain a header")
         header = _require_gate6_exact_keys(
@@ -4562,7 +4615,9 @@ def _read_gate6_formal_document(path: Path, input_kind: str) -> dict[str, Any]:
                 raise ValueError("Gate 6 JSONL row record is invalid")
             rows.append(item["row"])
     elif path.suffix.lower() == ".json":
-        payload = artifact_io.read_json(path)
+        payload = json.loads(text)
+        if type(payload) is not dict:
+            raise ValueError("Gate 6 JSON root must be an object")
         document = _require_gate6_exact_keys(
             payload,
             header_keys | {"rows"},
@@ -5042,36 +5097,35 @@ def _gate6_worker_cache_audit(
             row.seed,
         )
         groups.setdefault(key, []).append(row)
-    semantic_sample_rows = tuple(
-        row for rows in groups.values() if len(rows) > 1 for row in rows
-    )
     base = fixtures.audit_gate6_worker_cache_semantics_v2(
-        semantic_sample_rows,
+        metric_rows,
         worker_counts=tuple(config["ablation"]["worker_counts"]),
         cache_modes=tuple(config["ablation"]["cache_modes"]),
     )
-    covered = {
-        (rows[0].ablation_case, rows[0].platform_kind, rows[0].scale)
-        for rows in groups.values()
-        if {
-            (row.worker_count, row.cache_enabled) for row in rows
-        }
-        == {(1, False), (1, True), (4, False), (4, True)}
-    }
-    missing = [
+    expected_variants = {(1, False), (1, True), (4, False), (4, True)}
+    missing_episodes = [
         {
-            "ablation_case": case,
-            "platform_kind": platform,
-            "scale": scale,
+            "ablation_case": rows[0].ablation_case,
+            "platform_kind": rows[0].platform_kind,
+            "scale": rows[0].scale,
+            "request_sha256": rows[0].pair_id,
+            "seed": rows[0].seed,
         }
-        for case, platform, scale in _gate6_expected_metric_combinations()
-        if (case, platform, scale) not in covered
+        for rows in groups.values()
+        if any(row.worker_count == 1 and not row.cache_enabled for row in rows)
+        and {(row.worker_count, row.cache_enabled) for row in rows}
+        != expected_variants
     ]
-    passed = base["status"] == "passed" and not missing
+    canonical_episode_count = sum(
+        row.worker_count == 1 and not row.cache_enabled for row in metric_rows
+    )
+    passed = base["status"] == "passed" and not missing_episodes
     return {
         **base,
         "status": "passed" if passed else "failed",
-        "missing_combinations": missing,
+        "canonical_episode_count": canonical_episode_count,
+        "missing_canonical_episode_count": len(missing_episodes),
+        "missing_canonical_episodes": missing_episodes,
     }
 
 
@@ -5430,6 +5484,7 @@ def _gate6_resume_lineage(
     *,
     config: dict[str, Any],
     input_hashes: Mapping[str, str | None],
+    source_identities: Mapping[str, str | None],
     repo_root: Path,
     fixtures: Any,
 ) -> dict[str, Any]:
@@ -5437,6 +5492,7 @@ def _gate6_resume_lineage(
     return {
         "config_sha256": _gate6_json_sha256(config),
         "input_hashes": dict(input_hashes),
+        "source_identities": dict(source_identities),
         "root_head": _git(repo_root, "rev-parse", "HEAD"),
         "gitlink": _git(repo_root, "rev-parse", "HEAD:path-planner"),
         "nested_head": _git(repo_root / "path-planner", "rev-parse", "HEAD"),
@@ -5508,6 +5564,60 @@ def _validate_gate6_output_root(
     return root
 
 
+def _gate6_ready_git_preflight(
+    config: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    nested_root = Path(repo_root).resolve() / "path-planner"
+    try:
+        branch = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+        parent_status = _git(
+            repo_root, "status", "--porcelain", "--untracked-files=all"
+        )
+        gitlink = _git(repo_root, "rev-parse", "HEAD:path-planner")
+        nested_head = _git(nested_root, "rev-parse", "HEAD")
+        nested_branch = _git(nested_root, "rev-parse", "--abbrev-ref", "HEAD")
+        nested_status = _git(
+            nested_root, "status", "--porcelain", "--untracked-files=all"
+        )
+        ancestor = subprocess.run(
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                config["expected_git"]["base_commit"],
+                "HEAD",
+            ],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+        ).returncode == 0
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return {
+            "status": "failed",
+            "checks": {},
+            "error": type(exc).__name__,
+        }
+    checks = {
+        "branch_matches": branch == config["expected_git"]["branch"],
+        "base_is_ancestor": ancestor,
+        "parent_clean": not parent_status,
+        "nested_branch_matches": (
+            nested_branch == config["expected_git"]["nested_branch"]
+        ),
+        "nested_clean": not nested_status,
+        "gitlink_matches_nested_head": gitlink == nested_head,
+    }
+    return {
+        "status": "passed" if all(checks.values()) else "failed",
+        "checks": checks,
+        "branch": branch,
+        "nested_branch": nested_branch,
+        "gitlink": gitlink,
+        "nested_head": nested_head,
+    }
+
+
 def _gate6_report(blockers: Sequence[str]) -> str:
     blocker_lines = "".join(f"- blocker={blocker}\n" for blocker in blockers)
     return (
@@ -5553,6 +5663,7 @@ def _run_gate6_ready_benchmark(
     config: dict[str, Any],
     output_root: Path,
     repo_root: Path,
+    git_preflight: dict[str, Any],
 ) -> dict[str, Any]:
     fixtures = _gate6_fixture_api(repo_root)
     bundle = _load_gate6_formal_inputs(config, repo_root)
@@ -5578,9 +5689,25 @@ def _run_gate6_ready_benchmark(
         input_kind for input_kind, _blocker in GATE6_INPUT_BLOCKERS
     }:
         raise ValueError("Gate 6 input hash contract mismatch")
+    source_identities = bundle["source_identities"]
+    if (
+        not isinstance(source_identities, Mapping)
+        or set(source_identities) != {"oracle_source_id", "provider_source_id"}
+        or (
+            source_identities["oracle_source_id"] is not None
+            and (
+                type(source_identities["oracle_source_id"]) is not str
+                or type(source_identities["provider_source_id"]) is not str
+                or source_identities["oracle_source_id"]
+                == source_identities["provider_source_id"]
+            )
+        )
+    ):
+        raise ValueError("Gate 6 source identity contract mismatch")
     lineage = _gate6_resume_lineage(
         config=config,
         input_hashes=input_hashes,
+        source_identities=source_identities,
         repo_root=repo_root,
         fixtures=fixtures,
     )
@@ -5659,7 +5786,9 @@ def _run_gate6_ready_benchmark(
         "inputs": inventory_result["inputs"],
         "metric_row_count": len(metric_rows),
         "input_hashes": dict(input_hashes),
+        "source_identities": dict(source_identities),
         "lineage": lineage,
+        "git_preflight": git_preflight,
         "phases": list(GATE6_PHASES),
         "ablation_cases": list(GATE6_ABLATION_CASES),
         "matrix_audit": matrix_audit,
@@ -5735,7 +5864,9 @@ def _run_gate6_ready_benchmark(
             "resumed_phase_count": len(resumed),
         },
         "input_hashes": dict(input_hashes),
+        "source_identities": dict(source_identities),
         "lineage": lineage,
+        "git_preflight": git_preflight,
         **gate_artifacts.BOUNDARY_FIELDS,
     }
     gate_artifacts.write_gate_artifacts_atomically(
@@ -5761,12 +5892,18 @@ def _run_gate6_benchmark(
     del execute_tests
     ready = _validate_gate6_config(config)
     validate_output_root(repo_root, output_root)
+    git_preflight: dict[str, Any] | None = None
+    if ready:
+        git_preflight = _gate6_ready_git_preflight(config, repo_root)
+        if git_preflight.get("status") != "passed":
+            raise RuntimeError("Gate 6 ready git preflight failed")
     output_root = _validate_gate6_output_root(config, output_root, ready=ready)
     if ready:
         return _run_gate6_ready_benchmark(
             config=config,
             output_root=output_root,
             repo_root=repo_root,
+            git_preflight=git_preflight,
         )
     blockers = [blocker for _, blocker in GATE6_INPUT_BLOCKERS]
     primary_blocker = blockers[0]

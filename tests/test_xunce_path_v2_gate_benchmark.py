@@ -6096,7 +6096,9 @@ def test_gate6_resume_rejects_stale_input_lineage(
             "target_id": "wheel-target-stale",
             "platform_kind": "wheel",
             "target_sha256": hashlib.sha256(b"target:wheel:stale").hexdigest(),
-            "request_sha256": hashlib.sha256(b"request:wheel:stale").hexdigest(),
+            "request_sha256": hashlib.sha256(
+                b"schedule-standard-wheel-000"
+            ).hexdigest(),
         }
     )
     paths["ppo_targets"].write_text(json.dumps(ppo, sort_keys=True), encoding="utf-8")
