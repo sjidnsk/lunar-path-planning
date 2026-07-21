@@ -5081,6 +5081,12 @@ def _gate6_synthetic_config(tmp_path: Path, monkeypatch, runner):
     temp_root = (tmp_path / "attempts").resolve()
     monkeypatch.setattr(runner, "GATE6_FORMAL_OUTPUT_ROOT", formal_root)
     monkeypatch.setattr(runner, "GATE6_FORMAL_TEMP_ROOT", temp_root)
+    monkeypatch.setattr(
+        runner,
+        "_gate6_ready_git_preflight",
+        lambda _config, _repo_root: {"status": "passed", "checks": {}},
+        raising=False,
+    )
     payload = json.loads(GATE6_CONFIG_PATH.read_text(encoding="utf-8"))
     payload["formal_output_root"] = formal_root.as_posix()
     payload["temp_root"] = temp_root.as_posix()
@@ -5397,6 +5403,10 @@ def _install_gate6_memory_loader(monkeypatch, runner, inventories, metric_rows):
                 name: hashlib.sha256(name.encode("utf-8")).hexdigest()
                 for name, _blocker in GATE6_INPUT_BLOCKERS
             },
+            "source_identities": {
+                "oracle_source_id": "independent-oracle-suite/v1",
+                "provider_source_id": "independent-provider-suite/v1",
+            },
         }
 
     monkeypatch.setattr(runner, "_load_gate6_formal_inputs", load, raising=False)
@@ -5418,8 +5428,8 @@ def _write_gate6_formal_bundle(
         "input_kind": input_kind,
         "source_id": f"independent-{input_kind}/v1",
         "source_independent": True,
-        "oracle_source_id": f"oracle-{input_kind}/v1",
-        "provider_source_id": f"provider-{input_kind}/v1",
+        "oracle_source_id": "independent-oracle-suite/v1",
+        "provider_source_id": "independent-provider-suite/v1",
     }
     if jsonl:
         records = [{"record_type": "header", **header}]
@@ -5504,6 +5514,7 @@ def _gate6_formal_files(
     standard_count: int,
     kilometer_count: int,
     missing_kind: str | None = None,
+    drop_worker_variants_for: tuple[str, str, str, int] | None = None,
 ) -> dict[str, Path]:
     input_root = tmp_path / "formal-inputs"
     input_root.mkdir()
@@ -5562,14 +5573,20 @@ def _gate6_formal_files(
                             cache_enabled=False,
                         )
                     )
-                if count:
                     for worker_count, cache_enabled in ((1, True), (4, False), (4, True)):
+                        if drop_worker_variants_for == (
+                            scale,
+                            case,
+                            platform,
+                            index,
+                        ):
+                            continue
                         schedule_rows[scale].append(
                             _gate6_metric_record(
                                 case=case,
                                 platform=platform,
                                 scale=scale,
-                                index=0,
+                                index=index,
                                 worker_count=worker_count,
                                 cache_enabled=cache_enabled,
                             )
@@ -5582,7 +5599,7 @@ def _gate6_formal_files(
                 f"target:{platform}".encode("utf-8")
             ).hexdigest(),
             "request_sha256": hashlib.sha256(
-                f"request:{platform}".encode("utf-8")
+                f"schedule-standard-{platform}-000".encode("utf-8")
             ).hexdigest(),
         }
         for platform in ("wheel", "legged", "hopper")
@@ -5615,6 +5632,7 @@ def _gate6_file_ready_config(
     standard_count: int,
     kilometer_count: int,
     missing_kind: str | None = None,
+    drop_worker_variants_for: tuple[str, str, str, int] | None = None,
 ):
     config_path, formal_root, temp_root = _gate6_synthetic_config(
         tmp_path,
@@ -5627,6 +5645,7 @@ def _gate6_file_ready_config(
         standard_count=standard_count,
         kilometer_count=kilometer_count,
         missing_kind=missing_kind,
+        drop_worker_variants_for=drop_worker_variants_for,
     )
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     payload["execution_class"] = "formal_ready_evaluation"
@@ -5919,7 +5938,15 @@ def test_gate6_real_file_bundle_passes_boundaries_at_ready_formal_root(
     assert summary["status"] == "passed"
     assert summary["formal_evidence_eligible"] is True
     assert summary["primary_blocker"] is None
+    assert summary["metric_row_count"] == 10_400
     assert summary["matrix_audit"]["status"] == "passed"
+    assert summary["worker_cache_audit"]["status"] == "passed"
+    assert summary["worker_cache_audit"]["canonical_episode_count"] == 2_600
+    assert summary["worker_cache_audit"]["group_count"] == 2_600
+    assert summary["source_identities"] == {
+        "oracle_source_id": "independent-oracle-suite/v1",
+        "provider_source_id": "independent-provider-suite/v1",
+    }
     assert summary["threshold_audit"]["blocking_reasons"] == []
     assert summary["threshold_audit"]["coverage_relative_improvement_min"] == (
         pytest.approx(0.05)
@@ -5928,6 +5955,12 @@ def test_gate6_real_file_bundle_passes_boundaries_at_ready_formal_root(
     assert summary["threshold_audit"]["standard_p95_ms_max"] == pytest.approx(250.0)
     assert summary["threshold_audit"]["kilometer_p95_ms_max"] == pytest.approx(750.0)
     assert {path.name for path in formal_root.iterdir()} == CANONICAL_ARTIFACTS
+    review = json.loads((formal_root / "review.json").read_text(encoding="utf-8"))
+    assert review["source_identities"] == summary["source_identities"]
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    state_path = runner._gate6_phase_state_path(config, formal_root)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["lineage"]["source_identities"] == summary["source_identities"]
     assert all(summary[name] is False for name in BOUNDARIES)
 
 
@@ -6101,7 +6134,15 @@ def test_gate6_resume_rejects_tampered_phase_result(
     assert not output_root.exists()
 
 
-@pytest.mark.parametrize("mode", ["same-source", "invalid-ppo-hash"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "same-source",
+        "cross-file-source",
+        "invalid-ppo-hash",
+        "unjoined-ppo-request",
+    ],
+)
 def test_gate6_real_loader_rejects_unbound_source_or_target_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -6125,13 +6166,29 @@ def test_gate6_real_loader_rejects_unbound_source_or_target_identity(
             json.dumps(payload, sort_keys=True), encoding="utf-8"
         )
         expected = "source identities must be distinct"
-    else:
+    elif mode == "cross-file-source":
+        payload = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
+        payload["provider_source_id"] = "different-provider-suite/v1"
+        paths["ppo_targets"].write_text(
+            json.dumps(payload, sort_keys=True), encoding="utf-8"
+        )
+        expected = "source identity mismatch"
+    elif mode == "invalid-ppo-hash":
         payload = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
         payload["rows"][0]["target_sha256"] = "not-a-sha256"
         paths["ppo_targets"].write_text(
             json.dumps(payload, sort_keys=True), encoding="utf-8"
         )
         expected = "target_sha256"
+    else:
+        payload = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
+        payload["rows"][0]["request_sha256"] = hashlib.sha256(
+            b"request-not-present-in-schedules"
+        ).hexdigest()
+        paths["ppo_targets"].write_text(
+            json.dumps(payload, sort_keys=True), encoding="utf-8"
+        )
+        expected = "PPO request_sha256 is not present in schedules"
 
     with pytest.raises(ValueError, match=expected):
         runner.run_gate_benchmark(
@@ -6140,3 +6197,124 @@ def test_gate6_real_loader_rejects_unbound_source_or_target_identity(
             REPO_ROOT,
             execute_tests=False,
         )
+
+
+def test_gate6_worker_cache_requires_every_canonical_episode_variant_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, _paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=10_000,
+        standard_count=100,
+        kilometer_count=30,
+        drop_worker_variants_for=("standard", "v2_full", "wheel", 99),
+    )
+
+    summary = runner.run_gate_benchmark(
+        config_path,
+        temp_root / "worker-gap",
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "blocked"
+    assert summary["primary_blocker"] == "gate6_worker_cache_semantics_failed"
+    assert summary["worker_cache_audit"]["status"] == "failed"
+    assert summary["worker_cache_audit"]["missing_canonical_episode_count"] == 1
+    assert summary["formal_evidence_eligible"] is False
+
+
+def test_gate6_ready_git_preflight_fails_before_formal_read_or_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, _paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_gate6_ready_git_preflight",
+        lambda _config, _repo_root: {
+            "status": "failed",
+            "checks": {"parent_clean": False},
+        },
+        raising=False,
+    )
+    reads = []
+
+    def forbidden_loader(*args, **kwargs):
+        reads.append((args, kwargs))
+        raise AssertionError("Git preflight must run before formal input loader")
+
+    monkeypatch.setattr(runner, "_load_gate6_formal_inputs", forbidden_loader)
+    output_root = temp_root / "git-preflight-failed"
+
+    with pytest.raises(RuntimeError, match="Gate 6 ready git preflight failed"):
+        runner.run_gate_benchmark(
+            config_path,
+            output_root,
+            REPO_ROOT,
+            execute_tests=False,
+        )
+    assert reads == []
+    assert not output_root.exists()
+
+
+def test_gate6_formal_files_are_hashed_and_parsed_from_one_bytes_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+    )
+    formal_paths = {path.resolve() for path in paths.values()}
+    byte_reads = {path: 0 for path in formal_paths}
+    original_read_bytes = runner.artifact_io.read_bytes
+    original_read_json = runner.artifact_io.read_json
+    original_read_jsonl = runner.artifact_io.read_jsonl
+
+    def counted_read_bytes(path):
+        resolved = Path(path).resolve()
+        if resolved in byte_reads:
+            byte_reads[resolved] += 1
+        return original_read_bytes(path)
+
+    def guarded_read_json(path):
+        if Path(path).resolve() in formal_paths:
+            raise AssertionError("formal JSON must parse from the hashed bytes snapshot")
+        return original_read_json(path)
+
+    def guarded_read_jsonl(path):
+        if Path(path).resolve() in formal_paths:
+            raise AssertionError("formal JSONL must parse from the hashed bytes snapshot")
+        return original_read_jsonl(path)
+
+    monkeypatch.setattr(runner.artifact_io, "read_bytes", counted_read_bytes)
+    monkeypatch.setattr(runner.artifact_io, "read_json", guarded_read_json)
+    monkeypatch.setattr(runner.artifact_io, "read_jsonl", guarded_read_jsonl)
+
+    summary = runner.run_gate_benchmark(
+        config_path,
+        temp_root / "single-snapshot",
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "blocked"
+    assert set(byte_reads.values()) == {1}
