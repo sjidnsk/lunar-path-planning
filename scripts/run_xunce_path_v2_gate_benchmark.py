@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -324,6 +325,11 @@ GATE6_ABLATION_CASES = (
 )
 GATE6_BOOTSTRAP_SEED = 20260716
 GATE6_BOOTSTRAP_RESAMPLES = 10_000
+GATE6_READY_EXECUTION_CLASS = "formal_ready_evaluation"
+GATE6_INTERNAL_PASS_ROUTE = "path_v2_internal_validation_passed_no_release_authority"
+GATE6_PLATFORMS = ("wheel", "legged", "hopper")
+GATE6_SCALES = ("standard", "kilometer")
+GATE6_WHEEL_ONLY_CASES = ("v1_astar", "wheel_hybrid_astar_opt_in")
 
 
 class _Gate2LoaderContractError(RuntimeError):
@@ -4329,9 +4335,270 @@ def _expected_gate6_config() -> dict[str, Any]:
     }
 
 
-def _validate_gate6_config(config: dict[str, Any]) -> None:
-    if type(config) is not dict or config != _expected_gate6_config():
+def _validate_gate6_config(config: dict[str, Any]) -> bool:
+    expected = _expected_gate6_config()
+    if type(config) is not dict:
         raise ValueError("Gate 6 config contract mismatch")
+    if config == expected:
+        return False
+
+    formal_inputs = config.get("formal_inputs")
+    expected_input_kinds = {input_kind for input_kind, _ in GATE6_INPUT_BLOCKERS}
+    if (
+        type(formal_inputs) is not dict
+        or set(formal_inputs) != expected_input_kinds
+        or any(
+            type(formal_inputs[input_kind]) is not str
+            or not formal_inputs[input_kind].strip()
+            for input_kind in expected_input_kinds
+        )
+    ):
+        raise ValueError("Gate 6 config contract mismatch")
+
+    ready = _expected_gate6_config()
+    ready["execution_class"] = GATE6_READY_EXECUTION_CLASS
+    ready["primary_blocker"] = None
+    ready["accepts_formal_inputs"] = True
+    ready["formal_inputs"] = dict(formal_inputs)
+    if config != ready:
+        raise ValueError("Gate 6 config contract mismatch")
+    return True
+
+
+def _gate6_fixture_api(repo_root: Path) -> Any:
+    nested_src = (Path(repo_root).resolve() / "path-planner" / "src").resolve()
+    nested_src_text = str(nested_src)
+    if nested_src_text not in sys.path:
+        sys.path.insert(0, nested_src_text)
+    fixtures = importlib.import_module("path_planner.v2.benchmark_fixtures")
+    expected_origin = (
+        nested_src / "path_planner" / "v2" / "benchmark_fixtures.py"
+    ).resolve()
+    actual_origin = Path(str(fixtures.__file__)).resolve()
+    if actual_origin != expected_origin:
+        raise RuntimeError("Gate 6 benchmark fixture import origin mismatch")
+    if (
+        tuple(fixtures.GATE6_PLATFORMS_V2) != GATE6_PLATFORMS
+        or tuple(fixtures.GATE6_PHASES_V2) != GATE6_PHASES
+        or tuple(fixtures.GATE6_ABLATION_CASES_V2) != GATE6_ABLATION_CASES
+        or fixtures.GATE6_BOOTSTRAP_SEED_V2 != GATE6_BOOTSTRAP_SEED
+        or fixtures.GATE6_BOOTSTRAP_RESAMPLES_V2 != GATE6_BOOTSTRAP_RESAMPLES
+    ):
+        raise RuntimeError("Gate 6 benchmark fixture constants mismatch")
+    for name in (
+        "Gate6EpisodeMetricRowV2",
+        "Gate6FixtureInventoryV2",
+        "audit_gate6_fixture_inventory_v2",
+        "aggregate_gate6_metrics_v2",
+        "paired_bootstrap_coverage_ci95_v2",
+        "audit_gate6_worker_cache_semantics_v2",
+    ):
+        if not hasattr(fixtures, name):
+            raise RuntimeError(f"Gate 6 benchmark fixture API missing: {name}")
+    return fixtures
+
+
+def _load_gate6_formal_inputs(
+    config: dict[str, Any],
+    repo_root: Path,
+) -> Mapping[str, Any]:
+    del config, repo_root
+    raise RuntimeError("Gate 6 formal input loader is not installed")
+
+
+def _load_gate6_phase_state(
+    config: dict[str, Any],
+    output_root: Path,
+) -> Sequence[dict[str, Any]]:
+    del config, output_root
+    return ()
+
+
+def _gate6_inventory_payload(audit: Any) -> dict[str, Any]:
+    inputs = {
+        item.input_kind: {
+            "status": item.status,
+            "reason": item.blocker,
+            "formal_row_count": item.formal_row_count,
+            "content_read": item.status != "missing",
+        }
+        for item in audit.inputs
+    }
+    return {
+        "inputs": inputs,
+        "blocking_reasons": list(audit.blocking_reasons),
+        "formal_evidence_eligible": audit.formal_evidence_eligible,
+        "formal_row_count": audit.formal_row_count,
+    }
+
+
+def _gate6_expected_metric_combinations() -> tuple[tuple[str, str, str], ...]:
+    combinations: list[tuple[str, str, str]] = []
+    for case in GATE6_ABLATION_CASES:
+        platforms = (
+            ("wheel",) if case in GATE6_WHEEL_ONLY_CASES else GATE6_PLATFORMS
+        )
+        for platform in platforms:
+            for scale in GATE6_SCALES:
+                combinations.append((case, platform, scale))
+    return tuple(combinations)
+
+
+def _gate6_matrix_audit(metric_rows: Sequence[Any]) -> dict[str, Any]:
+    expected = _gate6_expected_metric_combinations()
+    expected_set = set(expected)
+    observed_set = {
+        (row.ablation_case, row.platform_kind, row.scale) for row in metric_rows
+    }
+
+    def payload(combination: tuple[str, str, str]) -> dict[str, str]:
+        case, platform, scale = combination
+        return {
+            "ablation_case": case,
+            "platform_kind": platform,
+            "scale": scale,
+        }
+
+    missing = [payload(item) for item in expected if item not in observed_set]
+    unexpected = [
+        payload(item)
+        for item in sorted(observed_set - expected_set)
+    ]
+    return {
+        "status": "passed" if not missing and not unexpected else "failed",
+        "expected_combination_count": len(expected),
+        "observed_combination_count": len(observed_set & expected_set),
+        "missing_combinations": missing,
+        "unexpected_combinations": unexpected,
+    }
+
+
+def _gate6_aggregate_decision(
+    *,
+    fixtures: Any,
+    metric_rows: Sequence[Any],
+    matrix_audit: dict[str, Any],
+    worker_cache_audit: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    overall_metrics = fixtures.aggregate_gate6_metrics_v2(metric_rows)
+    paired_bootstrap: dict[str, Any] | None = None
+    if overall_metrics["metrics_status"] == "not_evaluated":
+        blockers = ["gate6_metric_rows_missing"]
+    elif matrix_audit["status"] != "passed":
+        blockers = ["gate6_ablation_matrix_incomplete"]
+    elif overall_metrics["safety_passed"] is not True:
+        blockers = ["gate6_safety_metric_failed"]
+    elif worker_cache_audit["status"] != "passed":
+        blockers = ["gate6_worker_cache_semantics_failed"]
+    elif (
+        overall_metrics["primitive_recall"] is None
+        or overall_metrics["primitive_recall"] < 0.98
+    ):
+        blockers = ["gate6_primitive_recall_failed"]
+    elif (
+        overall_metrics["reachable_success_ratio"] is None
+        or overall_metrics["reachable_success_ratio"] < 0.99
+    ):
+        blockers = ["gate6_reachable_success_failed"]
+    elif (
+        overall_metrics["timeout_count"]
+        or overall_metrics["hard_timeout_violation_count"]
+    ):
+        blockers = ["gate6_timeout_metric_failed"]
+    else:
+        try:
+            paired_bootstrap = fixtures.paired_bootstrap_coverage_ci95_v2(
+                metric_rows,
+                baseline_case="v2_fine_only",
+                candidate_case="v2_full",
+                seed=config["ablation"]["bootstrap_seed"],
+                resamples=config["ablation"]["bootstrap_resamples"],
+            )
+        except (TypeError, ValueError):
+            blockers = ["gate6_paired_bootstrap_invalid"]
+        else:
+            blockers = (
+                []
+                if paired_bootstrap["mean_delta"] >= 0.0
+                and paired_bootstrap["ci95_lower"] >= 0.0
+                else ["gate6_coverage_bootstrap_failed"]
+            )
+    return {
+        "status": "passed" if not blockers else "blocked",
+        "blocking_reasons": blockers,
+        "overall_metrics": overall_metrics,
+        "paired_bootstrap": paired_bootstrap,
+    }
+
+
+def _evaluate_gate6_formal_phase(
+    phase: str,
+    *,
+    fixtures: Any,
+    inventories: Mapping[str, Any],
+    metric_rows: Sequence[Any],
+    prior_results: Mapping[str, dict[str, Any]],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    if phase == "primitive_audit":
+        audit = fixtures.audit_gate6_fixture_inventory_v2(inventories)
+        return _gate6_inventory_payload(audit)
+    if phase == "exact_quality":
+        inventory = prior_results["primitive_audit"]["inputs"]
+        return {
+            "status": inventory["independent_small_map_optima"]["status"],
+            "formal_row_count": inventory["independent_small_map_optima"][
+                "formal_row_count"
+            ],
+        }
+    if phase in GATE6_SCALES:
+        rows = tuple(row for row in metric_rows if row.scale == phase)
+        return fixtures.aggregate_gate6_metrics_v2(rows)
+    if phase == "ablation":
+        return {
+            "matrix_audit": _gate6_matrix_audit(metric_rows),
+            "ablation_metrics": {
+                case: fixtures.aggregate_gate6_metrics_v2(
+                    row for row in metric_rows if row.ablation_case == case
+                )
+                for case in GATE6_ABLATION_CASES
+            },
+        }
+    if phase == "determinism_worker_cache":
+        return fixtures.audit_gate6_worker_cache_semantics_v2(
+            metric_rows,
+            worker_counts=tuple(config["ablation"]["worker_counts"]),
+            cache_modes=tuple(config["ablation"]["cache_modes"]),
+        )
+    if phase == "aggregate":
+        return _gate6_aggregate_decision(
+            fixtures=fixtures,
+            metric_rows=metric_rows,
+            matrix_audit=prior_results["ablation"]["matrix_audit"],
+            worker_cache_audit=prior_results["determinism_worker_cache"],
+            config=config,
+        )
+    raise ValueError(f"unknown Gate 6 phase: {phase}")
+
+
+def _validated_gate6_resume_records(
+    records: Sequence[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    materialized = tuple(records)
+    if len(materialized) > len(GATE6_PHASES):
+        raise ValueError("Gate 6 resume state contains too many phases")
+    validated: list[dict[str, Any]] = []
+    for expected_phase, record in zip(GATE6_PHASES, materialized, strict=False):
+        if (
+            type(record) is not dict
+            or record.get("phase") != expected_phase
+            or record.get("status") != "completed"
+            or type(record.get("result")) is not dict
+        ):
+            raise ValueError("Gate 6 resume state must be a completed phase prefix")
+        validated.append(dict(record))
+    return tuple(validated)
 
 
 def _validate_gate6_output_root(
@@ -4371,6 +4638,184 @@ def _gate6_report(blockers: Sequence[str]) -> str:
     )
 
 
+def _gate6_ready_report(summary: dict[str, Any]) -> str:
+    blocker_lines = "".join(
+        f"- blocker={blocker}\n" for blocker in summary["blocking_reasons"]
+    )
+    return (
+        "# Path Planner v2 Gate 6 formal-ready internal benchmark\n\n"
+        f"- status={summary['status']}\n"
+        f"- execution_class={GATE6_READY_EXECUTION_CLASS}\n"
+        f"- formal_metrics_status={summary['formal_metrics_status']}\n"
+        "- accepts_formal_inputs=true\n"
+        f"- formal_evidence_eligible={str(summary['formal_evidence_eligible']).lower()}\n"
+        f"- formal_row_count={summary['formal_row_count']}\n"
+        f"{blocker_lines}"
+        "- release_authority=false\n"
+        "- publishes_checkpoint=false\n"
+        "- replaces_default_policy=false\n"
+        "- connects_real_executor=false\n"
+        "- starts_online_canary=false\n"
+    )
+
+
+def _run_gate6_ready_benchmark(
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    repo_root: Path,
+) -> dict[str, Any]:
+    fixtures = _gate6_fixture_api(repo_root)
+    bundle = _load_gate6_formal_inputs(config, repo_root)
+    if not isinstance(bundle, Mapping) or set(bundle) != {"inventories", "metric_rows"}:
+        raise ValueError("Gate 6 formal input bundle contract mismatch")
+    inventories = bundle["inventories"]
+    if not isinstance(inventories, Mapping):
+        raise TypeError("Gate 6 inventories must be a mapping")
+    metric_rows = tuple(bundle["metric_rows"])
+    if any(type(row) is not fixtures.Gate6EpisodeMetricRowV2 for row in metric_rows):
+        raise TypeError("Gate 6 metric_rows must use Gate6EpisodeMetricRowV2")
+
+    resumed = _validated_gate6_resume_records(
+        _load_gate6_phase_state(config, output_root)
+    )
+    prior_results: dict[str, dict[str, Any]] = {}
+    phases: list[dict[str, Any]] = []
+    for index, phase in enumerate(GATE6_PHASES):
+        if index < len(resumed):
+            result = resumed[index]["result"]
+            phase_row = {
+                "phase": phase,
+                "status": "completed",
+                "resumed": True,
+                "result": result,
+            }
+        else:
+            result = _evaluate_gate6_formal_phase(
+                phase,
+                fixtures=fixtures,
+                inventories=inventories,
+                metric_rows=metric_rows,
+                prior_results=prior_results,
+                config=config,
+            )
+            phase_row = {
+                "phase": phase,
+                "status": "completed",
+                "resumed": False,
+                "result": result,
+            }
+        prior_results[phase] = result
+        phases.append(phase_row)
+
+    inventory_result = prior_results["primitive_audit"]
+    aggregate_result = prior_results["aggregate"]
+    input_blockers = list(inventory_result["blocking_reasons"])
+    metric_blockers = list(aggregate_result["blocking_reasons"])
+    blockers = input_blockers if input_blockers else metric_blockers
+    primary_blocker = blockers[0] if blockers else None
+    status = "blocked" if blockers else "passed"
+    formal_evidence_eligible = not blockers
+    formal_metrics_status = aggregate_result["overall_metrics"]["metrics_status"]
+    matrix_audit = prior_results["ablation"]["matrix_audit"]
+    ablation_metrics = prior_results["ablation"]["ablation_metrics"]
+    worker_cache_audit = prior_results["determinism_worker_cache"]
+    paired_bootstrap = aggregate_result["paired_bootstrap"]
+    common = {
+        "status": status,
+        "execution_class": GATE6_READY_EXECUTION_CLASS,
+        "primary_blocker": primary_blocker,
+        "formal_metrics_status": formal_metrics_status,
+        "formal_evidence_eligible": formal_evidence_eligible,
+        "formal_row_count": inventory_result["formal_row_count"],
+    }
+    summary = {
+        "schema_version": GATE6_SCHEMA_VERSION,
+        "stage_id": GATE6_STAGE_ID,
+        **common,
+        "blocking_reasons": blockers,
+        "next_required_change": primary_blocker or GATE6_INTERNAL_PASS_ROUTE,
+        "accepts_formal_inputs": True,
+        "inputs": inventory_result["inputs"],
+        "metric_row_count": len(metric_rows),
+        "phases": list(GATE6_PHASES),
+        "ablation_cases": list(GATE6_ABLATION_CASES),
+        "matrix_audit": matrix_audit,
+        "ablation_metrics": ablation_metrics,
+        "worker_cache_audit": worker_cache_audit,
+        "paired_bootstrap": paired_bootstrap,
+        "overall_metrics": aggregate_result["overall_metrics"],
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    routing = {
+        "schema_version": "xunce-path-v2-gate6-routing/v1",
+        "stage_id": GATE6_STAGE_ID,
+        **common,
+        "route": primary_blocker or GATE6_INTERNAL_PASS_ROUTE,
+        "blocking_reasons": blockers,
+        "internal_pass_route": GATE6_INTERNAL_PASS_ROUTE,
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    rows = [
+        {
+            "suite": "formal_input",
+            "input_kind": input_kind,
+            **input_result,
+        }
+        for input_kind, input_result in inventory_result["inputs"].items()
+    ]
+    rows.extend(
+        {
+            "suite": "ablation",
+            "ablation_case": case,
+            **ablation_metrics[case],
+        }
+        for case in GATE6_ABLATION_CASES
+    )
+    rows.extend(
+        (
+            {"suite": "matrix_audit", **matrix_audit},
+            {"suite": "worker_cache_audit", **worker_cache_audit},
+            {
+                "suite": "paired_bootstrap",
+                "status": "evaluated" if paired_bootstrap is not None else "not_evaluated",
+                "result": paired_bootstrap,
+            },
+            {
+                "suite": "aggregate",
+                "status": aggregate_result["status"],
+                **aggregate_result["overall_metrics"],
+            },
+        )
+    )
+    review = {
+        "schema_version": "xunce-path-v2-gate6-review/v1",
+        "stage_id": GATE6_STAGE_ID,
+        **common,
+        "blocking_reasons": blockers,
+        "accepts_formal_inputs": True,
+        "inputs": inventory_result["inputs"],
+        "execution": {
+            "pytest": "not_run_evaluator_only",
+            "formal_input_reads": len(config["formal_inputs"]),
+            "commands": [],
+            "resumed_phase_count": len(resumed),
+        },
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    gate_artifacts.write_gate_artifacts_atomically(
+        output_root=output_root,
+        config=config,
+        summary=summary,
+        routing=routing,
+        rows=rows,
+        phases=phases,
+        review=review,
+        report=_gate6_ready_report(summary),
+    )
+    return summary
+
+
 def _run_gate6_benchmark(
     *,
     config: dict[str, Any],
@@ -4379,9 +4824,15 @@ def _run_gate6_benchmark(
     execute_tests: bool,
 ) -> dict[str, Any]:
     del execute_tests
-    _validate_gate6_config(config)
+    ready = _validate_gate6_config(config)
     validate_output_root(repo_root, output_root)
     output_root = _validate_gate6_output_root(config, output_root)
+    if ready:
+        return _run_gate6_ready_benchmark(
+            config=config,
+            output_root=output_root,
+            repo_root=repo_root,
+        )
     blockers = [blocker for _, blocker in GATE6_INPUT_BLOCKERS]
     primary_blocker = blockers[0]
     common = {
@@ -4418,7 +4869,7 @@ def _run_gate6_benchmark(
         **common,
         "route": primary_blocker,
         "blocking_reasons": blockers,
-        "internal_pass_route": "path_v2_internal_validation_passed_no_release_authority",
+        "internal_pass_route": GATE6_INTERNAL_PASS_ROUTE,
         **gate_artifacts.BOUNDARY_FIELDS,
     }
     rows = [
