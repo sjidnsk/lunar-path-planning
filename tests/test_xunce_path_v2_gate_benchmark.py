@@ -5039,3 +5039,208 @@ def test_gate5_pytest_envelope_constructor_is_exact(tmp_path: Path) -> None:
         "--junitxml",
         str(attempt_root / "gate5.junit.xml"),
     ]
+
+
+GATE6_CONFIG_PATH = (
+    REPO_ROOT / "configs" / "xunce_path_v2_gate6_formal_benchmark_v1.json"
+)
+GATE6_INPUT_BLOCKERS = (
+    (
+        "independent_primitive_labels",
+        "provide_independent_10000_primitive_labels_per_platform",
+    ),
+    ("independent_small_map_optima", "provide_independent_small_map_optima"),
+    ("standard_schedules", "provide_standard_100_episodes_per_platform"),
+    ("kilometer_schedules", "provide_kilometer_30_episodes_per_platform"),
+    ("ppo_targets", "provide_ppo_target_fixtures"),
+)
+GATE6_PHASES = (
+    "primitive_audit",
+    "exact_quality",
+    "standard",
+    "kilometer",
+    "ablation",
+    "determinism_worker_cache",
+    "aggregate",
+)
+GATE6_ABLATION_CASES = (
+    "v1_astar",
+    "wheel_hybrid_astar_opt_in",
+    "v2_fine_only",
+    "v2_plus_multi_heuristic",
+    "v2_plus_hierarchy",
+    "v2_plus_lazy_validation",
+    "v2_plus_cache",
+    "v2_full",
+)
+
+
+def _gate6_synthetic_config(tmp_path: Path, monkeypatch, runner):
+    formal_root = (tmp_path / "formal-g6").resolve()
+    temp_root = (tmp_path / "attempts").resolve()
+    monkeypatch.setattr(runner, "GATE6_FORMAL_OUTPUT_ROOT", formal_root)
+    monkeypatch.setattr(runner, "GATE6_FORMAL_TEMP_ROOT", temp_root)
+    payload = json.loads(GATE6_CONFIG_PATH.read_text(encoding="utf-8"))
+    payload["formal_output_root"] = formal_root.as_posix()
+    payload["temp_root"] = temp_root.as_posix()
+    config_path = tmp_path / "gate6.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    return config_path, formal_root, temp_root
+
+
+def test_gate6_checked_config_and_registry_freeze_blocked_contract() -> None:
+    payload = json.loads(GATE6_CONFIG_PATH.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "xunce-path-v2-gate6-formal-benchmark/v1"
+    assert payload["stage_id"] == "xunce-path-v2-gate6-formal-benchmark"
+    assert payload["formal_output_root"] == "D:/xunce/out/path_v2/g6"
+    assert payload["temp_root"] == "D:/xunce/tmp/path_v2_g6"
+    assert payload["execution_class"] == "blocked_formal_inputs_missing"
+    assert payload["accepts_formal_inputs"] is False
+    assert payload["formal_evidence_eligible"] is False
+    assert tuple(payload["formal_inputs"]) == tuple(
+        name for name, _ in GATE6_INPUT_BLOCKERS
+    )
+    assert all(value is None for value in payload["formal_inputs"].values())
+    assert tuple(payload["phases"]) == GATE6_PHASES
+    assert tuple(payload["ablation"]["cases"]) == GATE6_ABLATION_CASES
+    assert payload["ablation"]["bootstrap_seed"] == 20260716
+    assert payload["ablation"]["bootstrap_resamples"] == 10_000
+    assert payload["boundaries"] == BOUNDARIES
+
+    stages = json.loads(
+        (REPO_ROOT / "configs" / "stage_registry.json").read_text(encoding="utf-8")
+    )["stages"]
+    assert stages["xunce-path-v2-gate6-formal-benchmark"] == {
+        "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+        "default_config": "configs/xunce_path_v2_gate6_formal_benchmark_v1.json",
+        "default_output_root": "D:/xunce/out/path_v2/g6",
+        "execution_class": "blocked_formal_inputs_missing",
+        "formal_evidence_eligible": False,
+        "args": [
+            "--config",
+            "{config}",
+            "--output-root",
+            "{output_root}",
+            "--repo-root",
+            "{repo_root}",
+        ],
+    }
+    assert stages["xunce-path-v2-gate4-legged"]["script"] == (
+        "scripts/run_xunce_path_v2_gate_benchmark.py"
+    )
+    assert "runner" not in stages["xunce-path-v2-gate4-legged"]
+
+
+def test_gate6_blocked_dry_run_writes_exact_auditable_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _runner()
+    config_path, _, temp_root = _gate6_synthetic_config(tmp_path, monkeypatch, runner)
+    output_root = temp_root / "dry-run-001"
+
+    summary = runner.run_gate_benchmark(
+        config_path, output_root, REPO_ROOT, execute_tests=False
+    )
+
+    blockers = [blocker for _, blocker in GATE6_INPUT_BLOCKERS]
+    assert summary["status"] == "blocked"
+    assert summary["execution_class"] == "blocked_formal_inputs_missing"
+    assert summary["primary_blocker"] == blockers[0]
+    assert summary["blocking_reasons"] == blockers
+    assert summary["formal_metrics_status"] == "not_evaluated"
+    assert summary["formal_evidence_eligible"] is False
+    assert summary["formal_row_count"] == 0
+    assert all(summary[name] is False for name in BOUNDARIES)
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+
+    rows = [
+        json.loads(line)
+        for line in (output_root / "results.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows == [
+        {
+            "suite": "formal_input",
+            "input_kind": input_kind,
+            "status": "missing",
+            "reason": blocker,
+        }
+        for input_kind, blocker in GATE6_INPUT_BLOCKERS
+    ]
+    phases = [
+        json.loads(line)
+        for line in (output_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert phases == [
+        {
+            "phase": phase,
+            "status": (
+                "completed_blocked"
+                if phase == "aggregate"
+                else "not_run_due_to_missing_formal_inputs"
+            ),
+        }
+        for phase in GATE6_PHASES
+    ]
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["artifact_count"] == 7
+    assert {item["relative_path"] for item in manifest["artifacts"]} == (
+        CANONICAL_ARTIFACTS - {"manifest.json"}
+    )
+    report = (output_root / "report.md").read_text(encoding="utf-8")
+    assert all(blocker in report for blocker in blockers)
+    assert "not_evaluated" in report
+    assert "N/A" not in report
+
+
+def test_gate6_missing_inputs_short_circuit_pytest_and_formal_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _runner()
+    config_path, _, temp_root = _gate6_synthetic_config(tmp_path, monkeypatch, runner)
+    calls = []
+
+    def forbidden(name: str):
+        def fail(*args, **kwargs):
+            calls.append(name)
+            raise AssertionError(f"Gate 6 blocked snapshot called {name}")
+
+        return fail
+
+    monkeypatch.setattr(runner, "_run_pytest", forbidden("pytest"))
+    monkeypatch.setattr(
+        runner, "_load_gate6_formal_inputs", forbidden("formal-input"), raising=False
+    )
+    for index, execute_tests in enumerate((False, True)):
+        summary = runner.run_gate_benchmark(
+            config_path,
+            temp_root / f"attempt-{index}",
+            REPO_ROOT,
+            execute_tests=execute_tests,
+        )
+        assert summary["status"] == "blocked"
+    assert calls == []
+
+
+def test_gate6_rejects_formal_root_and_non_null_input_before_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _runner()
+    config_path, formal_root, temp_root = _gate6_synthetic_config(
+        tmp_path, monkeypatch, runner
+    )
+    with pytest.raises(ValueError, match="formal output root"):
+        runner.run_gate_benchmark(
+            config_path, formal_root, REPO_ROOT, execute_tests=False
+        )
+    assert not formal_root.exists()
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["formal_inputs"]["ppo_targets"] = "D:/xunce/inputs/path_v2/g6/ppo.jsonl"
+    bad_config = tmp_path / "bad-gate6.json"
+    bad_config.write_text(json.dumps(payload), encoding="utf-8")
+    output_root = temp_root / "rejected"
+    with pytest.raises(ValueError, match="Gate 6 config contract"):
+        runner.run_gate_benchmark(
+            bad_config, output_root, REPO_ROOT, execute_tests=False
+        )
+    assert not output_root.exists()
