@@ -6143,6 +6143,7 @@ def test_gate6_resume_rejects_tampered_phase_result(
         "cross-file-source",
         "invalid-ppo-hash",
         "unjoined-ppo-request",
+        "cross-platform-ppo-request",
     ],
 )
 def test_gate6_real_loader_rejects_unbound_source_or_target_identity(
@@ -6182,10 +6183,20 @@ def test_gate6_real_loader_rejects_unbound_source_or_target_identity(
             json.dumps(payload, sort_keys=True), encoding="utf-8"
         )
         expected = "target_sha256"
-    else:
+    elif mode == "unjoined-ppo-request":
         payload = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
         payload["rows"][0]["request_sha256"] = hashlib.sha256(
             b"request-not-present-in-schedules"
+        ).hexdigest()
+        paths["ppo_targets"].write_text(
+            json.dumps(payload, sort_keys=True), encoding="utf-8"
+        )
+        expected = "PPO request_sha256 is not present in schedules"
+    else:
+        payload = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
+        assert payload["rows"][0]["platform_kind"] == "wheel"
+        payload["rows"][0]["request_sha256"] = hashlib.sha256(
+            b"schedule-standard-legged-000"
         ).hexdigest()
         paths["ppo_targets"].write_text(
             json.dumps(payload, sort_keys=True), encoding="utf-8"
@@ -6196,6 +6207,43 @@ def test_gate6_real_loader_rejects_unbound_source_or_target_identity(
         runner.run_gate_benchmark(
             config_path,
             temp_root / f"identity-{mode}",
+            REPO_ROOT,
+            execute_tests=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "input_kind",
+    ["independent_primitive_labels", "standard_schedules"],
+)
+def test_gate6_formal_loader_rejects_duplicate_json_keys_from_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    input_kind: str,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+    )
+    path = paths[input_kind]
+    text = path.read_text(encoding="utf-8")
+    source_id = f"independent-{input_kind}/v1"
+    needle = f'"source_id": "{source_id}"'
+    assert text.count(needle) == 1
+    path.write_text(
+        text.replace(needle, f"{needle}, {needle}", 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate JSON object key: source_id"):
+        runner.run_gate_benchmark(
+            config_path,
+            temp_root / f"duplicate-{input_kind}",
             REPO_ROOT,
             execute_tests=False,
         )
@@ -6270,6 +6318,40 @@ def test_gate6_ready_git_preflight_fails_before_formal_read_or_output(
         )
     assert reads == []
     assert not output_root.exists()
+
+
+def test_gate6_ready_git_preflight_requires_gate_input_commit_ancestor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config = json.loads(GATE6_CONFIG_PATH.read_text(encoding="utf-8"))
+    rejected_gate_input = "f" * 40
+    config["expected_git"]["gate_input_commit"] = rejected_gate_input
+
+    def fake_git(_root, *args):
+        if args == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return EXPECTED_BRANCH
+        if args == ("status", "--porcelain", "--untracked-files=all"):
+            return ""
+        if args in {
+            ("rev-parse", "HEAD:path-planner"),
+            ("rev-parse", "HEAD"),
+        }:
+            return "1" * 40
+        raise AssertionError(f"unexpected git arguments: {args}")
+
+    def fake_run(argv, **_kwargs):
+        commit = argv[-2]
+        return SimpleNamespace(returncode=1 if commit == rejected_gate_input else 0)
+
+    monkeypatch.setattr(runner, "_git", fake_git)
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    preflight = runner._gate6_ready_git_preflight(config, REPO_ROOT)
+
+    assert preflight["status"] == "failed"
+    assert preflight["checks"]["base_is_ancestor"] is True
+    assert preflight["checks"]["gate_input_is_ancestor"] is False
 
 
 def test_gate6_formal_files_are_hashed_and_parsed_from_one_bytes_snapshot(
