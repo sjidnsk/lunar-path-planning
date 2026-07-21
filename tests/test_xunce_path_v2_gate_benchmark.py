@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -5244,3 +5245,332 @@ def test_gate6_rejects_formal_root_and_non_null_input_before_output(
             bad_config, output_root, REPO_ROOT, execute_tests=False
         )
     assert not output_root.exists()
+
+
+def _gate6_ready_config(tmp_path: Path, monkeypatch, runner, suffix: str):
+    config_path, formal_root, temp_root = _gate6_synthetic_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+    )
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["execution_class"] = "formal_ready_evaluation"
+    payload["primary_blocker"] = None
+    payload["accepts_formal_inputs"] = True
+    payload["formal_inputs"] = {
+        name: f"memory://gate6/{suffix}/{name}"
+        for name, _blocker in GATE6_INPUT_BLOCKERS
+    }
+    ready_path = tmp_path / f"gate6-ready-{suffix}.json"
+    ready_path.write_text(json.dumps(payload), encoding="utf-8")
+    return ready_path, formal_root, temp_root
+
+
+def _gate6_fixture_module():
+    nested_src = str((REPO_ROOT / "path-planner" / "src").resolve())
+    if nested_src not in sys.path:
+        sys.path.insert(0, nested_src)
+    return importlib.import_module("path_planner.v2.benchmark_fixtures")
+
+
+def _gate6_ready_inventories(fixtures):
+    return {
+        requirement.input_kind: fixtures.Gate6FixtureInventoryV2(
+            input_kind=requirement.input_kind,
+            source_id=f"independent-{requirement.input_kind}/v1",
+            source_independent=True,
+            rows_per_platform=tuple(
+                (platform, requirement.minimum_rows_per_platform)
+                for platform in fixtures.GATE6_PLATFORMS_V2
+            ),
+        )
+        for requirement in fixtures.GATE6_REQUIRED_INPUTS_V2
+    }
+
+
+def _gate6_ready_metric_rows(fixtures):
+    rows = []
+    for scale in ("standard", "kilometer"):
+        for case in GATE6_ABLATION_CASES:
+            platforms = (
+                ("wheel",)
+                if case in {"v1_astar", "wheel_hybrid_astar_opt_in"}
+                else fixtures.GATE6_PLATFORMS_V2
+            )
+            coverage = (
+                1.10
+                if case == "v2_full"
+                else 1.00
+                if case == "v2_fine_only"
+                else 1.05
+            )
+            for platform in platforms:
+                semantic_digest = hashlib.sha256(
+                    f"{scale}:{case}:{platform}".encode("utf-8")
+                ).hexdigest()
+                for worker_count in (1, 4):
+                    for cache_enabled in (False, True):
+                        rows.append(
+                            fixtures.Gate6EpisodeMetricRowV2(
+                                episode_id=(
+                                    f"episode-{scale}-{case}-{platform}-"
+                                    f"w{worker_count}-c{int(cache_enabled)}"
+                                ),
+                                pair_id="paired-main",
+                                platform_kind=platform,
+                                scale=scale,
+                                ablation_case=case,
+                                seed=17,
+                                worker_count=worker_count,
+                                cache_enabled=cache_enabled,
+                                oracle_reachable=True,
+                                provider_success=True,
+                                provider_complete_l2=True,
+                                primitive_true_positive_count=100,
+                                primitive_false_negative_count=0,
+                                primitive_false_positive_count=0,
+                                resource_cost=1.0,
+                                coverage_efficiency=coverage,
+                                expanded_states=10,
+                                rejected_l0=0,
+                                rejected_l1=0,
+                                rejected_l2=0,
+                                cache_hits=1 if cache_enabled else 0,
+                                cache_lookups=1,
+                                runtime_ms=10.0 if scale == "standard" else 20.0,
+                                timed_out=False,
+                                semantic_digest=semantic_digest,
+                            )
+                        )
+    return tuple(rows)
+
+
+def _install_gate6_memory_loader(monkeypatch, runner, inventories, metric_rows):
+    calls = []
+
+    def load(config, repo_root):
+        calls.append((config["stage_id"], Path(repo_root).resolve()))
+        return {"inventories": inventories, "metric_rows": metric_rows}
+
+    monkeypatch.setattr(runner, "_load_gate6_formal_inputs", load, raising=False)
+    return calls
+
+
+def test_gate6_ready_inventory_audit_emits_each_dynamic_input_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    fixtures = _gate6_fixture_module()
+    metric_rows = _gate6_ready_metric_rows(fixtures)
+    for index, (input_kind, expected_blocker) in enumerate(GATE6_INPUT_BLOCKERS):
+        config_path, _formal_root, temp_root = _gate6_ready_config(
+            tmp_path,
+            monkeypatch,
+            runner,
+            f"missing-{index}",
+        )
+        inventories = _gate6_ready_inventories(fixtures)
+        inventories[input_kind] = None
+        _install_gate6_memory_loader(
+            monkeypatch,
+            runner,
+            inventories,
+            metric_rows,
+        )
+
+        summary = runner.run_gate_benchmark(
+            config_path,
+            temp_root / f"missing-{index}",
+            REPO_ROOT,
+            execute_tests=False,
+        )
+
+        assert summary["status"] == "blocked"
+        assert summary["primary_blocker"] == expected_blocker
+        assert summary["blocking_reasons"] == [expected_blocker]
+        assert summary["inputs"][input_kind]["status"] == "missing"
+        assert all(summary[name] is False for name in BOUNDARIES)
+
+
+def test_gate6_ready_bundle_completes_seven_phases_and_eight_ablations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    fixtures = _gate6_fixture_module()
+    config_path, _formal_root, temp_root = _gate6_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        "pass",
+    )
+    calls = _install_gate6_memory_loader(
+        monkeypatch,
+        runner,
+        _gate6_ready_inventories(fixtures),
+        _gate6_ready_metric_rows(fixtures),
+    )
+    output_root = temp_root / "ready-pass"
+
+    summary = runner.run_gate_benchmark(
+        config_path,
+        output_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert len(calls) == 1
+    assert summary["status"] == "passed"
+    assert summary["formal_metrics_status"] == "evaluated"
+    assert summary["formal_evidence_eligible"] is True
+    assert summary["primary_blocker"] is None
+    assert tuple(summary["ablation_metrics"]) == GATE6_ABLATION_CASES
+    assert summary["matrix_audit"]["status"] == "passed"
+    assert summary["matrix_audit"]["missing_combinations"] == []
+    assert summary["worker_cache_audit"]["status"] == "passed"
+    assert summary["paired_bootstrap"]["mean_delta"] == pytest.approx(0.10)
+    assert all(summary[name] is False for name in BOUNDARIES)
+    routing = json.loads((output_root / "routing.json").read_text(encoding="utf-8"))
+    assert routing["route"] == "path_v2_internal_validation_passed_no_release_authority"
+    assert all(routing[name] is False for name in BOUNDARIES)
+    phases = [
+        json.loads(line)
+        for line in (output_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert tuple(row["phase"] for row in phases) == GATE6_PHASES
+    assert all(row["status"] == "completed" for row in phases)
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+
+
+def test_gate6_resume_skips_completed_phase_evaluators(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    fixtures = _gate6_fixture_module()
+    config_path, _formal_root, temp_root = _gate6_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        "resume",
+    )
+    inventories = _gate6_ready_inventories(fixtures)
+    metric_rows = _gate6_ready_metric_rows(fixtures)
+    _install_gate6_memory_loader(monkeypatch, runner, inventories, metric_rows)
+    first_root = temp_root / "resume-source"
+    runner.run_gate_benchmark(
+        config_path,
+        first_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+    first_phases = [
+        json.loads(line)
+        for line in (first_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    resumed = tuple(first_phases[:2])
+    monkeypatch.setattr(
+        runner,
+        "_load_gate6_phase_state",
+        lambda _config, _output_root: resumed,
+        raising=False,
+    )
+    evaluated = []
+    original = runner._evaluate_gate6_formal_phase
+
+    def capture(phase, *args, **kwargs):
+        evaluated.append(phase)
+        return original(phase, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "_evaluate_gate6_formal_phase", capture)
+    second_root = temp_root / "resume-target"
+    summary = runner.run_gate_benchmark(
+        config_path,
+        second_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "passed"
+    assert evaluated == list(GATE6_PHASES[2:])
+    second_phases = [
+        json.loads(line)
+        for line in (second_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row.get("resumed", False) for row in second_phases] == [
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_blocker"),
+        [
+            ("empty", "gate6_metric_rows_missing"),
+            ("incomplete", "gate6_ablation_matrix_incomplete"),
+            ("unsafe", "gate6_safety_metric_failed"),
+        ],
+)
+def test_gate6_empty_or_invalid_statistics_cannot_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    expected_blocker: str,
+) -> None:
+    runner = _runner()
+    fixtures = _gate6_fixture_module()
+    config_path, _formal_root, temp_root = _gate6_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        mode,
+    )
+    metric_rows = _gate6_ready_metric_rows(fixtures)
+    if mode == "empty":
+        metric_rows = ()
+    elif mode == "incomplete":
+        metric_rows = tuple(
+            row
+            for row in metric_rows
+            if not (
+                row.ablation_case == "v2_full"
+                and row.platform_kind == "hopper"
+                and row.scale == "kilometer"
+            )
+        )
+    else:
+        metric_rows = (
+            replace(metric_rows[0], primitive_false_positive_count=1),
+            *metric_rows[1:],
+        )
+    _install_gate6_memory_loader(
+        monkeypatch,
+        runner,
+        _gate6_ready_inventories(fixtures),
+        metric_rows,
+    )
+
+    summary = runner.run_gate_benchmark(
+        config_path,
+        temp_root / f"metrics-{mode}",
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "blocked"
+    assert summary["primary_blocker"] == expected_blocker
+    assert summary["formal_evidence_eligible"] is False
+    if mode == "incomplete":
+        assert summary["matrix_audit"]["status"] == "failed"
+        assert {
+            "ablation_case": "v2_full",
+            "platform_kind": "hopper",
+            "scale": "kilometer",
+        } in summary["matrix_audit"]["missing_combinations"]
+    assert all(summary[name] is False for name in BOUNDARIES)
