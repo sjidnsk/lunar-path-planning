@@ -5418,6 +5418,8 @@ def _write_gate6_formal_bundle(
         "input_kind": input_kind,
         "source_id": f"independent-{input_kind}/v1",
         "source_independent": True,
+        "oracle_source_id": f"oracle-{input_kind}/v1",
+        "provider_source_id": f"provider-{input_kind}/v1",
     }
     if jsonl:
         records = [{"record_type": "header", **header}]
@@ -5573,7 +5575,16 @@ def _gate6_formal_files(
                             )
                         )
     ppo_rows = [
-        {"target_id": f"{platform}-target-main", "platform_kind": platform}
+        {
+            "target_id": f"{platform}-target-main",
+            "platform_kind": platform,
+            "target_sha256": hashlib.sha256(
+                f"target:{platform}".encode("utf-8")
+            ).hexdigest(),
+            "request_sha256": hashlib.sha256(
+                f"request:{platform}".encode("utf-8")
+            ).hexdigest(),
+        }
         for platform in ("wheel", "legged", "hopper")
     ]
     payloads = {
@@ -6048,7 +6059,12 @@ def test_gate6_resume_rejects_stale_input_lineage(
 
     ppo = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
     ppo["rows"].append(
-        {"target_id": "wheel-target-stale", "platform_kind": "wheel"}
+        {
+            "target_id": "wheel-target-stale",
+            "platform_kind": "wheel",
+            "target_sha256": hashlib.sha256(b"target:wheel:stale").hexdigest(),
+            "request_sha256": hashlib.sha256(b"request:wheel:stale").hexdigest(),
+        }
     )
     paths["ppo_targets"].write_text(json.dumps(ppo, sort_keys=True), encoding="utf-8")
     with pytest.raises(ValueError, match="resume state lineage mismatch"):
@@ -6083,3 +6099,44 @@ def test_gate6_resume_rejects_tampered_phase_result(
     with pytest.raises(ValueError, match="resume state checksum mismatch"):
         runner.run_gate_benchmark(config_path, output_root, REPO_ROOT, False)
     assert not output_root.exists()
+
+
+@pytest.mark.parametrize("mode", ["same-source", "invalid-ppo-hash"])
+def test_gate6_real_loader_rejects_unbound_source_or_target_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+    )
+    if mode == "same-source":
+        payload = json.loads(
+            paths["independent_primitive_labels"].read_text(encoding="utf-8")
+        )
+        payload["provider_source_id"] = payload["oracle_source_id"]
+        paths["independent_primitive_labels"].write_text(
+            json.dumps(payload, sort_keys=True), encoding="utf-8"
+        )
+        expected = "source identities must be distinct"
+    else:
+        payload = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
+        payload["rows"][0]["target_sha256"] = "not-a-sha256"
+        paths["ppo_targets"].write_text(
+            json.dumps(payload, sort_keys=True), encoding="utf-8"
+        )
+        expected = "target_sha256"
+
+    with pytest.raises(ValueError, match=expected):
+        runner.run_gate_benchmark(
+            config_path,
+            temp_root / f"identity-{mode}",
+            REPO_ROOT,
+            execute_tests=False,
+        )
