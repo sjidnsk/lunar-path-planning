@@ -5305,6 +5305,9 @@ def _gate6_ready_metric_rows(fixtures):
                 else 1.05
             )
             for platform in platforms:
+                request_sha256 = hashlib.sha256(
+                    f"request:{scale}:{platform}:main".encode("utf-8")
+                ).hexdigest()
                 semantic_digest = hashlib.sha256(
                     f"{scale}:{case}:{platform}".encode("utf-8")
                 ).hexdigest()
@@ -5316,7 +5319,7 @@ def _gate6_ready_metric_rows(fixtures):
                                     f"episode-{scale}-{case}-{platform}-"
                                     f"w{worker_count}-c{int(cache_enabled)}"
                                 ),
-                                pair_id="paired-main",
+                                pair_id=request_sha256,
                                 platform_kind=platform,
                                 scale=scale,
                                 ablation_case=case,
@@ -5348,12 +5351,282 @@ def _gate6_ready_metric_rows(fixtures):
 def _install_gate6_memory_loader(monkeypatch, runner, inventories, metric_rows):
     calls = []
 
+    primitive_rows = tuple(
+        {
+            "label_id": f"{platform}-label-{index}",
+            "platform_kind": platform,
+            "oracle_safe": True,
+            "provider_success": True,
+            "provider_complete_l2": True,
+            "unknown_accepted": False,
+        }
+        for platform in ("wheel", "legged", "hopper")
+        for index in range(10_000)
+    )
+    exact_rows = tuple(
+        {
+            "case_id": f"{platform}-exact-main",
+            "platform_kind": platform,
+            "provider_success": True,
+            "provider_complete_l2": True,
+            "candidate_resource_cost": 1.10,
+            "optimum_resource_cost": 1.0,
+            "exploration_resource_cost": 1.20,
+            "minimum_feasible_resource_cost": 1.0,
+        }
+        for platform in ("wheel", "legged", "hopper")
+    )
+    metric_joins = tuple(
+        {
+            "episode_id": row.episode_id,
+            "schedule_id": f"schedule-{row.scale}-{row.platform_kind}-main",
+            "request_sha256": row.pair_id,
+        }
+        for row in metric_rows
+    )
+
     def load(config, repo_root):
         calls.append((config["stage_id"], Path(repo_root).resolve()))
-        return {"inventories": inventories, "metric_rows": metric_rows}
+        return {
+            "inventories": inventories,
+            "metric_rows": metric_rows,
+            "metric_joins": metric_joins,
+            "primitive_rows": primitive_rows,
+            "exact_rows": exact_rows,
+            "input_hashes": {
+                name: hashlib.sha256(name.encode("utf-8")).hexdigest()
+                for name, _blocker in GATE6_INPUT_BLOCKERS
+            },
+        }
 
     monkeypatch.setattr(runner, "_load_gate6_formal_inputs", load, raising=False)
     return calls
+
+
+GATE6_FORMAL_INPUT_SCHEMA = "xunce-path-v2-gate6-formal-input/v1"
+
+
+def _write_gate6_formal_bundle(
+    path: Path,
+    *,
+    input_kind: str,
+    rows: list[dict],
+    jsonl: bool = False,
+) -> None:
+    header = {
+        "schema_version": GATE6_FORMAL_INPUT_SCHEMA,
+        "input_kind": input_kind,
+        "source_id": f"independent-{input_kind}/v1",
+        "source_independent": True,
+    }
+    if jsonl:
+        records = [{"record_type": "header", **header}]
+        records.extend({"record_type": "row", "row": row} for row in rows)
+        path.write_text(
+            "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        path.write_text(
+            json.dumps({**header, "rows": rows}, sort_keys=True),
+            encoding="utf-8",
+        )
+
+
+def _gate6_metric_record(
+    *,
+    case: str,
+    platform: str,
+    scale: str,
+    index: int,
+    worker_count: int,
+    cache_enabled: bool,
+) -> dict:
+    schedule_id = f"schedule-{scale}-{platform}-{index:03d}"
+    request_sha256 = hashlib.sha256(schedule_id.encode("utf-8")).hexdigest()
+    semantic_digest = hashlib.sha256(
+        f"{schedule_id}:{case}".encode("utf-8")
+    ).hexdigest()
+    is_full = case == "v2_full"
+    coverage = 1.05 if is_full else 1.0
+    resource_cost = 1.20 if is_full else 1.0
+    runtime_ms = (
+        250.0
+        if is_full and scale == "standard"
+        else 750.0
+        if is_full
+        else 10.0
+        if scale == "standard"
+        else 20.0
+    )
+    return {
+        "schedule_id": schedule_id,
+        "request_sha256": request_sha256,
+        "metric": {
+            "episode_id": (
+                f"episode-{scale}-{case}-{platform}-{index:03d}-"
+                f"w{worker_count}-c{int(cache_enabled)}"
+            ),
+            "pair_id": request_sha256,
+            "platform_kind": platform,
+            "scale": scale,
+            "ablation_case": case,
+            "seed": index,
+            "worker_count": worker_count,
+            "cache_enabled": cache_enabled,
+            "oracle_reachable": True,
+            "provider_success": True,
+            "provider_complete_l2": True,
+            "primitive_true_positive_count": 0,
+            "primitive_false_negative_count": 0,
+            "primitive_false_positive_count": 0,
+            "resource_cost": resource_cost,
+            "coverage_efficiency": coverage,
+            "expanded_states": 10,
+            "rejected_l0": 0,
+            "rejected_l1": 0,
+            "rejected_l2": 0,
+            "cache_hits": 1 if cache_enabled else 0,
+            "cache_lookups": 1,
+            "runtime_ms": runtime_ms,
+            "timed_out": False,
+            "semantic_digest": semantic_digest,
+        },
+    }
+
+
+def _gate6_formal_files(
+    tmp_path: Path,
+    *,
+    primitive_count: int,
+    standard_count: int,
+    kilometer_count: int,
+    missing_kind: str | None = None,
+) -> dict[str, Path]:
+    input_root = tmp_path / "formal-inputs"
+    input_root.mkdir()
+    paths = {
+        "independent_primitive_labels": input_root / "primitive.json",
+        "independent_small_map_optima": input_root / "exact.json",
+        "standard_schedules": input_root / "standard.jsonl",
+        "kilometer_schedules": input_root / "kilometer.jsonl",
+        "ppo_targets": input_root / "ppo.json",
+    }
+    primitive_rows = [
+        {
+            "label_id": f"{platform}-label-{index:05d}",
+            "platform_kind": platform,
+            "oracle_safe": True,
+            "provider_success": True,
+            "provider_complete_l2": True,
+            "unknown_accepted": False,
+        }
+        for platform in ("wheel", "legged", "hopper")
+        for index in range(primitive_count)
+    ]
+    exact_rows = [
+        {
+            "case_id": f"{platform}-exact-main",
+            "platform_kind": platform,
+            "provider_success": True,
+            "provider_complete_l2": True,
+            "candidate_resource_cost": 1.10,
+            "optimum_resource_cost": 1.0,
+            "exploration_resource_cost": 1.20,
+            "minimum_feasible_resource_cost": 1.0,
+        }
+        for platform in ("wheel", "legged", "hopper")
+    ]
+    schedule_rows = {"standard": [], "kilometer": []}
+    for scale, count in (
+        ("standard", standard_count),
+        ("kilometer", kilometer_count),
+    ):
+        for case in GATE6_ABLATION_CASES:
+            platforms = (
+                ("wheel",)
+                if case in {"v1_astar", "wheel_hybrid_astar_opt_in"}
+                else ("wheel", "legged", "hopper")
+            )
+            for platform in platforms:
+                for index in range(count):
+                    schedule_rows[scale].append(
+                        _gate6_metric_record(
+                            case=case,
+                            platform=platform,
+                            scale=scale,
+                            index=index,
+                            worker_count=1,
+                            cache_enabled=False,
+                        )
+                    )
+                if count:
+                    for worker_count, cache_enabled in ((1, True), (4, False), (4, True)):
+                        schedule_rows[scale].append(
+                            _gate6_metric_record(
+                                case=case,
+                                platform=platform,
+                                scale=scale,
+                                index=0,
+                                worker_count=worker_count,
+                                cache_enabled=cache_enabled,
+                            )
+                        )
+    ppo_rows = [
+        {"target_id": f"{platform}-target-main", "platform_kind": platform}
+        for platform in ("wheel", "legged", "hopper")
+    ]
+    payloads = {
+        "independent_primitive_labels": primitive_rows,
+        "independent_small_map_optima": exact_rows,
+        "standard_schedules": schedule_rows["standard"],
+        "kilometer_schedules": schedule_rows["kilometer"],
+        "ppo_targets": ppo_rows,
+    }
+    for input_kind, rows in payloads.items():
+        if input_kind == missing_kind:
+            continue
+        _write_gate6_formal_bundle(
+            paths[input_kind],
+            input_kind=input_kind,
+            rows=rows,
+            jsonl=input_kind in {"standard_schedules", "kilometer_schedules"},
+        )
+    return paths
+
+
+def _gate6_file_ready_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner,
+    *,
+    primitive_count: int,
+    standard_count: int,
+    kilometer_count: int,
+    missing_kind: str | None = None,
+):
+    config_path, formal_root, temp_root = _gate6_synthetic_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+    )
+    paths = _gate6_formal_files(
+        tmp_path,
+        primitive_count=primitive_count,
+        standard_count=standard_count,
+        kilometer_count=kilometer_count,
+        missing_kind=missing_kind,
+    )
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["execution_class"] = "formal_ready_evaluation"
+    payload["primary_blocker"] = None
+    payload["accepts_formal_inputs"] = True
+    payload["formal_inputs"] = {
+        input_kind: path.resolve().as_posix() for input_kind, path in paths.items()
+    }
+    ready_path = tmp_path / "gate6-ready-files.json"
+    ready_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    return ready_path, formal_root, temp_root, paths
 
 
 def test_gate6_ready_inventory_audit_emits_each_dynamic_input_blocker(
@@ -5393,7 +5666,7 @@ def test_gate6_ready_inventory_audit_emits_each_dynamic_input_blocker(
         assert all(summary[name] is False for name in BOUNDARIES)
 
 
-def test_gate6_ready_bundle_completes_seven_phases_and_eight_ablations(
+def test_gate6_one_pair_per_matrix_combination_cannot_pass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5421,18 +5694,18 @@ def test_gate6_ready_bundle_completes_seven_phases_and_eight_ablations(
     )
 
     assert len(calls) == 1
-    assert summary["status"] == "passed"
+    assert summary["status"] == "blocked"
     assert summary["formal_metrics_status"] == "evaluated"
-    assert summary["formal_evidence_eligible"] is True
-    assert summary["primary_blocker"] is None
+    assert summary["formal_evidence_eligible"] is False
+    assert summary["primary_blocker"] == "gate6_standard_schedule_matrix_insufficient"
     assert tuple(summary["ablation_metrics"]) == GATE6_ABLATION_CASES
-    assert summary["matrix_audit"]["status"] == "passed"
-    assert summary["matrix_audit"]["missing_combinations"] == []
+    assert summary["matrix_audit"]["status"] == "failed"
+    assert summary["matrix_audit"]["insufficient_cardinality"]
     assert summary["worker_cache_audit"]["status"] == "passed"
-    assert summary["paired_bootstrap"]["mean_delta"] == pytest.approx(0.10)
+    assert summary["paired_bootstrap"] is None
     assert all(summary[name] is False for name in BOUNDARIES)
     routing = json.loads((output_root / "routing.json").read_text(encoding="utf-8"))
-    assert routing["route"] == "path_v2_internal_validation_passed_no_release_authority"
+    assert routing["route"] == "gate6_standard_schedule_matrix_insufficient"
     assert all(routing[name] is False for name in BOUNDARIES)
     phases = [
         json.loads(line)
@@ -5448,55 +5721,57 @@ def test_gate6_resume_skips_completed_phase_evaluators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = _runner()
-    fixtures = _gate6_fixture_module()
-    config_path, _formal_root, temp_root = _gate6_ready_config(
+    config_path, _formal_root, temp_root, _paths = _gate6_file_ready_config(
         tmp_path,
         monkeypatch,
         runner,
-        "resume",
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
     )
-    inventories = _gate6_ready_inventories(fixtures)
-    metric_rows = _gate6_ready_metric_rows(fixtures)
-    _install_gate6_memory_loader(monkeypatch, runner, inventories, metric_rows)
-    first_root = temp_root / "resume-source"
-    runner.run_gate_benchmark(
-        config_path,
-        first_root,
-        REPO_ROOT,
-        execute_tests=False,
-    )
-    first_phases = [
-        json.loads(line)
-        for line in (first_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    resumed = tuple(first_phases[:2])
-    monkeypatch.setattr(
-        runner,
-        "_load_gate6_phase_state",
-        lambda _config, _output_root: resumed,
-        raising=False,
-    )
-    evaluated = []
+    output_root = temp_root / "resume-target"
     original = runner._evaluate_gate6_formal_phase
+    failed = False
+
+    def interrupt(phase, *args, **kwargs):
+        nonlocal failed
+        if phase == GATE6_PHASES[2] and not failed:
+            failed = True
+            raise RuntimeError("injected Gate 6 phase interruption")
+        return original(phase, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "_evaluate_gate6_formal_phase", interrupt)
+    with pytest.raises(RuntimeError, match="phase interruption"):
+        runner.run_gate_benchmark(
+            config_path,
+            output_root,
+            REPO_ROOT,
+            execute_tests=False,
+        )
+    assert not output_root.exists()
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    state_path = runner._gate6_phase_state_path(config, output_root)
+    assert state_path.is_file()
+
+    evaluated = []
 
     def capture(phase, *args, **kwargs):
         evaluated.append(phase)
         return original(phase, *args, **kwargs)
 
     monkeypatch.setattr(runner, "_evaluate_gate6_formal_phase", capture)
-    second_root = temp_root / "resume-target"
     summary = runner.run_gate_benchmark(
         config_path,
-        second_root,
+        output_root,
         REPO_ROOT,
         execute_tests=False,
     )
 
-    assert summary["status"] == "passed"
+    assert summary["status"] == "blocked"
     assert evaluated == list(GATE6_PHASES[2:])
     second_phases = [
         json.loads(line)
-        for line in (second_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (output_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert [row.get("resumed", False) for row in second_phases] == [
         True,
@@ -5574,3 +5849,237 @@ def test_gate6_empty_or_invalid_statistics_cannot_pass(
             "scale": "kilometer",
         } in summary["matrix_audit"]["missing_combinations"]
     assert all(summary[name] is False for name in BOUNDARIES)
+
+
+def test_gate6_real_file_loader_blocks_small_cardinality_and_reports_hashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, _paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+    )
+    summary = runner.run_gate_benchmark(
+        config_path,
+        temp_root / "real-small",
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "blocked"
+    assert summary["formal_evidence_eligible"] is False
+    assert summary["matrix_audit"]["status"] == "failed"
+    assert summary["matrix_audit"]["insufficient_cardinality"]
+    assert set(summary["input_hashes"]) == {
+        name for name, _blocker in GATE6_INPUT_BLOCKERS
+    }
+    assert all(
+        isinstance(value, str) and len(value) == 64
+        for value in summary["input_hashes"].values()
+    )
+
+
+def test_gate6_real_file_bundle_passes_boundaries_at_ready_formal_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, formal_root, _temp_root, _paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=10_000,
+        standard_count=100,
+        kilometer_count=30,
+    )
+
+    summary = runner.run_gate_benchmark(
+        config_path,
+        formal_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "passed"
+    assert summary["formal_evidence_eligible"] is True
+    assert summary["primary_blocker"] is None
+    assert summary["matrix_audit"]["status"] == "passed"
+    assert summary["threshold_audit"]["blocking_reasons"] == []
+    assert summary["threshold_audit"]["coverage_relative_improvement_min"] == (
+        pytest.approx(0.05)
+    )
+    assert summary["threshold_audit"]["resource_ratio_max"] == pytest.approx(1.20)
+    assert summary["threshold_audit"]["standard_p95_ms_max"] == pytest.approx(250.0)
+    assert summary["threshold_audit"]["kilometer_p95_ms_max"] == pytest.approx(750.0)
+    assert {path.name for path in formal_root.iterdir()} == CANONICAL_ARTIFACTS
+    assert all(summary[name] is False for name in BOUNDARIES)
+
+
+def _gate6_threshold_boundary_audit() -> dict:
+    return {
+        "primitive": {
+            "minimum_rows_per_platform": 10_000,
+            "false_positive_count": 0,
+            "unknown_accepted_count": 0,
+            "minimum_recall": 0.98,
+            "all_success_complete_l2": True,
+        },
+        "exact": {
+            "maximum_candidate_optimum_ratio": 1.10,
+            "maximum_exploration_minimum_feasible_ratio": 1.20,
+            "all_success_complete_l2": True,
+        },
+        "paired": {
+            "resource_ratio_max": 1.20,
+            "coverage_relative_improvement_min": 0.05,
+            "coverage_ci95_lower": 0.0,
+            "full_reachable_success_ratio_min": 0.99,
+            "reachable_success_decline_max": 0.01,
+        },
+        "runtime": {
+            "standard_p95_ms_max": 250.0,
+            "kilometer_p95_ms_max": 750.0,
+            "hard_timeout_violation_count": 0,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "epsilon_value", "expected_blocker"),
+    [
+        ("primitive", "minimum_rows_per_platform", 9_999, "gate6_primitive_cardinality_insufficient"),
+        ("primitive", "false_positive_count", 1, "gate6_primitive_false_positive_failed"),
+        ("primitive", "unknown_accepted_count", 1, "gate6_primitive_unknown_acceptance_failed"),
+        ("primitive", "minimum_recall", 0.98 - 1e-9, "gate6_primitive_recall_failed"),
+        ("primitive", "all_success_complete_l2", False, "gate6_primitive_complete_l2_failed"),
+        ("exact", "maximum_candidate_optimum_ratio", 1.10 + 1e-9, "gate6_exact_candidate_optimum_failed"),
+        ("exact", "maximum_exploration_minimum_feasible_ratio", 1.20 + 1e-9, "gate6_exact_exploration_budget_failed"),
+        ("exact", "all_success_complete_l2", False, "gate6_exact_complete_l2_failed"),
+        ("paired", "resource_ratio_max", 1.20 + 1e-9, "gate6_resource_regression_failed"),
+        ("paired", "coverage_relative_improvement_min", 0.05 - 1e-9, "gate6_coverage_point_estimate_failed"),
+        ("paired", "coverage_ci95_lower", -1e-9, "gate6_coverage_bootstrap_failed"),
+        ("paired", "full_reachable_success_ratio_min", 0.99 - 1e-9, "gate6_reachable_success_failed"),
+        ("paired", "reachable_success_decline_max", 0.01 + 1e-9, "gate6_reachable_success_regression_failed"),
+        ("runtime", "standard_p95_ms_max", 250.0 + 1e-9, "gate6_standard_runtime_p95_failed"),
+        ("runtime", "kilometer_p95_ms_max", 750.0 + 1e-9, "gate6_kilometer_runtime_p95_failed"),
+        ("runtime", "hard_timeout_violation_count", 1, "gate6_hard_timeout_failed"),
+    ],
+)
+def test_gate6_threshold_boundaries_pass_and_epsilon_fails(
+    section: str,
+    field: str,
+    epsilon_value,
+    expected_blocker: str,
+) -> None:
+    runner = _runner()
+    boundary = _gate6_threshold_boundary_audit()
+    assert runner._gate6_threshold_blockers(boundary) == []
+    failing = deepcopy(boundary)
+    failing[section][field] = epsilon_value
+    blockers = runner._gate6_threshold_blockers(failing)
+    assert blockers[0] == expected_blocker
+
+
+def test_gate6_missing_real_file_is_stable_blocked_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, _paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+        missing_kind="ppo_targets",
+    )
+    output_root = temp_root / "missing-real-file"
+
+    summary = runner.run_gate_benchmark(
+        config_path,
+        output_root,
+        REPO_ROOT,
+        execute_tests=False,
+    )
+
+    assert summary["status"] == "blocked"
+    assert "provide_ppo_target_fixtures" in summary["blocking_reasons"]
+    assert summary["inputs"]["ppo_targets"]["status"] == "missing"
+    assert summary["input_hashes"]["ppo_targets"] is None
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+
+
+def _interrupt_gate6_after_first_phase(monkeypatch, runner):
+    original = runner._evaluate_gate6_formal_phase
+
+    def interrupt(phase, *args, **kwargs):
+        if phase == GATE6_PHASES[1]:
+            raise RuntimeError("injected Gate 6 phase interruption")
+        return original(phase, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "_evaluate_gate6_formal_phase", interrupt)
+    return original
+
+
+def test_gate6_resume_rejects_stale_input_lineage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+    )
+    output_root = temp_root / "stale-resume"
+    original = _interrupt_gate6_after_first_phase(monkeypatch, runner)
+    with pytest.raises(RuntimeError, match="phase interruption"):
+        runner.run_gate_benchmark(config_path, output_root, REPO_ROOT, False)
+    monkeypatch.setattr(runner, "_evaluate_gate6_formal_phase", original)
+
+    ppo = json.loads(paths["ppo_targets"].read_text(encoding="utf-8"))
+    ppo["rows"].append(
+        {"target_id": "wheel-target-stale", "platform_kind": "wheel"}
+    )
+    paths["ppo_targets"].write_text(json.dumps(ppo, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ValueError, match="resume state lineage mismatch"):
+        runner.run_gate_benchmark(config_path, output_root, REPO_ROOT, False)
+    assert not output_root.exists()
+
+
+def test_gate6_resume_rejects_tampered_phase_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _runner()
+    config_path, _formal_root, temp_root, _paths = _gate6_file_ready_config(
+        tmp_path,
+        monkeypatch,
+        runner,
+        primitive_count=1,
+        standard_count=1,
+        kilometer_count=1,
+    )
+    output_root = temp_root / "tampered-resume"
+    original = _interrupt_gate6_after_first_phase(monkeypatch, runner)
+    with pytest.raises(RuntimeError, match="phase interruption"):
+        runner.run_gate_benchmark(config_path, output_root, REPO_ROOT, False)
+    monkeypatch.setattr(runner, "_evaluate_gate6_formal_phase", original)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    state_path = runner._gate6_phase_state_path(config, output_root)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["phases"][0]["result"]["formal_row_count"] = 999_999
+    state_path.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="resume state checksum mismatch"):
+        runner.run_gate_benchmark(config_path, output_root, REPO_ROOT, False)
+    assert not output_root.exists()
