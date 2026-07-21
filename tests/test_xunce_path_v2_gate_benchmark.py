@@ -4925,7 +4925,7 @@ def test_gate5_stage_registry_is_explicitly_blocked_and_ineligible() -> None:
     )["stages"]["xunce-path-v2-gate5-hopper"]
 
     assert registry == {
-        "runner": "scripts/run_xunce_path_v2_gate_benchmark.py",
+        "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
         "default_config": "configs/xunce_path_v2_gate5_hopper_v1.json",
         "default_output_root": "D:/xunce/out/path_v2/g5",
         "execution_class": "blocked_profile_freeze",
