@@ -330,6 +330,17 @@ GATE6_INTERNAL_PASS_ROUTE = "path_v2_internal_validation_passed_no_release_autho
 GATE6_PLATFORMS = ("wheel", "legged", "hopper")
 GATE6_SCALES = ("standard", "kilometer")
 GATE6_WHEEL_ONLY_CASES = ("v1_astar", "wheel_hybrid_astar_opt_in")
+GATE6_FORMAL_INPUT_SCHEMA = "xunce-path-v2-gate6-formal-input/v1"
+GATE6_PHASE_STATE_SCHEMA = "xunce-path-v2-gate6-phase-state/v1"
+GATE6_ZERO_HASH = "0" * 64
+GATE6_BUNDLE_KEYS = {
+    "inventories",
+    "metric_rows",
+    "metric_joins",
+    "primitive_rows",
+    "exact_rows",
+    "input_hashes",
+}
 
 
 class _Gate2LoaderContractError(RuntimeError):
@@ -4402,16 +4413,416 @@ def _load_gate6_formal_inputs(
     config: dict[str, Any],
     repo_root: Path,
 ) -> Mapping[str, Any]:
-    del config, repo_root
-    raise RuntimeError("Gate 6 formal input loader is not installed")
+    fixtures = _gate6_fixture_api(repo_root)
+    documents: dict[str, dict[str, Any] | None] = {}
+    input_hashes: dict[str, str | None] = {}
+    for input_kind, _blocker in GATE6_INPUT_BLOCKERS:
+        raw_path = config["formal_inputs"][input_kind]
+        path = Path(raw_path)
+        if not path.is_absolute():
+            raise ValueError("Gate 6 formal input paths must be absolute")
+        if not artifact_io.path_is_file(path):
+            documents[input_kind] = None
+            input_hashes[input_kind] = None
+            continue
+        content = artifact_io.read_bytes(path)
+        input_hashes[input_kind] = hashlib.sha256(content).hexdigest()
+        documents[input_kind] = _read_gate6_formal_document(path, input_kind)
+
+    primitive_rows = _gate6_primitive_rows(documents["independent_primitive_labels"])
+    exact_rows = _gate6_exact_rows(documents["independent_small_map_optima"])
+    standard_metrics, standard_joins = _gate6_schedule_rows(
+        documents["standard_schedules"],
+        expected_scale="standard",
+        fixtures=fixtures,
+    )
+    kilometer_metrics, kilometer_joins = _gate6_schedule_rows(
+        documents["kilometer_schedules"],
+        expected_scale="kilometer",
+        fixtures=fixtures,
+    )
+    ppo_rows = _gate6_ppo_rows(documents["ppo_targets"])
+    metric_rows = standard_metrics + kilometer_metrics
+    metric_joins = standard_joins + kilometer_joins
+
+    rows_by_input = {
+        "independent_primitive_labels": primitive_rows,
+        "independent_small_map_optima": exact_rows,
+        "standard_schedules": tuple(zip(standard_metrics, standard_joins, strict=True)),
+        "kilometer_schedules": tuple(zip(kilometer_metrics, kilometer_joins, strict=True)),
+        "ppo_targets": ppo_rows,
+    }
+    inventories: dict[str, Any] = {}
+    for requirement in fixtures.GATE6_REQUIRED_INPUTS_V2:
+        input_kind = requirement.input_kind
+        document = documents[input_kind]
+        if document is None:
+            inventories[input_kind] = None
+            continue
+        rows = rows_by_input[input_kind]
+        if input_kind in {"standard_schedules", "kilometer_schedules"}:
+            counts = {
+                platform: len(
+                    {
+                        join["schedule_id"]
+                        for metric, join in rows
+                        if metric.platform_kind == platform
+                        and metric.worker_count == 1
+                        and not metric.cache_enabled
+                    }
+                )
+                for platform in GATE6_PLATFORMS
+            }
+        else:
+            counts = {
+                platform: sum(row["platform_kind"] == platform for row in rows)
+                for platform in GATE6_PLATFORMS
+            }
+        inventories[input_kind] = fixtures.Gate6FixtureInventoryV2(
+            input_kind=input_kind,
+            source_id=document["source_id"],
+            source_independent=document["source_independent"],
+            rows_per_platform=tuple(
+                (platform, counts[platform]) for platform in GATE6_PLATFORMS
+            ),
+        )
+    return {
+        "inventories": inventories,
+        "metric_rows": metric_rows,
+        "metric_joins": metric_joins,
+        "primitive_rows": primitive_rows,
+        "exact_rows": exact_rows,
+        "input_hashes": input_hashes,
+    }
+
+
+def _require_gate6_exact_keys(
+    value: object,
+    expected: set[str],
+    label: str,
+) -> dict[str, Any]:
+    if type(value) is not dict or set(value) != expected:
+        raise ValueError(f"Gate 6 {label} schema mismatch")
+    return value
+
+
+def _gate6_nonempty_string(value: object, label: str) -> str:
+    if type(value) is not str or not value.strip():
+        raise ValueError(f"Gate 6 {label} must be a nonempty string")
+    return value
+
+
+def _gate6_sha256(value: object, label: str) -> str:
+    token = _gate6_nonempty_string(value, label)
+    if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
+        raise ValueError(f"Gate 6 {label} must be lowercase sha256")
+    return token
+
+
+def _gate6_strict_bool(value: object, label: str) -> bool:
+    if type(value) is not bool:
+        raise TypeError(f"Gate 6 {label} must be bool")
+    return value
+
+
+def _gate6_positive_number(value: object, label: str) -> float:
+    if type(value) not in {int, float} or not math.isfinite(float(value)) or value <= 0:
+        raise ValueError(f"Gate 6 {label} must be finite and positive")
+    return float(value)
+
+
+def _read_gate6_formal_document(path: Path, input_kind: str) -> dict[str, Any]:
+    header_keys = {
+        "schema_version",
+        "input_kind",
+        "source_id",
+        "source_independent",
+        "oracle_source_id",
+        "provider_source_id",
+    }
+    if path.suffix.lower() == ".jsonl":
+        records = artifact_io.read_jsonl(path)
+        if not records:
+            raise ValueError("Gate 6 JSONL formal input must contain a header")
+        header = _require_gate6_exact_keys(
+            records[0],
+            header_keys | {"record_type"},
+            "JSONL header",
+        )
+        if header["record_type"] != "header":
+            raise ValueError("Gate 6 JSONL first record must be a header")
+        rows = []
+        for record in records[1:]:
+            item = _require_gate6_exact_keys(
+                record,
+                {"record_type", "row"},
+                "JSONL row",
+            )
+            if item["record_type"] != "row" or type(item["row"]) is not dict:
+                raise ValueError("Gate 6 JSONL row record is invalid")
+            rows.append(item["row"])
+    elif path.suffix.lower() == ".json":
+        payload = artifact_io.read_json(path)
+        document = _require_gate6_exact_keys(
+            payload,
+            header_keys | {"rows"},
+            "JSON document",
+        )
+        header = document
+        if type(document["rows"]) is not list or any(
+            type(row) is not dict for row in document["rows"]
+        ):
+            raise ValueError("Gate 6 JSON rows must be a list of objects")
+        rows = list(document["rows"])
+    else:
+        raise ValueError("Gate 6 formal input must use .json or .jsonl")
+    if header["schema_version"] != GATE6_FORMAL_INPUT_SCHEMA:
+        raise ValueError("Gate 6 formal input schema_version mismatch")
+    if header["input_kind"] != input_kind:
+        raise ValueError("Gate 6 formal input kind mismatch")
+    source_id = _gate6_nonempty_string(header["source_id"], "source_id")
+    source_independent = _gate6_strict_bool(
+        header["source_independent"],
+        "source_independent",
+    )
+    oracle_source_id = _gate6_nonempty_string(
+        header["oracle_source_id"], "oracle_source_id"
+    )
+    provider_source_id = _gate6_nonempty_string(
+        header["provider_source_id"], "provider_source_id"
+    )
+    if oracle_source_id == provider_source_id:
+        raise ValueError("Gate 6 source identities must be distinct")
+    return {
+        "source_id": source_id,
+        "source_independent": source_independent,
+        "oracle_source_id": oracle_source_id,
+        "provider_source_id": provider_source_id,
+        "rows": rows,
+    }
+
+
+def _gate6_platform(value: object) -> str:
+    if value not in GATE6_PLATFORMS:
+        raise ValueError("Gate 6 row platform_kind is invalid")
+    return str(value)
+
+
+def _gate6_primitive_rows(document: dict[str, Any] | None) -> tuple[dict[str, Any], ...]:
+    if document is None:
+        return ()
+    expected = {
+        "label_id",
+        "platform_kind",
+        "oracle_safe",
+        "provider_success",
+        "provider_complete_l2",
+        "unknown_accepted",
+    }
+    rows: list[dict[str, Any]] = []
+    identifiers: set[str] = set()
+    for raw in document["rows"]:
+        row = _require_gate6_exact_keys(raw, expected, "primitive row")
+        label_id = _gate6_nonempty_string(row["label_id"], "label_id")
+        if label_id in identifiers:
+            raise ValueError("Gate 6 primitive label_id must be unique")
+        identifiers.add(label_id)
+        normalized = {
+            "label_id": label_id,
+            "platform_kind": _gate6_platform(row["platform_kind"]),
+            "oracle_safe": _gate6_strict_bool(row["oracle_safe"], "oracle_safe"),
+            "provider_success": _gate6_strict_bool(
+                row["provider_success"], "provider_success"
+            ),
+            "provider_complete_l2": _gate6_strict_bool(
+                row["provider_complete_l2"], "provider_complete_l2"
+            ),
+            "unknown_accepted": _gate6_strict_bool(
+                row["unknown_accepted"], "unknown_accepted"
+            ),
+        }
+        if normalized["provider_complete_l2"] and not normalized["provider_success"]:
+            raise ValueError("Gate 6 primitive complete L2 requires success")
+        rows.append(normalized)
+    return tuple(rows)
+
+
+def _gate6_exact_rows(document: dict[str, Any] | None) -> tuple[dict[str, Any], ...]:
+    if document is None:
+        return ()
+    expected = {
+        "case_id",
+        "platform_kind",
+        "provider_success",
+        "provider_complete_l2",
+        "candidate_resource_cost",
+        "optimum_resource_cost",
+        "exploration_resource_cost",
+        "minimum_feasible_resource_cost",
+    }
+    rows: list[dict[str, Any]] = []
+    identifiers: set[str] = set()
+    for raw in document["rows"]:
+        row = _require_gate6_exact_keys(raw, expected, "exact row")
+        case_id = _gate6_nonempty_string(row["case_id"], "case_id")
+        if case_id in identifiers:
+            raise ValueError("Gate 6 exact case_id must be unique")
+        identifiers.add(case_id)
+        normalized = {
+            "case_id": case_id,
+            "platform_kind": _gate6_platform(row["platform_kind"]),
+            "provider_success": _gate6_strict_bool(
+                row["provider_success"], "provider_success"
+            ),
+            "provider_complete_l2": _gate6_strict_bool(
+                row["provider_complete_l2"], "provider_complete_l2"
+            ),
+            "candidate_resource_cost": _gate6_positive_number(
+                row["candidate_resource_cost"], "candidate_resource_cost"
+            ),
+            "optimum_resource_cost": _gate6_positive_number(
+                row["optimum_resource_cost"], "optimum_resource_cost"
+            ),
+            "exploration_resource_cost": _gate6_positive_number(
+                row["exploration_resource_cost"], "exploration_resource_cost"
+            ),
+            "minimum_feasible_resource_cost": _gate6_positive_number(
+                row["minimum_feasible_resource_cost"],
+                "minimum_feasible_resource_cost",
+            ),
+        }
+        rows.append(normalized)
+    return tuple(rows)
+
+
+def _gate6_schedule_rows(
+    document: dict[str, Any] | None,
+    *,
+    expected_scale: str,
+    fixtures: Any,
+) -> tuple[tuple[Any, ...], tuple[dict[str, str], ...]]:
+    if document is None:
+        return (), ()
+    expected = {"schedule_id", "request_sha256", "metric"}
+    metric_fields = set(fixtures.Gate6EpisodeMetricRowV2.__dataclass_fields__)
+    metrics: list[Any] = []
+    joins: list[dict[str, str]] = []
+    episode_ids: set[str] = set()
+    schedule_requests: dict[tuple[str, str], str] = {}
+    variants: set[tuple[str, str, int, bool]] = set()
+    for raw in document["rows"]:
+        row = _require_gate6_exact_keys(raw, expected, "schedule row")
+        schedule_id = _gate6_nonempty_string(row["schedule_id"], "schedule_id")
+        request_sha256 = _gate6_sha256(row["request_sha256"], "request_sha256")
+        metric_payload = _require_gate6_exact_keys(
+            row["metric"], metric_fields, "episode metric"
+        )
+        if metric_payload["pair_id"] != request_sha256:
+            raise ValueError("Gate 6 metric pair_id must equal request_sha256")
+        metric = fixtures.Gate6EpisodeMetricRowV2(**metric_payload)
+        if metric.scale != expected_scale:
+            raise ValueError("Gate 6 schedule metric scale mismatch")
+        if metric.episode_id in episode_ids:
+            raise ValueError("Gate 6 episode_id must be unique")
+        episode_ids.add(metric.episode_id)
+        request_key = (schedule_id, metric.platform_kind)
+        previous_request = schedule_requests.setdefault(request_key, request_sha256)
+        if previous_request != request_sha256:
+            raise ValueError("Gate 6 schedule request_sha256 drift")
+        variant_key = (
+            schedule_id,
+            metric.ablation_case,
+            metric.worker_count,
+            metric.cache_enabled,
+        )
+        if variant_key in variants:
+            raise ValueError("Gate 6 schedule variant must be unique")
+        variants.add(variant_key)
+        metrics.append(metric)
+        joins.append(
+            {
+                "episode_id": metric.episode_id,
+                "schedule_id": schedule_id,
+                "request_sha256": request_sha256,
+            }
+        )
+    return tuple(metrics), tuple(joins)
+
+
+def _gate6_ppo_rows(document: dict[str, Any] | None) -> tuple[dict[str, str], ...]:
+    if document is None:
+        return ()
+    rows: list[dict[str, str]] = []
+    identifiers: set[str] = set()
+    target_hashes: set[str] = set()
+    for raw in document["rows"]:
+        row = _require_gate6_exact_keys(
+            raw,
+            {"target_id", "platform_kind", "target_sha256", "request_sha256"},
+            "PPO target row",
+        )
+        target_id = _gate6_nonempty_string(row["target_id"], "target_id")
+        if target_id in identifiers:
+            raise ValueError("Gate 6 target_id must be unique")
+        identifiers.add(target_id)
+        target_sha256 = _gate6_sha256(row["target_sha256"], "target_sha256")
+        request_sha256 = _gate6_sha256(row["request_sha256"], "request_sha256")
+        if target_sha256 in target_hashes:
+            raise ValueError("Gate 6 target_sha256 must be unique")
+        target_hashes.add(target_sha256)
+        rows.append(
+            {
+                "target_id": target_id,
+                "platform_kind": _gate6_platform(row["platform_kind"]),
+                "target_sha256": target_sha256,
+                "request_sha256": request_sha256,
+            }
+        )
+    return tuple(rows)
 
 
 def _load_gate6_phase_state(
     config: dict[str, Any],
     output_root: Path,
+    lineage: dict[str, Any],
 ) -> Sequence[dict[str, Any]]:
-    del config, output_root
-    return ()
+    state_path = _gate6_phase_state_path(config, output_root)
+    if not artifact_io.path_is_file(state_path):
+        return ()
+    state = artifact_io.read_json(state_path)
+    expected_keys = {
+        "schema_version",
+        "output_root",
+        "lineage",
+        "phases",
+        "state_sha256",
+    }
+    _require_gate6_exact_keys(state, expected_keys, "resume state")
+    if state["schema_version"] != GATE6_PHASE_STATE_SCHEMA:
+        raise ValueError("Gate 6 resume state schema mismatch")
+    if type(state["phases"]) is not list:
+        raise ValueError("Gate 6 resume state phases must be a list")
+    stored_sha = state["state_sha256"]
+    unsigned = {key: state[key] for key in expected_keys - {"state_sha256"}}
+    if stored_sha != _gate6_json_sha256(unsigned):
+        raise ValueError("Gate 6 resume state checksum mismatch")
+    if state["output_root"] != Path(output_root).resolve().as_posix():
+        raise ValueError("Gate 6 resume state output root mismatch")
+    if state["lineage"] != lineage:
+        raise ValueError("Gate 6 resume state lineage mismatch")
+    records = _validated_gate6_resume_records(state["phases"])
+    parent_hash = GATE6_ZERO_HASH
+    for record in records:
+        if record["parent_record_sha256"] != parent_hash:
+            raise ValueError("Gate 6 resume state parent hash mismatch")
+        unsigned_record = {
+            key: record[key]
+            for key in ("phase", "status", "result", "parent_record_sha256")
+        }
+        if record["record_sha256"] != _gate6_json_sha256(unsigned_record):
+            raise ValueError("Gate 6 resume state record hash mismatch")
+        parent_hash = record["record_sha256"]
+    return records
 
 
 def _gate6_inventory_payload(audit: Any) -> dict[str, Any]:
@@ -4444,11 +4855,101 @@ def _gate6_expected_metric_combinations() -> tuple[tuple[str, str, str], ...]:
     return tuple(combinations)
 
 
-def _gate6_matrix_audit(metric_rows: Sequence[Any]) -> dict[str, Any]:
+def _gate6_canonical_rows(metric_rows: Sequence[Any]) -> tuple[Any, ...]:
+    return tuple(
+        row for row in metric_rows if row.worker_count == 1 and not row.cache_enabled
+    )
+
+
+def _gate6_primitive_evidence_audit(
+    primitive_rows: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    platform_results: dict[str, dict[str, Any]] = {}
+    for platform in GATE6_PLATFORMS:
+        rows = tuple(
+            row for row in primitive_rows if row["platform_kind"] == platform
+        )
+        true_positives = sum(
+            row["oracle_safe"] and row["provider_success"] for row in rows
+        )
+        false_negatives = sum(
+            row["oracle_safe"] and not row["provider_success"] for row in rows
+        )
+        false_positives = sum(
+            not row["oracle_safe"] and row["provider_success"] for row in rows
+        )
+        denominator = true_positives + false_negatives
+        platform_results[platform] = {
+            "row_count": len(rows),
+            "false_positive_count": false_positives,
+            "unknown_accepted_count": sum(row["unknown_accepted"] for row in rows),
+            "recall": true_positives / denominator if denominator else 0.0,
+            "all_success_complete_l2": all(
+                not row["provider_success"] or row["provider_complete_l2"]
+                for row in rows
+            ),
+        }
+    return {
+        "platforms": platform_results,
+        "minimum_rows_per_platform": min(
+            item["row_count"] for item in platform_results.values()
+        ),
+        "false_positive_count": sum(
+            item["false_positive_count"] for item in platform_results.values()
+        ),
+        "unknown_accepted_count": sum(
+            item["unknown_accepted_count"] for item in platform_results.values()
+        ),
+        "minimum_recall": min(item["recall"] for item in platform_results.values()),
+        "all_success_complete_l2": all(
+            item["all_success_complete_l2"] for item in platform_results.values()
+        ),
+    }
+
+
+def _gate6_exact_evidence_audit(
+    exact_rows: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    candidate_ratios = [
+        row["candidate_resource_cost"] / row["optimum_resource_cost"]
+        for row in exact_rows
+    ]
+    exploration_ratios = [
+        row["exploration_resource_cost"] / row["minimum_feasible_resource_cost"]
+        for row in exact_rows
+    ]
+    return {
+        "row_count": len(exact_rows),
+        "maximum_candidate_optimum_ratio": (
+            max(candidate_ratios) if candidate_ratios else None
+        ),
+        "maximum_exploration_minimum_feasible_ratio": (
+            max(exploration_ratios) if exploration_ratios else None
+        ),
+        "all_success_complete_l2": bool(exact_rows)
+        and all(
+            row["provider_success"] and row["provider_complete_l2"]
+            for row in exact_rows
+        ),
+    }
+
+
+def _gate6_matrix_audit(
+    metric_rows: Sequence[Any],
+    metric_joins: Sequence[dict[str, str]],
+) -> dict[str, Any]:
     expected = _gate6_expected_metric_combinations()
     expected_set = set(expected)
+    if len(metric_rows) != len(metric_joins):
+        raise ValueError("Gate 6 metric join cardinality mismatch")
+    joined = tuple(zip(metric_rows, metric_joins, strict=True))
+    canonical = tuple(
+        (row, join)
+        for row, join in joined
+        if row.worker_count == 1 and not row.cache_enabled
+    )
     observed_set = {
-        (row.ablation_case, row.platform_kind, row.scale) for row in metric_rows
+        (row.ablation_case, row.platform_kind, row.scale) for row, _join in canonical
     }
 
     def payload(combination: tuple[str, str, str]) -> dict[str, str]:
@@ -4464,71 +4965,350 @@ def _gate6_matrix_audit(metric_rows: Sequence[Any]) -> dict[str, Any]:
         payload(item)
         for item in sorted(observed_set - expected_set)
     ]
+    insufficient = []
+    for combination in expected:
+        case, platform, scale = combination
+        actual = len(
+            {
+                join["schedule_id"]
+                for row, join in canonical
+                if (row.ablation_case, row.platform_kind, row.scale) == combination
+            }
+        )
+        required = 100 if scale == "standard" else 30
+        if actual < required:
+            insufficient.append(
+                {**payload(combination), "actual": actual, "required": required}
+            )
+    semantic_join_failures = []
+    for platform in GATE6_PLATFORMS:
+        for scale in GATE6_SCALES:
+            applicable_cases = (
+                GATE6_ABLATION_CASES
+                if platform == "wheel"
+                else tuple(
+                    case
+                    for case in GATE6_ABLATION_CASES
+                    if case not in GATE6_WHEEL_ONLY_CASES
+                )
+            )
+            by_case: dict[str, set[tuple[str, int]]] = {}
+            for case in applicable_cases:
+                by_case[case] = {
+                    (join["request_sha256"], row.seed)
+                    for row, join in canonical
+                    if row.ablation_case == case
+                    and row.platform_kind == platform
+                    and row.scale == scale
+                }
+            reference = by_case[applicable_cases[0]]
+            if not reference or any(
+                by_case[case] != reference for case in applicable_cases[1:]
+            ):
+                semantic_join_failures.append(
+                    {"platform_kind": platform, "scale": scale}
+                )
     return {
-        "status": "passed" if not missing and not unexpected else "failed",
+        "status": (
+            "passed"
+            if not missing
+            and not unexpected
+            and not insufficient
+            and not semantic_join_failures
+            else "failed"
+        ),
         "expected_combination_count": len(expected),
         "observed_combination_count": len(observed_set & expected_set),
         "missing_combinations": missing,
         "unexpected_combinations": unexpected,
+        "insufficient_cardinality": insufficient,
+        "semantic_join_failures": semantic_join_failures,
     }
+
+
+def _gate6_worker_cache_audit(
+    *,
+    fixtures: Any,
+    metric_rows: Sequence[Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    groups: dict[tuple[Any, ...], list[Any]] = {}
+    for row in metric_rows:
+        key = (
+            row.platform_kind,
+            row.scale,
+            row.ablation_case,
+            row.pair_id,
+            row.seed,
+        )
+        groups.setdefault(key, []).append(row)
+    semantic_sample_rows = tuple(
+        row for rows in groups.values() if len(rows) > 1 for row in rows
+    )
+    base = fixtures.audit_gate6_worker_cache_semantics_v2(
+        semantic_sample_rows,
+        worker_counts=tuple(config["ablation"]["worker_counts"]),
+        cache_modes=tuple(config["ablation"]["cache_modes"]),
+    )
+    covered = {
+        (rows[0].ablation_case, rows[0].platform_kind, rows[0].scale)
+        for rows in groups.values()
+        if {
+            (row.worker_count, row.cache_enabled) for row in rows
+        }
+        == {(1, False), (1, True), (4, False), (4, True)}
+    }
+    missing = [
+        {
+            "ablation_case": case,
+            "platform_kind": platform,
+            "scale": scale,
+        }
+        for case, platform, scale in _gate6_expected_metric_combinations()
+        if (case, platform, scale) not in covered
+    ]
+    passed = base["status"] == "passed" and not missing
+    return {
+        **base,
+        "status": "passed" if passed else "failed",
+        "missing_combinations": missing,
+    }
+
+
+def _gate6_nearest_rank(values: Sequence[float], quantile: float) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return math.inf
+    return ordered[math.ceil(quantile * len(ordered)) - 1]
+
+
+def _gate6_paired_threshold_audit(
+    *,
+    fixtures: Any,
+    metric_rows: Sequence[Any],
+    metric_joins: Sequence[dict[str, str]],
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    canonical_pairs = tuple(
+        (row, join)
+        for row, join in zip(metric_rows, metric_joins, strict=True)
+        if row.worker_count == 1 and not row.cache_enabled
+    )
+    group_results: list[dict[str, Any]] = []
+    bootstrap_groups: list[dict[str, Any]] = []
+    for platform in GATE6_PLATFORMS:
+        for scale in GATE6_SCALES:
+            case_maps: dict[str, dict[tuple[str, int], Any]] = {}
+            for case in ("v2_fine_only", "v2_full"):
+                case_maps[case] = {
+                    (join["request_sha256"], row.seed): row
+                    for row, join in canonical_pairs
+                    if row.platform_kind == platform
+                    and row.scale == scale
+                    and row.ablation_case == case
+                }
+            keys = sorted(case_maps["v2_fine_only"])
+            if not keys or set(keys) != set(case_maps["v2_full"]):
+                raise ValueError("Gate 6 paired semantic join is incomplete")
+            fine_rows = [case_maps["v2_fine_only"][key] for key in keys]
+            full_rows = [case_maps["v2_full"][key] for key in keys]
+            if any(
+                row.resource_cost is None or row.resource_cost <= 0 for row in fine_rows
+            ):
+                raise ValueError("Gate 6 paired baseline resources must be positive")
+            if any(row.coverage_efficiency <= 0 for row in fine_rows):
+                raise ValueError("Gate 6 paired baseline coverage must be positive")
+            resource_ratios = [
+                (
+                    float(full.resource_cost) / float(fine.resource_cost)
+                    if full.resource_cost is not None
+                    else None
+                )
+                for fine, full in zip(fine_rows, full_rows, strict=True)
+            ]
+            resource_ratio = (
+                max(float(value) for value in resource_ratios if value is not None)
+                if all(value is not None for value in resource_ratios)
+                else None
+            )
+            coverage_relative = sum(
+                (full.coverage_efficiency - fine.coverage_efficiency)
+                / fine.coverage_efficiency
+                for fine, full in zip(fine_rows, full_rows, strict=True)
+            ) / len(keys)
+
+            def success_ratio(rows: Sequence[Any]) -> float:
+                reachable = [row for row in rows if row.oracle_reachable]
+                return (
+                    sum(row.provider_success for row in reachable) / len(reachable)
+                    if reachable
+                    else 0.0
+                )
+
+            fine_success = success_ratio(fine_rows)
+            full_success = success_ratio(full_rows)
+            bootstrap = fixtures.paired_bootstrap_coverage_ci95_v2(
+                tuple(fine_rows) + tuple(full_rows),
+                baseline_case="v2_fine_only",
+                candidate_case="v2_full",
+                seed=config["ablation"]["bootstrap_seed"],
+                resamples=config["ablation"]["bootstrap_resamples"],
+            )
+            bootstrap_groups.append(
+                {"platform_kind": platform, "scale": scale, **bootstrap}
+            )
+            group_results.append(
+                {
+                    "platform_kind": platform,
+                    "scale": scale,
+                    "resource_ratio": resource_ratio,
+                    "coverage_relative_improvement": coverage_relative,
+                    "coverage_ci95_lower": bootstrap["ci95_lower"],
+                    "fine_reachable_success_ratio": fine_success,
+                    "full_reachable_success_ratio": full_success,
+                    "reachable_success_decline": fine_success - full_success,
+                    "full_runtime_p95_ms": _gate6_nearest_rank(
+                        [row.runtime_ms for row in full_rows], 0.95
+                    ),
+                }
+            )
+    paired = {
+        "groups": group_results,
+        "resource_ratio_max": (
+            max(float(item["resource_ratio"]) for item in group_results)
+            if all(item["resource_ratio"] is not None for item in group_results)
+            else None
+        ),
+        "coverage_relative_improvement_min": min(
+            item["coverage_relative_improvement"] for item in group_results
+        ),
+        "coverage_ci95_lower": min(
+            item["coverage_ci95_lower"] for item in group_results
+        ),
+        "full_reachable_success_ratio_min": min(
+            item["full_reachable_success_ratio"] for item in group_results
+        ),
+        "reachable_success_decline_max": max(
+            item["reachable_success_decline"] for item in group_results
+        ),
+    }
+    runtime = {
+        "standard_p95_ms_max": max(
+            item["full_runtime_p95_ms"]
+            for item in group_results
+            if item["scale"] == "standard"
+        ),
+        "kilometer_p95_ms_max": max(
+            item["full_runtime_p95_ms"]
+            for item in group_results
+            if item["scale"] == "kilometer"
+        ),
+        "hard_timeout_violation_count": sum(
+            row.timed_out or row.runtime_ms > fixtures.GATE6_HARD_TIMEOUT_MS_V2
+            for row in _gate6_canonical_rows(metric_rows)
+        ),
+    }
+    return {"paired": paired, "runtime": runtime}, {
+        "status": "evaluated",
+        "groups": bootstrap_groups,
+        "ci95_lower": paired["coverage_ci95_lower"],
+    }
+
+
+def _gate6_threshold_blockers(audit: Mapping[str, Any]) -> list[str]:
+    primitive = audit["primitive"]
+    exact = audit["exact"]
+    paired = audit["paired"]
+    runtime = audit["runtime"]
+
+    def at_most(value: object, limit: float) -> bool:
+        return type(value) in {int, float} and math.isfinite(float(value)) and value <= limit
+
+    def at_least(value: object, limit: float) -> bool:
+        return type(value) in {int, float} and math.isfinite(float(value)) and value >= limit
+
+    checks = (
+        (primitive["minimum_rows_per_platform"] >= 10_000, "gate6_primitive_cardinality_insufficient"),
+        (primitive["false_positive_count"] == 0, "gate6_primitive_false_positive_failed"),
+        (primitive["unknown_accepted_count"] == 0, "gate6_primitive_unknown_acceptance_failed"),
+        (at_least(primitive["minimum_recall"], 0.98), "gate6_primitive_recall_failed"),
+        (primitive["all_success_complete_l2"] is True, "gate6_primitive_complete_l2_failed"),
+        (at_most(exact["maximum_candidate_optimum_ratio"], 1.10), "gate6_exact_candidate_optimum_failed"),
+        (at_most(exact["maximum_exploration_minimum_feasible_ratio"], 1.20), "gate6_exact_exploration_budget_failed"),
+        (exact["all_success_complete_l2"] is True, "gate6_exact_complete_l2_failed"),
+        (at_least(paired["full_reachable_success_ratio_min"], 0.99), "gate6_reachable_success_failed"),
+        (at_most(paired["reachable_success_decline_max"], 0.01), "gate6_reachable_success_regression_failed"),
+        (at_most(paired["resource_ratio_max"], 1.20), "gate6_resource_regression_failed"),
+        (at_least(paired["coverage_relative_improvement_min"], 0.05), "gate6_coverage_point_estimate_failed"),
+        (at_least(paired["coverage_ci95_lower"], 0.0), "gate6_coverage_bootstrap_failed"),
+        (at_most(runtime["standard_p95_ms_max"], 250.0), "gate6_standard_runtime_p95_failed"),
+        (at_most(runtime["kilometer_p95_ms_max"], 750.0), "gate6_kilometer_runtime_p95_failed"),
+        (runtime["hard_timeout_violation_count"] == 0, "gate6_hard_timeout_failed"),
+    )
+    return [blocker for passed, blocker in checks if not passed]
 
 
 def _gate6_aggregate_decision(
     *,
     fixtures: Any,
     metric_rows: Sequence[Any],
+    metric_joins: Sequence[dict[str, str]],
+    primitive_audit: dict[str, Any],
+    exact_audit: dict[str, Any],
     matrix_audit: dict[str, Any],
     worker_cache_audit: dict[str, Any],
     config: dict[str, Any],
 ) -> dict[str, Any]:
-    overall_metrics = fixtures.aggregate_gate6_metrics_v2(metric_rows)
+    canonical_rows = _gate6_canonical_rows(metric_rows)
+    overall_metrics = fixtures.aggregate_gate6_metrics_v2(canonical_rows)
     paired_bootstrap: dict[str, Any] | None = None
+    threshold_audit: dict[str, Any] | None = None
     if overall_metrics["metrics_status"] == "not_evaluated":
         blockers = ["gate6_metric_rows_missing"]
-    elif matrix_audit["status"] != "passed":
-        blockers = ["gate6_ablation_matrix_incomplete"]
     elif overall_metrics["safety_passed"] is not True:
         blockers = ["gate6_safety_metric_failed"]
+    elif matrix_audit["missing_combinations"] or matrix_audit["unexpected_combinations"]:
+        blockers = ["gate6_ablation_matrix_incomplete"]
+    elif matrix_audit["semantic_join_failures"]:
+        blockers = ["gate6_schedule_semantic_join_failed"]
+    elif any(
+        item["scale"] == "standard"
+        for item in matrix_audit["insufficient_cardinality"]
+    ):
+        blockers = ["gate6_standard_schedule_matrix_insufficient"]
+    elif matrix_audit["insufficient_cardinality"]:
+        blockers = ["gate6_kilometer_schedule_matrix_insufficient"]
     elif worker_cache_audit["status"] != "passed":
         blockers = ["gate6_worker_cache_semantics_failed"]
-    elif (
-        overall_metrics["primitive_recall"] is None
-        or overall_metrics["primitive_recall"] < 0.98
-    ):
-        blockers = ["gate6_primitive_recall_failed"]
-    elif (
-        overall_metrics["reachable_success_ratio"] is None
-        or overall_metrics["reachable_success_ratio"] < 0.99
-    ):
-        blockers = ["gate6_reachable_success_failed"]
-    elif (
-        overall_metrics["timeout_count"]
-        or overall_metrics["hard_timeout_violation_count"]
-    ):
-        blockers = ["gate6_timeout_metric_failed"]
     else:
         try:
-            paired_bootstrap = fixtures.paired_bootstrap_coverage_ci95_v2(
-                metric_rows,
-                baseline_case="v2_fine_only",
-                candidate_case="v2_full",
-                seed=config["ablation"]["bootstrap_seed"],
-                resamples=config["ablation"]["bootstrap_resamples"],
+            paired_parts, paired_bootstrap = _gate6_paired_threshold_audit(
+                fixtures=fixtures,
+                metric_rows=metric_rows,
+                metric_joins=metric_joins,
+                config=config,
             )
         except (TypeError, ValueError):
             blockers = ["gate6_paired_bootstrap_invalid"]
         else:
-            blockers = (
-                []
-                if paired_bootstrap["mean_delta"] >= 0.0
-                and paired_bootstrap["ci95_lower"] >= 0.0
-                else ["gate6_coverage_bootstrap_failed"]
-            )
+            threshold_contract = {
+                "primitive": primitive_audit,
+                "exact": exact_audit,
+                **paired_parts,
+            }
+            blockers = _gate6_threshold_blockers(threshold_contract)
+            threshold_audit = {
+                **threshold_contract,
+                **paired_parts["paired"],
+                **paired_parts["runtime"],
+                "blocking_reasons": blockers,
+            }
     return {
         "status": "passed" if not blockers else "blocked",
         "blocking_reasons": blockers,
         "overall_metrics": overall_metrics,
         "paired_bootstrap": paired_bootstrap,
+        "threshold_audit": threshold_audit,
     }
 
 
@@ -4538,12 +5318,18 @@ def _evaluate_gate6_formal_phase(
     fixtures: Any,
     inventories: Mapping[str, Any],
     metric_rows: Sequence[Any],
+    metric_joins: Sequence[dict[str, str]],
+    primitive_rows: Sequence[dict[str, Any]],
+    exact_rows: Sequence[dict[str, Any]],
     prior_results: Mapping[str, dict[str, Any]],
     config: dict[str, Any],
 ) -> dict[str, Any]:
     if phase == "primitive_audit":
         audit = fixtures.audit_gate6_fixture_inventory_v2(inventories)
-        return _gate6_inventory_payload(audit)
+        return {
+            **_gate6_inventory_payload(audit),
+            "primitive_audit": _gate6_primitive_evidence_audit(primitive_rows),
+        }
     if phase == "exact_quality":
         inventory = prior_results["primitive_audit"]["inputs"]
         return {
@@ -4551,30 +5337,38 @@ def _evaluate_gate6_formal_phase(
             "formal_row_count": inventory["independent_small_map_optima"][
                 "formal_row_count"
             ],
+            "exact_audit": _gate6_exact_evidence_audit(exact_rows),
         }
     if phase in GATE6_SCALES:
-        rows = tuple(row for row in metric_rows if row.scale == phase)
+        rows = tuple(
+            row for row in _gate6_canonical_rows(metric_rows) if row.scale == phase
+        )
         return fixtures.aggregate_gate6_metrics_v2(rows)
     if phase == "ablation":
         return {
-            "matrix_audit": _gate6_matrix_audit(metric_rows),
+            "matrix_audit": _gate6_matrix_audit(metric_rows, metric_joins),
             "ablation_metrics": {
                 case: fixtures.aggregate_gate6_metrics_v2(
-                    row for row in metric_rows if row.ablation_case == case
+                    row
+                    for row in _gate6_canonical_rows(metric_rows)
+                    if row.ablation_case == case
                 )
                 for case in GATE6_ABLATION_CASES
             },
         }
     if phase == "determinism_worker_cache":
-        return fixtures.audit_gate6_worker_cache_semantics_v2(
-            metric_rows,
-            worker_counts=tuple(config["ablation"]["worker_counts"]),
-            cache_modes=tuple(config["ablation"]["cache_modes"]),
+        return _gate6_worker_cache_audit(
+            fixtures=fixtures,
+            metric_rows=metric_rows,
+            config=config,
         )
     if phase == "aggregate":
         return _gate6_aggregate_decision(
             fixtures=fixtures,
             metric_rows=metric_rows,
+            metric_joins=metric_joins,
+            primitive_audit=prior_results["primitive_audit"]["primitive_audit"],
+            exact_audit=prior_results["exact_quality"]["exact_audit"],
             matrix_audit=prior_results["ablation"]["matrix_audit"],
             worker_cache_audit=prior_results["determinism_worker_cache"],
             config=config,
@@ -4592,27 +5386,122 @@ def _validated_gate6_resume_records(
     for expected_phase, record in zip(GATE6_PHASES, materialized, strict=False):
         if (
             type(record) is not dict
+            or set(record)
+            != {
+                "phase",
+                "status",
+                "result",
+                "parent_record_sha256",
+                "record_sha256",
+            }
             or record.get("phase") != expected_phase
             or record.get("status") != "completed"
             or type(record.get("result")) is not dict
         ):
             raise ValueError("Gate 6 resume state must be a completed phase prefix")
+        _gate6_sha256(record["parent_record_sha256"], "parent_record_sha256")
+        _gate6_sha256(record["record_sha256"], "record_sha256")
         validated.append(dict(record))
     return tuple(validated)
+
+
+def _gate6_json_sha256(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _gate6_phase_state_path(
+    config: dict[str, Any],
+    output_root: Path,
+) -> Path:
+    output_key = hashlib.sha256(
+        Path(output_root).resolve().as_posix().encode("utf-8")
+    ).hexdigest()
+    return Path(str(config["temp_root"])).resolve() / "gate6-state" / f"{output_key}.json"
+
+
+def _gate6_resume_lineage(
+    *,
+    config: dict[str, Any],
+    input_hashes: Mapping[str, str | None],
+    repo_root: Path,
+    fixtures: Any,
+) -> dict[str, Any]:
+    fixture_path = Path(str(fixtures.__file__)).resolve()
+    return {
+        "config_sha256": _gate6_json_sha256(config),
+        "input_hashes": dict(input_hashes),
+        "root_head": _git(repo_root, "rev-parse", "HEAD"),
+        "gitlink": _git(repo_root, "rev-parse", "HEAD:path-planner"),
+        "nested_head": _git(repo_root / "path-planner", "rev-parse", "HEAD"),
+        "fixture_sha256": hashlib.sha256(
+            artifact_io.read_bytes(fixture_path)
+        ).hexdigest(),
+        "runner_sha256": hashlib.sha256(
+            artifact_io.read_bytes(Path(__file__).resolve())
+        ).hexdigest(),
+        "configured_git": config["expected_git"],
+    }
+
+
+def _gate6_phase_record(
+    phase: str,
+    result: dict[str, Any],
+    parent_record_sha256: str,
+) -> dict[str, Any]:
+    unsigned = {
+        "phase": phase,
+        "status": "completed",
+        "result": result,
+        "parent_record_sha256": parent_record_sha256,
+    }
+    return {**unsigned, "record_sha256": _gate6_json_sha256(unsigned)}
+
+
+def _write_gate6_phase_state(
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    lineage: dict[str, Any],
+    phases: Sequence[dict[str, Any]],
+) -> None:
+    state_path = _gate6_phase_state_path(config, output_root)
+    artifact_io.make_dirs(state_path.parent)
+    unsigned = {
+        "schema_version": GATE6_PHASE_STATE_SCHEMA,
+        "output_root": Path(output_root).resolve().as_posix(),
+        "lineage": lineage,
+        "phases": list(phases),
+    }
+    state = {**unsigned, "state_sha256": _gate6_json_sha256(unsigned)}
+    temp_path = state_path.with_name(f".{state_path.name}.tmp-{os.getpid()}")
+    artifact_io.write_json(temp_path, state)
+    os.replace(
+        artifact_io.windows_safe_path(temp_path),
+        artifact_io.windows_safe_path(state_path),
+    )
 
 
 def _validate_gate6_output_root(
     config: dict[str, Any],
     output_root: Path,
+    *,
+    ready: bool,
 ) -> Path:
     root = Path(output_root).resolve()
     formal_root = Path(str(config["formal_output_root"])).resolve()
     temp_root = Path(str(config["temp_root"])).resolve()
-    if root == formal_root:
+    if root == formal_root and not ready:
         raise ValueError("Gate 6 formal output root is not authorized")
-    if root == temp_root or not root.is_relative_to(temp_root):
+    if root != formal_root and (root == temp_root or not root.is_relative_to(temp_root)):
         raise ValueError("Gate 6 output_root must be a fresh temp_root child")
-    if root.drive.upper() != temp_root.drive.upper():
+    if root != formal_root and root.drive.upper() != temp_root.drive.upper():
         raise ValueError("Gate 6 output_root must share the configured temp drive")
     if os.path.lexists(_windows_safe_lexical_absolute_path(root)):
         raise RuntimeError("Gate 6 output_root already exists")
@@ -4667,7 +5556,7 @@ def _run_gate6_ready_benchmark(
 ) -> dict[str, Any]:
     fixtures = _gate6_fixture_api(repo_root)
     bundle = _load_gate6_formal_inputs(config, repo_root)
-    if not isinstance(bundle, Mapping) or set(bundle) != {"inventories", "metric_rows"}:
+    if not isinstance(bundle, Mapping) or set(bundle) != GATE6_BUNDLE_KEYS:
         raise ValueError("Gate 6 formal input bundle contract mismatch")
     inventories = bundle["inventories"]
     if not isinstance(inventories, Mapping):
@@ -4675,20 +5564,39 @@ def _run_gate6_ready_benchmark(
     metric_rows = tuple(bundle["metric_rows"])
     if any(type(row) is not fixtures.Gate6EpisodeMetricRowV2 for row in metric_rows):
         raise TypeError("Gate 6 metric_rows must use Gate6EpisodeMetricRowV2")
+    metric_joins = tuple(bundle["metric_joins"])
+    if len(metric_rows) != len(metric_joins) or any(
+        type(join) is not dict
+        or set(join) != {"episode_id", "schedule_id", "request_sha256"}
+        for join in metric_joins
+    ):
+        raise ValueError("Gate 6 metric join contract mismatch")
+    primitive_rows = tuple(bundle["primitive_rows"])
+    exact_rows = tuple(bundle["exact_rows"])
+    input_hashes = bundle["input_hashes"]
+    if not isinstance(input_hashes, Mapping) or set(input_hashes) != {
+        input_kind for input_kind, _blocker in GATE6_INPUT_BLOCKERS
+    }:
+        raise ValueError("Gate 6 input hash contract mismatch")
+    lineage = _gate6_resume_lineage(
+        config=config,
+        input_hashes=input_hashes,
+        repo_root=repo_root,
+        fixtures=fixtures,
+    )
 
     resumed = _validated_gate6_resume_records(
-        _load_gate6_phase_state(config, output_root)
+        _load_gate6_phase_state(config, output_root, lineage)
     )
     prior_results: dict[str, dict[str, Any]] = {}
     phases: list[dict[str, Any]] = []
+    state_records = list(resumed)
     for index, phase in enumerate(GATE6_PHASES):
         if index < len(resumed):
             result = resumed[index]["result"]
             phase_row = {
-                "phase": phase,
-                "status": "completed",
+                **resumed[index],
                 "resumed": True,
-                "result": result,
             }
         else:
             result = _evaluate_gate6_formal_phase(
@@ -4696,15 +5604,26 @@ def _run_gate6_ready_benchmark(
                 fixtures=fixtures,
                 inventories=inventories,
                 metric_rows=metric_rows,
+                metric_joins=metric_joins,
+                primitive_rows=primitive_rows,
+                exact_rows=exact_rows,
                 prior_results=prior_results,
                 config=config,
             )
-            phase_row = {
-                "phase": phase,
-                "status": "completed",
-                "resumed": False,
-                "result": result,
-            }
+            parent_hash = (
+                state_records[-1]["record_sha256"]
+                if state_records
+                else GATE6_ZERO_HASH
+            )
+            record = _gate6_phase_record(phase, result, parent_hash)
+            state_records.append(record)
+            _write_gate6_phase_state(
+                config=config,
+                output_root=output_root,
+                lineage=lineage,
+                phases=state_records,
+            )
+            phase_row = {**record, "resumed": False}
         prior_results[phase] = result
         phases.append(phase_row)
 
@@ -4721,6 +5640,7 @@ def _run_gate6_ready_benchmark(
     ablation_metrics = prior_results["ablation"]["ablation_metrics"]
     worker_cache_audit = prior_results["determinism_worker_cache"]
     paired_bootstrap = aggregate_result["paired_bootstrap"]
+    threshold_audit = aggregate_result["threshold_audit"]
     common = {
         "status": status,
         "execution_class": GATE6_READY_EXECUTION_CLASS,
@@ -4738,12 +5658,15 @@ def _run_gate6_ready_benchmark(
         "accepts_formal_inputs": True,
         "inputs": inventory_result["inputs"],
         "metric_row_count": len(metric_rows),
+        "input_hashes": dict(input_hashes),
+        "lineage": lineage,
         "phases": list(GATE6_PHASES),
         "ablation_cases": list(GATE6_ABLATION_CASES),
         "matrix_audit": matrix_audit,
         "ablation_metrics": ablation_metrics,
         "worker_cache_audit": worker_cache_audit,
         "paired_bootstrap": paired_bootstrap,
+        "threshold_audit": threshold_audit,
         "overall_metrics": aggregate_result["overall_metrics"],
         **gate_artifacts.BOUNDARY_FIELDS,
     }
@@ -4786,6 +5709,16 @@ def _run_gate6_ready_benchmark(
                 "status": aggregate_result["status"],
                 **aggregate_result["overall_metrics"],
             },
+            {
+                "suite": "threshold_audit",
+                "status": (
+                    "passed"
+                    if threshold_audit is not None
+                    and not threshold_audit["blocking_reasons"]
+                    else "blocked"
+                ),
+                "result": threshold_audit,
+            },
         )
     )
     review = {
@@ -4801,6 +5734,8 @@ def _run_gate6_ready_benchmark(
             "commands": [],
             "resumed_phase_count": len(resumed),
         },
+        "input_hashes": dict(input_hashes),
+        "lineage": lineage,
         **gate_artifacts.BOUNDARY_FIELDS,
     }
     gate_artifacts.write_gate_artifacts_atomically(
@@ -4826,7 +5761,7 @@ def _run_gate6_benchmark(
     del execute_tests
     ready = _validate_gate6_config(config)
     validate_output_root(repo_root, output_root)
-    output_root = _validate_gate6_output_root(config, output_root)
+    output_root = _validate_gate6_output_root(config, output_root, ready=ready)
     if ready:
         return _run_gate6_ready_benchmark(
             config=config,
