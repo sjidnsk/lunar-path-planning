@@ -5,8 +5,9 @@
 - High-level option A was approved before the three section contracts.
 - Sections 1, 2, and 3 were explicitly approved on 2026-07-20.
 - The user explicitly approved the independent readiness/implementation contract on 2026-07-21.
-- This tracked file is the sole self-contained implementation authority for Gate5B slices 11B1-11B7. The ignored source drafts listed below are provenance only.
-- Authorization includes the plan-only promotion commit, serial TDD work, fresh reviews, allowed commits/integrations, and bounded non-formal verification under the approved D-drive temp roots.
+- The user explicitly approved the Gate5B cadence/cardinal correction A2 on 2026-07-21 with the exact statement `批准 Gate5B cadence/cardinal correction A2`.
+- This tracked file is the sole self-contained implementation authority for Gate5B slices 11B1-11B7, including the serial 11B1.5 A2 repair slice. The ignored source drafts and proposal listed below are provenance only.
+- Authorization includes the plan-only promotion and A2-amendment commits, serial TDD work, fresh reviews, allowed commits/integrations, and bounded non-formal verification under the approved D-drive temp roots.
 - Authorization excludes the controller, any formal Gate5 data access, `D:/xunce/out/path_v2/g5`, a formal blocked snapshot, Gate6, checkpoint publication, default-policy replacement, executor connection, and canary start.
 - v1 remains the default and v2 remains opt-in. The protected C-drive Stage6 dirty worktree is never read, executed in, modified, or used as evidence.
 - PPO Stage1 may retain only the exact inherited 13-nodeid failure set; the set may not expand.
@@ -22,6 +23,9 @@
 - `.superpowers/sdd/gate5b-section2-fixture-authority-draft.md`: SHA-256 `5f924aececd95901bfd9d1d034107b34f3b628ade2502bb1f49b4c24fdc61db9`
 - `.superpowers/sdd/gate5b-section3-route-authority-draft.md`: SHA-256 `3981c81efa2c6dca1836f61c7b588bcd583c72d298e8071b33fb1f96443ced18`
 - `.superpowers/sdd/gate5b-implementation-readiness-plan.md`: SHA-256 `176d5fee8fb9db051c5df15e95741f6e0e09ce9ff4217cac9171a0da6e0c6231`
+- `.superpowers/sdd/gate5b-cadence-cardinal-correction-proposal.md`: SHA-256 `51c1f151f3513e4d7e1f87423fd31d82c2be7f53c3b0bead2fc64c1d9371f458`; this ignored proposal records A2 provenance, while this tracked plan contains the complete operative contract.
+- A2 amendment parent anchor: `2f0e05e006f70148ba9dcc334a47c5bf53957ea5`.
+- A2 amendment nested implementation anchor: `59d012375745a862fbdd9c92a92875a671e82ff3`; the parent may show only the expected unstaged `path-planner` gitlink drift while this plan-only amendment is committed.
 
 ## Selected high-level Option A — Same-height nominal-mean simulation proxy
 
@@ -31,7 +35,7 @@
 - The probability zone is a per-hop safety tube. Every selected landing cell means its entire closed cell square, dilated by the landing footprint radius, must pass. The theoretical mean pose and its footprint are checked independently.
 - After a successful hop, the supported stop model performs an explicit instantaneous simulation-only reset to that checked nominal mean state. It does not claim or validate a physical recentering path from an actual touchdown.
 - Each hop must cover at least `0.99` unconditioned probability mass. A multi-hop route may report only a union-bound diagnostic and must not claim whole-route probability `>=0.99`.
-- Advantages: preserves the Gate5A public physics exactly, adds no hidden tolerance, and supports deterministic multi-hop search.
+- Advantages: preserves the Gate5A public `sample_ballistic_arc()` and generic capped-helper behavior exactly, adds no hidden tolerance, and supports deterministic multi-hop search. Gate5B's versioned discrete-action helper uses exact cardinal directions for indices `0/4/8/12` while retaining the same ballistic model; those four Hopper sample byte strings intentionally need not equal the generic raw-libm residual bytes.
 - Cost: supports only equal-height landing plateaus and relies on an explicit simulation-only nominal-state assumption.
 
 ## Part I — Approved Section 1 continuous-clearance contract
@@ -40,6 +44,7 @@
 
 - Gate5B high-level option A is approved.
 - The user explicitly approved Section 1 on 2026-07-20.
+- The user explicitly approved A2 on 2026-07-21; it narrowly replaces Gate5B operational sample cadence and discrete cardinal-direction authority as frozen below, without changing the Gate5A public/generic contract.
 - It freezes only terrain height authority, continuous arc clearance, numeric enclosure, caps, and hard-obstacle overflight semantics.
 - Section 1 approval by itself did not approve later sections or implementation. Sections 2 and 3 were separately approved on 2026-07-20, and readiness/implementation was separately approved on 2026-07-21. A still-later separate controller authorization remains mandatory for formal output.
 
@@ -57,12 +62,37 @@
 - Gate5B v1 deliberately uses a separable conservative product proxy: exact Euclidean XY disk distance `<= rho` selects a terrain prism, and every selected non-hard prism then requires the full vertical clearance `z >= elevation + rho`. This is not an exact 3D sphere-to-prism distance claim and can reject a diagonally separated path that a true sphere model would accept; it cannot create a collision false-pass.
 - Every launch-footprint cell intersecting the closed horizontal disk of radius `rho` must be in bounds, observed, traversable, non-hard, and within the 30-degree platform boundary.
 - Every launch-footprint elevation must be exactly equal in canonical binary64. That common elevation is `H0`; `z_launch = H0 + launch_reference_height_m` must be representable and `launch_reference_height_m >= rho`.
-- Reseal Gate5A's canonical binary64 derived values `flight_time`, `horizontal_dx`, `horizontal_dy`, and `apex_height`, then lift those exact binary64 rationals into the continuous normalized curve `u=t/flight_time`, `x=x0+horizontal_dx*u`, `y=y0+horizontal_dy*u`, `z=z0+4*apex_height*u*(1-u)`.
-- Gate5A samples are independently replayed byte-for-byte with `sample_ballistic_arc()`. Their rounded coordinates need not equal evaluation of the exact-real continuous curve; the two authorities must never be conflated.
+- From the sealed profile and exact speed/elevation/azimuth indices, independently rebuild and reseal the Gate5B A2 canonical binary64 values `flight_time`, `horizontal_dx`, `horizontal_dy`, and `apex_height`, then lift those exact binary64 rationals into the continuous normalized curve `u=t/flight_time`, `x=x0+horizontal_dx*u`, `y=y0+horizontal_dy*u`, `z=z0+4*apex_height*u*(1-u)`. The four cardinal action indices use A2's exact direction table; the other twelve use raw `sin/cos` of their canonical azimuth words.
+- Operational samples are independently replayed with the captured private `_sample_hopper_ballistic_arc_capped_v2` object from the sealed `HopperResourceAuthorityV2`, never with the public wrapper or generic capped helper. Their rounded coordinates need not equal evaluation of the exact-real continuous curve; sample partition and continuous-curve safety remain distinct authorities.
+
+#### A2 operational cadence and discrete-direction authority
+
+Gate5A public `sample_ballistic_arc()` and generic `sample_ballistic_arc_capped_v2()` retain their existing signatures, arbitrary-finite-azimuth behavior, bytes, failure priority, and versioned generic helper semantics. Gate5B alone adds this private, non-exported helper with the exact signature:
+
+```python
+def _sample_hopper_ballistic_arc_capped_v2(
+    start: BallisticStartV2,
+    speed_mps: float,
+    elevation_rad: float,
+    azimuth_index: int,
+    g_mps2: float,
+    *,
+    max_sample_count: int,
+) -> tuple[BallisticSampleV2, ...]: ...
+```
+
+- `azimuth_index` is an exact built-in `int`, rejects `bool` and subclasses, and must be in `0..15`. The helper derives the canonical azimuth in exact binary64 operation order `2.0 * pi * azimuth_index / 16.0`; no caller supplies an azimuth float, direction vector, or cadence.
+- Indices `0`, `4`, `8`, and `12` map exactly to `(1.0, 0.0)`, `(0.0, 1.0)`, `(-1.0, 0.0)`, and `(0.0, -1.0)` respectively, with every zero canonical positive zero. The other twelve indices use raw `cos(azimuth)` and `sin(azimuth)`. No tolerance, modulo, interval, nearest-direction snap, or post-hoc endpoint rewrite is permitted.
+- The exact cardinal azimuth words are respectively `0x0.0p+0`, `0x1.921fb54442d18p+0`, `0x1.921fb54442d18p+1`, and `0x1.2d97c7f3321d2p+2`. Action authority, helper replay, continuous `horizontal_dx/horizontal_dy`, theoretical mean endpoint, landing-distribution orientation, primitive resources, provider L2, and API L2 all independently reconstruct and exact-word compare the same index-derived azimuth and direction semantics.
+- Inside the helper, derive `vertical_speed = speed_mps * sin(elevation_rad)`, then `vertical_time_scale = vertical_speed / g_mps2`, then `flight_time = 2.0 * vertical_time_scale` in that exact order. The same `flight_time` word is the private core cadence. The production signature contains no `dt_s`; any extra positional or keyword cadence argument is rejected.
+- After the existing finite/type/range, true nonzero-displacement, velocity/displacement/origin/apex representability, cap, and fail-closed checks, operational output is exactly two samples at exact times `(0.0, flight_time)`. The caller independently performs the same flight-time derivation and requires exact final-time equality, exact sample count `2`, and exact normalized times `(0,1)`; any mismatch is `hopper_numeric_contract_mismatch`.
+- Fine cadence and `nextafter(flight_time, +/-inf)` cadence exist only at a private, non-exported direct-core adversarial seam fed by independently produced test samples. They are forbidden as production helper/provider/candidate/API/config inputs, module-global overrides, or serialized lineage. They may prove partition-equivalent safety but never define operational action bytes.
+- The helper name stays absent from wildcard exports, `path_planner.v2.__init__`, every `__all__`, and every public export allowlist. Capturing its exact private module object in `HopperResourceAuthorityV2` is the sole operational entry.
+- `dt_s` is not a field of any candidate, primitive, profile, parameter set, resource authority, validation result, public outcome, or deterministic lineage. The sealed profile, three exact action indices, helper/schema IDs, and operation order reconstruct it. This cadence is part of `hopper-jump-primitive/v1`, jump-oracle, and route-L2 semantics; changing it requires a version bump and new approval.
 
 ### Exact continuous horizontal overlap
 
-Fresh Gate5A replay defines the unique analytic partition. For consecutive exact samples `s_i,s_(i+1)`, lift their canonical binary64 `time_s` values and the canonical `flight_time` to rationals and define `[u_i,u_(i+1)] = [time_i/flight_time,time_(i+1)/flight_time]`. Require exact `u_0=0`, exact `u_last=1`, and strictly increasing adjacent values; all Gate5A repair samples participate. These closed intervals cover `[0,1]` with only shared endpoints and no gap. Any mismatch is `hopper_numeric_contract_mismatch`.
+Fresh captured Hopper-specific replay defines the unique operational analytic partition. Operational replay first requires exact `S=2`, so the only normalized interval is exact `[0,1]`; no interior/repair sample exists. The generic audit identity remains `1 + sum(S_i - 1)` for independently produced private direct-core adversarial samples: for consecutive exact samples `s_i,s_(i+1)`, lift canonical binary64 `time_s` and `flight_time` to rationals and define `[u_i,u_(i+1)] = [time_i/flight_time,time_(i+1)/flight_time]`, requiring exact endpoints, strict increase, and gap-free closed coverage. Any operational `S != 2`, altered time, or malformed private-test partition is `hopper_numeric_contract_mismatch`.
 
 For each such adjacent analytic interval and each candidate cell square `B`:
 
@@ -79,11 +109,11 @@ The implementation must have an independent exact reference oracle for adversari
 
 ### Continuous vertical clearance
 
-- For each connected closed XY-overlap component, evaluate the exact normalized Gate5A curve at its exact rational/`Q(sqrt(D))` endpoints.
+- For each connected closed XY-overlap component, evaluate the exact normalized Gate5B A2 curve at its exact rational/`Q(sqrt(D))` endpoints.
 - Since the normalized curve is concave, the smaller endpoint value is the exact lower bound over that component.
 - Apply the frozen product-proxy comparison `z_min >= exact(elevation_m[cell]) + rho`; equality meets the required clearance, while any exact value below fails. Ordinary binary64 evaluation cannot authorize a pass. This full vertical margin is intentionally more conservative than exact 3D sphere-to-prism distance near a horizontal edge or corner.
 - Any non-finite/absorbed derived offset, inconsistent sample, snapshot/profile/query drift, or unrepresentable bound fails closed.
-- Changing `dt_s` may change work partitioning, but must not turn a true collision/unknown/boundary contact into a pass.
+- A private direct-core alternate cadence may change only analytic work partitioning; it must not turn a true collision/unknown/boundary contact into a pass. Production has no caller-controlled cadence and always uses the unique `[0,1]` partition.
 
 ### Hard-obstacle altitude rule in this approved section
 
@@ -108,9 +138,9 @@ At every checkpoint, request/deadline/profile/snapshot/geometry/query authority 
 
 ### RED boundary matrix
 
-- Safe endpoints with an unsafe or unknown cell only between samples.
+- Safe endpoints with an unsafe or unknown cell only between the two operational samples; exact continuous overlap must still detect it.
 - Exact disk-square tangency, an algebraic corner root between adjacent floats, and `nextafter` on both sides.
-- Exact sample-time-ratio partition including Gate5A repair samples covers `[0,1]` once; a missing, duplicated, nonmonotone, or altered repair boundary fails.
+- Operational Hopper replay has exactly two samples, exact normalized times `(0,1)`, and one `[0,1]` interval; any extra/missing/nonmonotone/altered sample fails. Private direct-core fine/`nextafter` cadence tests include repair samples and prove the corresponding exact partitions cover `[0,1]` once without becoming a production input.
 - Constant `q=0`, constant `q=rho^2`, constant safe-outside `q>rho^2`, and impossible `A=0,B!=0` kernel cases; closed components merge without losing a singleton.
 - Arc AABB touching a grid line/corner, including nonzero and large origins.
 - Overlap root rounded inward by a naive implementation.
@@ -120,6 +150,8 @@ At every checkpoint, request/deadline/profile/snapshot/geometry/query authority 
 - Exact vertical false-pass where rounded binary64 values compare equal but exact `z_min < elevation + rho`.
 - A diagonally separated case that an exact 3D sphere would accept but the documented product proxy rejects, proving the conservative capability boundary is intentional.
 - Candidate cap checked before allocation; overflow and absorbed offsets return stable failures.
+- All 16 canonical azimuth words and directions are exact; at nonzero and large world origins every one of the 192 frozen actions preserves its intended direction, while real nonzero displacement absorption, underflow, or overflow still fails globally. Near-cardinal arbitrary azimuths are never snapped.
+- Generic public/capped helper outputs and failure priority remain byte-equivalent under A2; the private Hopper helper is absent from wildcard/top-level/`__all__` exports and rejects any `dt_s` argument.
 - Exact lower/upper index formula at a grid boundary includes the two incident cells; a broad-phase-only OOB candidate that fails exact disk-square refinement does not cause a false boundary rejection.
 - Repeated runs and different `PYTHONHASHSEED` values produce identical cells, reason, and evidence bytes.
 
@@ -129,6 +161,7 @@ At every checkpoint, request/deadline/profile/snapshot/geometry/query authority 
 ### Approval scope
 
 - Sections 1, 2, and 3 were explicitly approved on 2026-07-20; readiness/implementation was separately approved on 2026-07-21.
+- A2 was explicitly approved on 2026-07-21 and narrowly amends flight-time/cadence reconstruction without adding a profile, parameter-set, primitive, resource, or outcome field.
 - Section 2 approval by itself freezes this design contract only and authorizes no implementation; implementation authority comes only from the separate 2026-07-21 readiness/implementation approval and this tracked plan.
 - It freezes one simulation-only algorithm fixture, stop/energy formulas, provider binding, and machine separation from formal Gate5 evidence.
 - `HopperProfileV2` keeps its Gate5A field shape; no `fixture_only` or `formal_evidence_eligible` booleans are added to the profile itself.
@@ -160,7 +193,7 @@ Registry comparison uses canonical binary64 words, not decimal tolerance: `0.25 
 
 - Primitive relative energy evaluates `ratio = speed_mps / 3.0` and then `ratio * ratio` in that exact binary64 operation order. It is dimensionless and must never be labeled Joules.
 - The four speed levels yield `0.25`, `4/9`, `25/36`, and `1.0` in exact-real semantics; serialized binary64 values are resealed evidence.
-- Flight time remains the raw Gate5A resource: fresh replay's final `BallisticSampleV2.time_s`, which must exact-word-match the independently rederived canonical `flight_time`, is copied into inherited `RoutePrimitiveV2.duration_s`. Gate5B v1 introduces no hidden normalizer.
+- Flight time remains the raw ballistic resource: fresh captured Hopper-specific replay's second/final `BallisticSampleV2.time_s`, which must exact-word-match `flight_time` independently rederived as `vertical_speed = speed_mps * sin(elevation_rad)`, `vertical_time_scale = vertical_speed / gravity_mps2`, then `2.0 * vertical_time_scale`, is copied into inherited `RoutePrimitiveV2.duration_s`. Operational cadence is that same word, but no candidate/primitive/profile/parameter/resource/outcome `dt_s` field or hidden normalizer exists.
 - `risk_weight` must be exact canonical `0.0`; any nonzero value returns `hopper_risk_objective_unsupported` before action generation. Per-hop mass remains a diagnostic/safety threshold, not an unapproved additive risk-cost model.
 - Search and final `CostBreakdownV2` apply request objective weights exactly once. Energy may not include time, and time may not include energy.
 - Route energy/time are deterministic sums over all primitives; candidate-set membership cannot change a primitive's resource values.
@@ -260,8 +293,9 @@ The registry record itself is exact-type/deep-sealed before semantic comparisons
 ### Approval scope
 
 - Sections 1, 2, and 3 were explicitly approved on 2026-07-20; readiness/implementation was separately approved on 2026-07-21.
+- A2 was explicitly approved on 2026-07-21 and narrowly amends the Hopper action/helper/replay/resource binding frozen in this Part III.
 - Section 3 approval by itself freezes this design contract only; implementation authority comes only from the separate 2026-07-21 readiness/implementation approval and this tracked plan.
-- It freezes the typed Hopper state/primitive, deterministic nominal-mean multi-hop search, independent complete-route L2 replay, probability diagnostic, exact success/failure envelope, reason/category/stage/phase mapping, API/provider reseal, the `min(requested,100_001)` route-state clamp, Hopper-only 512 MiB deterministic accounted-memory ceiling, complete outcome/transient accounting, two explicit-cap Gate5A helper surfaces, and the separate resource-authority record/tokens. Its design approval by itself covers those contracts only; implementation authority comes only from the separate 2026-07-21 readiness/implementation approval and this tracked plan.
+- It freezes the typed Hopper state/primitive, deterministic nominal-mean multi-hop search, independent complete-route L2 replay, probability diagnostic, exact success/failure envelope, reason/category/stage/phase mapping, API/provider reseal, the `min(requested,100_001)` route-state clamp, Hopper-only 512 MiB deterministic accounted-memory ceiling, complete outcome/transient accounting, the unchanged generic explicit-cap surfaces plus A2's private index-aware Hopper ballistic surface, and the separate resource-authority record/tokens. Its design approval plus the later explicit A2 approval covers those contracts only; implementation authority comes from the separate 2026-07-21 readiness/implementation approval, the 2026-07-21 A2 approval, and this tracked plan.
 - v1/default/PPO/executor/canary boundaries remain unchanged. Gate5 fixture success can never become formal Gate5 evidence.
 
 ### Minimal typed nominal search state
@@ -294,8 +328,8 @@ primitive_schema_version: str
 ```
 
 - The exact primitive schema is `hopper-jump-primitive/v1`. Inherited `kind` is `BALLISTIC_JUMP`; inherited start/end poses exactly equal the two typed nominal poses; validation level is L2.
-- Action key and raw speed/elevation/azimuth are derived from the three indices plus the sealed profile. `H0` comes from the typed states; stop/energy IDs and implementations come from the immutable parameter-set record.
-- End x/y are the fresh Gate5A theoretical mean endpoint; heading and `H0` are invariant. The explicit stop model, not a snap, owns the instantaneous nominal-mean reset.
+- Action key, raw speed/elevation/canonical azimuth, and canonical A2 direction components are derived from the three indices plus the sealed profile. `H0` comes from the typed states; stop/energy IDs and implementations come from the immutable parameter-set record. No raw duplicate action values or `dt_s` are carried.
+- End x/y are the fresh Hopper-specific A2 theoretical mean endpoint; heading and `H0` are invariant. The explicit stop model, not a snap, owns the instantaneous nominal-mean reset.
 - Inherited `duration_s`, `distance_m`, and `energy_cost` are canonical replay values; `observation_contribution` is exact `0.0` because inflight observation remains disabled.
 - `selected_landing_mass` is the unconditioned frozen simulation-proxy mass of the exact shortest prefix and must be at least the canonical binary64 threshold `0.99`. The field is not called certified physical probability.
 - Full ballistic samples and up to one million landing candidates are not retained in every primitive/search node. They are transiently rebuilt under public caps by the primitive oracle and complete-route L2. No primitive instance method or cached evidence is an authority source.
@@ -304,7 +338,7 @@ primitive_schema_version: str
 ### Fixed action and search order
 
 - Every expanded state enumerates exactly 192 actions in nested order: speed index `0..3`, elevation index `0..2`, azimuth index `0..15`.
-- Derived action key is `"{speed_index:02d}:{elevation_index:02d}:{azimuth_index:02d}"`. World azimuth uses the single frozen Gate5B helper for `2*pi*k/16` and canonical positive zero. Equal-range 30-degree/60-degree actions remain distinct because duration/apex/clearance differ.
+- Derived action key is `"{speed_index:02d}:{elevation_index:02d}:{azimuth_index:02d}"`. One frozen Gate5B action helper derives world azimuth in exact order `2.0*pi*k/16.0` and the A2 direction: exact cardinal table at `k=0/4/8/12`, raw `sin/cos` for the other twelve, and canonical positive zero. Provider, primitive oracle, provider route L2, and API route L2 independently rebuild and exact-word compare both azimuth and direction; no endpoint repair or tolerance is allowed. Equal-range 30-degree/60-degree actions remain distinct because duration/apex/clearance differ.
 - Search is deterministic Dijkstra: `StableSearchQueueV2`, `h=0`, and goal testing only after a valid node is dequeued.
 - Candidate IDs are unique monotonic strings `hopper-node-{serial:020d}`. A state key is never reused as candidate ID because retired queue IDs cannot be reopened.
 - Every queue entry has a nonempty authoritative primitive key. The root sentinel is exactly `hopper-root/v1`; each non-root entry uses the derived three-index action key. The root candidate is `hopper-node-00000000000000000000`, later serials increase by one, and both keys participate unchanged in queue tie order.
@@ -316,7 +350,7 @@ primitive_schema_version: str
 ### Cost authority
 
 - Gate5B v1 requires `risk_weight` to be exact canonical `0.0`; nonzero risk is `hopper_risk_objective_unsupported`. `risk_cost` is exact `0.0` and landing probability is not silently converted into an additive cost.
-- Per primitive resources are canonical horizontal range for distance, registry-bound relative energy using Section 2's exact `ratio = speed_mps / 3.0` then `ratio * ratio` binary64 order, and fresh replay's final `BallisticSampleV2.time_s` for time. The final sample time must exact-word-match an independent Gate5A-operation-order rederivation of `flight_time`, then is copied into inherited `RoutePrimitiveV2.duration_s`. No time normalization exists.
+- Per primitive resources are canonical A2 index-derived horizontal range for distance, registry-bound relative energy using Section 2's exact `ratio = speed_mps / 3.0` then `ratio * ratio` binary64 order, and captured Hopper-specific replay's second/final `BallisticSampleV2.time_s` for time. That sample time must exact-word-match the independently rederived `flight_time` in the frozen operation order and is copied into inherited `RoutePrimitiveV2.duration_s`. No time normalization or serialized cadence exists.
 - Starting from exact zero component totals, each edge executes these binary64 operations in this exact order: multiply weight by primitive resource, add it to the parent component, then compute `total_cost = sum((distance_cost, 0.0, energy_cost, time_cost))` in tuple order. Every intermediate must be finite, nonnegative, and canonical-zero.
 - Provider dominance uses that exact total. Independent route L2 reconstructs the same published operation order from sealed request weights and fresh primitive resources; it does not trust provider component totals or a primitive method. Every component and total must match by exact binary64 word/`.hex()`, not `isclose`.
 - Candidate-set membership cannot alter a primitive resource. Route and `CostBreakdownV2` totals apply each request weight exactly once.
@@ -341,23 +375,24 @@ primitive_schema_version: str
 ### Search and replay resource accounting
 
 - Gate5A's `MAX_BALLISTIC_SAMPLES_V2=100_000` and `MAX_LANDING_ZONE_CANDIDATES_V2=1_000_000` remain independent pre-allocation caps. Section 1 adds independent `MAX_REPLAY_STEPS=100_000` interval/cell counters.
-- `request.resource_budget.max_route_states` counts full replay states, exactly `1 + sum(len(hop_samples)-1)`, not merely hop count. The single effective bound is `effective_max_route_states = min(requested_max_route_states, MAX_REPLAY_STEPS+1) = min(requested_max_route_states, 100_001)`. It is used unchanged by child admission and provider/API L2. For a child with exact sample count `S>=2`, set `delta=S-1`; after proving `parent_route_states <= effective`, reject before insertion when `delta > effective-parent_route_states`. Final L2 uses the same subtraction-safe cumulative rule. A nonempty one-hop route needs at least two route states, so effective `0` or `1` fails at resource setup.
+- `request.resource_budget.max_route_states` counts full replay states under the generic audit identity `1 + sum(S_i-1)`, not merely hop count. Operational replay first requires exact `S_i=2` for every hop, so each child delta is exact `1` and an `H`-hop route has exactly `H+1` replay states; `S_i != 2` is `hopper_numeric_contract_mismatch`, not an accepted cadence. The single effective bound is `effective_max_route_states = min(requested_max_route_states, MAX_REPLAY_STEPS+1) = min(requested_max_route_states, 100_001)`. It is used unchanged by child admission and provider/API L2 with the subtraction-safe check after proving `parent_route_states <= effective`. A nonempty one-hop route needs two route states, so effective `0` or `1` fails at resource setup. Observation's endpoint-only `H+1` `sample_states` has the same number but is a different carrier and authority; it cannot prove ballistic replay or safety.
 - Memory is versioned deterministic admission accounting, not a claim about CPython object size, allocator behavior, process RSS, or physical peak bytes. `sys.getsizeof`, `tracemalloc`, RSS sampling, and post-allocation measurement are not authority. The exact accounting ID is `hopper_deterministic_admission_bytes/v1` and `HOPPER_HARD_ACCOUNTED_MEMORY_BYTES_V2 = 536_870_912` (512 MiB).
 - The existing generic sentinel is preserved: requested `max_memory_bytes == 0` means that the caller supplies no smaller byte limit, not a zero-byte budget. Hopper still applies its hard ceiling. The exact effective limit is `HARD` when requested is zero and `min(requested, HARD)` otherwise. It is enforced even when the caller requests more than 512 MiB.
 - Persistent search accounting is `P(N) = 4_096 + 1_024*N`, where `N` is every admitted record including the root. The 1,024-byte bundle is frozen as node/state/cost/parent-and-action lineage `384`, active-or-retired queue entry `256`, anchor index `128`, best slot `128`, future closed slot `64`, and map/container reserve `64`. `auxiliary_heuristics` is exact empty and provider queue discard is disabled.
 - Every admitted root/open/popped/retired/closed/stale record and every improved history record is charged forever within the search scope; there is no refund. Oracle rejection, a non-improving child, or a child rejected before admission is not charged. Root and child admission atomically check `P(N+1)` before any node, queue, anchor, best, or closed write. Persistent lineage stores only a parent candidate ID, packed action indices, selected mass, and scalar edge resources; it never owns samples, landing candidates, or a duplicate full primitive.
-- `HopperResourceAuthorityV2` is an exact frozen/slotted record with schema `hopper-resource-authority/v1` and fields in this exact order: `ballistic_helper`, `ballistic_helper_id`, `landing_helper`, `landing_helper_id`, `memory_accounting_id`, `max_ballistic_samples`, `max_landing_candidates`, `max_replay_steps`, `max_exact_integer_bits`, `max_exact_live_integer_slots`, `hard_accounted_memory_bytes`, `search_base_bytes`, `search_record_bytes`, `ballistic_build_base_bytes`, `ballistic_build_per_sample_bytes`, `ballistic_retained_per_sample_bytes`, `landing_build_base_bytes`, `landing_build_per_candidate_bytes`, `exact_base_bytes`, `exact_integer_slot_overhead_bytes`, `exact_distinct_cell_bytes`, `route_build_base_bytes`, `route_primitive_bytes`, `schema_version`. Callable fields are the exact trusted objects; helper IDs are respectively `sample_ballistic_arc_capped/v1` and `landing_zone_cells_capped/v1`; the accounting ID is `hopper_deterministic_admission_bytes/v1`; every numeric field is an exact positive built-in int with the values/formulas in this section. The provider exposes the canonical singleton under exact read-only attribute `hopper_resource_authority`; it must be the same object/token used by API and both L2 callers. Section 2's `hopper_authority` wrapper and field order remain unchanged.
+- `HopperResourceAuthorityV2` is an exact frozen/slotted record with schema `hopper-resource-authority/v1` and fields in this exact order: `ballistic_helper`, `ballistic_helper_id`, `landing_helper`, `landing_helper_id`, `memory_accounting_id`, `max_ballistic_samples`, `max_landing_candidates`, `max_replay_steps`, `max_exact_integer_bits`, `max_exact_live_integer_slots`, `hard_accounted_memory_bytes`, `search_base_bytes`, `search_record_bytes`, `ballistic_build_base_bytes`, `ballistic_build_per_sample_bytes`, `ballistic_retained_per_sample_bytes`, `landing_build_base_bytes`, `landing_build_per_candidate_bytes`, `exact_base_bytes`, `exact_integer_slot_overhead_bytes`, `exact_distinct_cell_bytes`, `route_build_base_bytes`, `route_primitive_bytes`, `schema_version`. Callable fields are the exact trusted objects; helper IDs are respectively `sample_hopper_ballistic_arc_capped/v1` and `landing_zone_cells_capped/v1`; the accounting ID is `hopper_deterministic_admission_bytes/v1`; every numeric field is an exact positive built-in int with the values/formulas in this section. This explicit ballistic callable/ID replacement changes both the in-memory token and deterministic lineage token without changing record field order, schema, caps, or byte coefficients. The provider exposes the canonical singleton under exact read-only attribute `hopper_resource_authority`; it must be the same object/token used by API and both L2 callers. Section 2's `hopper_authority` wrapper and field order remain unchanged.
 - The in-memory resource token follows that exact record field order: callable fields contribute object identity, strings/schema contribute exact built-in values, and numeric fields contribute exact ints. The deterministic lineage token is exactly `("hopper-resource-authority-lineage/v1", ballistic_helper_id, landing_helper_id, memory_accounting_id, max_ballistic_samples, max_landing_candidates, max_replay_steps, max_exact_integer_bits, max_exact_live_integer_slots, hard_accounted_memory_bytes, search_base_bytes, search_record_bytes, ballistic_build_base_bytes, ballistic_build_per_sample_bytes, ballistic_retained_per_sample_bytes, landing_build_base_bytes, landing_build_per_candidate_bytes, exact_base_bytes, exact_integer_slot_overhead_bytes, exact_distinct_cell_bytes, route_build_base_bytes, route_primitive_bytes, schema_version)`; callables/addresses are omitted because their versioned IDs carry serialized lineage.
 - API's exact in-memory composite token order is `("hopper-api-composite-authority/v1", section2_hopper_authority_token, resource_authority_in_memory_token, bound_plan_self_func_pair, jump_oracle_callable_identity, route_l2_callable_identity)`. `section2_hopper_authority_token` is reused byte-for-byte with its existing wrapper/registry/absent-record order; the resource token is a separate following element and never alters either Section 2 record. API acquires both only from exact read-only provider attributes `hopper_authority` then `hopper_resource_authority`; module-global fallback, aliasing, or dynamic lookup is forbidden.
-- Gate5B adds exact cap-aware Gate5A module helpers `sample_ballistic_arc_capped_v2(..., max_sample_count=...)` and `landing_zone_cells_capped_v2(..., max_candidate_count=...)`. The existing public wrappers and their behavior stay unchanged and delegate to these helpers with their canonical public cap. The cap-aware helpers require exact positive built-in integers, use only the explicit argument for every pre-allocation/work check, and never reread a mutable module cap global. Hopper binds the exact helper function objects and passes exactly `100_000` and `1_000_000` from its sealed resource-authority record.
-- The exact in-memory resource-authority token contains the cap-aware helper object identities plus the exact values of ballistic cap, landing cap, replay-work cap, integer-bit cap, live-slot cap, memory hard ceiling, and every byte coefficient. Its deterministic token uses versioned helper IDs and the same integer values without object addresses. API, provider, primitive oracle, and route L2 seal this token before and after every helper call and invoke the captured local callable from that seal rather than rereading a module attribute. A changed helper/cap/coefficient is `hopper_authority_contract_mismatch` before materialization; tests that mutate the legacy module globals cannot change the explicit-cap Hopper path. No temporary global rewrite is permitted.
-- These Gate5A helpers are reserved at their explicit public cap before invocation because their internal allocation cannot otherwise be stopped by the request budget. Ballistic build reserves `HOPPER_BALLISTIC_BUILD_MAX_BYTES_V2 = 4_096 + 96*100_000 = 9_604_096`. A returned sample retained for the following arc phase is charged `HOPPER_RETURNED_BALLISTIC_SAMPLE_BYTES_V2 = 48` per actual sample. Landing build reserves `HOPPER_LANDING_BUILD_MAX_BYTES_V2 = 65_536 + 384*1_000_000 = 384_065_536`. The last formula deliberately uses the public million-candidate cap rather than depending on the current concentric-square implementation's smaller `998_001` maximum retained square.
+- Gate5B retains the generic explicit-cap module helpers `sample_ballistic_arc_capped_v2(..., max_sample_count=...)` and `landing_zone_cells_capped_v2(..., max_candidate_count=...)`; their existing public wrappers, behavior, bytes, and generic helper ID semantics stay unchanged. A2 adds the private index-aware `_sample_hopper_ballistic_arc_capped_v2(..., azimuth_index, ..., max_sample_count=...)` above. All explicit caps require exact positive built-in integers, use only the explicit argument for every pre-allocation/work check, and never reread a mutable module cap global. Hopper binds only the exact private specialized ballistic object plus the exact landing helper and passes exactly `100_000` and `1_000_000` from its sealed resource-authority record.
+- `_call_captured_ballistic_helper_v2` has the exact index-aware call shape `(authority, start, speed_mps, elevation_rad, azimuth_index, g_mps2)` with no `azimuth_rad` or `dt_s`. It entry-reseals the authority, reads only the captured `authority.ballistic_helper` and sealed cap, calls that captured object with the exact index and keyword-only `max_sample_count=100_000`, and performs mandatory reseal after an ordinary exception and immediately before a normal return. Critical process exceptions retain the existing propagation rule. Mandatory reseal also read-only checks that `ballistics._sample_hopper_ballistic_arc_capped_v2` is still the captured trusted object; this detects specialized module-binding drift but never dynamically dispatches through the module. Rebinding generic `sample_ballistic_arc_capped_v2` cannot change Hopper dispatch or its seal.
+- The exact in-memory resource-authority token contains the specialized ballistic and capped landing helper object identities plus the exact values of ballistic cap, landing cap, replay-work cap, integer-bit cap, live-slot cap, memory hard ceiling, and every byte coefficient. Its deterministic token uses the versioned helper IDs and the same integer values without object addresses. API, provider, primitive oracle, and route L2 seal this token before and after every helper call and invoke the captured local callable rather than rereading a module attribute for dispatch. A changed specialized helper/landing helper/cap/coefficient is `hopper_authority_contract_mismatch` before materialization; tests that mutate legacy globals or the generic ballistic helper cannot change the explicit-cap Hopper path. No temporary global rewrite is permitted.
+- These helpers are reserved at their explicit hard cap before invocation because their internal allocation cannot otherwise be stopped by the request budget. Ballistic build remains `HOPPER_BALLISTIC_BUILD_MAX_BYTES_V2 = 4_096 + 96*100_000 = 9_604_096`; A2's operational two-sample result does not lower this reservation or the `100_000` cap. A returned sample retained for the following arc phase remains `HOPPER_RETURNED_BALLISTIC_SAMPLE_BYTES_V2 = 48` per actual sample, hence exact operational retained bytes are `48*2 = 96`. Landing build remains `HOPPER_LANDING_BUILD_MAX_BYTES_V2 = 65_536 + 384*1_000_000 = 384_065_536`. The last formula deliberately uses the public million-candidate cap rather than depending on the current concentric-square implementation's smaller `998_001` maximum retained square.
 - Exact algebraic work uses a bounded arena, not runtime object inspection. The same single canonical Section 1 constant is `HOPPER_EXACT_MAX_INTEGER_BITS_V2 = 262_144`; `HOPPER_EXACT_LIVE_INTEGER_SLOTS_V2 = 128`, and one reserved slot is `16 + ceil(HOPPER_EXACT_MAX_INTEGER_BITS_V2/8) = 32_784` bytes. With exact base `4_096` and `HOPPER_EXACT_DISTINCT_CELL_BYTES_V2 = 320` for at most `100_000` distinct cells, `HOPPER_EXACT_ORACLE_MAX_BYTES_V2 = 4_096 + 128*32_784 + 100_000*320 = 36_200_448`. Candidate ranges and interval-cell pairs are streamed; only the bounded global distinct-cell ledger persists. Every exact operation reserves a conservative result bit bound and its prospective live slot before any integer allocation. Attempting to acquire slot 129 or to exceed the canonical bit ceiling returns `hopper_numeric_contract_mismatch`, performs no integer operation, and is never reclassified as `hopper_memory_budget_exceeded`. If an implementation cannot statically account for every live slot and also enforce that runtime pre-allocation admission, it cannot enter the provider slice and must propose a new reviewed accounting revision.
-- Transient scopes do not overlap implicitly. While search records remain live, an action checks in order: `P(N)+9_604_096` before ballistic build; after build, `P(N)+48*S+36_200_448` before arc work for actual sample count `S`; then releases samples/arc state while retaining only sealed scalar resources; then checks `P(N)+384_065_536` before landing build. Landing work and its returned prefix are disposed before child admission. A helper hard/work cap is checked before its memory reservation, and both are checked before materialization.
-- Complete outcome materialization is `R(H) = 4_096 + 512*H` for `H` primitives. The 4,096-byte base explicitly covers `TypedRouteV2`, `PlanningSuccessV2`, `ObservationProjectionV2`, `CostBreakdownV2`, `ValidationEvidenceV2`, `SearchTelemetryV2`, `CacheEvidenceV2`, the internal L2 result/probability diagnostic, digest/outcome-token containers, and the first observation-state slot. Each 512-byte hop bundle covers the exact primitive, one endpoint observation-state slot, route/digest tuple slots, and construction reserve. No ballistic sample, landing candidate, exact-arena object, or search record is included or retained. Before construction the provider checks `P(N)+R(H)` while search structures still exist, then explicitly ends the search scope and proves no alias retains queue/node/best/closed state. Provider route L2 and API route L2 retain this complete outcome reservation plus only one hop's transient scope, so each independently checks `R(H) + max(9_604_096, 48*S+36_200_448, 384_065_536)` for the active hop rather than accumulating evidence for all hops.
+- Transient scopes do not overlap implicitly. While search records remain live, an action checks in order: `P(N)+9_604_096` before ballistic build; after build and the exact `S=2` postcondition, `P(N)+96+36_200_448` before arc work; then releases samples/arc state while retaining only sealed scalar resources; then checks `P(N)+384_065_536` before landing build. The generic audit formula remains `P(N)+48*S+36_200_448`, but no production path accepts `S != 2`. Landing work and its returned prefix are disposed before child admission. A helper hard/work cap is checked before its memory reservation, and both are checked before materialization.
+- Complete outcome materialization is `R(H) = 4_096 + 512*H` for `H` primitives. The 4,096-byte base explicitly covers `TypedRouteV2`, `PlanningSuccessV2`, `ObservationProjectionV2`, `CostBreakdownV2`, `ValidationEvidenceV2`, `SearchTelemetryV2`, `CacheEvidenceV2`, the internal L2 result/probability diagnostic, digest/outcome-token containers, and the first observation-state slot. Each 512-byte hop bundle covers the exact primitive, one endpoint observation-state slot, route/digest tuple slots, and construction reserve. No ballistic sample, landing candidate, exact-arena object, or search record is included or retained. Before construction the provider checks `P(N)+R(H)` while search structures still exist, then explicitly ends the search scope and proves no alias retains queue/node/best/closed state. Provider route L2 and API route L2 retain this complete outcome reservation plus only one hop's transient scope, so each independently checks `R(H) + max(9_604_096, 96+36_200_448, 384_065_536)` for the operational active hop rather than accumulating evidence for all hops; the worst-case ballistic build `9_604_096`, exact oracle `36_200_448`, six replay counters, 262,144-bit ceiling, and 128-slot arena remain unchanged.
 - `HopperSearchMemoryLedgerV2` is an exact frozen/slotted provider-internal carrier with schema `hopper-search-memory-ledger/v1` and exact fields `accounting_id`, `requested_max_memory_bytes`, `effective_max_memory_bytes`, `admitted_record_count`, `persistent_peak_bytes`, `transient_reservation_peak_bytes`, `combined_accounted_peak_bytes`, `route_materialization_peak_bytes`, `schema_version`. `persistent_peak_bytes` is the greatest `P(N)` reached; `transient_reservation_peak_bytes` is the greatest phase-local reservation alone; `combined_accounted_peak_bytes` is the greatest simultaneous persistent-plus-transient accounted total over all search, materialization, and L2 scopes; `route_materialization_peak_bytes` is exact `P(N)+R(H)` or zero if no route was materialized. Each update creates and reseals a new exact ledger value. The provider audits it before constructing success or a memory failure; it is not added to `PlanningSuccessV2`.
 - Memory-failure evidence is phase arithmetic, not a peak summary. For `root_admission`/`child_admission`, `persistent_accounted_bytes` is current `P(N)`, `transient_reserved_bytes=0`, and attempted bytes is prospective `P(N+1)`. For `ballistic_build`, `arc_oracle`, and `landing_build`, persistent is current `P(N)`, transient is respectively `9_604_096`, `48*S+36_200_448`, or `384_065_536`, and attempted is their sum. For `route_materialization`, persistent is `P(N)`, transient is `R(H)`, and attempted is the sum. For `route_l2`, persistent is `R(H)`, transient is the active-hop ballistic/arc/landing reservation, and attempted is the sum. Every reported component and sum is an exact nonnegative built-in int.
-- Resource-setup precedence is expansion minimum, route-state minimum, then root admission memory. Within an action, public helper hard/work cap precedes memory reservation; admission memory precedes any persistent write. Expanded-state count, route-state count, persistent admitted records, transient peak reservations, landing candidates, replay work, exact-integer ceiling, and deadline remain independent. Passing one never waives another.
+- Resource-setup precedence is expansion minimum, route-state minimum, then root admission memory. Within an action, specialized ballistic or landing helper hard/work cap precedes memory reservation; admission memory precedes any persistent write. Expanded-state count, route-state count, persistent admitted records, transient peak reservations, landing candidates, all six replay-work counters, exact-integer ceiling, live-slot ceiling, and deadline remain independent. Passing one never waives another.
 - Cache is explicitly disabled in v1 with exact `cache_namespace="path-planner-v2-hopper-cache-disabled/v1"`, `cache_key="hopper-cache-disabled/v1"`, and `hit=False`. Existing generic validation cache cannot carry Hopper landing/mass/parameter provenance and never replaces fresh replay.
 
 ### Independent complete-route L2
@@ -367,8 +402,8 @@ Create a dedicated Hopper route-validation module and only a thin re-export from
 1. Seal exact request/deadline, Hopper authority wrapper, profile/parameter-set/implementation identities, the complete resource-authority/helper/cap token, snapshot identity/hash/query authority, and grid geometry.
 2. Require exact `TypedRouteV2`, Hopper platform, complete/nonempty route, exact `HopperJumpPrimitiveV2` elements, public counts, and a fresh complete route digest.
 3. Verify first state, every pairwise typed/base-pose connection, common parameter set, invariant heading/H0, and final exact goal. Route structure, start, connectivity, and goal have distinct reasons.
-4. For each primitive in index order, derive action values from indices, fresh-replay Gate5A samples, run the exact continuous arc oracle, rebuild the landing prefix before any landing-terrain query, validate selected/mean footprints and stop, and compare mass/resources by exact binary64 token.
-5. Rebuild full replay-state counts against the single effective `min(requested,100_001)` bound, per-hop work counters, complete outcome-materialization bytes, every active-hop transient reservation, cost components/total, per-hop diagnostic, primitive tokens, and route hash. Route L2 does not claim that a route can reconstruct stale/retired search history or the provider's persistent admitted-record peak.
+4. For each primitive in index order, independently derive raw speed/elevation, canonical azimuth, A2 canonical direction, flight time, and two-sample cadence from the sealed profile and three exact indices; invoke only the captured specialized ballistic helper with the sealed fixed cap; require exact two-sample/final-time/direction postconditions; run the exact full-parabola continuous arc oracle over the single `[0,1]` operational interval; rebuild the landing prefix before any landing-terrain query; validate selected/mean footprints and stop; and compare mass/resources by exact binary64 token. Neither provider fields nor observation endpoints authorize this replay.
+5. Rebuild the generic replay-state audit identity and require its operational specialization to exact `H+1` against the single effective `min(requested,100_001)` bound, all six per-hop work counters, complete outcome-materialization bytes, every active-hop transient reservation, cost components/total, per-hop diagnostic, primitive tokens, and route hash. Route L2 does not claim that a route can reconstruct stale/retired search history or the provider's persistent admitted-record peak.
 6. Reseal route, request, deadline, authority/profile/registry/implementations, snapshot, helper results, and validation result immediately before return.
 
 Calling an untrusted instance method requires a before/after object token; normal validation does not need one. Final provider validation follows `pre_digest -> independent L2 -> post_digest -> final digest/result-token reseal`. API Hopper success repeats independent L2, seals the provider outcome before/after it, and then performs a final authority/outcome seal.
@@ -490,10 +525,10 @@ At any checkpoint, simultaneously observable failures use this total order:
 7. `hopper_terrain_geometry_contract_mismatch`.
 8. Input/primitive/route token drift, ordered primitive contract then `route_hash_contract_mismatch` then provider outcome contract.
 9. `planning_deadline_expired`.
-10. Helper-output mismatch for the active phase: terrain query, numeric, jump oracle, route oracle, then cost/probability contract.
+10. Helper-output mismatch for the active phase: terrain query, specialized-ballistic numeric/two-sample/cadence/direction contract, jump oracle, route oracle, then cost/probability contract.
 11. Resource failure, then the phase's ranked semantic result. Within resource failures the executed checkpoint order is authoritative: setup expansion minimum -> route-state minimum -> root memory; action helper hard/work cap -> helper memory; accepted primitive route-state admission -> child memory; route materialization memory; route-L2 route-state/work/memory in replay order.
 
-An ordinary helper exception does not bypass its mandatory post-call reseal; `KeyboardInterrupt`, `SystemExit`, and `MemoryError` propagate. Semantic winner selection uses only the frozen rank/optional/hop/action/segment/cell encoding above; there is no second tuple or implicit container order. Once selected, no later-phase helper runs.
+An ordinary helper exception does not bypass its mandatory post-call reseal; `KeyboardInterrupt`, `SystemExit`, and `MemoryError` propagate. Specialized ballistic entry/post-call reseal includes read-only private module-binding identity drift detection, while the actual call always uses the captured authority object; generic helper rebinding is irrelevant. Semantic winner selection uses only the frozen rank/optional/hop/action/segment/cell encoding above; there is no second tuple or implicit container order. Once selected, no later-phase helper runs.
 
 Cross-layer order is fixed:
 
@@ -511,27 +546,28 @@ No-later-call consequences:
 - Launch failure: zero arc/landing/theta/stop calls. Arc failure: zero landing/theta/stop calls.
 - Probability failure: zero landing-terrain/theta/stop calls. Landing failure: zero theta/stop calls. Theta failure: zero stop calls.
 - Stop failure: zero primitive emission/cost/search insertion.
-- Local semantic rejection may advance only to the next fixed action. Authority/deadline/numeric/resource global failure permits no later action or final L2.
+- Local semantic rejection may advance only to the next fixed action. Authority/deadline/numeric/resource global failure, including a specialized helper binding, direction, flight-time, `S != 2`, or cadence mismatch, permits no later action or final L2.
 - Provider failure gets the exact structural/authority API audit but no route validator. Claimed success with any member of the complete provider-invalid L2 partition (structure/start/connectivity/goal/cost/probability/hash, semantic, or resource) becomes provider-outcome mismatch and cannot be returned as success.
 - If bound `plan()` raises an ordinary exception, API first performs the mandatory Hopper post-call seal; authority drift wins, then the `provider_completion` deadline wins, otherwise API constructs trusted `INTERNAL_ERROR / primitive_provider_exception / provider_execution`. Critical process exceptions propagate.
 
 ### RED boundary matrix
 
 - Exact field/type/frozen/slot/schema contracts; mutated nested fields, subclasses, signed-zero canonicalization, NaN/inf rejection, and wrong authority tokens.
-- All 192 actions and exact key/order; equal-range 30/60-degree actions both replayed.
+- All 192 actions and exact key/order; all 16 canonical azimuth words/directions; exact cardinal `0/4/8/12` components at nonzero and large origins; equal-range 30/60-degree actions both replayed. A 192-action matrix must prove that A2 removes only raw-libm cardinal residuals, while true nonzero displacement absorption/underflow/overflow still causes global numeric abort.
 - State-key tag, root primitive-key sentinel, exact-float cycles, opposite actions, nonzero/large origins, exact cost ties, monotonic candidate IDs, stale/closed behavior, and seed/hash independence.
 - Goal only on dequeue; start==goal hold blocker; no snap/tolerance/partial route.
 - Primitive carries no samples/zone; transient cap and persistent/peak-memory accounting catch adversarial large evidence.
-- `max_route_states` requested/effective/attempted boundaries use the same `min(requested,100_001)` and subtraction-safe formula in child admission and both L2 callers; they remain independent from hop count, memory, and work caps.
+- `max_route_states` requested/effective/attempted boundaries use the same `min(requested,100_001)` and subtraction-safe formula in child admission and both L2 callers. Tests freeze generic identity `1+sum(S_i-1)`, operational exact `S_i=2`, child delta `1`, and route count `H+1`; any alternate production sample count is numeric mismatch. Replay-state authority remains distinct from observation's endpoint-only `H+1`, and route state remains independent from hop, memory, and work caps even though the operational counts are arithmetically related.
 - Deterministic memory boundaries cover root/child admission, improved and stale history with no refund, requested zero and over-hard-limit clamping, explicit-cap ballistic/landing worst-case reservation, exact-arena bit/slot caps, phase disposal, complete outcome materialization, and provider/API L2. Tests forbid runtime-size/RSS authority and forbid L2 from claiming it reconstructed persistent search history.
-- Cap-aware helper tests mutate legacy module globals, helper module attributes, explicit cap arguments, helper identity, and every resource-token coefficient. Hopper must call only the captured explicit-cap helper; every mismatch is caught before materialization and no temporary global rewrite is allowed.
-- Full success envelope tests freeze observation source and `H+1` endpoint-only states, zero observation metrics, L2 evidence, cost, cache, probability carrier, success telemetry, and `R(H)` residency. No sample/landing evidence may survive into the outcome.
+- Cap-aware helper tests mutate legacy module globals, generic and specialized helper module attributes, explicit cap arguments, specialized helper identity/ID, and every resource-token coefficient. Hopper calls only the captured specialized ballistic helper and capped landing helper; specialized binding drift is caught by mandatory reseal, generic ballistic rebinding has no dispatch effect, every true authority mismatch is caught before materialization, and no temporary global rewrite is allowed.
+- Full success envelope tests freeze observation source and `H+1` endpoint-only states, independently rebuilt replay-state `H+1`, exact two-sample/final-time/cadence/direction postconditions, zero observation metrics, L2 evidence, cost, cache, probability carrier, success telemetry, and `R(H)` residency. No sample/landing/cadence evidence may survive into the outcome.
 - Provider-failure structural-policy tests cover every reason/category/stage/template row, exact checks/termination/timed-out values, exact-int/no-bool telemetry, request expansion upper bound, nonzero success/no-route expansion, the trusted provider's separate final-L2 expansion invariant, counter increment boundaries, and honest inability to prove well-shaped search history from an outward failure.
 - Route-result carrier tests freeze exact fields/order/schema, six counter pairs, phase-dependent optional payload, pass/non-pass evidence, subclasses, and token reseal. Claimed-success API L2 exhaustively tests authority-preserving, validator-oracle, provider-invalid semantic/structure/cost/hash/resource, deadline-consistency, unsupported-reason, malformed, and exception partitions including exact `actual`/`expected` strings.
 - Risk nonzero rejected; raw-time and energy operation order; exact component/total tokens and lower-cost-to-closed mismatch.
 - First/middle/last primitive type/token/disconnection/start/goal/cost/mass tampering and route hash drift have distinct stable reasons inside the route-result carrier and provider-internal L2; claimed-success API postcondition remaps the complete provider-invalid partition as frozen above.
 - Probability-before-terrain-query spy; per-hop `0.99`; two-hop union-bound diagnostic rounded downward without whole-route 99% claim.
 - Success and failure mutation during API calls; ordinary helper exception plus simultaneous authority drift; every adjacent total-order/no-later-call pair.
+- Public/generic ballistic bytes and failure priority remain unchanged; the private Hopper helper rejects wrong index type/range and all `dt_s` inputs, stays absent from every public export, and private direct-core fine/`nextafter` cadence proves partition-equivalent full-arc safety without becoming production configuration.
 - Wheel/legged API authority and v1 default behavior remain unchanged under Hopper registration.
 
 
@@ -541,11 +577,12 @@ No-later-call consequences:
 
 - High-level option A is selected.
 - Sections 1, 2, and 3 were explicitly approved on 2026-07-20. This readiness/implementation contract was explicitly approved on 2026-07-21.
-- Approval order is strictly: Section 1 -> Section 2 -> Section 3 -> explicit readiness-plan/implementation authorization -> tracked plan/code/review -> separate explicit controller authorization -> formal blocked snapshot. Approval of any design section, including Section 3, never approves a later gate or authorizes implementation; completing code and review never authorizes the controller step.
-- This file is the exact tracked plan `docs/superpowers/plans/2026-07-20-multiplatform-path-planner-v2-gate5b.md`. It is self-contained: Parts I-III carry the complete approved Sections 1-3 contracts and Part IV carries this complete execution order. Links or hashes to ignored drafts are provenance only; ignored files are never semantic or implementation authority.
+- Gate5B cadence/cardinal correction A2 was explicitly approved on 2026-07-21. Its authority is limited to this tracked amendment, serial 11B1.5 TDD/review, and the amended 11B2-11B7 implementation contract.
+- Approval order is strictly: Section 1 -> Section 2 -> Section 3 -> explicit readiness-plan/implementation authorization -> A2 cadence/cardinal correction authorization -> tracked A2 amendment -> 11B1.5 and remaining serial code/review -> separate explicit controller authorization -> formal blocked snapshot. Approval of any design section or A2 never approves a later gate or the controller; completing code and review never authorizes the controller step.
+- This file is the exact tracked plan `docs/superpowers/plans/2026-07-20-multiplatform-path-planner-v2-gate5b.md`. It is self-contained: Parts I-III carry the complete approved Sections 1-3+A2 contracts and Part IV carries the complete amended execution order. Links or hashes to ignored drafts/proposal are provenance only; ignored files are never semantic or implementation authority.
 - This plan is promoted in one root-only commit whose parent is the pre-promotion anchor `0b6c12d8a5228a7f64f5b86ad0e6f0ba6181bb4e`, whose only tree change is this new tracked plan, and whose `path-planner` gitlink remains `57c28fb2709aec4e043827a50425906a4cbddecc`. The resulting clean parent HEAD becomes the implementation anchor; later implementation checks must reproduce that new anchor or an explicitly reviewed descendant, not require the pre-promotion anchor again.
-- This tracked plan authorizes only 11B1-11B7 serial TDD implementation, reviews, allowed commits/integrations, and the explicitly bounded D-drive non-formal verification. It does not authorize a controller run, formal data access, `D:/xunce/out/path_v2/g5`, a formal blocked snapshot, Gate6, checkpoint publication, default-policy replacement, executor connection, or canary start.
-- The approved design authorities are the three Section contracts. This plan controls execution order and verification; it does not redefine their semantics.
+- This tracked plan authorizes only 11B1-11B7 serial TDD implementation including 11B1.5, reviews, allowed commits/integrations, and the explicitly bounded D-drive non-formal verification. It does not authorize a controller run, formal data access, `D:/xunce/out/path_v2/g5`, a formal blocked snapshot, Gate6, checkpoint publication, default-policy replacement, executor connection, or canary start.
+- The approved design authorities are the three Section contracts as narrowly amended by approved A2. This plan controls execution order and verification and makes that amendment self-contained.
 
 ### Authoritative starting evidence
 
@@ -556,21 +593,22 @@ No-later-call consequences:
 - Gate5A verified baselines: focused `420 passed`; named v2 `1461 passed`; nested full `1641 passed, 17 skipped`; root Gate0 plus gate-runner `322 passed`; PPO Stage1 `43 passed` plus the exact frozen 13-nodeid inherited failure set, with zero errors/skips.
 - `configs/xunce_path_v2_gate5_hopper_v1.json` and `D:/xunce/out/path_v2/g5` are absent.
 - The protected C-drive Stage6 worktree is out of scope: never read it, run commands in it, or use its contents as evidence.
+- At A2 amendment entry, the parent HEAD is exact `2f0e05e006f70148ba9dcc334a47c5bf53957ea5`, nested HEAD is exact reviewed 11B1 descendant `59d012375745a862fbdd9c92a92875a671e82ff3`, the nested tracked tree is clean, and the parent's only worktree difference is the expected unstaged `path-planner` gitlink drift. The A2 amendment changes only this tracked plan and does not integrate the gitlink.
 
 ### Why original Task 11 is replaced
 
-The original Task 11 combines oracle, provider, API, exports, runner, and formal evidence into one change. It also says incomplete capability fails during provider construction, which conflicts with the current `PrimitiveProviderV2.plan(...) -> PlanningOutcomeV2` contract and the approved Gate5A preflight seam. Gate5B therefore replaces that task with six nested serial TDD slices and one final root blocked-evidence slice.
+The original Task 11 combines oracle, provider, API, exports, runner, and formal evidence into one change. It also says incomplete capability fails during provider construction, which conflicts with the current `PrimitiveProviderV2.plan(...) -> PlanningOutcomeV2` contract and the approved Gate5A preflight seam. Gate5B therefore replaces that task with six nested serial TDD slices, the narrowly inserted serial 11B1.5 A2 repair slice, and one final root blocked-evidence slice.
 
 ### Common TDD and integration protocol
 
 For every nested slice:
 
-1. Reconfirm branch, exact parent/nested lineage, absent formal output, and forbidden-surface diff under the applicable state contract: 11B1 entry requires both tracked trees clean and gitlink equality at the recorded implementation anchor; 11B2 and 11B3 entry may show only the expected parent `path-planner` gitlink drift caused by already committed and reviewed nested slice work, while every other parent path and the nested tracked tree remain clean and the nested HEAD is an exact descendant of the last sealed nested anchor. After the reviewed 11B1-11B3 milestone is integrated, and at every later post-integration entry, both tracked trees must again be clean with gitlink equality. Any other tracked change or lineage deviation stops implementation.
+1. Reconfirm branch, exact parent/nested lineage, absent formal output, and forbidden-surface diff under the applicable state contract: 11B1 entry requires both tracked trees clean and gitlink equality at the recorded implementation anchor; 11B1.5 entry requires the A2-amended parent plan descendant, exact reviewed 11B1 nested anchor `59d012375745a862fbdd9c92a92875a671e82ff3`, nested clean, and only the expected unstaged parent `path-planner` gitlink drift; 11B2 and 11B3 entry may show only that expected gitlink drift caused by already committed and reviewed nested slice work, while every other parent path and the nested tracked tree remain clean and nested HEAD is an exact descendant of the last sealed nested anchor. After the reviewed 11B1-11B3 milestone is integrated, and at every later post-integration entry, both tracked trees must again be clean with gitlink equality. Any other tracked change or lineage deviation stops implementation.
 2. Write only the slice's RED tests. Use `--collect-only` to freeze the exact new nodeid set and delta before accepting RED.
-3. RED may fail only on the newly frozen nodeids for the exact missing surface/behavior. Existing nodeids must stay green; no new collection error or skip is allowed.
+3. RED may fail only on the newly frozen nodeids for the exact missing surface/behavior. Existing nodeids must stay green except the exact five explicitly superseded by 11B1.5 below; no new collection error or skip is allowed.
 4. Commit tests-only RED, then implement the smallest complete approved contract and commit production-only GREEN. Never weaken RED to fit implementation.
 5. Run the slice-focused suite only through the complete D-drive/import-isolation envelope below.
-6. Obtain fresh spec and quality review. Slices 11B2 through 11B5 also require fresh adversarial safety/resource review. Any review fix begins with a reproducing RED.
+6. Obtain fresh spec and quality review. Slice 11B1.5 and slices 11B2 through 11B5 also require fresh adversarial safety/resource review. Any review fix begins with a reproducing RED.
 7. Update exact test deltas from collection evidence; never predict counts before tests exist.
 
 There is no registered Gate5 pytest marker. RED/GREEN evidence therefore uses the exact newly frozen nodeids or the listed test files, never a broad `-k gate5` approximation. Every collect-only, RED, GREEN, focused, named-v2, nested-full, root, and PPO pytest invocation uses its own fresh D-drive temp root and the complete isolation envelope below:
@@ -601,7 +639,7 @@ Shared files are serial-only. No two agents may edit `ballistics.py`, `hopper_au
 
 Static import ownership is frozen: `hopper_authority` may import only lower-level ballistics/profiles/contracts; `oracles.hopper` may import the authority and lower-level modules but never a provider, validator, or API module; `providers.hopper` may import the authority/oracle but must not statically import the route validator; `hopper_route_validation` may import provider types plus the authority/oracle; `hopper_api` may import contracts/authority/provider/validator but never `api.py`; and `api.py` may import `hopper_api`. The provider captures the trusted route validator only by a runtime import at the final-L2 call site, matching the existing legged cycle break. A deviation requires a new RED plus design/plan re-approval before code.
 
-### Seven serial slices
+### Seven main serial slices plus the inserted 11B1.5 repair slice
 
 #### 11B1 - Captured helpers and neutral resource authority
 
@@ -614,7 +652,7 @@ Files:
 
 Scope:
 
-- Add `sample_ballistic_arc_capped_v2(..., max_sample_count=...)` and `landing_zone_cells_capped_v2(..., max_candidate_count=...)` as exact explicit-cap entry points.
+- Add `sample_ballistic_arc_capped_v2(..., max_sample_count=...)` and `landing_zone_cells_capped_v2(..., max_candidate_count=...)` as exact explicit-cap entry points. This 11B1 historical baseline initially captures the generic ballistic helper; approved 11B1.5 narrowly replaces only the Hopper ballistic binding/ID/wrapper contract while preserving the generic helper unchanged.
 - Existing public wrappers keep their exact signatures and behavior and delegate with the existing canonical global caps.
 - Explicit caps reject bool/subclasses and are checked before allocation. Captured helpers never reread mutable module cap globals.
 - Freeze the exact `HopperResourceAuthorityV2` record/singleton, helper identities/IDs, all caps and byte coefficients, 512 MiB hard accounted ceiling, `HOPPER_EXACT_MAX_INTEGER_BITS_V2=262_144`, 128-live-slot arena, exact-operation pre-admission API, and deterministic resource token before any oracle exists.
@@ -629,6 +667,68 @@ D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovi
   tests/test_v2_hopper_authority.py
 ```
 
+#### 11B1.5 - A2 cadence/cardinal specialized-helper repair
+
+This slice runs strictly after reviewed 11B1 and before any 11B2 work. It is a narrow approved supersession of the old Hopper generic-ballistic binding, not permission to weaken 11B1 resource, arena, cap, TOCTOU, or exception contracts.
+
+RED files only:
+
+- Modify `path-planner/tests/test_v2_ballistics.py`.
+- Modify `path-planner/tests/test_v2_hopper_authority.py`.
+
+The tests-only RED commit may update assertions inside exactly these five pre-existing nodeids because their old identity/ID/signature/rebind target is intentionally superseded:
+
+1. `tests/test_v2_hopper_authority.py::test_hopper_resource_authority_freezes_exact_record_singleton_and_values`: generic ballistic identity/old ID becomes private specialized identity/new ID; all record fields/order/schema/caps/bytes remain asserted.
+2. `tests/test_v2_hopper_authority.py::test_hopper_resource_authority_tokens_follow_exact_frozen_order`: both tokens freeze the new ID/identity and prove the old ID absent; token schema/order and all other values remain asserted.
+3. `tests/test_v2_hopper_authority.py::test_captured_resource_helpers_use_sealed_caps_not_legacy_globals`: ballistic arguments become exact index/no-cadence and expected replay uses the specialized direct contract; fixed-cap and legacy-global isolation assertions remain.
+4. `tests/test_v2_hopper_authority.py::test_captured_resource_helpers_fail_before_rebound_module_callable`: generic capped-helper rebinding becomes an explicit no-effect case, specialized module-binding drift is rejected before call, and landing behavior remains unchanged.
+5. `tests/test_v2_hopper_authority.py::test_captured_resource_helpers_fail_before_every_token_field_drift`: only `invalid_ballistic_args` changes from the old raw-azimuth/cadence call shape to exact `(object(), 3.0, pi/4.0, 0, 1.62)` semantics; exhaustive canonical-singleton, subclass, every-token-field, equality-forger, and pre-operation rejection assertions remain unchanged.
+
+No other existing nodeid may be deleted, renamed, parametrically narrowed, skipped, or have an assertion relaxed. Those five updates preserve their pre-existing substantive authority-record, token-order, fixed-cap, legacy-global isolation, pre-call TOCTOU/no-dynamic-dispatch, exhaustive token-drift, equality-forger, pre-operation rejection, and error-precedence assertions under the new specialized contract. Together with the nine new nodes, the final suite additionally freezes specialized normal/ordinary-exception post-call reseal, authority-drift precedence, and critical-exception propagation.
+
+The RED assertions freeze these exact boundaries:
+
+- Private helper signature is exactly `(start, speed_mps, elevation_rad, azimuth_index, g_mps2, *, max_sample_count)`; raw azimuth, direction, `dt_s`, extra positional cadence, and extra keyword cadence are absent/rejected. Exact-index type/range rejects bool, subclasses, and values outside `0..15`.
+- `max_sample_count` remains an exact positive built-in `int`: bool, int subclasses, and coercible non-ints raise the exact-int `TypeError`; `0` and `-1` raise the positive-value `ValueError`; cap `1` rejects the required `sample_count=2` only after valid representability, while caps `2` and `100_000` pass. The specialized path preserves the existing post-representability cap audit order rather than allowing an invalid cap to mask an earlier endpoint/apex representability failure.
+- For each world origin `0.0`, `1.0`, `10.0`, and `1_000_000.0`, exercise the complete `4*3*16 = 192` matrix with speeds `(1.5, 2.0, 2.5, 3.0)`, elevations `(pi/6.0, pi/4.0, pi/3.0)`, all sixteen indices, and `max_sample_count=100_000`. Require exact canonical directions, endpoints, `flight_time`, and exactly two `(0.0, flight_time)` samples. This does not waive separate true absorbed-displacement, underflow, overflow, origin, or apex failures.
+- The all-sixteen/two-sample behavior test monkeypatches/delegates the existing `_exact_positive_ratio_ceil` and `_interior_sample_times` behavioral seams: every recorded `(flight_time, cadence)` pair must have identical `.hex()` words, interval count must be exact `1` under the explicit cap, and a forbidden `_bounded_local_repair` sentinel must receive zero calls. It does not hardcode a result tuple or freeze any new arbitrary-direction core name/signature.
+- Private visibility checks prove the helper absent from wildcard import, top-level `path_planner.v2`, `oracles`, `providers`, and every relevant `__all__`/public attribute surface.
+- Authority wrapper tests freeze exact index-only forwarding and output, fixed captured cap, normal and ordinary-exception completion reseal with authority-drift precedence, and propagation of `KeyboardInterrupt`, `MemoryError`, and `SystemExit` under the existing critical-exception rule.
+- The generic regression sentinel freezes pre-A2 public/generic raw-libm behavior, including the `pi/2` landing x residual `0x1.5c9f64561d398p-53` at start zero, speed `2.0`, elevation `pi/4.0`, gravity `1.62`, and `dt_s=flight_time`; nonzero-origin absorption failure; composite invalid-input failure priority; and generic fine/`nextafter` cadence behavior as independently produced private adversarial samples.
+- Tests must use behavioral seams. They may not inspect source/AST, freeze trig call counts, replace the sealed specialized helper, use approximate comparisons for exact contracts, freeze an arbitrary-direction core name/signature, or depend on the not-yet-created 11B2 oracle.
+
+The exact new A2 failing nodeids are:
+
+1. `tests/test_v2_ballistics.py::test_hopper_ballistic_helper_freezes_private_no_cadence_signature`.
+2. `tests/test_v2_ballistics.py::test_hopper_ballistic_helper_rejects_invalid_exact_action_index`.
+3. `tests/test_v2_ballistics.py::test_hopper_ballistic_helper_derives_all_16_exact_directions_and_two_samples`.
+4. `tests/test_v2_ballistics.py::test_hopper_ballistic_helper_covers_192_actions_at_nonzero_and_large_origins`.
+5. `tests/test_v2_ballistics.py::test_hopper_ballistic_helper_keeps_real_representability_failures_global`.
+6. `tests/test_v2_ballistics.py::test_hopper_ballistic_helper_is_module_private_and_unexported`.
+7. `tests/test_v2_hopper_authority.py::test_captured_hopper_ballistic_wrapper_freezes_index_only_signature_and_forwarding`.
+8. `tests/test_v2_hopper_authority.py::test_captured_hopper_ballistic_wrapper_reseals_normal_and_ordinary_completion`.
+9. `tests/test_v2_hopper_authority.py::test_captured_hopper_ballistic_wrapper_preserves_critical_exception_precedence`.
+
+RED also adds `tests/test_v2_ballistics.py::test_generic_ballistic_helpers_keep_pre_a2_bytes_and_failure_precedence` as a regression sentinel that must already pass against the pre-GREEN production tree. After exact collect-only evidence, accepted RED is exactly the five superseded existing nodeids plus the nine new A2 nodeids above: `14 failed`, zero errors/skips, every other pre-existing nodeid green, and the new generic regression sentinel green. Any different failure set stops the slice.
+
+GREEN files only:
+
+- Modify `path-planner/src/path_planner/v2/ballistics.py`.
+- Modify `path-planner/src/path_planner/v2/hopper_authority.py`.
+
+GREEN implements the exact private signature, index type/range checks, 16 canonical azimuth words, four exact cardinal directions with positive zero, raw `sin/cos` for the other twelve, internal same-word flight-time cadence, exact two-sample postcondition, unchanged generic bytes/failure precedence, absence from all public exports, `sample_hopper_ballistic_arc_capped/v1` binding/token revision, and index-aware `_call_captured_ballistic_helper_v2` with fixed captured cap and mandatory entry/normal/ordinary-exception reseals. Specialized module-binding drift must be detected read-only; actual dispatch uses only the captured object; generic helper rebinding must not affect Hopper. Existing real representability, cap, error-priority, arena, six-counter, slot, bit, and byte contracts remain fail-closed.
+
+Focused GREEN command:
+
+```powershell
+D:/conda_envs/lunar-explorer/python.exe -m pytest -o addopts='' -p no:cacheprovider `
+  --basetemp "$tempRoot/basetemp" -q `
+  tests/test_v2_ballistics.py `
+  tests/test_v2_hopper_authority.py
+```
+
+After GREEN, obtain fresh spec, quality, and adversarial safety/resource review. Any review fix begins with a reproducing RED. Do not start 11B2 until those reviews pass, and do not integrate the parent gitlink: 11B1, 11B1.5, 11B2, and 11B3 remain nested commits until the complete reviewed oracle milestone.
+
 #### 11B2 - Oracle contracts plus continuous launch and arc authority
 
 Files:
@@ -639,12 +739,14 @@ Files:
 Scope:
 
 - Freeze exact frozen/slotted input/result carriers, reason universe, detail/evidence shape, canonical numeric helpers, six independent replay-work counters, deadline/profile/snapshot pre-audit, and no-later-call behavior.
-- Implement the approved piecewise-constant closed-cell prism model, exact Euclidean XY disk overlap, full-vertical conservative product proxy, exact rational/Qsqrt comparisons, unbounded hard-cell columns, launch footprint, continuous interval coverage, candidate/work caps, stable semantic winner, deadline, and reseal checkpoints using only the sealed 11B1 resource singleton.
+- Implement the approved piecewise-constant closed-cell prism model, exact Euclidean XY disk overlap, full-vertical conservative product proxy, exact rational/Qsqrt comparisons, unbounded hard-cell columns, launch footprint, continuous interval coverage, candidate/work caps, stable semantic winner, deadline, and reseal checkpoints using only the A2-revised sealed 11B1 resource singleton.
 - Every exact operation must enforce both the 262,144-bit pre-allocation limit and prospective 128-live-slot admission from its first GREEN; no temporary unbounded `Fraction`/big-int path is allowed.
-- Sampling cadence may supply analytic interval anchors but cannot authorize clearance or permit tunneling.
+- Oracle/candidate input carries the sealed profile and exact speed/elevation/azimuth indices, not raw duplicate direction or `dt_s`. It independently reconstructs A2 canonical action semantics and flight time; invokes only `_call_captured_ballistic_helper_v2`; requires exact `S=2`, final-time equality, normalized `(0,1)`, and direction/endpoint agreement before the one `[0,1]` interval; and treats any mismatch as global `hopper_numeric_contract_mismatch` with no later helper/action.
+- The exact continuous parabola remains the clearance authority over the whole interval; two samples never authorize endpoint-only or 3D-line clearance. Private direct-core fine and `nextafter` cadence tests are partition-equivalence adversarial evidence only and must include a repair-sample sentinel and work-cap fail-closed coverage; they cannot enter production inputs or lineage.
+- Keep ballistic build reservation `9_604_096`, exact-oracle reservation `36_200_448`, cap `100_000`, six counters, 262,144-bit ceiling, and 128-slot arena unchanged; only actual retained operational samples specialize to `96` bytes.
 - Do not export the module, evaluate landing/stop, generate an action, search, or construct a public planning outcome.
 
-Focused GREEN command runs `tests/test_v2_hopper_oracle.py`, `tests/test_v2_ballistics.py`, `tests/test_v2_profiles.py`, `tests/test_v2_runtime.py`, `tests/test_v2_terrain.py`, and `tests/test_v2_geometry.py`. Fresh adversarial review must cover equality/nextafter boundaries, grid edges/corners, unknown/OOB/hard cells, irrational roots, bit/work limits, forged helpers, and authority drift.
+Focused GREEN command runs `tests/test_v2_hopper_oracle.py`, `tests/test_v2_ballistics.py`, `tests/test_v2_hopper_authority.py`, `tests/test_v2_profiles.py`, `tests/test_v2_runtime.py`, `tests/test_v2_terrain.py`, and `tests/test_v2_geometry.py`. Fresh adversarial review must cover equality/nextafter boundaries, single-interval full-arc safety, private alternate partitions/repair sentinel, cardinal and near-cardinal directions, nonzero/large origins, grid edges/corners, unknown/OOB/hard cells, irrational roots, bit/work limits, forged helpers, and authority drift.
 
 #### 11B3 - Landing, fixture model, pose, and stop authority
 
@@ -678,7 +780,9 @@ Files:
 Scope:
 
 - Freeze Hopper state key, typed primitive, exact public/provenance fields, complete route carrier, route-state clamp, replay counters, cost/probability diagnostic, route digest, disabled cache evidence, success envelope, and independent full-route L2/reseal.
-- Both provider-internal and API L2 consume the exact same neutral 11B1 resource singleton, 128-slot arena admission, helper identities/caps, and deterministic route/transient accounting. This slice cannot claim complete L2 while any resource dependency is deferred.
+- Both provider-internal and API L2 consume the exact same A2-revised neutral resource singleton, specialized helper identity/ID/cap, 128-slot arena admission, and deterministic route/transient accounting. Each independently reconstructs speed/elevation/canonical azimuth/direction/flight time from sealed profile plus the primitive's three indices, accepts no carried `dt_s`, enforces exact two-sample replay, and validates the full continuous parabola before landing/stop.
+- Freeze generic route-state identity `1+sum(S_i-1)`, operational `S_i=2`, child delta `1`, and exact `H+1` route replay states against the same subtraction-safe clamp. Separately freeze observation's endpoint-only `H+1` carrier and prove it does not authorize replay/safety. Keep worst-case helper/oracle reservations unchanged while using only `96` actual ballistic-retention bytes.
+- This slice cannot claim complete L2 while any resource, cadence, direction, reseal, or reconstruction dependency is deferred.
 - The large Hopper validator lives in its own module. `validation.py` is not changed in this slice.
 
 Focused GREEN command:
@@ -705,10 +809,11 @@ Files:
 
 Scope:
 
-- Implement `plan()` capability preflight, exact fixture registry authority, fixed 192-action Dijkstra order, no snap, deterministic tie-breaks, memory ledger and admission enforcement, per-hop work caps, route-state/expansion/deadline caps, complete-route final L2, exact failure policy, and no partial success. The provider exposes the exact already-created 11B1 resource singleton read-only; it may not create or substitute a second authority.
+- Implement `plan()` capability preflight, exact fixture registry authority, fixed 192-action Dijkstra order, A2 index-derived azimuth/directions with exact cardinal `0/4/8/12`, no snap, deterministic tie-breaks, memory ledger and admission enforcement, per-hop work caps, operational `H+1` route-state/expansion/deadline caps, complete-route final L2, exact failure policy, and no partial success. The provider exposes the exact A2-revised singleton read-only; it may not create or substitute a second authority.
+- Every action calls only the captured specialized ballistic path and carries no `dt_s`; all 192 actions remain available at nonzero/large origins. Local semantic rejection alone may advance to the next action; any true direction/representability/two-sample/cadence/numeric mismatch is a global abort and may not be skipped.
 - Incomplete default profile must return typed unsupported capability before any Hopper ballistics/oracle/action/search call.
 
-Focused GREEN command adds provider, search, runtime, cache, ballistics, profiles, oracle, and route-L2 tests. Adversarial review must cover mutable helper caps, callable rebinding, memory phases, slot/bit limits, telemetry prefixes, deadline checkpoints, malformed outcomes, and repeated/hash-seed determinism.
+Focused GREEN command adds provider, search, runtime, cache, ballistics, authority, profiles, oracle, and route-L2 tests. Adversarial review must cover 192-action nonzero/large-origin direction reconstruction, generic-versus-specialized callable rebinding, mutable helper caps, memory phases, operational `H+1` versus observation authority, slot/bit/work limits, telemetry prefixes, deadline checkpoints, malformed outcomes, and repeated/hash-seed determinism.
 
 After fresh review, integrate only the reviewed nested gitlink.
 
@@ -739,7 +844,7 @@ The public export delta is exact and may not grow during implementation:
 - Shared `validation.py` thin imports only: `HOPPER_ROUTE_VALIDATOR_ID_V2`, `HopperRouteProbabilityDiagnosticV2`, `validate_hopper_route_l2`.
 - Top-level `path_planner.v2.__all__`: the preceding public symbols plus `HopperProviderAuthorityV2`, and no other Hopper symbol.
 
-The following remain internal and must not enter any package `__all__`: `HopperParameterSetRecordV2`, `HopperResourceAuthorityV2`, `HopperRouteValidationResultV2`, `HopperSearchMemoryLedgerV2`, both capped helper entry points, fixture evaluators/factories, arena/ledger helpers, in-memory authority tokens, composite token builders, and everything in `hopper_api.py`. Exact export identity and absence tests are part of 11B6 RED.
+The following remain internal and must not enter any package `__all__`: `HopperParameterSetRecordV2`, `HopperResourceAuthorityV2`, `HopperRouteValidationResultV2`, `HopperSearchMemoryLedgerV2`, generic `sample_ballistic_arc_capped_v2`, private `_sample_hopper_ballistic_arc_capped_v2`, capped `landing_zone_cells_capped_v2`, fixture evaluators/factories, arena/ledger helpers, in-memory authority tokens, composite token builders, and everything in `hopper_api.py`. Exact export identity and absence tests are part of 11B6 RED.
 
 Verification order:
 
@@ -840,7 +945,7 @@ Pytest exit code `1` is expected and acceptable only when this JUnit audit prove
 
 ### Final Gate5B integration regression
 
-After all seven slices and reviews, but before any formal output write:
+After all seven main slices, the inserted 11B1.5 slice, and every required review, but before any formal output write:
 
 1. Prove parent/nested clean and gitlink equality; audit exact changed-file allowlists and `git diff --check`.
 2. Re-run cumulative focused, named v2, nested full, and root Gate0/gate-runner suites using D-drive temp roots.
@@ -855,6 +960,8 @@ After all seven slices and reviews, but before any formal output write:
 
 - Do not modify `contracts.py`, `profiles.py`, `providers/base.py`, `cache.py`, wheel/legged production or tests, top-level `path_planner/__init__.py`, CLI, v1 adapters, PPO, executor, canary, default-policy, or checkpoint code unless a new RED proves an unavoidable contract change and the plan/design is independently re-approved first.
 - No discrete sample-only clearance, L-infinity final authority, bilinear terrain interpolation, bounded hard-obstacle height, implicit snap, or hidden touchdown-to-mean transition.
+- No endpoint-only or 3D straight-line substitution for the full continuous parabola; exact two-sample cadence changes partition count only, never safety authority.
+- No production `dt_s`, alternate cadence, direction-vector input, generic-ballistic fallback, cardinal epsilon snap, or post-hoc endpoint rewrite. Any future cadence/direction semantic change requires a version bump and new approval.
 - No unapproved fixture value may become a default or formal/physical capability claim.
 - No helper result, cached evidence, provider outcome, or route primitive may authorize its own safety without independent reseal/L2.
 - No test count, pass claim, or formal artifact may be inferred from a narrow focused run.
