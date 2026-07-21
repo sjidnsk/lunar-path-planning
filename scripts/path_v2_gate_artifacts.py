@@ -28,9 +28,30 @@ GATE_ARTIFACT_NAMES = frozenset(
     }
 )
 _ATOMIC_STAGING_RESERVATION_ATTEMPTS = 16
+GATE5_MANIFEST_METADATA = {
+    "status": "blocked",
+    "execution_class": "blocked_profile_freeze",
+    "primary_blocker": "freeze_hopper_simulation_proxy_profile_parameters",
+    "formal_evidence_eligible": False,
+    "formal_row_count": 0,
+    "parameter_set_id": None,
+}
 
 
-def build_manifest_without_self_hash(output_root: Path) -> dict[str, Any]:
+def _validated_manifest_metadata(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if type(value) is not dict or value != GATE5_MANIFEST_METADATA:
+        raise ValueError("manifest metadata contract mismatch")
+    return dict(GATE5_MANIFEST_METADATA)
+
+
+def build_manifest_without_self_hash(
+    output_root: Path,
+    *,
+    manifest_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    metadata = _validated_manifest_metadata(manifest_metadata)
     artifacts: list[dict[str, Any]] = []
     root = Path(output_root).resolve()
     safe_root = artifact_io.windows_safe_path(root)
@@ -50,11 +71,14 @@ def build_manifest_without_self_hash(output_root: Path) -> dict[str, Any]:
                 }
             )
     artifacts.sort(key=lambda item: item["relative_path"])
-    return {
+    manifest = {
         "schema_version": "xunce-path-v2-gate-manifest/v1",
         "artifact_count": len(artifacts),
         "artifacts": artifacts,
     }
+    if metadata is not None:
+        manifest.update(metadata)
+    return manifest
 
 
 def write_gate_artifacts(
@@ -67,7 +91,9 @@ def write_gate_artifacts(
     phases: list[dict[str, Any]],
     review: dict[str, Any],
     report: str,
+    manifest_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    metadata = _validated_manifest_metadata(manifest_metadata)
     artifact_io.make_dirs(output_root)
     artifact_io.write_json(output_root / "config.json", config)
     artifact_io.write_json(output_root / "summary.json", summary)
@@ -76,12 +102,19 @@ def write_gate_artifacts(
     artifact_io.write_jsonl(output_root / "phase-state.jsonl", phases)
     artifact_io.write_json(output_root / "review.json", review)
     artifact_io.write_text(output_root / "report.md", report)
-    manifest = build_manifest_without_self_hash(output_root)
+    manifest = build_manifest_without_self_hash(
+        output_root,
+        manifest_metadata=metadata,
+    )
     artifact_io.write_json(output_root / "manifest.json", manifest)
     return manifest
 
 
-def _validate_staged_gate_artifacts(staging_root: Path) -> dict[str, Any]:
+def _validate_staged_gate_artifacts(
+    staging_root: Path,
+    *,
+    manifest_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     safe_root = artifact_io.windows_safe_path(Path(staging_root).resolve())
     entries = list(os.scandir(safe_root))
     if {entry.name for entry in entries} != GATE_ARTIFACT_NAMES or any(
@@ -89,7 +122,10 @@ def _validate_staged_gate_artifacts(staging_root: Path) -> dict[str, Any]:
     ):
         raise ValueError("staging root must contain exactly eight regular artifacts")
     stored_manifest = artifact_io.read_json(Path(staging_root) / "manifest.json")
-    expected_manifest = build_manifest_without_self_hash(staging_root)
+    expected_manifest = build_manifest_without_self_hash(
+        staging_root,
+        manifest_metadata=manifest_metadata,
+    )
     if stored_manifest != expected_manifest:
         raise ValueError("staging manifest does not match artifact bytes")
     return stored_manifest
@@ -120,7 +156,9 @@ def write_gate_artifacts_atomically(
     phases: list[dict[str, Any]],
     review: dict[str, Any],
     report: str,
+    manifest_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    metadata = _validated_manifest_metadata(manifest_metadata)
     target = Path(output_root).resolve()
     safe_target = artifact_io.windows_safe_path(target)
     if os.path.lexists(safe_target):
@@ -131,20 +169,33 @@ def write_gate_artifacts_atomically(
         raise RuntimeError("atomic gate artifact staging reservation failed") from exc
     staging = _reserve_atomic_staging_root(target)
     try:
-        manifest = write_gate_artifacts(
-            output_root=staging,
-            config=config,
-            summary=summary,
-            routing=routing,
-            rows=rows,
-            phases=phases,
-            review=review,
-            report=report,
-        )
+        kwargs = {
+            "output_root": staging,
+            "config": config,
+            "summary": summary,
+            "routing": routing,
+            "rows": rows,
+            "phases": phases,
+            "review": review,
+            "report": report,
+        }
+        if metadata is None:
+            manifest = write_gate_artifacts(**kwargs)
+        else:
+            manifest = write_gate_artifacts(
+                **kwargs,
+                manifest_metadata=metadata,
+            )
     except Exception as exc:
         raise RuntimeError("atomic gate artifact staging write failed") from exc
     try:
-        manifest = _validate_staged_gate_artifacts(staging)
+        if metadata is None:
+            manifest = _validate_staged_gate_artifacts(staging)
+        else:
+            manifest = _validate_staged_gate_artifacts(
+                staging,
+                manifest_metadata=metadata,
+            )
     except Exception as exc:
         raise RuntimeError("atomic gate artifact staging validation failed") from exc
     if os.path.lexists(safe_target):

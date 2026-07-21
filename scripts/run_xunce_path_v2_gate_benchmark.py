@@ -266,6 +266,27 @@ GATE4_PHASES = (
     "boundary-review",
 )
 
+GATE5_SCHEMA_VERSION = "xunce-path-v2-gate5-hopper/v1"
+GATE5_STAGE_ID = "xunce-path-v2-gate5-hopper"
+GATE5_EXECUTION_CLASS = "blocked_profile_freeze"
+GATE5_PRIMARY_BLOCKER = "freeze_hopper_simulation_proxy_profile_parameters"
+GATE5_FORMAL_OUTPUT_ROOT = Path("D:/xunce/out/path_v2/g5")
+GATE5_FORMAL_TEMP_ROOT = Path("D:/xunce/tmp/path_v2_g5")
+GATE5_FORMAL_PYTHON = FORMAL_PYTHON
+GATE5_PROFILE_FIELDS = (
+    "body_envelope_radius_m",
+    "launch_reference_height_m",
+    "arc_clearance_margin_m",
+    "landing_footprint_radius_m",
+    "stop_condition",
+    "energy_model",
+)
+GATE5_DATASET_CONTRACT = {
+    "schema_version": "xunce-path-v2-gate5-blocked-intake/v1",
+    "accepts_formal_inputs": False,
+}
+GATE5_MANIFEST_METADATA = dict(gate_artifacts.GATE5_MANIFEST_METADATA)
+
 
 class _Gate2LoaderContractError(RuntimeError):
     pass
@@ -4073,6 +4094,156 @@ def _run_gate4_benchmark(
     return summary
 
 
+def _validate_gate5_config(config: dict[str, Any]) -> None:
+    valid = (
+        type(config) is dict
+        and config.get("schema_version") == GATE5_SCHEMA_VERSION
+        and config.get("stage_id") == GATE5_STAGE_ID
+        and config.get("execution_class") == GATE5_EXECUTION_CLASS
+        and config.get("formal_evidence_eligible") is False
+        and config.get("formal_output_root") == GATE5_FORMAL_OUTPUT_ROOT.as_posix()
+        and config.get("temp_root") == GATE5_FORMAL_TEMP_ROOT.as_posix()
+        and config.get("parameter_set_id") is None
+        and type(config.get("hopper_profile")) is dict
+        and tuple(config["hopper_profile"]) == GATE5_PROFILE_FIELDS
+        and all(config["hopper_profile"][name] is None for name in GATE5_PROFILE_FIELDS)
+        and config.get("dataset_contract") == GATE5_DATASET_CONTRACT
+        and boundaries_match(config.get("boundaries"))
+    )
+    if not valid:
+        raise ValueError("Gate 5 config contract mismatch")
+
+
+def _validate_gate5_output_root(config: dict[str, Any], output_root: Path) -> Path:
+    root = Path(output_root).resolve()
+    temp_root = Path(str(config["temp_root"])).resolve()
+    if root == GATE5_FORMAL_OUTPUT_ROOT.resolve():
+        raise ValueError("Gate 5 formal output root requires controller authorization")
+    if root == temp_root or not root.is_relative_to(temp_root):
+        raise ValueError("Gate 5 output_root must be a fresh temp_root child")
+    if root.drive.upper() != "D:":
+        raise ValueError("Gate 5 output_root must be on D drive")
+    if os.path.lexists(_windows_safe_lexical_absolute_path(root)):
+        raise RuntimeError("Gate 5 output_root already exists")
+    return root
+
+
+def _build_gate5_pytest_invocation(
+    repo_root: Path,
+    attempt_root: Path,
+) -> dict[str, Any]:
+    repo_root = Path(repo_root).resolve()
+    attempt_root = Path(attempt_root)
+    nested_root = repo_root / "path-planner"
+    return {
+        "cwd": nested_root,
+        "env": {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTHONPATH": str(nested_root / "src"),
+            "TEMP": str(attempt_root),
+            "TMP": str(attempt_root),
+            "MPLCONFIGDIR": str(attempt_root / "mpl"),
+        },
+        "argv": [
+            GATE5_FORMAL_PYTHON.as_posix(),
+            "-m",
+            "pytest",
+            "-o",
+            "addopts=",
+            "-p",
+            "no:cacheprovider",
+            "--basetemp",
+            str(attempt_root / "basetemp"),
+            "--junitxml",
+            str(attempt_root / "gate5.junit.xml"),
+        ],
+    }
+
+
+def _gate5_report() -> str:
+    return (
+        "# Path Planner v2 Gate 5 Hopper blocked snapshot\n\n"
+        "- status=blocked\n"
+        f"- execution_class={GATE5_EXECUTION_CLASS}\n"
+        f"- primary_blocker={GATE5_PRIMARY_BLOCKER}\n"
+        "- accepts_formal_inputs=false\n"
+        "- formal_metrics_status=not_evaluated\n"
+        "- formal_evidence_eligible=false\n"
+        "- formal_row_count=0\n"
+        "- parameter_set_id=null\n"
+        "- publishes_checkpoint=false\n"
+        "- replaces_default_policy=false\n"
+        "- connects_real_executor=false\n"
+        "- starts_online_canary=false\n"
+    )
+
+
+def _run_gate5_benchmark(
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    repo_root: Path,
+    execute_tests: bool,
+) -> dict[str, Any]:
+    del execute_tests
+    _validate_gate5_config(config)
+    validate_output_root(repo_root, output_root)
+    output_root = _validate_gate5_output_root(config, output_root)
+    common = dict(GATE5_MANIFEST_METADATA)
+    summary = {
+        "schema_version": GATE5_SCHEMA_VERSION,
+        "stage_id": GATE5_STAGE_ID,
+        **common,
+        "blocking_reasons": [GATE5_PRIMARY_BLOCKER],
+        "next_required_change": GATE5_PRIMARY_BLOCKER,
+        "accepts_formal_inputs": False,
+        "formal_metrics_status": "not_evaluated",
+        "subprocess_phase": "not_run_due_to_profile_freeze",
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    routing = {
+        "schema_version": "xunce-path-v2-gate5-routing/v1",
+        "stage_id": GATE5_STAGE_ID,
+        **common,
+        "route": GATE5_PRIMARY_BLOCKER,
+        "blocking_reasons": [GATE5_PRIMARY_BLOCKER],
+        "accepts_formal_inputs": False,
+        "formal_metrics_status": "not_evaluated",
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    phases = [
+        {"phase": "profile-freeze", "status": "blocked"},
+        {"phase": "pytest", "status": "not_run_due_to_profile_freeze"},
+    ]
+    review = {
+        "schema_version": "xunce-path-v2-gate5-review/v1",
+        "stage_id": GATE5_STAGE_ID,
+        **common,
+        "blocking_reasons": [GATE5_PRIMARY_BLOCKER],
+        "accepts_formal_inputs": False,
+        "formal_metrics_status": "not_evaluated",
+        "execution": {
+            "pytest": "not_run_due_to_profile_freeze",
+            "commands": [],
+        },
+        **gate_artifacts.BOUNDARY_FIELDS,
+    }
+    gate_artifacts.write_gate_artifacts_atomically(
+        output_root=output_root,
+        config=config,
+        summary=summary,
+        routing=routing,
+        rows=[],
+        phases=phases,
+        review=review,
+        report=_gate5_report(),
+        manifest_metadata=common,
+    )
+    return summary
+
+
 def run_gate_benchmark(
     config_path: Path,
     output_root: Path,
@@ -4082,6 +4253,16 @@ def run_gate_benchmark(
     config_path = Path(config_path).resolve()
     repo_root = Path(repo_root).resolve()
     config = artifact_io.read_json(config_path)
+    if (
+        config.get("schema_version") == GATE5_SCHEMA_VERSION
+        or config.get("stage_id") == GATE5_STAGE_ID
+    ):
+        return _run_gate5_benchmark(
+            config=config,
+            output_root=Path(output_root),
+            repo_root=repo_root,
+            execute_tests=execute_tests,
+        )
     if (
         config.get("schema_version") == GATE4_SCHEMA_VERSION
         or config.get("stage_id") == GATE4_STAGE_ID
