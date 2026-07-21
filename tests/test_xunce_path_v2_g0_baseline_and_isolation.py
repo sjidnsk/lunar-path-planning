@@ -644,3 +644,59 @@ def test_gate0_binds_each_known_failure_category_to_its_nodeid(tmp_path: Path) -
 
     assert summary["status"] == "failed"
     assert summary["next_required_change"] == "restore_exact_ppo_stage1_external_baseline"
+
+
+GATE5_MANIFEST_METADATA = {
+    "status": "blocked",
+    "execution_class": "blocked_profile_freeze",
+    "primary_blocker": "freeze_hopper_simulation_proxy_profile_parameters",
+    "formal_evidence_eligible": False,
+    "formal_row_count": 0,
+    "parameter_set_id": None,
+}
+
+
+def test_manifest_optional_metadata_is_exact_and_hashes_remain_byte_derived(
+    tmp_path: Path,
+) -> None:
+    gate_artifacts, _ = _gate_modules()
+    kwargs = _atomic_artifact_kwargs(tmp_path / "gate5")
+    manifest = gate_artifacts.write_gate_artifacts_atomically(
+        **kwargs,
+        manifest_metadata=GATE5_MANIFEST_METADATA,
+    )
+
+    assert {key: manifest[key] for key in GATE5_MANIFEST_METADATA} == GATE5_MANIFEST_METADATA
+    assert manifest == gate_artifacts.build_manifest_without_self_hash(
+        tmp_path / "gate5",
+        manifest_metadata=GATE5_MANIFEST_METADATA,
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {key: value for key, value in GATE5_MANIFEST_METADATA.items() if key != "formal_row_count"},
+        {**GATE5_MANIFEST_METADATA, "extra": False},
+        {**GATE5_MANIFEST_METADATA, "formal_evidence_eligible": True},
+    ],
+    ids=["missing", "extra", "conflicting"],
+)
+def test_manifest_gate5_metadata_fails_closed(metadata: dict, tmp_path: Path) -> None:
+    gate_artifacts, _ = _gate_modules()
+    with pytest.raises(ValueError, match="manifest metadata contract"):
+        gate_artifacts.write_gate_artifacts_atomically(
+            **_atomic_artifact_kwargs(tmp_path / "invalid"),
+            manifest_metadata=metadata,
+        )
+
+
+def test_manifest_existing_call_shape_and_bytes_remain_unchanged(tmp_path: Path) -> None:
+    gate_artifacts, _ = _gate_modules()
+    output_root = tmp_path / "legacy"
+    manifest = gate_artifacts.write_gate_artifacts(
+        **_atomic_artifact_kwargs(output_root)
+    )
+
+    assert set(manifest) == {"schema_version", "artifact_count", "artifacts"}
+    assert manifest == gate_artifacts.build_manifest_without_self_hash(output_root)

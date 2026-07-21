@@ -4875,3 +4875,167 @@ def test_gate4_full_audit_preserves_gate0_nodeids_and_only_allows_new_v2_passes(
         _write_junit(path, cases)
         audit = runner._audit_gate4_full_junit(path, **kwargs)
         assert audit["status"] == "failed", name
+
+
+GATE5_CONFIG_PATH = REPO_ROOT / "configs" / "xunce_path_v2_gate5_hopper_v1.json"
+GATE5_PROFILE_FIELDS = (
+    "body_envelope_radius_m",
+    "launch_reference_height_m",
+    "arc_clearance_margin_m",
+    "landing_footprint_radius_m",
+    "stop_condition",
+    "energy_model",
+)
+GATE5_BLOCKER = "freeze_hopper_simulation_proxy_profile_parameters"
+GATE5_MANIFEST_METADATA = {
+    "status": "blocked",
+    "execution_class": "blocked_profile_freeze",
+    "primary_blocker": GATE5_BLOCKER,
+    "formal_evidence_eligible": False,
+    "formal_row_count": 0,
+    "parameter_set_id": None,
+}
+
+
+def _gate5_config_copy(tmp_path: Path) -> Path:
+    payload = json.loads(GATE5_CONFIG_PATH.read_text(encoding="utf-8"))
+    target = tmp_path / "gate5.json"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    return target
+
+
+def test_gate5_checked_config_freezes_exact_null_profile_and_parameter_set() -> None:
+    payload = json.loads(GATE5_CONFIG_PATH.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == "xunce-path-v2-gate5-hopper/v1"
+    assert payload["stage_id"] == "xunce-path-v2-gate5-hopper"
+    assert payload["execution_class"] == "blocked_profile_freeze"
+    assert payload["temp_root"] == "D:/xunce/tmp/path_v2_g5"
+    assert payload["parameter_set_id"] is None
+    assert tuple(payload["hopper_profile"]) == GATE5_PROFILE_FIELDS
+    assert all(payload["hopper_profile"][name] is None for name in GATE5_PROFILE_FIELDS)
+    assert payload["dataset_contract"]["accepts_formal_inputs"] is False
+    assert payload["formal_evidence_eligible"] is False
+    assert payload["boundaries"] == BOUNDARIES
+
+
+def test_gate5_stage_registry_is_explicitly_blocked_and_ineligible() -> None:
+    registry = json.loads(
+        (REPO_ROOT / "configs" / "stage_registry.json").read_text(encoding="utf-8")
+    )["stages"]["xunce-path-v2-gate5-hopper"]
+
+    assert registry == {
+        "runner": "scripts/run_xunce_path_v2_gate_benchmark.py",
+        "default_config": "configs/xunce_path_v2_gate5_hopper_v1.json",
+        "default_output_root": "D:/xunce/out/path_v2/g5",
+        "execution_class": "blocked_profile_freeze",
+        "formal_evidence_eligible": False,
+        "args": [
+            "--config",
+            "{config}",
+            "--output-root",
+            "{output_root}",
+            "--repo-root",
+            "{repo_root}",
+        ],
+    }
+
+
+@pytest.mark.parametrize("execute_tests", [False, True], ids=["dry-run", "controller"])
+def test_gate5_profile_freeze_writes_exact_blocked_snapshot_without_pytest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    execute_tests: bool,
+) -> None:
+    runner = _runner()
+    output_root = tmp_path / "gate5"
+    calls = []
+
+    def forbidden_pytest(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("profile freeze must short-circuit pytest")
+
+    monkeypatch.setattr(runner, "_run_pytest", forbidden_pytest)
+    summary = runner.run_gate_benchmark(
+        GATE5_CONFIG_PATH,
+        output_root,
+        REPO_ROOT,
+        execute_tests=execute_tests,
+    )
+
+    assert calls == []
+    assert {path.name for path in output_root.iterdir()} == CANONICAL_ARTIFACTS
+    assert summary["status"] == "blocked"
+    assert summary["execution_class"] == "blocked_profile_freeze"
+    assert summary["primary_blocker"] == GATE5_BLOCKER
+    assert summary["formal_metrics_status"] == "not_evaluated"
+    assert summary["formal_evidence_eligible"] is False
+    assert summary["formal_row_count"] == 0
+    assert summary["parameter_set_id"] is None
+    assert all(summary[name] is False for name in BOUNDARIES)
+    assert (output_root / "results.jsonl").read_bytes() == b""
+    for name in ("summary.json", "routing.json", "review.json", "manifest.json"):
+        payload = json.loads((output_root / name).read_text(encoding="utf-8"))
+        for key, value in GATE5_MANIFEST_METADATA.items():
+            assert payload[key] == value
+    report = (output_root / "report.md").read_text(encoding="utf-8")
+    assert all(str(value).lower() in report for value in GATE5_MANIFEST_METADATA.values() if value is not None)
+    phases = [json.loads(line) for line in (output_root / "phase-state.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert phases == [
+        {"phase": "profile-freeze", "status": "blocked"},
+        {"phase": "pytest", "status": "not_run_due_to_profile_freeze"},
+    ]
+
+
+def test_gate5_rejects_any_non_null_default_before_output(tmp_path: Path) -> None:
+    runner = _runner()
+    original = json.loads(GATE5_CONFIG_PATH.read_text(encoding="utf-8"))
+    mutations = [("parameter_set_id", "fixture/v1")]
+    mutations.extend((f"hopper_profile.{name}", 1.0) for name in GATE5_PROFILE_FIELDS)
+    for index, (field, value) in enumerate(mutations):
+        payload = deepcopy(original)
+        if field.startswith("hopper_profile."):
+            payload["hopper_profile"][field.split(".", 1)[1]] = value
+        else:
+            payload[field] = value
+        config_path = tmp_path / f"bad-{index}.json"
+        config_path.write_text(json.dumps(payload), encoding="utf-8")
+        output_root = tmp_path / f"out-{index}"
+        with pytest.raises(ValueError, match="Gate 5 config contract"):
+            runner.run_gate_benchmark(
+                config_path, output_root, REPO_ROOT, execute_tests=False
+            )
+        assert not output_root.exists()
+
+
+def test_gate5_pytest_envelope_constructor_is_exact(tmp_path: Path) -> None:
+    runner = _runner()
+    attempt_root = Path("D:/xunce/tmp/path_v2_g5/formal/attempt-test")
+
+    invocation = runner._build_gate5_pytest_invocation(REPO_ROOT, attempt_root)
+
+    assert invocation["cwd"] == REPO_ROOT / "path-planner"
+    assert invocation["env"] == {
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PYTHONPATH": str(REPO_ROOT / "path-planner" / "src"),
+        "TEMP": str(attempt_root),
+        "TMP": str(attempt_root),
+        "MPLCONFIGDIR": str(attempt_root / "mpl"),
+    }
+    assert invocation["argv"][:5] == [
+        "D:/conda_envs/lunar-explorer/python.exe",
+        "-m",
+        "pytest",
+        "-o",
+        "addopts=",
+    ]
+    assert invocation["argv"][5:] == [
+        "-p",
+        "no:cacheprovider",
+        "--basetemp",
+        str(attempt_root / "basetemp"),
+        "--junitxml",
+        str(attempt_root / "gate5.junit.xml"),
+    ]
