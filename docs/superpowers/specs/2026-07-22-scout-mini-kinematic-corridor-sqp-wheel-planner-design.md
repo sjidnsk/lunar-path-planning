@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：轮式 Section 1–4 已逐节批准，等待书面规格复核。
+- 状态：轮式 Section 1–4 与本书面规格已于 2026-07-22 批准；实现仍须按独立实施计划执行。
 - 日期：2026-07-22。
 - 工作树：`D:/codex/worktrees/multiplatform-path-planner-v2`。
 - 分支：`codex/multiplatform-path-planner-v2`。
