@@ -1,6 +1,12 @@
 {
   "schema_version": "lunar-stage-registry/v1",
   "stages": {
+    "xunce-path-v2-g0-baseline-and-isolation": {
+      "script": "scripts/run_xunce_path_v2_g0_baseline_and_isolation.py",
+      "default_config": "configs/xunce_path_v2_g0_baseline_and_isolation_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g0",
+      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
+    },
     "xunce-model-comparison-input-readiness": {
       "script": "scripts/run_xunce_model_comparison_input_readiness.py",
       "default_output_root": "outputs/xunce_model_comparison_input_readiness_v1",
@@ -836,6 +842,88 @@
         "--batch-root", "outputs/path_feedback_batch_guarded_ppo_rollout_clean_src_v1",
         "--output-root", "{output_root}",
         "--config", "{config}"
+      ]
+    },
+    "xunce-path-v2-gate1-contract": {
+      "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate1_contract_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g1",
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
+      ]
+    },
+    "xunce-path-v2-gate2-wheel": {
+      "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate2_wheel_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g2",
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
+      ]
+    },
+    "xunce-path-v2-gate3-accelerators": {
+      "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate3_accelerators_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g3",
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
+      ]
+    },
+    "xunce-path-v2-gate4-legged": {
+      "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate4_legged_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g4",
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
+      ]
+    },
+    "xunce-path-v2-gate5-hopper": {
+      "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate5_hopper_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g5",
+      "execution_class": "blocked_profile_freeze",
+      "formal_evidence_eligible": false,
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
+      ]
+    },
+    "xunce-path-v2-gate6-formal-benchmark": {
+      "script": "scripts/run_xunce_path_v2_gate_benchmark.py",
+      "default_config": "configs/xunce_path_v2_gate6_formal_benchmark_v1.json",
+      "default_output_root": "D:/xunce/out/path_v2/g6",
+      "execution_class": "blocked_formal_inputs_missing",
+      "formal_evidence_eligible": false,
+      "args": [
+        "--config",
+        "{config}",
+        "--output-root",
+        "{output_root}",
+        "--repo-root",
+        "{repo_root}"
       ]
     }
   }

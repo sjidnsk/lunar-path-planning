@@ -1,0 +1,35 @@
+{
+  "schema_version": "xunce-path-v2-gate5-hopper/v1",
+  "stage_id": "xunce-path-v2-gate5-hopper",
+  "python": "D:/conda_envs/lunar-explorer/python.exe",
+  "expected_python_version": "3.12.13",
+  "expected_git": {
+    "branch": "codex/multiplatform-path-planner-v2",
+    "base_commit": "b635740ee021258ef31811ec87c60add839fc5f9",
+    "gate_input_commit": "f132e0ecdead3d8ece8c621b8e45b627067b7139",
+    "nested_branch": "codex/multiplatform-path-planner-v2"
+  },
+  "formal_output_root": "D:/xunce/out/path_v2/g5",
+  "temp_root": "D:/xunce/tmp/path_v2_g5",
+  "execution_class": "blocked_profile_freeze",
+  "hopper_profile": {
+    "body_envelope_radius_m": null,
+    "launch_reference_height_m": null,
+    "arc_clearance_margin_m": null,
+    "landing_footprint_radius_m": null,
+    "stop_condition": null,
+    "energy_model": null
+  },
+  "parameter_set_id": null,
+  "dataset_contract": {
+    "schema_version": "xunce-path-v2-gate5-blocked-intake/v1",
+    "accepts_formal_inputs": false
+  },
+  "formal_evidence_eligible": false,
+  "boundaries": {
+    "publishes_checkpoint": false,
+    "replaces_default_policy": false,
+    "connects_real_executor": false,
+    "starts_online_canary": false
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "schema_version": "xunce-path-v2-gate1-contract/v1",
+  "stage_id": "xunce-path-v2-gate1-contract",
+  "python": "D:/conda_envs/lunar-explorer/python.exe",
+  "expected_python_version": "3.12.13",
+  "expected_git": {
+    "branch": "codex/multiplatform-path-planner-v2",
+    "base_commit": "b635740ee021258ef31811ec87c60add839fc5f9",
+    "gate_input_commit": "b2a36d31f3802eb5a37fcfcf594f74a499aa719b",
+    "nested_branch": "codex/multiplatform-path-planner-v2"
+  },
+  "temp_root": "D:/xunce/tmp/path_v2_g1",
+  "focused": {
+    "working_directory": "path-planner",
+    "pythonpath": [
+      "path-planner/src"
+    ],
+    "pytest_targets": [
+      "tests/test_v2_contracts.py",
+      "tests/test_v2_serialization.py",
+      "tests/test_v2_terrain.py",
+      "tests/test_v2_fine_safety_anchor.py",
+      "tests/test_v2_profiles.py",
+      "tests/test_v2_api.py"
+    ]
+  },
+  "full": {
+    "working_directory": "path-planner",
+    "pythonpath": [
+      "path-planner/src"
+    ],
+    "pytest_targets": [
+      "tests"
+    ],
+    "legacy_expected": {
+      "passed": 156,
+      "skipped": 17,
+      "failures": 0,
+      "errors": 0
+    },
+    "allowed_skip_dependency": "pydrake"
+  },
+  "byte_repeat": {
+    "repeat_count": 3,
+    "python_hash_seeds": [
+      "11",
+      "29",
+      "47"
+    ]
+  },
+  "boundaries": {
+    "publishes_checkpoint": false,
+    "replaces_default_policy": false,
+    "connects_real_executor": false,
+    "starts_online_canary": false
+  },
+  "pass_route": "implement_path_v2_wheel_provider"
+}
