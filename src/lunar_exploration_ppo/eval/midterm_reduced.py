@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 import math
 import struct
+import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -169,22 +169,37 @@ def _reject_nonfinite(value: str) -> object:
 
 
 def _verify_frozen_bundle(bundle_root: str | Path) -> bool:
-    """调用 Task 3 的独立全量复算器，不在本适配层复制选择逻辑。"""
+    """在隔离子进程中调用 Task 3 全量复算器，不改当前导入路径。"""
 
     scripts_dir = Path(__file__).resolve().parents[3] / "scripts"
-    inserted = str(scripts_dir) not in sys.path
-    if inserted:
-        sys.path.insert(0, str(scripts_dir))
     try:
-        module = importlib.import_module("freeze_xunce_mid_dual_scenarios")
-        verifier = getattr(module, "verify_frozen_bundle", None)
-        return bool(verifier(bundle_root)) if callable(verifier) else False
-    finally:
-        if inserted:
-            try:
-                sys.path.remove(str(scripts_dir))
-            except ValueError:
-                pass
+        result = subprocess.run(
+            (
+                sys.executable,
+                "-c",
+                (
+                    "import json,sys;"
+                    "from freeze_xunce_mid_dual_scenarios "
+                    "import verify_frozen_bundle;"
+                    "print(json.dumps(bool(verify_frozen_bundle(sys.argv[1]))))"
+                ),
+                str(Path(bundle_root)),
+            ),
+            cwd=scripts_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    if result.returncode != 0:
+        return False
+    try:
+        return json.loads(result.stdout.strip()) is True
+    except json.JSONDecodeError:
+        return False
 
 
 def _strict_manifest_payload(payload: bytes) -> dict[str, object]:
