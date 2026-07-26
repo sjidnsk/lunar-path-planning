@@ -154,6 +154,16 @@ def _manifest_payload() -> dict[str, object]:
     }
 
 
+def _task3_manifest_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
 def _load_fixture_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -162,13 +172,44 @@ def _load_fixture_manifest(
 
     root = tmp_path / "frozen"
     root.mkdir()
-    payload = ArtifactStore.canonical_json_bytes(_manifest_payload())
+    payload = _task3_manifest_bytes(_manifest_payload())
     (root / "manifest.json").write_bytes(payload)
     monkeypatch.setattr(midterm_reduced, "_verify_frozen_bundle", lambda _root: True)
     return midterm_reduced.load_frozen_scenario_manifest(
         bundle_root=root,
         expected_manifest_sha256=hashlib.sha256(payload).hexdigest(),
     )
+
+
+def test_frozen_manifest_accepts_only_task3_compact_canonical_bytes() -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    payload = _manifest_payload()
+    canonical = _task3_manifest_bytes(payload)
+
+    assert midterm_reduced._strict_manifest_payload(canonical) == payload
+
+    pretty = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2,
+        allow_nan=False,
+    ).encode("utf-8") + b"\n"
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="canonical bytes",
+    ):
+        midterm_reduced._strict_manifest_payload(pretty)
+
+    for noncanonical in (
+        canonical + b"\n",
+        canonical.replace(b'"completion_status":"complete"', b'"completion_status":"complete" '),
+        b'{"schema_version":"mid-dual-scenario-freeze/v1","schema_version":"mid-dual-scenario-freeze/v1"}',
+        b'{"schema_version":NaN}',
+    ):
+        with pytest.raises(midterm_reduced.MidtermReducedEvaluationError):
+            midterm_reduced._strict_manifest_payload(noncanonical)
 
 
 def _install_identity_factory(
@@ -223,7 +264,7 @@ def test_reduced_builder_accepts_only_explicit_frozen_24_ids(
 
     tampered = _manifest_payload()
     tampered["cohorts"]["test_q24"][1] = tampered["cohorts"]["test_q24"][0]
-    payload = ArtifactStore.canonical_json_bytes(tampered)
+    payload = _task3_manifest_bytes(tampered)
     bad_root = tmp_path / "tampered"
     bad_root.mkdir()
     (bad_root / "manifest.json").write_bytes(payload)
@@ -378,7 +419,7 @@ def test_frozen_manifest_hash_and_semantic_verification_fail_closed(
 
     root = tmp_path / "frozen"
     root.mkdir()
-    payload = ArtifactStore.canonical_json_bytes(_manifest_payload())
+    payload = _task3_manifest_bytes(_manifest_payload())
     (root / "manifest.json").write_bytes(payload)
     digest = hashlib.sha256(payload).hexdigest()
 
@@ -412,7 +453,7 @@ def test_frozen_manifest_rejects_unsafe_descriptor_read(
 
     root = tmp_path / "frozen"
     root.mkdir()
-    payload = ArtifactStore.canonical_json_bytes(_manifest_payload())
+    payload = _task3_manifest_bytes(_manifest_payload())
     (root / "manifest.json").write_bytes(payload)
     digest = hashlib.sha256(payload).hexdigest()
 

@@ -46,7 +46,6 @@ from lunar_exploration_ppo.ppo.collector import (
     PLANNER_FAILURE_REASONS,
     validate_reset_diagnostics_payload,
 )
-from lunar_exploration_ppo.utils.artifact_io import ArtifactStore
 from lunar_exploration_ppo.utils.path_security import (
     PathSecurityError,
     require_plain_path,
@@ -168,6 +167,32 @@ def _reject_nonfinite(value: str) -> object:
     raise ValueError(f"non-finite value {value!r}")
 
 
+def _reject_duplicate_json_object_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        result[key] = value
+    return result
+
+
+def _task3_manifest_canonical_json_bytes(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise MidtermReducedEvaluationError(
+            "frozen scenario manifest is not serializable"
+        ) from exc
+
+
 def _verify_frozen_bundle(bundle_root: str | Path) -> bool:
     """在隔离子进程中调用 Task 3 全量复算器，不改当前导入路径。"""
 
@@ -207,6 +232,7 @@ def _strict_manifest_payload(payload: bytes) -> dict[str, object]:
         value = json.loads(
             payload.decode("utf-8"),
             parse_constant=_reject_nonfinite,
+            object_pairs_hook=_reject_duplicate_json_object_keys,
         )
     except (UnicodeDecodeError, ValueError) as exc:
         raise MidtermReducedEvaluationError(
@@ -215,7 +241,7 @@ def _strict_manifest_payload(payload: bytes) -> dict[str, object]:
     if (
         not isinstance(value, dict)
         or set(value) != _MANIFEST_FIELDS
-        or ArtifactStore.canonical_json_bytes(value) != payload
+        or _task3_manifest_canonical_json_bytes(value) != payload
     ):
         raise MidtermReducedEvaluationError(
             "frozen scenario manifest schema or canonical bytes drifted"
