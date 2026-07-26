@@ -1,0 +1,15 @@
+{
+  "canonical_encoding": {
+    "json": "utf-8-lf-sorted-keys-no-nan-no-negative-zero",
+    "npz": "zip-stored-fixed-metadata-npy-v2-no-pickle"
+  },
+  "dependencies": {
+    "numpy": "2.2.6"
+  },
+  "python": {
+    "implementation": "CPython",
+    "minimum": "3.11",
+    "tested": "3.12.13"
+  },
+  "schema_version": "g2-t2-producer-lock/v1"
+}

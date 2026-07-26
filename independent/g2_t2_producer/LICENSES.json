@@ -1,0 +1,22 @@
+{
+  "components": [
+    {
+      "license": "Python-2.0",
+      "name": "Python standard library",
+      "use": "runtime, hashing, geometry, finite graph, packaging"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "NumPy",
+      "use": "canonical typed terrain array containers only"
+    }
+  ],
+  "retained_external_sources": [
+    {
+      "license_record_required": true,
+      "name": "LOLA LRO-L-LOLA-4-GDR-V1.0",
+      "role": "kilometer 20 m macro elevation provenance only"
+    }
+  ],
+  "schema_version": "g2-t2-licenses/v1"
+}

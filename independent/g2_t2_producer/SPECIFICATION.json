@@ -1,0 +1,126 @@
+{
+  "authorization_sha256": "720e11ef04ad2b57283421809a077ccf1f0b35167a9f482082241398ad0214d2",
+  "boundaries": {
+    "distance_epsilon_mm": 1,
+    "height_epsilon_mm": 1,
+    "landing_probability_epsilon_ppm": 1,
+    "slope_epsilon_cdeg": 1
+  },
+  "candidate_attestation": {
+    "formal_evidence_eligible": false,
+    "organizational_independence": "project_internal",
+    "status": "pending_o2_signature",
+    "technical_independence": "T2_candidate"
+  },
+  "diversity": {
+    "hopper_action_coverage_minimum": 2,
+    "legged_each_leg_minimum": 700,
+    "safe_ratio_max_ppm": 650000,
+    "safe_ratio_min_ppm": 350000,
+    "terrain_hash_minimum": 64,
+    "wheel_control_family_minimum": 7,
+    "wheel_heading_bin_minimum": 72
+  },
+  "hopper_action_lattice": {
+    "azimuth_count": 16,
+    "elevation_count": 3,
+    "speed_count": 4
+  },
+  "primitive_quotas": {
+    "hopper": {
+      "action_lattice": 384,
+      "arc": 600,
+      "landing": 550,
+      "landing_probability": 300,
+      "launch": 360,
+      "nominal": 516,
+      "stop_model": 324,
+      "unknown_boundary": 300
+    },
+    "legged": {
+      "body_sweep": 420,
+      "compound": 300,
+      "foothold": 480,
+      "nominal": 650,
+      "sequence_grid": 284,
+      "step_height": 360,
+      "step_length": 360,
+      "support": 480
+    },
+    "wheel": {
+      "anti_alias": 404,
+      "compound": 400,
+      "kinematic": 630,
+      "knownness_boundary": 300,
+      "nominal": 700,
+      "obstacle": 450,
+      "slope": 450
+    }
+  },
+  "reason_precedence": {
+    "hopper": [
+      "numeric",
+      "parameter_record",
+      "launch",
+      "arc_outside",
+      "arc_unknown",
+      "arc_clearance",
+      "landing_mass",
+      "landing_footprint",
+      "landing_slope",
+      "landing_height",
+      "stop",
+      "model_domain",
+      "safe"
+    ],
+    "legged": [
+      "numeric",
+      "sequence",
+      "grid_domain",
+      "foothold_unknown",
+      "foothold_obstacle",
+      "foothold_slope",
+      "step_length",
+      "step_height",
+      "support_margin",
+      "body_sweep",
+      "safe"
+    ],
+    "wheel": [
+      "numeric",
+      "speed_domain",
+      "angular_domain",
+      "turn_radius_domain",
+      "endpoint_consistent",
+      "knownness",
+      "map_domain",
+      "closed_obstacle",
+      "traversability",
+      "slope",
+      "safe"
+    ]
+  },
+  "request_mix": {
+    "kilometer": {
+      "hard_reachable": 2,
+      "reachable": 6,
+      "unreachable": 2
+    },
+    "standard": {
+      "hard_reachable": 7,
+      "reachable": 23,
+      "unreachable": 3
+    }
+  },
+  "request_pool": {
+    "kilometer_base_terrains": 96,
+    "standard_base_terrains": 256
+  },
+  "root_seed": 20260727,
+  "schema_version": "g2-t2-producer-spec/v1",
+  "source_kinds": {
+    "kilometer_macro": "derived_lola_20m_macro_interpolation",
+    "kilometer_micro": "synthetic_terrain_obstacle_proxy/v1",
+    "standard": "procedural_simulation_proxy/v1"
+  }
+}
