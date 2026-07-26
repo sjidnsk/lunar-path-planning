@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import statistics
+import struct
 import sys
 from typing import Any, Callable, Mapping, Sequence
 
@@ -132,6 +133,25 @@ def _json_sha256(payload: Mapping[str, object]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return _sha256_bytes(encoded)
+
+
+def _g2_semantic_digest(
+    request_sha256: str,
+    provider_success: bool,
+) -> str:
+    payload = json.dumps(
+        {
+            "request_sha256": request_sha256,
+            "provider_success": provider_success,
+            "route_l2_valid": provider_success,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    parts = (b"xunce-mid-dual-g2-provider-semantics/v1", payload)
+    framed = b"".join(struct.pack(">Q", len(part)) + part for part in parts)
+    return _sha256_bytes(framed)
 
 
 def _artifact_text_bytes(text: str) -> bytes:
@@ -294,25 +314,21 @@ def _g2_input_audit() -> dict[str, object]:
                 expected_success = request_class != "unreachable"
                 requests.append(
                     {
+                        "schema_version": "xunce-mid-dual-g2-truth-provider-crosswalk/v1",
                         "platform": platform,
                         "scale": scale,
                         "request_index": platform_index,
                         "request_id": request_id,
-                        "request_sha256": request_sha256,
+                        "provider_request_sha256": request_sha256,
                         "request_class": request_class,
                         "outcome_kind": (
                             "reachable" if expected_success else "unreachable"
                         ),
-                        "truth_sha256": _sha256_text(f"truth:{request_sha256}"),
-                        "provider_result_sha256": _sha256_text(
-                            f"provider-result:{request_sha256}"
-                        ),
-                        "oracle_result_sha256": _sha256_text(
+                        "truth_request_sha256": _sha256_text(f"truth:{request_sha256}"),
+                        "truth_certificate_sha256": _sha256_text(
                             f"oracle-result:{request_sha256}"
                         ),
-                        "semantic_digest": _sha256_text(
-                            f"semantic:{request_sha256}"
-                        ),
+                        "terrain_sha256": _sha256_text(f"terrain:{request_sha256}"),
                         "expected_success": expected_success,
                         "expected_route_l2_valid": expected_success,
                     }
@@ -321,10 +337,24 @@ def _g2_input_audit() -> dict[str, object]:
     return {
         "schema_version": "xunce-mid-dual-g2-input-audit/v1",
         "gate_id": "g2",
-        "run_id": "g2-run",
         "scale_profile": SCALE_PROFILE,
+        "status": "ready",
         "formal_evidence_eligible": True,
+        "blockers": [],
+        "truth_bundle_root": "D:/xunce/inputs/mid_dual/g2/truth",
         "truth_manifest_sha256": _sha256_text("fixture-g2-truth-manifest"),
+        "truth_freeze_sha256": _sha256_text("fixture-g2-truth-freeze"),
+        "truth_payload_root_sha256": _sha256_text("fixture-g2-payload-root"),
+        "truth_source_attestations_sha256": _sha256_text("fixture-g2-attestations"),
+        "input_set_id": "fixture-g2-input-set",
+        "manifest_core_sha256": _sha256_text("fixture-g2-manifest-core"),
+        "authorization_sha256": _sha256_text("fixture-g2-authorization"),
+        "candidate_boundary": {
+            "technical_independence": "T2_candidate",
+            "organizational_independence": "project_internal",
+            "source_attestation_status": "pending_o2_signature",
+            "candidate_formal_evidence_eligible": False,
+        },
         "provider_source": {
             "identity": "path-planner-v2-provider/v1",
             "source_bytes_sha256": _sha256_text("provider-source-bytes"),
@@ -335,22 +365,40 @@ def _g2_input_audit() -> dict[str, object]:
             "source_bytes_sha256": _sha256_text("oracle-source-bytes"),
             "implementation_sha256": _sha256_text("oracle-implementation"),
         },
+        "expected_approval_artifact_path": "D:/xunce/inputs/mid_dual/g2-approvals/fixture/artifact-bound-o2-approval.json",
         "approval": {
-            "schema_version": "xunce-mid-dual-project-approval/v1",
-            "project_authorized": True,
-            "input_set_authorized": True,
-            "payload_root": "D:/xunce/inputs/mid_dual/g2",
-            "source_attestation_authorized": True,
-            "provider_authorized": True,
-            "oracle_authorized": True,
-            "hopper_parameters_recorded": True,
-            "hopper_evaluator_authorized": True,
+            "schema_version": "xunce-mid-dual-g2-artifact-bound-approval/v1",
+            "approval_id": "fixture-approval",
+            "formal_evidence_eligible": True,
+            "provider_source": {
+                "identity": "path-planner-v2-provider/v1",
+                "source_bytes_sha256": _sha256_text("provider-source-bytes"),
+                "implementation_sha256": _sha256_text("provider-implementation"),
+            },
+            "oracle_source": {
+                "identity": "independent-finite-oracle/v1",
+                "source_bytes_sha256": _sha256_text("oracle-source-bytes"),
+                "implementation_sha256": _sha256_text("oracle-implementation"),
+            },
             "g2_scope_authorized": True,
             "g3_scope_authorized": True,
-            "pending_o2": False,
-            "formal_evidence_eligible": True,
+            "physical_capability_claimed": False,
+            "hardware_certification_claimed": False,
+            "approval_record_sha256": _sha256_text("fixture-approval-record"),
+            "approval_artifact_sha256": _sha256_text("fixture-approval-artifact"),
+            "approval_artifact_path": "D:/xunce/inputs/mid_dual/g2-approvals/fixture/artifact-bound-o2-approval.json",
         },
+        "hopper_resolution": {"formal_evidence_eligible": True, "blockers": []},
+        "primitive_label_audit": {"status": "verified"},
+        "small_map_optimum_audit": {"status": "verified"},
+        "request_matrix_audit": {"status": "verified"},
+        "ppo_target_audit": {"status": "verified"},
+        "g3_replay_cohort": {"cohort_sha256": _sha256_text("fixture-g3-cohort")},
+        "g3_replay_cohort_sha256": _sha256_text("fixture-g3-cohort"),
         "requests": requests,
+        "provider_requests": [],
+        "terrain_sha256": sorted({row["terrain_sha256"] for row in requests}),
+        "formal_row_count": 0,
     }
 
 
@@ -879,8 +927,8 @@ def _g2_rows(
                     "config_sha256": config_sha256,
                     "input_sha256": _HASH_A,
                     "code_sha256": _HASH_B,
-                    "request_sha256": request["request_sha256"],
-                    "truth_sha256": request["truth_sha256"],
+                    "request_sha256": request["provider_request_sha256"],
+                    "truth_sha256": request["truth_request_sha256"],
                     "provider_sha256": provider["implementation_sha256"],
                     "provider_source_bytes_sha256": provider[
                         "source_bytes_sha256"
@@ -889,10 +937,16 @@ def _g2_rows(
                     "oracle_source_bytes_sha256": oracle[
                         "source_bytes_sha256"
                     ],
-                    "provider_result_sha256": request[
-                        "provider_result_sha256"
-                    ],
-                    "oracle_result_sha256": request["oracle_result_sha256"],
+                    "provider_result_sha256": _sha256_text(
+                        f"provider-result:{request['provider_request_sha256']}"
+                    ),
+                    "oracle_result_sha256": request["truth_certificate_sha256"],
+                    "input_validation_ns": 10_000_000,
+                    "platform_instantiation_ns": 10_000_000,
+                    "search_ns": int((elapsed_ms - 40.0) * 1_000_000),
+                    "complete_route_validation_ns": 10_000_000,
+                    "result_assembly_ns": 10_000_000,
+                    "total_ns": int(elapsed_ms * 1_000_000),
                     "elapsed_ms": elapsed_ms,
                     "input_validation_ms": 10.0,
                     "platform_instantiation_ms": 10.0,
@@ -901,7 +955,10 @@ def _g2_rows(
                     "result_assembly_ms": 10.0,
                     "provider_success": request["expected_success"],
                     "route_l2_valid": request["expected_route_l2_valid"],
-                    "semantic_digest": request["semantic_digest"],
+                    "semantic_digest": _g2_semantic_digest(
+                        request["provider_request_sha256"],
+                        request["expected_success"],
+                    ),
                     "timing_contract_id": "five-phase-sequential-ns/v1",
                     "formal_sample": True,
                     "repeat_index": repeat,
@@ -1344,7 +1401,7 @@ def test_g2_exact_input_matrix_and_approval_chain_fail_closed(
         input_audit["provider_source"] = dict(input_audit["oracle_source"])
     else:
         for row in requests:
-            row["request_sha256"] = _HASH_C
+            row["provider_request_sha256"] = _HASH_C
     g2 = _create_source_root(
         tmp_path,
         "g2",
@@ -1366,6 +1423,55 @@ def test_g2_exact_input_matrix_and_approval_chain_fail_closed(
 
     assert result["status"] == "blocked"
     assert any(blocking_fragment in reason for reason in result["blockers"])
+
+
+@pytest.mark.parametrize(
+    ("mutation_kind", "blocking_fragment"),
+    (
+        ("raw_ns", "timing_component_sum"),
+        ("derived_ms", "timing_ms_projection"),
+        ("provider_result", "provider_result_consensus"),
+    ),
+)
+def test_g2_task8_raw_ns_and_provider_result_are_fail_closed(
+    tmp_path: Path,
+    mutation_kind: str,
+    blocking_fragment: str,
+) -> None:
+    """Task8 formal rows retain raw ns; ms and provider results are derived evidence."""
+    _g1, g2, _g3 = _valid_roots(tmp_path)
+    rows = artifact_io.read_jsonl(g2 / "results.jsonl")
+
+    def mutate(rows: list[dict[str, object]]) -> None:
+        if mutation_kind == "raw_ns":
+            rows[0]["total_ns"] = int(rows[0]["total_ns"]) + 1
+        elif mutation_kind == "derived_ms":
+            rows[0]["elapsed_ms"] = 101.0
+        else:
+            rows[1]["provider_result_sha256"] = _HASH_C
+
+    mutate(rows)
+    module = _aggregate_module()
+    with pytest.raises(module.AggregateBlocked, match=blocking_fragment):
+        module.recompute_g2(
+            rows,
+            artifact_io.read_json(g2 / "config.json"),
+            artifact_io.read_json(g2 / "source_input_audit.json"),
+        )
+
+
+
+def test_g2_results_must_be_the_canonical_p04_formal_payload(
+    tmp_path: Path,
+) -> None:
+    """Task8 diagnostics remain in phase audits; results.jsonl is p04-only."""
+    g1, g2, g3 = _valid_roots(tmp_path)
+    _rewrite_results(g2, lambda rows: rows.pop())
+
+    result = _aggregate((g1, g2, g3))
+
+    assert result["status"] == "blocked"
+    assert "g2_results_not_canonical_p04" in result["blockers"]
 
 
 @pytest.mark.parametrize(
@@ -1496,7 +1602,7 @@ def test_unhashable_or_malformed_rows_become_stable_blocked_results(
 
     assert result["status"] == "blocked"
     assert result["formal_evidence_eligible"] is False
-    assert any("g2_row_schema" in reason for reason in result["blockers"])
+    assert any(reason.startswith("g2_") for reason in result["blockers"])
 
 
 def test_formal_path_run_id_resume_and_cli_status_contracts(

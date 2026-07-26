@@ -19,6 +19,7 @@ import platform
 import re
 import stat
 import statistics
+import struct
 import subprocess
 import sys
 from typing import Any, Iterable, Mapping, Sequence
@@ -146,6 +147,8 @@ _G2_ROW_KEYS = frozenset(
         "oracle_source_bytes_sha256",
         "provider_result_sha256",
         "oracle_result_sha256",
+        *_TIMING_COMPONENT_FIELDS,
+        "total_ns",
         "elapsed_ms",
         "input_validation_ms",
         "platform_instantiation_ms",
@@ -273,6 +276,58 @@ def _finite_nonnegative(value: object, field_name: str) -> float:
     if number < 0.0:
         raise AggregateBlocked(f"{field_name}_negative")
     return number
+
+
+def _g2_elapsed_ms_from_raw_ns(row: Mapping[str, Any]) -> float:
+    """Validate Task8's five raw nanosecond phases and derived projections."""
+    components = [
+        _exact_nonnegative_int(row.get(field), f"g2_{field}")
+        for field in _TIMING_COMPONENT_FIELDS
+    ]
+    total_ns = _exact_nonnegative_int(row.get("total_ns"), "g2_total_ns")
+    if total_ns != sum(components):
+        raise AggregateBlocked("g2_timing_component_sum_mismatch")
+    expected_ms = {
+        "input_validation_ms": components[0] / 1_000_000.0,
+        "platform_instantiation_ms": components[1] / 1_000_000.0,
+        "search_ms": components[2] / 1_000_000.0,
+        "complete_route_validation_ms": components[3] / 1_000_000.0,
+        "result_assembly_ms": components[4] / 1_000_000.0,
+        "elapsed_ms": total_ns / 1_000_000.0,
+    }
+    for field, expected in expected_ms.items():
+        actual = _finite_nonnegative(row.get(field), f"g2_{field}")
+        if actual != expected:
+            raise AggregateBlocked("g2_timing_ms_projection_mismatch")
+    return expected_ms["elapsed_ms"]
+
+
+def _g2_expected_semantic_digest(
+    request_sha256: object,
+    provider_success: object,
+    route_l2_valid: object,
+) -> str:
+    request_hash = _nonempty_string(request_sha256, "g2_semantic_request_hash")
+    if not _is_sha256(request_hash):
+        raise AggregateBlocked("g2_semantic_request_hash")
+    success = _exact_bool(provider_success, "g2_semantic_success")
+    valid = _exact_bool(route_l2_valid, "g2_semantic_l2")
+    payload = json.dumps(
+        {
+            "request_sha256": request_hash,
+            "provider_success": success,
+            "route_l2_valid": valid,
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    parts = (b"xunce-mid-dual-g2-provider-semantics/v1", payload)
+    framed = b"".join(
+        struct.pack(">Q", len(part)) + part for part in parts
+    )
+    return _sha256_bytes(framed)
 
 
 def _exact_positive_int(value: object, field_name: str) -> int:
@@ -562,6 +617,32 @@ def _validate_phase_sequence(
         raise AggregateBlocked(f"{gate_id}_required_phase_sequence_mismatch")
 
 
+def _validate_g2_p04_results_snapshot(snapshot: Mapping[str, bytes]) -> None:
+    """Require canonical G2 results to be exactly the formal p04 payload."""
+    phase_rows = _parse_jsonl_bytes(
+        snapshot["phase-state.jsonl"], "g2_phase_state_invalid"
+    )
+    if len(phase_rows) != 4 or any(
+        not isinstance(row, Mapping) for row in phase_rows
+    ):
+        raise AggregateBlocked("g2_phase_state_invalid")
+    p04 = phase_rows[-1]
+    if (
+        set(p04) != {"phase_id", "attempt_id", "row_sha256", "rows_path"}
+        or p04.get("phase_id") != "p04"
+        or not _is_sha256(p04.get("row_sha256"))
+    ):
+        raise AggregateBlocked("g2_phase_state_invalid")
+    p04_path = _safe_manifest_path(p04.get("rows_path"), "g2")
+    p04_bytes = snapshot.get(p04_path)
+    if (
+        p04_bytes is None
+        or _sha256_bytes(p04_bytes) != p04["row_sha256"]
+        or snapshot["results.jsonl"] != p04_bytes
+    ):
+        raise AggregateBlocked("g2_results_not_canonical_p04")
+
+
 def _load_verified_source(
     root: str | Path,
     gate_id: str,
@@ -603,6 +684,16 @@ def _load_verified_source(
         snapshot["config.json"],
         f"{gate_id}_config_schema_invalid",
     )
+    # G1's effective config and the current G3 config are genuine upstream
+    # schemas, but neither has the immutable aggregate evidence wrapper.  Do
+    # not mistake their ordinary runner config for a Task10 source snapshot.
+    # This deliberately reports the missing producer-side fields rather than
+    # fabricating paths or silently weakening the aggregate contract.
+    if gate_id in {"g1", "g3"} and "evidence_binding" not in config:
+        raise AggregateBlocked(
+            f"{gate_id}_evidence_wrapper_missing:"
+            "input_audit_path,lineage_audit_path,report_audit_path"
+        )
     expected_config_keys = {
         "schema_version",
         "gate_id",
@@ -703,6 +794,8 @@ def _load_verified_source(
         _contract_value(contract, "required_phase_ids", gate_id),
         gate_id,
     )
+    if gate_id == "g2":
+        _validate_g2_p04_results_snapshot(snapshot)
     stored_summary = _parse_json_bytes(
         snapshot["summary.json"],
         f"{gate_id}_stored_summary_invalid",
@@ -1068,16 +1161,17 @@ def recompute_g2(
 ) -> dict[str, Any]:
     """Recalculate G2 against the manifest-bound 129-request truth crosswalk."""
     audit_keys = {
-        "schema_version",
-        "gate_id",
-        "run_id",
-        "scale_profile",
-        "formal_evidence_eligible",
-        "truth_manifest_sha256",
-        "provider_source",
-        "oracle_source",
-        "approval",
-        "requests",
+        "schema_version", "gate_id", "scale_profile", "status",
+        "formal_evidence_eligible", "blockers", "truth_bundle_root",
+        "truth_manifest_sha256", "truth_freeze_sha256",
+        "truth_payload_root_sha256", "truth_source_attestations_sha256",
+        "input_set_id", "manifest_core_sha256", "authorization_sha256",
+        "candidate_boundary", "provider_source", "oracle_source",
+        "expected_approval_artifact_path", "approval", "hopper_resolution",
+        "primitive_label_audit", "small_map_optimum_audit",
+        "request_matrix_audit", "ppo_target_audit", "g3_replay_cohort",
+        "g3_replay_cohort_sha256", "requests", "provider_requests",
+        "terrain_sha256", "formal_row_count",
     }
     audit = _exact_keys(
         input_audit,
@@ -1087,9 +1181,11 @@ def recompute_g2(
     if (
         audit["schema_version"] != "xunce-mid-dual-g2-input-audit/v1"
         or audit["gate_id"] != "g2"
-        or audit["run_id"] != config["run_id"]
         or audit["scale_profile"] != SCALE_PROFILE
+        or audit["status"] != "ready"
         or audit["formal_evidence_eligible"] is not True
+        or audit["blockers"] != []
+        or audit["formal_row_count"] != 0
         or not _is_sha256(audit["truth_manifest_sha256"])
     ):
         raise AggregateBlocked("g2_input_audit_binding_invalid")
@@ -1120,59 +1216,56 @@ def recompute_g2(
         or provider["implementation_sha256"] == oracle["implementation_sha256"]
     ):
         raise AggregateBlocked("g2_provider_oracle_identity_mismatch")
-    approval_keys = {
-        "schema_version",
-        "project_authorized",
-        "input_set_authorized",
-        "payload_root",
-        "source_attestation_authorized",
-        "provider_authorized",
-        "oracle_authorized",
-        "hopper_parameters_recorded",
-        "hopper_evaluator_authorized",
-        "g2_scope_authorized",
-        "g3_scope_authorized",
-        "pending_o2",
+    approval = audit["approval"]
+    if not isinstance(approval, Mapping) or (
+        approval.get("schema_version")
+        != "xunce-mid-dual-g2-artifact-bound-approval/v1"
+    ):
+        raise AggregateBlocked("g2_approval_schema_invalid")
+    required_approval = (
+        "approval_id", "approval_record_sha256", "approval_artifact_sha256",
+        "approval_artifact_path", "provider_source", "oracle_source",
+        "g2_scope_authorized", "g3_scope_authorized",
+        "physical_capability_claimed", "hardware_certification_claimed",
         "formal_evidence_eligible",
-    }
-    approval = _exact_keys(
-        audit["approval"],
-        approval_keys,
-        "g2_approval_schema_invalid",
     )
-    if approval["schema_version"] != "xunce-mid-dual-project-approval/v1":
-        raise AggregateBlocked("g2_approval_invalid")
-    required_true = approval_keys - {
-        "schema_version",
-        "payload_root",
-        "pending_o2",
-    }
-    if any(
-        _exact_bool(approval[field], f"g2_approval_{field}") is not True
-        for field in required_true
+    if (
+        any(field not in approval for field in required_approval)
+        or not _nonempty_string(approval.get("approval_id"), "g2_approval_id")
+        or any(not _is_sha256(approval[field]) for field in (
+            "approval_record_sha256", "approval_artifact_sha256"
+        ))
+        or approval.get("provider_source") != provider
+        or approval.get("oracle_source") != oracle
+        or any(_exact_bool(approval[field], f"g2_approval_{field}") is not True
+               for field in ("g2_scope_authorized", "g3_scope_authorized", "formal_evidence_eligible"))
+        or any(_exact_bool(approval[field], f"g2_approval_{field}") is not False
+               for field in ("physical_capability_claimed", "hardware_certification_claimed"))
     ):
         raise AggregateBlocked("g2_approval_invalid")
-    payload_root = _nonempty_string(
-        approval["payload_root"],
-        "g2_approval_payload_root",
+    approval_path = _nonempty_string(
+        approval.get("approval_artifact_path"), "g2_approval_path"
     ).replace("\\", "/")
-    if not payload_root.lower().startswith("d:/xunce/inputs/mid_dual/"):
+    expected_approval_path = _nonempty_string(
+        audit["expected_approval_artifact_path"], "g2_expected_approval_path"
+    ).replace("\\", "/")
+    if approval_path != expected_approval_path or not approval_path.lower().startswith(
+        "d:/xunce/inputs/mid_dual/"
+    ):
         raise AggregateBlocked("g2_approval_payload_root_invalid")
-    if _exact_bool(approval["pending_o2"], "g2_approval_pending_o2") is not False:
-        raise AggregateBlocked("g2_approval_invalid")
 
     request_keys = {
         "platform",
         "scale",
         "request_index",
         "request_id",
-        "request_sha256",
+        "schema_version",
         "request_class",
         "outcome_kind",
-        "truth_sha256",
-        "provider_result_sha256",
-        "oracle_result_sha256",
-        "semantic_digest",
+        "truth_request_sha256",
+        "truth_certificate_sha256",
+        "terrain_sha256",
+        "provider_request_sha256",
         "expected_success",
         "expected_route_l2_valid",
     }
@@ -1200,6 +1293,8 @@ def recompute_g2(
             request_keys,
             "g2_request_schema_invalid",
         )
+        if request["schema_version"] != "xunce-mid-dual-g2-truth-provider-crosswalk/v1":
+            raise AggregateBlocked("g2_request_schema_invalid")
         platform_name = request["platform"]
         scale = request["scale"]
         request_class = request["request_class"]
@@ -1234,13 +1329,10 @@ def recompute_g2(
         ):
             raise AggregateBlocked("g2_outcome_taxonomy_invalid")
         request_id = _nonempty_string(request["request_id"], "g2_request_id")
-        request_sha = request["request_sha256"]
+        request_sha = request["provider_request_sha256"]
         for field_name in (
-            "request_sha256",
-            "truth_sha256",
-            "provider_result_sha256",
-            "oracle_result_sha256",
-            "semantic_digest",
+            "provider_request_sha256", "truth_request_sha256",
+            "truth_certificate_sha256", "terrain_sha256",
         ):
             if not _is_sha256(request[field_name]):
                 raise AggregateBlocked("g2_request_hash_invalid")
@@ -1278,6 +1370,7 @@ def recompute_g2(
     repeat_indices: dict[tuple[str, str, str], list[int]] = {}
     call_ids: set[str] = set()
     semantic_by_request: dict[tuple[str, str, str], set[str]] = {}
+    provider_results_by_request: dict[tuple[str, str, str], set[str]] = {}
     for raw in rows:
         row = _exact_keys(raw, _G2_ROW_KEYS, "g2_row_schema_invalid")
         if (
@@ -1302,10 +1395,8 @@ def recompute_g2(
             "scale": request["scale"],
             "request_class": request["request_class"],
             "outcome_kind": request["outcome_kind"],
-            "truth_sha256": request["truth_sha256"],
-            "provider_result_sha256": request["provider_result_sha256"],
-            "oracle_result_sha256": request["oracle_result_sha256"],
-            "semantic_digest": request["semantic_digest"],
+            "truth_sha256": request["truth_request_sha256"],
+            "oracle_result_sha256": request["truth_certificate_sha256"],
             "provider_success": request["expected_success"],
             "route_l2_valid": request["expected_route_l2_valid"],
             "provider_sha256": provider["implementation_sha256"],
@@ -1315,6 +1406,15 @@ def recompute_g2(
         }
         if any(row[field] != value for field, value in bindings.items()):
             raise AggregateBlocked("g2_truth_provider_crosswalk_mismatch")
+        if (
+            not _is_sha256(row["provider_result_sha256"])
+            or row["semantic_digest"] != _g2_expected_semantic_digest(
+                row["request_sha256"],
+                row["provider_success"],
+                row["route_l2_valid"],
+            )
+        ):
+            raise AggregateBlocked("g2_provider_result_or_semantic_invalid")
         call_id = _nonempty_string(row["call_id"], "g2_call_id")
         if call_id in call_ids:
             raise AggregateBlocked("g2_duplicate_call_id")
@@ -1323,27 +1423,11 @@ def recompute_g2(
         if repeat >= G2_REPEATS:
             raise AggregateBlocked("g2_repeat_index_invalid")
         repeat_indices.setdefault(key, []).append(repeat)
-        semantic_by_request.setdefault(key, set()).add(
-            str(row["semantic_digest"])
+        semantic_by_request.setdefault(key, set()).add(str(row["semantic_digest"]))
+        provider_results_by_request.setdefault(key, set()).add(
+            str(row["provider_result_sha256"])
         )
-        components = [
-            _finite_nonnegative(row[field], f"g2_{field}")
-            for field in (
-                "input_validation_ms",
-                "platform_instantiation_ms",
-                "search_ms",
-                "complete_route_validation_ms",
-                "result_assembly_ms",
-            )
-        ]
-        elapsed = _finite_nonnegative(row["elapsed_ms"], "g2_elapsed_ms")
-        if not math.isclose(
-            elapsed,
-            sum(components),
-            rel_tol=0.0,
-            abs_tol=1.0e-9,
-        ):
-            raise AggregateBlocked("g2_timing_component_sum_mismatch")
+        _g2_elapsed_ms_from_raw_ns(row)
         materialized.append(row)
     if any(
         sorted(indices) != list(range(G2_REPEATS))
@@ -1352,6 +1436,8 @@ def recompute_g2(
         raise AggregateBlocked("g2_duplicate_or_missing_repeat_index")
     if any(len(values) != 1 for values in semantic_by_request.values()):
         raise AggregateBlocked("g2_semantic_consensus_mismatch")
+    if any(len(values) != 1 for values in provider_results_by_request.values()):
+        raise AggregateBlocked("g2_provider_result_consensus_mismatch")
 
     timing_by_platform_scale: dict[str, dict[str, Any]] = {}
     timing_by_platform_scale_outcome: dict[str, dict[str, Any]] = {}
