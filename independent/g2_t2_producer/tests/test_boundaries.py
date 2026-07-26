@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import copy
 import struct
 import sys
 import types
@@ -28,10 +29,13 @@ from producer.models import (
     validate_truth_row,
 )
 from producer.oracle_hopper import (
+    ballistic_witness,
+    build_hopper_parameter_record,
     evaluate_hopper,
     gaussian_square_mass_ppm,
     validate_hopper_parameter_record,
 )
+from producer.geometry import square_polygon
 from producer.oracle_legged import evaluate_legged
 from producer.oracle_wheel import evaluate_wheel, wheel_endpoint_mm
 from run_producer import collect_isolation_evidence
@@ -93,35 +97,14 @@ def _legged_case() -> dict[str, object]:
 
 
 def _hopper_record() -> dict[str, object]:
-    return {
-        "schema_version": "g2-hopper-candidate/v1",
-        "parameter_set_id": "hopper-generic-internal-proxy/v1",
-        "body_envelope_radius_m": "0.375",
-        "launch_reference_height_m": "0.750",
-        "arc_clearance_margin_m": "0.125",
-        "landing_footprint_radius_m": "0.625",
-        "stop_condition": {
-            "model_id": "touchdown-speed-upper-bound/v1",
-            "max_touchdown_speed_m_s": "2.500",
-            "evaluator_source_sha256": "1" * 64,
-        },
-        "energy_model": {
-            "model_id": "quadratic-normalized-speed/v1",
-            "reference_speed_m_s": "2.500",
-            "max_energy_decimal": "1.000000",
-            "evaluator_source_sha256": "2" * 64,
-        },
-        "evidence_class": "candidate_engineering_proxy",
-        "simulation_proxy": True,
-        "physical_capability_claimed": False,
-        "formal_evidence_eligible": False,
-        "status": "pending_external_evidence",
-    }
+    return build_hopper_parameter_record(ROOT)
 
 
 def _hopper_case() -> dict[str, object]:
-    return {
+    record = _hopper_record()
+    case = {
         "numeric_state": "decided",
+        "launch_pose_mm": [0, 0, 0],
         "action": {
             "azimuth_index": 0,
             "azimuth_mdeg": 0,
@@ -131,18 +114,45 @@ def _hopper_case() -> dict[str, object]:
             "speed_mm_s": 2000,
         },
         "terrain": {
-            "arc_clearance_slack_mm": 20,
-            "arc_inside_map": True,
-            "arc_known": True,
-            "landing_footprint_clearance_mm": 20,
-            "landing_height_error_mm": 0,
-            "landing_halfwidth_mm": 5000,
-            "landing_slope_cdeg": 0,
+            "height_plane": {
+                "gradient_x_ppm": 0,
+                "gradient_y_ppm": 0,
+                "origin_x_mm": 0,
+                "origin_y_mm": 0,
+                "origin_z_mm": 0,
+            },
+            "landing_height_tolerance_mm": 50,
+            "landing_pad_polygon_mm": square_polygon(0, 0, 2000),
             "landing_sigma_mm": 289,
-            "launch_clearance_mm": 20,
+            "landing_surface_plane": {
+                "gradient_x_ppm": 0,
+                "gradient_y_ppm": 0,
+                "origin_x_mm": 0,
+                "origin_y_mm": 0,
+                "origin_z_mm": 0,
+            },
+            "map_bounds_mm": [-20000, -20000, 20000, 20000],
+            "obstacle_polygons_mm": [],
+            "obstacle_prisms": [],
+            "unknown_polygons_mm": [],
         },
-        "touchdown_speed_mm_s": 2000,
     }
+    witness = ballistic_witness(case, record)
+    case["terrain"]["landing_pad_polygon_mm"] = square_polygon(
+        witness["landing_x_mm"], witness["landing_y_mm"], 2000
+    )
+    return case
+
+
+def _set_hopper_pad_halfwidth(
+    case: dict[str, object],
+    record: dict[str, object],
+    halfwidth_mm: int,
+) -> None:
+    witness = ballistic_witness(case, record)
+    case["terrain"]["landing_pad_polygon_mm"] = square_polygon(  # type: ignore[index]
+        witness["landing_x_mm"], witness["landing_y_mm"], halfwidth_mm
+    )
 
 
 def _manual_domain_hash(domain: str, *parts: bytes) -> str:
@@ -400,26 +410,37 @@ def test_hopper_complete_record_gaussian_and_inclusive_probability_boundary() ->
     assert gaussian_square_mass_ppm(halfwidth_mm=810, sigma_mm=289) == 989892
 
     equal = _hopper_case()
-    equal["terrain"]["landing_halfwidth_mm"] = 811  # type: ignore[index]
+    _set_hopper_pad_halfwidth(equal, record, 625 + 811)
     assert evaluate_hopper(equal, record)["oracle_safe"] is True
 
     below = _hopper_case()
-    below["terrain"]["landing_halfwidth_mm"] = 810  # type: ignore[index]
+    _set_hopper_pad_halfwidth(below, record, 625 + 810)
     assert evaluate_hopper(below, record)["oracle_reason_code"] == "G2I_H_LANDING_MASS"
 
 
 def test_hopper_closed_contact_stop_energy_and_parameter_fail_closed() -> None:
     record = _hopper_record()
     contact = _hopper_case()
-    contact["terrain"]["arc_clearance_slack_mm"] = 0  # type: ignore[index]
+    contact["terrain"]["obstacle_prisms"] = [  # type: ignore[index]
+        {
+            "polygon_mm": square_polygon(0, 0, 20000),
+            "top_z_mm": 20000,
+        }
+    ]
     assert evaluate_hopper(contact, record)["oracle_reason_code"] == "G2I_H_ARC_CLEARANCE"
 
     stop_equal = _hopper_case()
-    stop_equal["touchdown_speed_mm_s"] = 2500
+    stop_equal["action"].update(  # type: ignore[union-attr]
+        {"speed_index": 2, "speed_mm_s": 2500}
+    )
+    _set_hopper_pad_halfwidth(stop_equal, record, 2000)
     assert evaluate_hopper(stop_equal, record)["oracle_safe"] is True
 
     stop_above = _hopper_case()
-    stop_above["touchdown_speed_mm_s"] = 2501
+    stop_above["action"].update(  # type: ignore[union-attr]
+        {"speed_index": 3, "speed_mm_s": 3000}
+    )
+    _set_hopper_pad_halfwidth(stop_above, record, 2000)
     assert evaluate_hopper(stop_above, record)["oracle_reason_code"] == "G2I_H_STOP"
 
     incomplete = dict(record)

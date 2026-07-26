@@ -14,6 +14,7 @@ from producer.package_bundle import (
     build_fixture_bundle,
     verify_contiguous_shard_prefix,
 )
+from producer.oracle_hopper import build_hopper_parameter_record
 from run_producer import main, phase_names
 
 
@@ -49,30 +50,7 @@ sys.stdout.buffer.write(canonical_json_bytes(payload))
 
 
 def _hopper_record() -> dict[str, object]:
-    return {
-        "schema_version": "g2-hopper-candidate/v1",
-        "parameter_set_id": "hopper-generic-internal-proxy/v1",
-        "body_envelope_radius_m": "0.375",
-        "launch_reference_height_m": "0.750",
-        "arc_clearance_margin_m": "0.125",
-        "landing_footprint_radius_m": "0.625",
-        "stop_condition": {
-            "model_id": "touchdown-speed-upper-bound/v1",
-            "max_touchdown_speed_m_s": "2.500",
-            "evaluator_source_sha256": "1" * 64,
-        },
-        "energy_model": {
-            "model_id": "quadratic-normalized-speed/v1",
-            "reference_speed_m_s": "2.500",
-            "max_energy_decimal": "1.000000",
-            "evaluator_source_sha256": "2" * 64,
-        },
-        "evidence_class": "candidate_engineering_proxy",
-        "simulation_proxy": True,
-        "physical_capability_claimed": False,
-        "formal_evidence_eligible": False,
-        "status": "pending_external_evidence",
-    }
+    return build_hopper_parameter_record(ROOT)
 
 
 def _fixture_inputs() -> tuple[dict[str, bytes], dict[str, object]]:

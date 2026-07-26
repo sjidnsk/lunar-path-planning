@@ -6,7 +6,8 @@ import os
 import platform
 import sys
 from pathlib import Path
-from typing import Mapping
+from types import ModuleType
+from typing import Iterable, Mapping
 
 
 _FORBIDDEN_IMPORT_TOKENS = (
@@ -85,12 +86,216 @@ def collect_isolation_evidence(
     return evidence
 
 
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    return path == parent or parent in path.parents
+
+
+def _is_reparse_point(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    try:
+        attributes = int(getattr(path.stat(), "st_file_attributes", 0))
+    except OSError:
+        return False
+    return bool(attributes & 0x400)
+
+
+def _module_name_and_origin(
+    name: str, module_or_origin: object
+) -> tuple[str, str]:
+    if isinstance(module_or_origin, str):
+        return name, module_or_origin
+    if isinstance(module_or_origin, ModuleType):
+        return name, str(getattr(module_or_origin, "__file__", "") or "")
+    return name, str(getattr(module_or_origin, "__file__", "") or "")
+
+
+def collect_production_isolation_evidence(
+    *,
+    source_root: Path,
+    project_root: Path,
+    path_planner_root: Path,
+    input_root: Path,
+    output_root: Path,
+    environment: Mapping[str, str],
+    sys_path_entries: Iterable[str] | None = None,
+    loaded_modules: Mapping[str, object] | None = None,
+    require_d_drive: bool = True,
+) -> dict[str, object]:
+    named_roots = {
+        "source_root": Path(source_root),
+        "project_root": Path(project_root),
+        "path_planner_root": Path(path_planner_root),
+        "input_root": Path(input_root),
+        "output_root": Path(output_root),
+    }
+    reasons: list[str] = []
+    resolved: dict[str, Path] = {}
+    for name, raw_path in named_roots.items():
+        if not raw_path.is_absolute():
+            reasons.append(f"{name} must be absolute")
+        resolved_path = raw_path.resolve()
+        resolved[name] = resolved_path
+        if require_d_drive and resolved_path.drive.casefold() != "d:":
+            reasons.append(f"{name} must be on D drive")
+        if name != "output_root" and not resolved_path.exists():
+            reasons.append(f"{name} missing: {resolved_path}")
+        if name == "output_root" and not resolved_path.parent.exists():
+            reasons.append(f"output_root parent missing: {resolved_path.parent}")
+        if resolved_path.exists() and _is_reparse_point(resolved_path):
+            reasons.append(f"{name} is a reparse point")
+
+    source = resolved["source_root"]
+    project = resolved["project_root"]
+    planner = resolved["path_planner_root"]
+    inputs = resolved["input_root"]
+    output = resolved["output_root"]
+    for name, path in (
+        ("source_root", source),
+        ("input_root", inputs),
+        ("output_root", output),
+    ):
+        if _is_relative_to(path, project) or _is_relative_to(path, planner):
+            reasons.append(f"{name} overlaps project/provider root")
+    if _is_relative_to(output, inputs) is False:
+        reasons.append("output_root must be beneath input_root")
+
+    entries = list(sys.path if sys_path_entries is None else sys_path_entries)
+    contaminated_paths: list[str] = []
+    pth_injections: list[dict[str, str]] = []
+    for raw_entry in entries:
+        if not raw_entry:
+            continue
+        entry_text = str(raw_entry)
+        normalized = entry_text.casefold().replace("\\", "/")
+        try:
+            entry = Path(entry_text).resolve()
+        except OSError:
+            reasons.append(f"unresolvable sys.path entry: {entry_text}")
+            continue
+        if (
+            _is_relative_to(entry, project)
+            or _is_relative_to(entry, planner)
+            or any(token in normalized for token in _FORBIDDEN_IMPORT_TOKENS)
+        ):
+            contaminated_paths.append(str(entry))
+        if entry.is_dir():
+            for pth_path in sorted(entry.glob("*.pth"), key=lambda path: path.name):
+                try:
+                    lines = pth_path.read_text(
+                        encoding="utf-8", errors="strict"
+                    ).splitlines()
+                except (OSError, UnicodeError) as error:
+                    reasons.append(f"unreadable .pth file: {pth_path}: {error}")
+                    continue
+                for line in lines:
+                    candidate_text = line.strip()
+                    if not candidate_text or candidate_text.startswith("#"):
+                        continue
+                    candidate_normalized = candidate_text.casefold().replace(
+                        "\\", "/"
+                    )
+                    if candidate_text.startswith("import "):
+                        if any(
+                            token in candidate_normalized
+                            for token in _FORBIDDEN_IMPORT_TOKENS
+                        ):
+                            pth_injections.append(
+                                {
+                                    "line": candidate_text,
+                                    "path": str(pth_path.resolve()),
+                                }
+                            )
+                        continue
+                    candidate = Path(candidate_text)
+                    if not candidate.is_absolute():
+                        candidate = pth_path.parent / candidate
+                    candidate = candidate.resolve()
+                    if (
+                        _is_relative_to(candidate, project)
+                        or _is_relative_to(candidate, planner)
+                        or any(
+                            token in candidate_normalized
+                            for token in _FORBIDDEN_IMPORT_TOKENS
+                        )
+                    ):
+                        pth_injections.append(
+                            {
+                                "line": candidate_text,
+                                "path": str(pth_path.resolve()),
+                            }
+                        )
+    contaminated_paths = sorted(set(contaminated_paths))
+    if contaminated_paths:
+        reasons.append("project/provider path visible in sys.path")
+    if pth_injections:
+        reasons.append("project/provider .pth injection visible")
+
+    modules = sys.modules if loaded_modules is None else loaded_modules
+    forbidden_loaded: list[str] = []
+    module_origins: list[dict[str, str]] = []
+    for name, module_or_origin in sorted(modules.items()):
+        module_name, origin_text = _module_name_and_origin(name, module_or_origin)
+        normalized = f"{module_name}|{origin_text}".casefold().replace("\\", "/")
+        if origin_text:
+            module_origins.append(
+                {"module": module_name, "origin": origin_text}
+            )
+        origin_path = Path(origin_text).resolve() if origin_text else None
+        if (
+            any(token in normalized for token in _FORBIDDEN_IMPORT_TOKENS)
+            or (
+                origin_path is not None
+                and (
+                    _is_relative_to(origin_path, project)
+                    or _is_relative_to(origin_path, planner)
+                )
+            )
+        ):
+            forbidden_loaded.append(module_name)
+    if forbidden_loaded:
+        reasons.append("project/provider module origin visible")
+
+    evidence: dict[str, object] = {
+        "command": list(sys.argv),
+        "cwd": str(Path.cwd().resolve()),
+        "environment": {
+            key: environment[key]
+            for key in _ENVIRONMENT_ALLOWLIST
+            if key in environment
+        },
+        "forbidden_loaded_modules": sorted(set(forbidden_loaded)),
+        "module_origins": module_origins,
+        "passed": not reasons,
+        "path_planner_root": str(planner),
+        "platform": platform.platform(),
+        "project_path_entries": contaminated_paths,
+        "project_root": str(project),
+        "pth_injections": pth_injections,
+        "python_executable": sys.executable,
+        "python_version": platform.python_version(),
+        "reasons": reasons,
+        "roots": {name: str(path) for name, path in sorted(resolved.items())},
+        "schema_version": "g2-production-isolation-preflight/v1",
+        "sys_path": entries,
+    }
+    from producer.canonical import canonical_json_bytes, domain_hash
+
+    evidence["preflight_sha256"] = domain_hash(
+        "g2-production-preflight/v1", canonical_json_bytes(evidence)
+    )
+    return evidence
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Standalone deterministic reduced-G2 truth producer"
     )
     parser.add_argument("phase", choices=phase_names())
     parser.add_argument("--project-root", default=os.environ.get("G2_PROJECT_ROOT", "__unset__"))
+    parser.add_argument("--path-planner-root")
+    parser.add_argument("--input-root")
+    parser.add_argument("--candidate-id")
     parser.add_argument("--json-output")
     parser.add_argument("--source-root", default=str(Path(__file__).resolve().parent))
     parser.add_argument("--output-root")
@@ -98,6 +303,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--first-root")
     parser.add_argument("--second-root")
     parser.add_argument("--hopper-record")
+    parser.add_argument("--hopper-stop-evaluator")
+    parser.add_argument("--hopper-energy-evaluator")
+    parser.add_argument("--authorization")
+    parser.add_argument("--lola-jp2")
+    parser.add_argument("--lola-lbl")
     parser.add_argument("--lola-provenance")
     parser.add_argument("--raw-source", action="append", default=[])
     parser.add_argument("--fixture", action="store_true")
@@ -115,10 +325,25 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.buffer.write(payload)
 
     if args.phase == "preflight":
-        evidence = collect_isolation_evidence(
-            project_root=Path(args.project_root),
-            environment=os.environ,
-        )
+        if (
+            args.path_planner_root
+            and args.input_root
+            and args.output_root
+            and args.source_root
+        ):
+            evidence = collect_production_isolation_evidence(
+                source_root=Path(args.source_root),
+                project_root=Path(args.project_root),
+                path_planner_root=Path(args.path_planner_root),
+                input_root=Path(args.input_root),
+                output_root=Path(args.output_root),
+                environment=os.environ,
+            )
+        else:
+            evidence = collect_isolation_evidence(
+                project_root=Path(args.project_root),
+                environment=os.environ,
+            )
         emit(evidence)
         return 0 if evidence["passed"] else 2
 
@@ -141,10 +366,71 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result["matched"] else 2
 
     if not args.fixture:
-        parser.error(
-            "generation phases require --fixture in this implementation handoff; "
-            "production candidate publication is intentionally disabled"
+        if args.phase != "all":
+            parser.error("production candidate supports only the all phase")
+        required = {
+            "--authorization": args.authorization,
+            "--candidate-id": args.candidate_id,
+            "--hopper-record": args.hopper_record,
+            "--input-root": args.input_root,
+            "--lola-jp2": args.lola_jp2,
+            "--lola-lbl": args.lola_lbl,
+            "--output-root": args.output_root,
+            "--path-planner-root": args.path_planner_root,
+            "--project-root": (
+                None if args.project_root == "__unset__" else args.project_root
+            ),
+            "--source-root": args.source_root,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            parser.error(
+                "production all requires explicit arguments: "
+                + ", ".join(missing)
+            )
+        source_root = Path(args.source_root)
+        stop_path = Path(
+            args.hopper_stop_evaluator
+            or source_root / "producer" / "hopper_stop_evaluator.py"
         )
+        energy_path = Path(
+            args.hopper_energy_evaluator
+            or source_root / "producer" / "hopper_energy_evaluator.py"
+        )
+        preflight = collect_production_isolation_evidence(
+            source_root=source_root,
+            project_root=Path(args.project_root),
+            path_planner_root=Path(args.path_planner_root),
+            input_root=Path(args.input_root),
+            output_root=Path(args.output_root),
+            environment=os.environ,
+        )
+        if preflight["passed"] is not True:
+            emit(preflight)
+            return 2
+        from producer.canonical import canonical_loads
+        from producer.package_bundle import build_production_candidate
+
+        hopper_record_bytes = Path(args.hopper_record).read_bytes()
+        hopper_record = canonical_loads(hopper_record_bytes)
+        raw_sources = {
+            "hopper/HOPPER_PARAMETER_RECORD.json": hopper_record_bytes,
+            "hopper/hopper_energy_evaluator.py": energy_path.read_bytes(),
+            "hopper/hopper_stop_evaluator.py": stop_path.read_bytes(),
+            "lola/LDEM_875S_20M.JP2": Path(args.lola_jp2).read_bytes(),
+            "lola/LDEM_875S_20M_JP2.LBL": Path(args.lola_lbl).read_bytes(),
+            "project-authorization.md": Path(args.authorization).read_bytes(),
+        }
+        freeze = build_production_candidate(
+            Path(args.output_root),
+            candidate_id=str(args.candidate_id),
+            source_root=source_root,
+            hopper_parameter_record=hopper_record,
+            raw_sources=raw_sources,
+            preflight_evidence=preflight,
+        )
+        emit(freeze)
+        return 0
     if not args.hopper_record:
         parser.error("generation phases require --hopper-record")
     source_root = Path(args.source_root)
@@ -245,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
             specification,
             profile_record_sha256=profile_hashes,
             lola_provenance=lola,
+            hopper_parameter_record=hopper_record,
         )
         selected = select_requests(pool, specification)
         (output_root / "request-pool.jsonl").write_bytes(

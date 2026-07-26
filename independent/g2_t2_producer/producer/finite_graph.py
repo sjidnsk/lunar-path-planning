@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import heapq
+import math
 from collections import defaultdict
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from .canonical import canonical_json_bytes, domain_hash, sha256_bytes
-from .oracle_hopper import evaluate_hopper, validate_hopper_parameter_record
+from .geometry import square_polygon
+from .oracle_hopper import (
+    ballistic_witness,
+    evaluate_hopper,
+    validate_hopper_parameter_record,
+)
+from .oracle_legged import evaluate_legged
+from .oracle_wheel import evaluate_wheel, wheel_endpoint_mm
 
 
 def _validate_graph(graph: dict[str, Any]) -> None:
@@ -229,36 +238,148 @@ def _edge(
     cost_milli: int,
     reason: str | None,
     slack: int,
+    oracle_input: dict[str, Any],
+    oracle_decision: dict[str, Any],
+    action_source: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "accepted": accepted,
+        "action_source": action_source,
         "cost_milli": cost_milli,
         "edge_id": edge_id,
         "from_node": source,
+        "oracle_decision_sha256": domain_hash(
+            "g2-small-map-oracle-decision/v1",
+            canonical_json_bytes(oracle_decision),
+        ),
+        "oracle_input": oracle_input,
         "reject_reason": reason,
         "safety_slack_mm": slack,
         "to_node": target,
     }
 
 
-def _wheel_small_map() -> tuple[dict[str, Any], str, str]:
-    nodes = [f"w:{x}:{y}:{heading}" for x in range(6) for y in range(6) for heading in range(8)]
-    actions = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1), (0, 0, 0))
+def _source_sha(module_relative_name: str) -> str:
+    return sha256_bytes(
+        (Path(__file__).resolve().parent / module_relative_name).read_bytes()
+    )
+
+
+def _minimum_decision_slack(decision: dict[str, Any]) -> int:
+    values = [
+        int(value)
+        for value in decision.get("safety_slacks", {}).values()
+        if int(value) < 2**29
+    ]
+    return min(values, default=0)
+
+
+def _wheel_small_map(
+    specification: dict[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    nodes = [
+        f"w:{x}:{y}:{heading}"
+        for x in range(6)
+        for y in range(6)
+        for heading in range(8)
+    ]
+    actions = (
+        {"kind": "translate", "delta_cell_xy": [1, 0], "target_heading": 0},
+        {"kind": "translate", "delta_cell_xy": [-1, 0], "target_heading": 4},
+        {"kind": "translate", "delta_cell_xy": [0, 1], "target_heading": 2},
+        {"kind": "translate", "delta_cell_xy": [0, -1], "target_heading": 6},
+        {"kind": "rotate", "heading_delta": 1},
+        {"kind": "rotate", "heading_delta": -1},
+        {"kind": "hold"},
+    )
     blocked = {(2, 2), (3, 2)}
+    cell_size = 500
+    blocked_polygons = [
+        square_polygon(x * cell_size, y * cell_size, 150)
+        for x, y in sorted(blocked)
+    ]
     edges: list[dict[str, Any]] = []
     for x in range(6):
         for y in range(6):
             for heading in range(8):
                 source = f"w:{x}:{y}:{heading}"
-                for action_index, (dx, dy, dh) in enumerate(actions):
-                    tx, ty, th = x + dx, y + dy, (heading + dh) % 8
+                for action_index, action_source in enumerate(actions):
+                    if action_source["kind"] == "translate":
+                        dx, dy = action_source["delta_cell_xy"]
+                        tx, ty = x + int(dx), y + int(dy)
+                        th = int(action_source["target_heading"])
+                        theta = round(math.atan2(int(dy), int(dx)) * 1_000_000)
+                        speed = 500_000
+                        angular = 0
+                    elif action_source["kind"] == "rotate":
+                        tx, ty = x, y
+                        th = (heading + int(action_source["heading_delta"])) % 8
+                        theta = round(heading * math.pi / 4 * 1_000_000)
+                        speed = 0
+                        angular = int(action_source["heading_delta"]) * 785_398
+                    else:
+                        tx, ty, th = x, y, heading
+                        theta = round(heading * math.pi / 4 * 1_000_000)
+                        speed = 0
+                        angular = 0
                     inside = 0 <= tx < 6 and 0 <= ty < 6
-                    obstacle = inside and (tx, ty) in blocked
-                    accepted = inside and not obstacle
                     target = f"w:{tx}:{ty}:{th}" if inside else source
-                    cost = 100 if action_index == 6 else (250 if action_index in {4, 5} else 1000)
-                    reason = None if accepted else (
-                        "G2I_W_CLOSED_OBSTACLE_CONTACT" if obstacle else "G2I_W_OUTSIDE_MAP"
+                    start_pose = [x * cell_size, y * cell_size, theta]
+                    oracle_input = {
+                        "limits": {
+                            "allow_reverse": True,
+                            "allow_turn": True,
+                            "endpoint_tolerance_mm": 1,
+                            "endpoint_tolerance_urad": 1000,
+                            "max_abs_angular_urad_s": 2_000_000,
+                            "max_abs_speed_um_s": 1_000_000,
+                            "max_duration_us": 5_000_000,
+                            "min_turn_radius_mm": 250,
+                        },
+                        "numeric_state": "decided",
+                        "primitive": {
+                            "angular_urad_s": angular,
+                            "control_family": str(action_source["kind"]),
+                            "duration_us": 1_000_000,
+                            "endpoint_mm_urad": [0, 0, 0],
+                            "heading_bin": heading,
+                            "speed_um_s": speed,
+                        },
+                        "start_pose_mm_urad": start_pose,
+                        "terrain": {
+                            "geometry_schema_version": "g2-wheel-small-map/v2",
+                            "height_plane": {
+                                "gradient_x_ppm": 0,
+                                "gradient_y_ppm": 0,
+                                "origin_x_mm": 0,
+                                "origin_y_mm": 0,
+                                "origin_z_mm": 0,
+                            },
+                            "map_bounds_mm": [-100, -100, 2600, 2600],
+                            "obstacle_polygons_mm": blocked_polygons,
+                            "unknown_polygons_mm": [],
+                            "untraversable_polygons_mm": [],
+                            "wheel_footprint_radius_mm": 100,
+                        },
+                    }
+                    oracle_input["primitive"]["endpoint_mm_urad"] = list(
+                        wheel_endpoint_mm(oracle_input)
+                    )
+                    decision = evaluate_wheel(oracle_input)
+                    accepted = inside and bool(decision["oracle_safe"])
+                    distance = math.hypot(
+                        int(oracle_input["primitive"]["endpoint_mm_urad"][0])
+                        - start_pose[0],
+                        int(oracle_input["primitive"]["endpoint_mm_urad"][1])
+                        - start_pose[1],
+                    )
+                    cost = max(
+                        100,
+                        round(
+                            distance * 2
+                            + abs(angular) / 4000
+                            + (100 if action_source["kind"] == "hold" else 0)
+                        ),
                     )
                     edges.append(
                         _edge(
@@ -267,23 +388,39 @@ def _wheel_small_map() -> tuple[dict[str, Any], str, str]:
                             target,
                             accepted=accepted,
                             cost_milli=cost,
-                            reason=reason,
-                            slack=20 if accepted else -1,
+                            reason=(
+                                None
+                                if accepted
+                                else str(decision["oracle_reason_code"])
+                            ),
+                            slack=_minimum_decision_slack(decision),
+                            oracle_input=oracle_input,
+                            oracle_decision=decision,
+                            action_source=action_source,
                         )
                     )
     return {
-        "schema_version": "g2-finite-graph/v1",
+        "schema_version": "g2-finite-graph/v2",
         "platform_kind": "wheel",
         "nodes": nodes,
         "candidate_edges": edges,
         "expected_node_count": 288,
         "expected_candidate_edge_count": 2016,
         "node_envelope": {"cell_x": 6, "cell_y": 6, "heading": 8},
-        "action_envelope": {"per_node": 7},
+        "action_envelope": {"actions": list(actions), "per_node": 7},
+        "oracle_source_sha256": _source_sha("oracle_wheel.py"),
+        "profile_or_parameter_record_sha256": domain_hash(
+            "g2-independent-profile/v2", b"wheel"
+        ),
+        "specification_sha256": sha256_bytes(
+            canonical_json_bytes(specification)
+        ),
     }, "w:0:0:0", "w:5:5:0"
 
 
-def _legged_small_map() -> tuple[dict[str, Any], str, str]:
+def _legged_small_map(
+    specification: dict[str, Any],
+) -> tuple[dict[str, Any], str, str]:
     nodes = [
         f"l:{x}:{y}:{phase}:{com}"
         for x in range(5)
@@ -291,28 +428,95 @@ def _legged_small_map() -> tuple[dict[str, Any], str, str]:
         for phase in range(4)
         for com in range(2)
     ]
-    actions = ((1, 0), (-1, 0), (0, 1), (0, -1), (0, 0))
+    actions = (
+        {"delta_cell_xy": [1, 0]},
+        {"delta_cell_xy": [-1, 0]},
+        {"delta_cell_xy": [0, 1]},
+        {"delta_cell_xy": [0, -1]},
+        {"delta_cell_xy": [0, 0]},
+    )
     blocked = {(2, 2)}
+    cell_size = 400
+    blocked_polygons = [
+        square_polygon(x * cell_size, y * cell_size, 100)
+        for x, y in sorted(blocked)
+    ]
     edges: list[dict[str, Any]] = []
     for x in range(5):
         for y in range(5):
             for phase in range(4):
                 for com in range(2):
                     source = f"l:{x}:{y}:{phase}:{com}"
-                    for action_index, (dx, dy) in enumerate(actions):
+                    for action_index, action_source in enumerate(actions):
+                        dx, dy = [
+                            int(value)
+                            for value in action_source["delta_cell_xy"]
+                        ]
                         tx, ty = x + dx, y + dy
                         next_phase = (phase + 1) % 4
                         next_com = 1 - com
                         inside = 0 <= tx < 5 and 0 <= ty < 5
-                        obstacle = inside and (tx, ty) in blocked
-                        accepted = inside and not obstacle
                         target = (
                             f"l:{tx}:{ty}:{next_phase}:{next_com}" if inside else source
                         )
-                        reason = None if accepted else (
-                            "G2I_L_FOOTHOLD_OBSTACLE"
-                            if obstacle
-                            else "G2I_L_GRID_DOMAIN"
+                        oracle_input = {
+                            "moving_leg_id": phase,
+                            "numeric_state": "decided",
+                            "phase": phase,
+                            "required_phase": phase,
+                            "source_foot_mm": [
+                                x * cell_size,
+                                y * cell_size,
+                                0,
+                            ],
+                            "target_foot_mm": [
+                                tx * cell_size,
+                                ty * cell_size,
+                                0,
+                            ],
+                            "terrain": {
+                                "body_end_mm": [
+                                    x * cell_size + 100,
+                                    y * cell_size,
+                                ],
+                                "body_obstacle_polygons_mm": [],
+                                "body_plane": {
+                                    "gradient_x_ppm": 0,
+                                    "gradient_y_ppm": 0,
+                                    "origin_x_mm": 0,
+                                    "origin_y_mm": 0,
+                                    "origin_z_mm": 0,
+                                },
+                                "body_radius_mm": 100,
+                                "body_start_mm": [
+                                    x * cell_size,
+                                    y * cell_size,
+                                ],
+                                "foothold_plane": {
+                                    "gradient_x_ppm": 0,
+                                    "gradient_y_ppm": 0,
+                                    "origin_x_mm": 0,
+                                    "origin_y_mm": 0,
+                                    "origin_z_mm": 0,
+                                },
+                                "geometry_schema_version": "g2-legged-small-map/v2",
+                                "map_bounds_mm": [-100, -100, 1700, 1700],
+                                "obstacle_polygons_mm": blocked_polygons,
+                                "support_polygon_mm": square_polygon(
+                                    x * cell_size, y * cell_size, 75
+                                ),
+                                "target_com_mm": [
+                                    x * cell_size,
+                                    y * cell_size,
+                                ],
+                                "unknown_polygons_mm": [],
+                                "untraversable_polygons_mm": [],
+                            },
+                        }
+                        decision = evaluate_legged(oracle_input)
+                        accepted = inside and bool(decision["oracle_safe"])
+                        step_length = int(
+                            decision["numeric_witness"]["step_length_mm"]
                         )
                         edges.append(
                             _edge(
@@ -320,13 +524,20 @@ def _legged_small_map() -> tuple[dict[str, Any], str, str]:
                                 source,
                                 target,
                                 accepted=accepted,
-                                cost_milli=300 if action_index == 4 else 1200,
-                                reason=reason,
-                                slack=15 if accepted else -1,
+                                cost_milli=300 + step_length * 2,
+                                reason=(
+                                    None
+                                    if accepted
+                                    else str(decision["oracle_reason_code"])
+                                ),
+                                slack=_minimum_decision_slack(decision),
+                                oracle_input=oracle_input,
+                                oracle_decision=decision,
+                                action_source=action_source,
                             )
                         )
     return {
-        "schema_version": "g2-finite-graph/v1",
+        "schema_version": "g2-finite-graph/v2",
         "platform_kind": "legged",
         "nodes": nodes,
         "candidate_edges": edges,
@@ -338,7 +549,14 @@ def _legged_small_map() -> tuple[dict[str, Any], str, str]:
             "com_offset": 2,
             "moving_phase": 4,
         },
-        "action_envelope": {"per_node": 5},
+        "action_envelope": {"actions": list(actions), "per_node": 5},
+        "oracle_source_sha256": _source_sha("oracle_legged.py"),
+        "profile_or_parameter_record_sha256": domain_hash(
+            "g2-independent-profile/v2", b"legged"
+        ),
+        "specification_sha256": sha256_bytes(
+            canonical_json_bytes(specification)
+        ),
     }, "l:0:0:0:0", "l:4:4:0:0"
 
 
@@ -353,66 +571,137 @@ def _hopper_action(action_index: int) -> dict[str, int]:
         "elevation_index": elevation_index,
         "elevation_mdeg": (30000, 45000, 60000)[elevation_index],
         "speed_index": speed_index,
-        "speed_mm_s": (1000, 1500, 2000, 2500)[speed_index],
+        "speed_mm_s": (1500, 2000, 2500, 3000)[speed_index],
     }
 
 
 def _hopper_small_map(
+    specification: dict[str, Any],
     parameter_record: dict[str, Any],
 ) -> tuple[dict[str, Any], str, str]:
     validate_hopper_parameter_record(parameter_record)
     nodes = [f"h:pad:{pad}" for pad in range(9)]
+    probe = {
+        "action": _hopper_action(16),
+        "launch_pose_mm": [0, 0, 0],
+        "numeric_state": "decided",
+        "terrain": {
+            "height_plane": {
+                "gradient_x_ppm": 0,
+                "gradient_y_ppm": 0,
+                "origin_x_mm": 0,
+                "origin_y_mm": 0,
+                "origin_z_mm": 0,
+            }
+        },
+    }
+    spacing = int(ballistic_witness(probe, parameter_record)["range_mm"])
+    pad_centers = {
+        pad: ((pad % 3) * spacing, (pad // 3) * spacing)
+        for pad in range(9)
+    }
+    blocked_pad = 4
     edges: list[dict[str, Any]] = []
     for pad in range(9):
         source = f"h:pad:{pad}"
         for action_index in range(192):
-            advance = 1 + action_index % 3
-            destination = pad + advance
-            inside = destination < 9
-            target = f"h:pad:{destination}" if inside else source
             action = _hopper_action(action_index)
+            launch_x, launch_y = pad_centers[pad]
             terrain = {
-                "arc_clearance_slack_mm": 20 if inside else -1,
-                "arc_inside_map": inside,
-                "arc_known": True,
-                "landing_footprint_clearance_mm": 20,
-                "landing_height_error_mm": 0,
+                "geometry_schema_version": "g2-hopper-small-map/v2",
+                "height_plane": probe["terrain"]["height_plane"],
                 "landing_height_tolerance_mm": 50,
-                "landing_halfwidth_mm": 5000,
+                "landing_pad_polygon_mm": square_polygon(0, 0, 2000),
                 "landing_sigma_mm": 289,
-                "landing_slope_cdeg": 0,
-                "launch_clearance_mm": 20,
+                "landing_surface_plane": probe["terrain"]["height_plane"],
+                "map_bounds_mm": [
+                    -500,
+                    -500,
+                    2 * spacing + 500,
+                    2 * spacing + 500,
+                ],
+                "obstacle_polygons_mm": [],
+                "obstacle_prisms": [],
+                "unknown_polygons_mm": [],
             }
-            decision = evaluate_hopper(
-                {
-                    "action": action,
-                    "numeric_state": "decided",
-                    "terrain": terrain,
-                    "touchdown_speed_mm_s": int(action["speed_mm_s"]),
-                },
-                parameter_record,
+            oracle_input = {
+                "action": action,
+                "launch_pose_mm": [launch_x, launch_y, 0],
+                "numeric_state": "decided",
+                "terrain": terrain,
+            }
+            landing = ballistic_witness(oracle_input, parameter_record)
+            landing_xy = (
+                int(landing["landing_x_mm"]),
+                int(landing["landing_y_mm"]),
             )
-            accepted = inside and bool(decision["oracle_safe"])
+            destination = min(
+                pad_centers,
+                key=lambda candidate: (
+                    math.hypot(
+                        landing_xy[0] - pad_centers[candidate][0],
+                        landing_xy[1] - pad_centers[candidate][1],
+                    ),
+                    candidate,
+                ),
+            )
+            target_center = pad_centers[destination]
+            terrain["landing_pad_polygon_mm"] = square_polygon(
+                target_center[0], target_center[1], 2000
+            )
+            if destination == blocked_pad:
+                terrain["obstacle_polygons_mm"] = [
+                    square_polygon(
+                        target_center[0], target_center[1], 100
+                    )
+                ]
+            decision = evaluate_hopper(oracle_input, parameter_record)
+            accepted = bool(decision["oracle_safe"])
+            target = f"h:pad:{destination}"
             edges.append(
                 _edge(
                     f"h-e-{pad}-{action_index}",
                     source,
                     target,
                     accepted=accepted,
-                    cost_milli=500 + int(action["speed_index"]) * 125,
+                    cost_milli=round(
+                        int(landing["flight_time_us"]) / 1000
+                        + int(action["speed_mm_s"]) / 2
+                    ),
                     reason=None if accepted else str(decision["oracle_reason_code"]),
-                    slack=int(decision["safety_slacks"].get("arc_clearance_mm", -1)),
+                    slack=_minimum_decision_slack(decision),
+                    oracle_input=oracle_input,
+                    oracle_decision=decision,
+                    action_source=action,
                 )
             )
     return {
-        "schema_version": "g2-finite-graph/v1",
+        "schema_version": "g2-finite-graph/v2",
         "platform_kind": "hopper",
         "nodes": nodes,
         "candidate_edges": edges,
         "expected_node_count": 9,
         "expected_candidate_edge_count": 1728,
-        "node_envelope": {"landing_pad": 9},
-        "action_envelope": {"per_node": 192},
+        "node_envelope": {
+            "landing_pad": 9,
+            "pad_centers_mm": [
+                [pad, *pad_centers[pad]] for pad in range(9)
+            ],
+        },
+        "action_envelope": {
+            "actions": [_hopper_action(index) for index in range(192)],
+            "per_node": 192,
+        },
+        "hopper_parameter_record_sha256": sha256_bytes(
+            canonical_json_bytes(parameter_record)
+        ),
+        "oracle_source_sha256": _source_sha("oracle_hopper.py"),
+        "profile_or_parameter_record_sha256": sha256_bytes(
+            canonical_json_bytes(parameter_record)
+        ),
+        "specification_sha256": sha256_bytes(
+            canonical_json_bytes(specification)
+        ),
     }, "h:pad:0", "h:pad:8"
 
 
@@ -545,10 +834,10 @@ def build_all_optima(
     *,
     hopper_parameter_record: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    del specification
-    wheel_graph, wheel_start, wheel_goal = _wheel_small_map()
-    legged_graph, legged_start, legged_goal = _legged_small_map()
+    wheel_graph, wheel_start, wheel_goal = _wheel_small_map(specification)
+    legged_graph, legged_start, legged_goal = _legged_small_map(specification)
     hopper_graph, hopper_start, hopper_goal = _hopper_small_map(
+        specification,
         hopper_parameter_record
     )
     return {

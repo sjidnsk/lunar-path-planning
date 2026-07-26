@@ -7,39 +7,17 @@ from typing import Any, Iterable
 
 from producer.generate_cases import generate_all_cases
 from producer.models import make_case_identity, validate_truth_blind_case
-from producer.oracle_hopper import evaluate_hopper
+from producer.oracle_hopper import build_hopper_parameter_record, evaluate_hopper
 from producer.oracle_legged import evaluate_legged
-from producer.oracle_wheel import evaluate_wheel
+from producer.oracle_wheel import evaluate_wheel, wheel_sweep_points
+from producer.geometry import point_in_polygon_closed
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _hopper_record() -> dict[str, object]:
-    return {
-        "schema_version": "g2-hopper-candidate/v1",
-        "parameter_set_id": "hopper-generic-internal-proxy/v1",
-        "body_envelope_radius_m": "0.375",
-        "launch_reference_height_m": "0.750",
-        "arc_clearance_margin_m": "0.125",
-        "landing_footprint_radius_m": "0.625",
-        "stop_condition": {
-            "model_id": "touchdown-speed-upper-bound/v1",
-            "max_touchdown_speed_m_s": "2.500",
-            "evaluator_source_sha256": "1" * 64,
-        },
-        "energy_model": {
-            "model_id": "quadratic-normalized-speed/v1",
-            "reference_speed_m_s": "2.500",
-            "max_energy_decimal": "1.000000",
-            "evaluator_source_sha256": "2" * 64,
-        },
-        "evidence_class": "candidate_engineering_proxy",
-        "simulation_proxy": True,
-        "physical_capability_claimed": False,
-        "formal_evidence_eligible": False,
-        "status": "pending_external_evidence",
-    }
+    return build_hopper_parameter_record(ROOT)
 
 
 def _all_keys(value: Any) -> Iterable[str]:
@@ -118,9 +96,13 @@ def test_curved_sweep_between_endpoint_counterexample_is_not_accepted() -> None:
         row
         for row in rows
         if row["stratum"] == "anti_alias"
-        and row["case"]["terrain"]["sweep_clearance_mm"] < 0
+        and evaluate_wheel(row["case"])["oracle_reason_code"]
+        == "G2I_W_CLOSED_OBSTACLE_CONTACT"
     )
-    assert between["case"]["terrain"]["endpoint_cells_clear"] is True
+    sweep = wheel_sweep_points(between["case"])
+    polygon = between["case"]["terrain"]["obstacle_polygons_mm"][0]
+    assert point_in_polygon_closed(sweep[0], polygon) is False
+    assert point_in_polygon_closed(sweep[-1], polygon) is False
     result = evaluate_wheel(between["case"])
     assert result["oracle_safe"] is False
     assert result["oracle_reason_code"] == "G2I_W_CLOSED_OBSTACLE_CONTACT"

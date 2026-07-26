@@ -17,6 +17,7 @@ from producer.finite_graph import (
     verify_optimum_record,
 )
 from producer.generate_requests import generate_request_pool, select_requests
+from producer.oracle_hopper import build_hopper_parameter_record
 from producer.package_bundle import build_fixture_bundle
 
 
@@ -24,30 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _hopper_record() -> dict[str, object]:
-    return {
-        "schema_version": "g2-hopper-candidate/v1",
-        "parameter_set_id": "hopper-generic-internal-proxy/v1",
-        "body_envelope_radius_m": "0.375",
-        "launch_reference_height_m": "0.750",
-        "arc_clearance_margin_m": "0.125",
-        "landing_footprint_radius_m": "0.625",
-        "stop_condition": {
-            "model_id": "touchdown-speed-upper-bound/v1",
-            "max_touchdown_speed_m_s": "2.500",
-            "evaluator_source_sha256": "1" * 64,
-        },
-        "energy_model": {
-            "model_id": "quadratic-normalized-speed/v1",
-            "reference_speed_m_s": "2.500",
-            "max_energy_decimal": "1.000000",
-            "evaluator_source_sha256": "2" * 64,
-        },
-        "evidence_class": "candidate_engineering_proxy",
-        "simulation_proxy": True,
-        "physical_capability_claimed": False,
-        "formal_evidence_eligible": False,
-        "status": "pending_external_evidence",
-    }
+    return build_hopper_parameter_record(ROOT)
 
 
 def _small_graph() -> dict[str, Any]:
@@ -169,6 +147,7 @@ def test_request_pool_and_hash_ranked_selection_have_exact_provider_blind_mix() 
         "hopper": "c" * 64,
     }
     lola = {
+        "fixture_only": True,
         "jp2_sha256": "fff7c2017a192788066a0867d78fd1ccf783216e26974b5e65287669aa472bac",
         "lbl_sha256": "9318f41503c7d02251ed643e6dd74b737d76378be49cd492c3abb9e05d431aaa",
         "macro_source_kind": "derived_lola_20m_macro_interpolation",
@@ -274,6 +253,8 @@ def test_full_fixture_bundle_is_hash_bound_formally_ineligible_and_auditable(
     )
     assert freeze["counts"] == {
         "primitive_labels": 10002,
+        "raw_request_pool": 1056,
+        "repeat_mapping": 645,
         "requests": 129,
         "small_map_optima": 3,
     }
