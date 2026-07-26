@@ -28,6 +28,11 @@ import numpy as np
 import xunce_artifact_io as artifact_io
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PATH_PLANNER_SRC = REPO_ROOT / "path-planner" / "src"
+if str(PATH_PLANNER_SRC) not in sys.path:
+    sys.path.insert(0, str(PATH_PLANNER_SRC))
+
 SCALE_PROFILE = "midterm_reduced_w8x3_update80/v1"
 CONFIG_SCHEMA_VERSION = "xunce-mid-dual-g2-planning-time-config/v1"
 INPUT_AUDIT_SCHEMA_VERSION = "xunce-mid-dual-g2-input-audit/v1"
@@ -948,7 +953,11 @@ def _provider_request_payload(
             "request_id": row["request_id"],
             "resource_budget": {
                 "max_expanded_states": max_path_primitives * 64,
-                "max_memory_bytes": max_path_primitives * 262144,
+                "max_memory_bytes": (
+                    536_870_912
+                    if platform == "hopper"
+                    else max_path_primitives * 262144
+                ),
                 "max_route_states": max_path_primitives + 1,
             },
             "start_state": {
@@ -2005,6 +2014,410 @@ def materialize_execution_bundle(
     return manifest
 
 
+def _provider_fine_snapshot(
+    provider_request: Mapping[str, object],
+    terrain_payload: bytes,
+):
+    """Convert one audited neutral terrain blob to the fixed 0.5 m v2 grid.
+
+    The source representation remains immutable.  Kilometer-scale 20 m macro
+    elevations are bilinearly projected to the v2 fine grid, while categorical
+    obstacle/known/confidence layers are expanded without inventing physical
+    obstacle claims.
+    """
+
+    from path_planner.v2.terrain import (
+        FineGridGeometryV2,
+        TerrainProvenanceV2,
+        TerrainSnapshotV2,
+    )
+
+    terrain_binding = provider_request.get("terrain_binding")
+    if type(terrain_binding) is not dict:
+        _fail("provider_terrain_binding_invalid")
+    if _sha256(terrain_payload) != terrain_binding.get("terrain_sha256"):
+        _fail("provider_terrain_sha256_mismatch")
+    arrays, metadata, geometry_sha256 = _decode_truth_terrain(terrain_payload)
+    if (
+        geometry_sha256 != terrain_binding.get("terrain_geometry_sha256")
+        or metadata.get("geometry_schema_version")
+        != terrain_binding.get("geometry_schema_version")
+        or metadata.get("macro_cell_size_mm")
+        != terrain_binding.get("macro_cell_size_mm")
+        or metadata.get("sub_20m_layer_source_kind")
+        != terrain_binding.get("sub_20m_layer_source_kind")
+        or metadata.get("provenance", {}).get(
+            "physical_obstacle_cells_written"
+        )
+        is not False
+        or terrain_binding.get("physical_obstacle_cells_written") is not False
+    ):
+        _fail("provider_terrain_binding_mismatch")
+    height, width = arrays["height_mm"].shape
+    if (
+        terrain_binding.get("height") != height
+        or terrain_binding.get("width") != width
+    ):
+        _fail("provider_terrain_shape_mismatch")
+    macro_mm = metadata.get("macro_cell_size_mm")
+    if type(macro_mm) is not int or macro_mm <= 0 or macro_mm % 500 != 0:
+        _fail("provider_terrain_resolution_invalid")
+    expansion = macro_mm // 500
+    fine_height = height * expansion
+    fine_width = width * expansion
+    macro_resolution_m = macro_mm / 1000.0
+    fine_resolution_m = 0.5
+    macro_x = (np.arange(width, dtype="<f8") + 0.5) * macro_resolution_m
+    macro_y = (np.arange(height, dtype="<f8") + 0.5) * macro_resolution_m
+    fine_x = (np.arange(fine_width, dtype="<f8") + 0.5) * fine_resolution_m
+    fine_y = (np.arange(fine_height, dtype="<f8") + 0.5) * fine_resolution_m
+    macro_elevation = arrays["height_mm"].astype("<f8") / 1000.0
+    interpolated_x = np.vstack(
+        [
+            np.interp(
+                fine_x,
+                macro_x,
+                macro_elevation[row_index],
+            )
+            for row_index in range(height)
+        ]
+    )
+    elevation_m = np.ascontiguousarray(
+        np.vstack(
+            [
+                np.interp(
+                    fine_y,
+                    macro_y,
+                    interpolated_x[:, column_index],
+                )
+                for column_index in range(fine_width)
+            ]
+        ).T,
+        dtype="<f8",
+    )
+    gradient_y, gradient_x = np.gradient(
+        elevation_m,
+        fine_resolution_m,
+        fine_resolution_m,
+    )
+    slope_deg = np.ascontiguousarray(
+        np.degrees(np.arctan(np.hypot(gradient_x, gradient_y))),
+        dtype="<f8",
+    )
+    cell_class = np.repeat(
+        np.repeat(arrays["cell_class"], expansion, axis=0),
+        expansion,
+        axis=1,
+    )
+    known = np.repeat(
+        np.repeat(arrays["known"], expansion, axis=0),
+        expansion,
+        axis=1,
+    ).astype(bool)
+    confidence = np.ascontiguousarray(
+        np.repeat(
+            np.repeat(arrays["confidence_ppm"], expansion, axis=0),
+            expansion,
+            axis=1,
+        ).astype("<f8")
+        / 1_000_000.0,
+        dtype="<f8",
+    )
+    hard_obstacle = np.ascontiguousarray(cell_class == 2, dtype=bool)
+    traversable = np.ascontiguousarray(
+        known & ~hard_obstacle & (slope_deg <= 30.0),
+        dtype=bool,
+    )
+    source_kind = metadata.get("provenance", {}).get("source_kind")
+    if type(source_kind) is not str or not source_kind:
+        macro_kind = metadata.get("provenance", {}).get("macro_source_kind")
+        micro_kind = metadata.get("provenance", {}).get("micro_source_kind")
+        if type(macro_kind) is not str or type(micro_kind) is not str:
+            _fail("provider_terrain_provenance_invalid")
+        source_kind = f"{macro_kind}+{micro_kind}"
+    terrain_sha256 = str(terrain_binding["terrain_sha256"])
+    return TerrainSnapshotV2(
+        geometry=FineGridGeometryV2(
+            width=fine_width,
+            height=fine_height,
+            resolution_m=0.5,
+        ),
+        elevation_m=elevation_m,
+        slope_deg=slope_deg,
+        traversable_mask=traversable,
+        hard_obstacle_mask=hard_obstacle,
+        observed_mask=np.ascontiguousarray(known, dtype=bool),
+        confidence=confidence,
+        provenance=TerrainProvenanceV2(
+            source_kind=source_kind,
+            source_id=f"g2-neutral-terrain-{terrain_sha256[:24]}",
+            source_hash=terrain_sha256,
+            physical_obstacle_cells_written=False,
+            details=(
+                ("macro_cell_size_mm", macro_mm),
+                (
+                    "sub_20m_layer_source_kind",
+                    str(
+                        metadata.get("sub_20m_layer_source_kind")
+                        or "not-applicable"
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def decode_provider_execution_request(
+    provider_request: Mapping[str, object],
+    terrain_payload: bytes,
+):
+    """Validate and decode exactly one Task 7 provider request.
+
+    This is intentionally the timed worker's input-validation boundary.  It
+    accepts data, never import paths, and rechecks both the one-way provider
+    request hash and the formal v2 request codec.
+    """
+
+    from path_planner.v2.contracts import (
+        AcceleratorPolicyV2,
+        ObjectiveProfileV2,
+        PlanningRequestV2,
+        PoseStateV2,
+        ResourceBudgetV2,
+    )
+    from path_planner.v2.formal_request_codec import (
+        decode_formal_request_v2,
+        encode_formal_request_v2,
+    )
+
+    if type(provider_request) is not dict:
+        _fail("provider_request_not_object")
+    _reject_provider_truth_leak(provider_request)
+    required = {
+        "schema_version",
+        "request_id",
+        "platform",
+        "scale",
+        "platform_stack",
+        "canonical_request_metadata",
+        "terrain_binding",
+        "provider_request_sha256",
+    }
+    if set(provider_request) != required:
+        _fail("provider_request_schema_invalid")
+    platform = provider_request.get("platform")
+    if (
+        provider_request.get("schema_version")
+        != PROVIDER_REQUEST_SCHEMA_VERSION
+        or platform not in G2_PLATFORMS
+        or provider_request.get("platform_stack") != PLATFORM_STACKS[platform]
+    ):
+        _fail("provider_request_stack_invalid")
+    request_sha256 = _require_sha256(
+        provider_request.get("provider_request_sha256"),
+        "provider_request_sha256_invalid",
+    )
+    envelope = {
+        key: value
+        for key, value in provider_request.items()
+        if key != "provider_request_sha256"
+    }
+    expected_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-provider-request/v1",
+        _canonical_json_bytes(envelope),
+        terrain_payload,
+    )
+    if request_sha256 != expected_sha256:
+        _fail("provider_request_sha256_mismatch")
+    snapshot = _provider_fine_snapshot(provider_request, terrain_payload)
+    metadata = provider_request.get("canonical_request_metadata")
+    if type(metadata) is not dict:
+        _fail("provider_request_metadata_invalid")
+    expected_metadata_keys = {
+        "accelerator_policy",
+        "determinism_seed",
+        "goal_state",
+        "objective_profile",
+        "platform_profile_id",
+        "request_id",
+        "resource_budget",
+        "start_state",
+        "timeout_s",
+    }
+    if (
+        set(metadata) != expected_metadata_keys
+        or metadata.get("request_id") != provider_request.get("request_id")
+        or metadata.get("platform_profile_id")
+        != PLATFORM_STACKS[platform]["profile_id"]
+    ):
+        _fail("provider_request_metadata_invalid")
+    try:
+        request = PlanningRequestV2(
+            request_id=str(metadata["request_id"]),
+            platform_profile_id=str(metadata["platform_profile_id"]),
+            start_state=PoseStateV2(**metadata["start_state"]),
+            goal_state=PoseStateV2(**metadata["goal_state"]),
+            terrain_snapshot=snapshot,
+            objective_profile=ObjectiveProfileV2(
+                **metadata["objective_profile"]
+            ),
+            resource_budget=ResourceBudgetV2(
+                **metadata["resource_budget"]
+            ),
+            timeout_s=metadata["timeout_s"],
+            accelerator_policy=AcceleratorPolicyV2(
+                metadata["accelerator_policy"]
+            ),
+            determinism_seed=metadata["determinism_seed"],
+        )
+        artifact = encode_formal_request_v2(request)
+        decoded = decode_formal_request_v2(artifact)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise G2InputContractError(
+            "provider_request_codec_invalid",
+            type(exc).__name__,
+        ) from exc
+    if (
+        decoded.request_id != provider_request["request_id"]
+        or decoded.platform_profile_id
+        != PLATFORM_STACKS[platform]["profile_id"]
+    ):
+        _fail("provider_request_codec_binding_mismatch")
+    return decoded
+
+
+def build_approved_platform_execution_stack(
+    platform: str,
+    request: object,
+) -> dict[str, object]:
+    """Instantiate only the three frozen provider/profile/L2 stacks."""
+
+    from time import monotonic
+
+    from path_planner.v2.contracts import PlanningRequestV2, PlatformKindV2
+    from path_planner.v2.hopper_api import dispatch_hopper_provider_v2
+    from path_planner.v2.hopper_authority import (
+        HOPPER_GENERIC_INTERNAL_SIMULATION_PROXY_PARAMETER_SET_ID_V1,
+        HopperProviderAuthorityV2,
+        hopper_generic_internal_simulation_proxy_midterm_v1,
+    )
+    from path_planner.v2.profiles import (
+        LEGGED_STATIC_CRAWL_CAPABILITY_REVISION_V2,
+        WHEEL_KINEMATIC_CORRIDOR_SQP_CAPABILITY_V2,
+        LeggedProfileV2,
+        PlatformProfileV2,
+        WheelKinematicSQPProfileV2,
+    )
+    from path_planner.v2.providers import (
+        HopperPrimitiveProviderV2,
+        LeggedPrimitiveProviderV2,
+        WheelKinematicSQPProviderV2,
+    )
+    from path_planner.v2.runtime import PlanningDeadlineV2
+    from path_planner.v2.terrain import FineSafetyAnchorV2
+    from path_planner.v2.validation import validate_legged_route_l2
+    from path_planner.v2.hopper_route_validation import (
+        validate_hopper_route_l2,
+    )
+    from path_planner.v2.wheel_sqp_api import dispatch_wheel_sqp_provider_v2
+
+    if platform not in G2_PLATFORMS or type(request) is not PlanningRequestV2:
+        _fail("provider_stack_request_invalid")
+    if request.platform_profile_id != PLATFORM_STACKS[platform]["profile_id"]:
+        _fail("provider_stack_profile_identity_mismatch")
+    if platform == "wheel":
+        profile = PlatformProfileV2(
+            profile_id="scout-mini-wheel-kinematic-sqp/v1",
+            platform_kind=PlatformKindV2.WHEEL,
+            capability_revision=(
+                WHEEL_KINEMATIC_CORRIDOR_SQP_CAPABILITY_V2
+            ),
+            simulation_proxy=False,
+            max_traversable_slope_deg=30.0,
+            goal_position_tolerance_m=0.25,
+            goal_heading_tolerance_rad=0.08726646259971647,
+        )
+        execution_profile = WheelKinematicSQPProfileV2(profile=profile)
+        profile = execution_profile.profile
+        provider = WheelKinematicSQPProviderV2(execution_profile)
+        l2_validator = None
+
+        def plan():
+            return dispatch_wheel_sqp_provider_v2(
+                request,
+                profile,
+                provider,
+                anchor,
+                deadline,
+            )
+
+    elif platform == "legged":
+        profile = PlatformProfileV2(
+            profile_id=(
+                "legged-static-crawl-simulation-proxy-midterm/v1"
+            ),
+            platform_kind=PlatformKindV2.LEGGED,
+            capability_revision=LEGGED_STATIC_CRAWL_CAPABILITY_REVISION_V2,
+            simulation_proxy=True,
+            max_traversable_slope_deg=30.0,
+            goal_position_tolerance_m=0.0,
+            goal_heading_tolerance_rad=0.0,
+        )
+        execution_profile = LeggedProfileV2(profile=profile)
+        provider = LeggedPrimitiveProviderV2(execution_profile)
+        l2_validator = validate_legged_route_l2
+
+        def plan():
+            return provider.plan(request, anchor, deadline)
+
+    else:
+        execution_profile = (
+            hopper_generic_internal_simulation_proxy_midterm_v1()
+        )
+        profile = execution_profile.profile
+        authority = HopperProviderAuthorityV2(
+            hopper_profile=execution_profile,
+            parameter_set_id=(
+                HOPPER_GENERIC_INTERNAL_SIMULATION_PROXY_PARAMETER_SET_ID_V1
+            ),
+            authority_schema_version="hopper-provider-authority/v1",
+        )
+        provider = HopperPrimitiveProviderV2(authority)
+        l2_validator = validate_hopper_route_l2
+
+        def plan():
+            return dispatch_hopper_provider_v2(
+                request,
+                profile,
+                provider,
+                anchor,
+                deadline,
+            )
+
+    anchor = FineSafetyAnchorV2(request.terrain_snapshot)
+    started = monotonic()
+    deadline = PlanningDeadlineV2(
+        started,
+        started + request.timeout_s,
+        monotonic,
+    )
+    if (
+        profile.profile_id != PLATFORM_STACKS[platform]["profile_id"]
+        or profile.max_traversable_slope_deg != 30.0
+    ):
+        _fail("provider_stack_contract_drift")
+    return {
+        "platform": platform,
+        "profile": profile,
+        "execution_profile": execution_profile,
+        "provider": provider,
+        "anchor": anchor,
+        "deadline": deadline,
+        "l2_validator": l2_validator,
+        "plan": plan,
+    }
+
+
 def _load_config(path: str | Path) -> dict[str, object]:
     if not artifact_io.path_is_file(path):
         _fail("g2_config_missing")
@@ -2142,7 +2555,9 @@ __all__ = [
     "audit_small_map_optima",
     "audit_source_separation",
     "audit_truth_bundle",
+    "build_approved_platform_execution_stack",
     "build_execution_crosswalk",
+    "decode_provider_execution_request",
     "materialize_execution_bundle",
     "preflight",
     "resolve_hopper_formal_eligibility",
