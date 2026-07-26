@@ -5,8 +5,11 @@ from __future__ import annotations
 import ast
 import copy
 import hashlib
+import importlib
 import inspect
+import json
 import os
+import sys
 from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
@@ -38,6 +41,17 @@ from lunar_exploration_ppo.utils.artifact_io import ArtifactStore
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs/ppo_highres_frontier_stage6_v1.json"
+G1_CONFIG = ROOT / "configs/xunce_mid_dual_g1_coverage_v1.json"
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+
+def _g1_runner():
+    try:
+        return importlib.import_module("run_xunce_mid_dual_g1_coverage")
+    except ModuleNotFoundError:
+        pytest.fail("Task 5 G1 runner is not implemented")
 
 
 @lru_cache(maxsize=1)
@@ -1050,4 +1064,336 @@ def test_reduced_trace_rejects_schema_extensions_and_noncanonical_lanes(
             replace(execution, episode_rows=tuple(episode_rows)),
             frozen,
             job_plan,
+        )
+
+
+_RUNNER_HASH_A = "a" * 64
+_RUNNER_HASH_B = "b" * 64
+_RUNNER_HASH_C = "c" * 64
+_RUNNER_HASH_D = "d" * 64
+
+
+def _runner_episode_rows(
+    split: str,
+    covered_counts: list[int],
+    *,
+    denominator_count: int = 100,
+    safety_violation_count: int = 0,
+    masked_action_count: int = 0,
+) -> list[dict[str, object]]:
+    runner = _g1_runner()
+    return [
+        runner.make_g1_coverage_episode_row(
+            run_id="g1-fixture-run",
+            split=split,
+            episode_index=index,
+            scenario_id=f"{split}/scenario-{index:02d}/standard-proxy/v1",
+            config_sha256=_RUNNER_HASH_A,
+            input_sha256=_RUNNER_HASH_B,
+            code_sha256=_RUNNER_HASH_C,
+            scenario_manifest_sha256=_RUNNER_HASH_D,
+            denominator_sha256=hashlib.sha256(
+                f"{split}:mask:{index}".encode("utf-8")
+            ).hexdigest(),
+            denominator_cell_count=denominator_count,
+            initial_covered_cell_count=0,
+            final_covered_cell_count=covered_count,
+            elapsed_ms=0.0,
+            steps_executed=1,
+            termination_reason=(
+                "success_done"
+                if covered_count >= 99
+                else "failure_done"
+            ),
+            safety_violation_count=safety_violation_count,
+            masked_action_count=masked_action_count,
+        )
+        for index, covered_count in enumerate(covered_counts)
+    ]
+
+
+def test_g1_config_pins_update80_and_rejects_any_override(
+    tmp_path: Path,
+) -> None:
+    runner = _g1_runner()
+    payload = json.loads(G1_CONFIG.read_text(encoding="utf-8"))
+    validated = runner.validate_g1_config_payload(payload)
+
+    assert validated["checkpoint"] == {
+        "update": 80,
+        "path": (
+            "D:/xunce/out/ppo_frontier/"
+            "s6-standard-single-r1-20260724T000124Z/s6/"
+            "checkpoints/seed-20260716/update-00000080/checkpoint.pt"
+        ),
+        "sha256": (
+            "35e04c86f9f973af028fb08f0175d42ab45378d09e1f2b96ee6aad6e4c12b5b5"
+        ),
+        "policy_state_sha256": (
+            "3123e6adde99be41e3bd5cc2f3843068e5416892395926d759c2c6a243ffd381"
+        ),
+        "device": "cuda",
+        "dtype": "float32",
+    }
+    assert validated["execution"]["worker_count"] == 8
+    assert validated["execution"]["lane_sizes"] == [3] * 8
+    assert validated["execution"]["max_steps"] == 128
+    assert validated["execution"]["environment_success_threshold"] == 0.99
+
+    for field, value in (
+        ("path", "D:/other/checkpoint.pt"),
+        ("sha256", "0" * 64),
+        ("policy_state_sha256", "1" * 64),
+        ("device", "cpu"),
+        ("dtype", "float64"),
+    ):
+        drifted = copy.deepcopy(payload)
+        drifted["checkpoint"][field] = value
+        with pytest.raises(runner.G1Blocked, match="g1_config_drift"):
+            runner.validate_g1_config_payload(drifted)
+
+
+def test_g1_dry_run_uses_three_validation_scenes_only() -> None:
+    runner = _g1_runner()
+    scenarios = (
+        "validation/scene-a/standard-proxy/v1",
+        "validation/scene-b/standard-proxy/v1",
+        "validation/scene-c/standard-proxy/v1",
+    )
+    calls: list[tuple[str, ...]] = []
+
+    audit = runner.run_validation_dry_run(
+        scenarios,
+        lambda selected: calls.append(tuple(selected))
+        or tuple(
+            {
+                "scenario_id": scenario_id,
+                "termination_reason": "success_done",
+            }
+            for scenario_id in selected
+        ),
+    )
+
+    assert calls == [scenarios]
+    assert audit["scenario_ids"] == list(scenarios)
+    assert audit["scenario_count"] == 3
+    with pytest.raises(runner.G1Blocked, match="validation3"):
+        runner.run_validation_dry_run(scenarios[:2], lambda _selected: ())
+
+
+def test_g1_q24_must_pass_before_unseen24_runs() -> None:
+    runner = _g1_runner()
+    q_rows = _runner_episode_rows(
+        "test_q24",
+        [100] * 22 + [79, 79],
+    )
+    unseen_rows = _runner_episode_rows("unseen24", [100] * 24)
+    calls: list[str] = []
+
+    result = runner.execute_formal_gate(
+        lambda split: calls.append(split)
+        or (q_rows if split == "test_q24" else unseen_rows)
+    )
+
+    assert calls == ["test_q24"]
+    assert result["summary"]["status"] == "failed"
+    assert result["summary"]["splits"]["unseen24"] is None
+    assert result["summary"]["unseen_execution_status"] == (
+        "skipped_due_to_test_q24_failure"
+    )
+    assert all(
+        row["split"] == "test_q24"
+        for row in result["rows"]
+        if row["row_kind"] == "coverage_episode"
+    )
+
+
+def test_g1_test_c24_requires_a_new_repair_lineage_and_explicit_mode(
+    tmp_path: Path,
+) -> None:
+    runner = _g1_runner()
+    lineage = tmp_path / "repair-lineage.json"
+    lineage.write_text(
+        json.dumps(
+            {
+                "schema_version": "xunce-mid-dual-g1-repair-lineage/v1",
+                "repair_id": "repair-after-q24-failure",
+                "parent_run_id": "failed-q24-run",
+                "code_sha256": _RUNNER_HASH_B,
+                "config_sha256": _RUNNER_HASH_C,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(runner.G1Blocked, match="test_c_explicit_mode_required"):
+        runner.validate_test_c_request(
+            mode="formal",
+            repair_lineage=lineage,
+            current_code_sha256=_RUNNER_HASH_A,
+            current_config_sha256=_RUNNER_HASH_D,
+        )
+    with pytest.raises(runner.G1Blocked, match="repair_lineage_required"):
+        runner.validate_test_c_request(
+            mode="test-c-confirmation",
+            repair_lineage=None,
+            current_code_sha256=_RUNNER_HASH_A,
+            current_config_sha256=_RUNNER_HASH_D,
+        )
+
+    audit = runner.validate_test_c_request(
+        mode="test-c-confirmation",
+        repair_lineage=lineage,
+        current_code_sha256=_RUNNER_HASH_A,
+        current_config_sha256=_RUNNER_HASH_D,
+    )
+    assert audit["parent_run_id"] == "failed-q24-run"
+
+    reused = json.loads(lineage.read_text(encoding="utf-8"))
+    reused["code_sha256"] = _RUNNER_HASH_A
+    reused["config_sha256"] = _RUNNER_HASH_D
+    lineage.write_text(json.dumps(reused), encoding="utf-8")
+    with pytest.raises(runner.G1Blocked, match="repair_lineage_not_new"):
+        runner.validate_test_c_request(
+            mode="test-c-confirmation",
+            repair_lineage=lineage,
+            current_code_sha256=_RUNNER_HASH_A,
+            current_config_sha256=_RUNNER_HASH_D,
+        )
+
+
+def test_g1_requires_23_of_24_and_macro_mean_for_both_thresholds() -> None:
+    runner = _g1_runner()
+
+    count_fails = runner.recompute_g1_split_summary(
+        _runner_episode_rows("test_q24", [100] * 22 + [79, 79]),
+        expected_split="test_q24",
+    )
+    assert count_fails["mean"] > 0.80
+    assert count_fails["coverage_80_count"] == 22
+    assert count_fails["g1_coverage_80_passed"] is False
+
+    mean_fails = runner.recompute_g1_split_summary(
+        _runner_episode_rows("test_q24", [99] * 23 + [98]),
+        expected_split="test_q24",
+    )
+    assert mean_fails["coverage_99_count"] == 23
+    assert mean_fails["mean"] < 0.99
+    assert mean_fails["g1_coverage_99_passed"] is False
+
+    both_pass = runner.recompute_g1_summary(
+        test_q24_rows=_runner_episode_rows(
+            "test_q24",
+            [100] * 23 + [80],
+        ),
+        unseen24_rows=_runner_episode_rows(
+            "unseen24",
+            [100] * 23 + [80],
+        ),
+    )
+    assert both_pass["g1_coverage_80_passed"] is True
+    assert both_pass["g1_coverage_99_passed"] is True
+    assert both_pass["status"] == "passed"
+
+
+def test_g1_replay_requires_identical_actions_curve_and_termination() -> None:
+    runner = _g1_runner()
+    reference = tuple(
+        {
+            "scenario_id": f"test/replay-{index}/standard-proxy/v1",
+            "actions": [
+                {
+                    "selected_candidate_index": index,
+                    "selected_theta": 0.125 * index,
+                }
+            ],
+            "coverage_curve": [0.25, 0.99],
+            "termination_reason": "success_done",
+        }
+        for index in range(3)
+    )
+    replay = copy.deepcopy(reference)
+
+    assert runner.validate_g1_replay(reference, replay)["passed"] is True
+
+    replay[1]["coverage_curve"][-1] = 0.98
+    with pytest.raises(runner.G1Blocked, match="replay_mismatch"):
+        runner.validate_g1_replay(reference, replay)
+
+
+def test_g1_results_preserve_all_low_coverage_and_failure_rows() -> None:
+    runner = _g1_runner()
+    q_rows = _runner_episode_rows("test_q24", [100] * 23 + [79])
+    unseen_rows = _runner_episode_rows("unseen24", [100] * 23 + [79])
+    result = runner.execute_formal_gate(
+        lambda split: q_rows if split == "test_q24" else unseen_rows
+    )
+    coverage_rows = [
+        row
+        for row in result["rows"]
+        if row["row_kind"] == "coverage_episode"
+    ]
+
+    assert len(coverage_rows) == 48
+    assert sum(row["coverage"] < 0.80 for row in coverage_rows) == 2
+    assert {
+        row["termination_reason"]
+        for row in coverage_rows
+        if row["coverage"] < 0.80
+    } == {"failure_done"}
+
+
+def test_g1_hidden_truth_never_enters_policy_or_candidate_input() -> None:
+    runner = _g1_runner()
+    tree = ast.parse(inspect.getsource(runner._evaluate_formal_cohort))
+    calls = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    source = inspect.getsource(runner._evaluate_formal_cohort)
+
+    assert "run_midterm_reduced_evaluation" in calls
+    assert "freeze_selection" not in source
+    assert "scenario_ids=" not in source
+    assert ".truth" not in source
+    assert "cpu" not in source.lower()
+
+
+def test_g1_missing_manifest_preflight_does_not_call_cuda_loader() -> None:
+    runner = _g1_runner()
+    called = False
+
+    def forbidden_loader(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("CUDA loader must not run")
+
+    result = runner.preflight_scenario_manifest(
+        "D:/xunce/inputs/mid_dual/missing/manifest.json",
+        loader=forbidden_loader,
+    )
+    assert result == {
+        "status": "blocked",
+        "blocking_reason": "scenario_manifest_missing",
+    }
+    assert called is False
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ("..", "g1..child", "g1/child", "g1\\child", "CON", "run."),
+)
+def test_g1_rejects_unsafe_run_ids_and_non_d_formal_input(
+    run_id: str,
+) -> None:
+    runner = _g1_runner()
+    with pytest.raises(runner.G1Blocked, match="run_id_invalid"):
+        runner._validated_run_id(run_id)
+    with pytest.raises(
+        runner.G1Blocked,
+        match="scenario_manifest_path_invalid",
+    ):
+        runner._validate_d_manifest_path(
+            "C:/xunce/inputs/mid_dual/frozen/manifest.json"
         )
