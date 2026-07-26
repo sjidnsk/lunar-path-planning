@@ -1,0 +1,17 @@
+{
+  "schema_version": "mid-dual-scenario-source-materialization/v1",
+  "catalog_split_counts": {
+    "test": 150,
+    "unseen": 64,
+    "validation": 150
+  },
+  "excluded_splits": [
+    "train"
+  ],
+  "coverage_denominator_source": "reachable_observable_free_highres_cells/v1",
+  "coverage_denominator_algorithm": "exact_reachable_safe_pose_range_los/v1",
+  "distance_bin_algorithm": "within_split_stable_rank_tertiles/v1",
+  "policy_blind_approval_id": "mid-dual-policy-blind-source-approval-20260727/v1",
+  "project_authorization_sha256": "720e11ef04ad2b57283421809a077ccf1f0b35167a9f482082241398ad0214d2",
+  "publication_mode": "data_files_then_completion_manifest/v1"
+}

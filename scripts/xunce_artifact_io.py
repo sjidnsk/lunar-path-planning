@@ -52,6 +52,14 @@ def read_bytes(path: str | Path) -> bytes:
         return handle.read()
 
 
+def write_bytes(path: str | Path, payload: bytes) -> None:
+    if type(payload) is not bytes:
+        raise TypeError("binary artifact payload must be exact bytes")
+    ensure_parent(path)
+    with open(windows_safe_path(path), "wb") as handle:
+        handle.write(payload)
+
+
 def write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -> None:
     ensure_parent(path)
     with open(windows_safe_path(path), "w", encoding=encoding) as handle:
