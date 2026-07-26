@@ -1,11 +1,11 @@
-# 未知环境自主探索与路径规划双门槛实验设计（三分之一规模）
+# 未知环境自主探索与路径规划双门槛实验设计（缩减规模）
 
 ## 状态
 
 - 设计日期：2026-07-26
-- 设计状态：已确认，2026-07-26 按用户要求缩减到原方案约三分之一
+- 设计状态：已确认，2026-07-26 按用户要求缩减到原方案约三分之一，其中 G1 按 8 worker 整组上取为 24 场景/split
 - 当前阶段：仅固化实验与验收设计，尚未进入实现和正式运行
-- 规模合同：`midterm_one_third_update80/v1`
+- 规模合同：`midterm_reduced_w8x3_update80/v1`
 - 适用指标：
   - 未知环境自主探索覆盖率：中期不低于 80%，完成时不低于 99%
   - 路径规划处理时间：中期不高于 2 s，完成时不高于 1 s
@@ -21,7 +21,7 @@
 - PPO High-Resolution Frontier Stage 6 的 update 80 验证记录在 16 个验证场景上给出平均最终覆盖率约 0.9910、固定预算成功率 1.0。本设计固定使用该 update 80，不等待 update 100。该结果来自验证集，正式 Test 和 Unseen 评价尚未完成，不能直接认定覆盖率指标通过。
 - Path Planner v2 Gate 6 已定义 2 s 硬超时、Standard P95 不高于 250 ms 和 Kilometer P95 不高于 750 ms 的工程目标，但正式配置仍因独立标签、独立最优解和正式请求清单缺失而处于 blocked 状态。
 
-本设计的目标是复用上述技术基础，建立一次设计、两级门槛、分项资格试验和闭环交叉核验相结合的中期缩减规模实验链。场景数和规划请求数在接触正式结果前一次性冻结为原方案约三分之一；正式结果产生后不得继续缩小场景、更换分母、删除慢样本或混合平台结果来制造达标结论。
+本设计的目标是复用上述技术基础，建立一次设计、两级门槛、分项资格试验和闭环交叉核验相结合的中期缩减规模实验链。规划请求数和 G3 总运行数冻结为原方案约三分之一；G1 为适配 8 worker × 3 场景的均衡执行合同，固定为每个正式 split 24 场景，即原规模的 37.5%。正式结果产生后不得继续缩小场景、更换分母、删除慢样本或混合平台结果来制造达标结论。
 
 ## 2. 范围与硬边界
 
@@ -33,7 +33,7 @@
 2. G2 轮式、足式和飞跃式平台路径规划处理时间资格试验。
 3. G3 三模块闭环交叉核验。
 4. 双门槛汇总、证据复算和结果路由。
-5. 形成三分之一规模的中期技术资格证据；该证据不得表述为原每个正式 split 64 场景/1950 次规划调用方案的全规模替代。
+5. 形成缩减规模的中期技术资格证据；该证据不得表述为原每个正式 split 64 场景/1950 次规划调用方案的全规模替代。
 
 ### 2.2 不在范围内
 
@@ -68,12 +68,12 @@
 总体判定为：
 
 ```text
-midterm_one_third_gate_passed =
+midterm_reduced_gate_passed =
   g1_coverage_80_passed
   AND g2_all_platforms_2s_passed
   AND g3_midterm_crosscheck_passed
 
-final_threshold_one_third_gate_passed =
+final_threshold_reduced_gate_passed =
   g1_coverage_99_passed
   AND g2_all_platforms_1s_passed
   AND g3_final_crosscheck_passed
@@ -81,20 +81,20 @@ final_threshold_one_third_gate_passed =
 
 G3 不替代 G1 或 G2。G3 失败时，G1 和 G2 的独立结果仍保留，但不得形成“系统闭环同时满足双门槛”的结论。
 
-### 3.1 三分之一规模与一天执行边界
+### 3.1 缩减规模与一天执行边界
 
-本版按下列整数合同实现原方案约三分之一规模：
+本版按下列整数合同实现约三分之一工作量，并对 G1 作 8-worker 均衡上取：
 
-- G1 首次正式评价为 Test-Q21 和 Unseen-21，共 42 个 episode；失败确认集为 Test-C21。
+- G1 首次正式评价为 Test-Q24 和 Unseen-24，共 48 个 episode；失败确认集为 Test-C24。
 - G2 为 3 个平台、每个平台 43 个请求、每个请求 5 次重复，共 645 次正式规划调用。
 - G3 为 10 个轮式闭环 episode，并对足式和飞跃式各执行 3 次短接口回放。
 - 80%/2 s、99%/1 s、安全约束、失败语义、统计方法和证据完整性要求不随规模缩减。
 
-对应首轮规模比例为：G1 `42/128=32.8125%`，G2 `645/1950≈33.08%`，G3 `16/48=33.3333%`。Test-C21 只属于失败后的独立确认分支，不计入首轮规模。
+对应首轮规模比例为：G1 `48/128=37.5%`，G2 `645/1950≈33.08%`，G3 `16/48=33.3333%`。Test-C24 只属于失败后的独立确认分支，不计入首轮规模。G1 采用 8 条 lane 各 3 个场景的均衡分配；相对非均衡整数取整方案不增加 worker 执行轮次。
 
-`final_threshold_one_third_gate_passed` 只表示同一三分之一规模实验达到了 99%/1 s 数值阈值，不等同于项目全规模完成验收。所有结果、字段和报告都必须同时携带规模合同，不得生成省略 `one_third` 限定的通过别名。
+`final_threshold_reduced_gate_passed` 只表示同一缩减规模实验达到了 99%/1 s 数值阈值，不等同于项目全规模完成验收。所有结果、字段和报告都必须同时携带规模合同，不得生成省略 `reduced` 限定的通过别名。
 
-在 update 80、正式输入、runner 和缓存均已就绪且无失败重跑的前提下，正式运行预计需要 14～18 小时，按不超过 20 小时的连续窗口排期。该时间预算不包含 G2 独立输入生产、runner 实现、缺陷修复或 Test-Q21 失败后的 Test-C21 重跑。G2 正式计时期间禁止并发运行训练、覆盖率评价或其他高负载任务。
+在 update 80、正式输入、runner 和缓存均已就绪且无失败重跑的前提下，正式运行预计需要 14～18 小时，按不超过 20 小时的连续窗口排期。该时间预算不包含 G2 独立输入生产、runner 实现、缺陷修复或 Test-Q24 失败后的 Test-C24 重跑。G2 正式计时期间禁止并发运行训练、覆盖率评价或其他高负载任务。
 
 ## 4. 正式运行冻结合同
 
@@ -118,7 +118,7 @@ G3 不替代 G1 或 G2。G3 失败时，G1 和 G2 的独立结果仍保留，但
 - policy state SHA-256：`3123e6adde99be41e3bd5cc2f3843068e5416892395926d759c2c6a243ffd381`
 - 选择依据：update 80 在 16 个 Validation 场景上的 `success_rate_under_fixed_step_budget=1.0`，平均最终覆盖率约为 0.9910。
 
-update 81 及以后 checkpoint 不属于本版候选集。本实验不要求继续训练到 update 100；一旦 Test-Q21 或 Unseen-21 开始，禁止切换 checkpoint。
+update 81 及以后 checkpoint 不属于本版候选集。本实验不要求继续训练到 update 100；一旦 Test-Q24 或 Unseen-24 开始，禁止切换 checkpoint。
 
 正式运行不得在冻结后：
 
@@ -148,11 +148,11 @@ G1 以当前闭环成熟度最高的轮式平台作为正式覆盖率平台。�
 | 集合 | 数量 | 用途 |
 | --- | ---: | --- |
 | Validation | 现有 150 个目录中的固定子集 | checkpoint 选择、阈值预检和开发诊断 |
-| Test-Q21 | 21 | 第一次正式资格试验 |
-| Test-C21 | 21 | Test-Q21 失败并完成修复后的独立确认集 |
-| Unseen-21 | 21 | Test-Q21 通过后的未见场景泛化试验 |
+| Test-Q24 | 24 | 第一次正式资格试验 |
+| Test-C24 | 24 | Test-Q24 失败并完成修复后的独立确认集 |
+| Unseen-24 | 24 | Test-Q24 通过后的未见场景泛化试验 |
 
-Test-Q21、Test-C21 和 Unseen-21 不参与模型更新或 checkpoint 选择。Test-C21 从 Test 目录未用于 Test-Q21 的场景中预先冻结。若 Test-Q21 失败，修复只能使用 Train 和 Validation；下一版本使用 Test-C21，不允许反复调试 Test-Q21。
+Test-Q24、Test-C24 和 Unseen-24 不参与模型更新或 checkpoint 选择。Test-C24 从 Test 目录未用于 Test-Q24 的场景中预先冻结。若 Test-Q24 失败，修复只能使用 Train 和 Validation；下一版本使用 Test-C24，不允许反复调试 Test-Q24。
 
 场景清单按以下因素分层：
 
@@ -209,8 +209,8 @@ coverage_i =
 - 正式评价使用确定性策略：
   - 候选动作为掩膜后的 logits 最大项。
   - theta 使用选中候选的策略均值。
-- Test-Q21 和 Unseen-21 使用相同模型、候选生成器、传感器、规划后端、预算和终止规则。
-- 正式评价继续使用 8 个 worker；21 个场景按固定 lane 大小 `(3,3,3,3,3,2,2,2)` 分配，不根据运行速度动态重排。
+- Test-Q24 和 Unseen-24 使用相同模型、候选生成器、传感器、规划后端、预算和终止规则。
+- 正式评价继续使用 8 个 worker；24 个场景按固定 lane 大小 `(3,3,3,3,3,3,3,3)` 分配，不根据运行速度动态重排。
 - 所有 episode 保存动作、候选、路线、覆盖曲线、终止状态和失败原因。
 - Test 与 Unseen 的场景级结果分别统计，不合并后再判定。
 
@@ -220,10 +220,10 @@ coverage_i =
 
 | 判定项 | 中期门槛 | 完成时门槛 |
 | --- | ---: | ---: |
-| Test-Q21 平均最终覆盖率 | ≥ 0.80 | ≥ 0.99 |
-| Unseen-21 平均最终覆盖率 | ≥ 0.80 | ≥ 0.99 |
-| Test-Q21 达标场景数 | ≥ 20/21 | ≥ 20/21 |
-| Unseen-21 达标场景数 | ≥ 20/21 | ≥ 20/21 |
+| Test-Q24 平均最终覆盖率 | ≥ 0.80 | ≥ 0.99 |
+| Unseen-24 平均最终覆盖率 | ≥ 0.80 | ≥ 0.99 |
+| Test-Q24 达标场景数 | ≥ 23/24 | ≥ 23/24 |
+| Unseen-24 达标场景数 | ≥ 23/24 | ≥ 23/24 |
 | 掩膜外动作数 | 0 | 0 |
 | 安全违规数 | 0 | 0 |
 
@@ -243,8 +243,8 @@ Bootstrap 以 episode 为抽样单位，不以 step 为抽样单位。置信区�
 
 1. 在 3 个 Validation 场景执行 dry-run，验证接口和证据格式。
 2. 冻结 checkpoint、有效配置、场景清单和分母哈希。
-3. 一次性运行 Test-Q21。
-4. Test-Q21 通过后一次性运行 Unseen-21。
+3. 一次性运行 Test-Q24。
+4. Test-Q24 通过后一次性运行 Unseen-24。
 5. 固定抽取 3 个场景重复回放，要求动作、覆盖曲线和终止状态一致。
 6. 从逐场景结果独立复算 summary。
 7. 输出 G1 报告和路由。
@@ -393,8 +393,8 @@ P95 使用预先冻结的 nearest-rank 算法。报告样本数、平均值、�
 
 在正式运行前预先固定 10 个轮式闭环场景：
 
-- Test-Q21 中 5 个。
-- Unseen-21 中 5 个。
+- Test-Q24 中 5 个。
+- Unseen-24 中 5 个。
 - 覆盖不同坡度、障碍密度、规划距离和候选稀疏度。
 
 选择清单不得根据 G1 或 G2 结果重新生成。
@@ -485,7 +485,7 @@ D:/xunce/out/mid_dual/
 - `lineage_audit.json`
 - `failure_audit.json`
 
-每个 manifest 必须记录 `scale_profile=midterm_one_third_update80/v1`、实际样本数和原方案参照样本数。报告必须使用“三分之一规模中期实验”表述，不得省略规模限定。
+每个 manifest 必须记录 `scale_profile=midterm_reduced_w8x3_update80/v1`、实际样本数和原方案参照样本数。报告必须使用“缩减规模中期实验（G1 24 场景/split）”表述，不得省略规模限定。
 
 主线 runner 的 artifact 读写必须使用 `scripts/xunce_artifact_io.py` 和 `scripts/xunce_artifact_paths.py`。正式 artifact 不直接使用 `Path.read_text()`、`Path.write_text()`、`Path.exists()`、`Path.is_file()`、`Path.open()` 或 `Path.mkdir()`。
 
@@ -522,10 +522,10 @@ tests/test_xunce_mid_dual_g2_planning_time.py
 tests/test_xunce_mid_dual_g3_closed_loop.py
 tests/test_xunce_mid_dual_aggregate.py
 
-src/lunar_exploration_ppo/eval/midterm_one_third.py
+src/lunar_exploration_ppo/eval/midterm_reduced.py
 ```
 
-现有 Standard evaluator 只接受 16 或 64 个 episode，不能通过截断 64 个正式结果实现 21 场景评价。`midterm_one_third.py` 只扩展冻结场景调度和 8-worker lane 分配，并复用现有 Standard 环境、update 80 推理、动作规则、覆盖统计与安全合同；不得改写 PPO、环境状态推进、候选生成或规划语义。
+现有 Standard evaluator 只接受 16 或 64 个 episode，不能通过截断 64 个正式结果实现 24 场景评价。`midterm_reduced.py` 只扩展冻结场景调度和 8-worker lane 分配，并复用现有 Standard 环境、update 80 推理、动作规则、覆盖统计与安全合同；不得改写 PPO、环境状态推进、候选生成或规划语义。
 
 runner 只负责：
 
@@ -557,9 +557,9 @@ runner 不重新实现 PPO、候选生成、路径搜索、路线安全复核或
 - 80% 和 99% 阈值边界测试。
 - Test/Unseen 隔离测试。
 - checkpoint 选择不读取 Test 测试。
-- 每个正式 split 21 个 episode 的完整性和唯一性测试。
-- 21 场景固定 lane `(3,3,3,3,3,2,2,2)` 分配测试。
-- 禁止运行 64 场景后截断为 21 场景的测试。
+- 每个正式 split 24 个 episode 的完整性和唯一性测试。
+- 24 场景固定 lane `(3,3,3,3,3,3,3,3)` 分配测试。
+- 禁止运行 64 场景后截断为 24 场景的测试。
 - bootstrap 可重放测试。
 - 独立复算与 summary 一致性测试。
 
@@ -594,7 +594,7 @@ runner 不重新实现 PPO、候选生成、路径搜索、路线安全复核或
 4. 运行 G1 Validation dry-run。
 5. 运行 G2 非正式预试验并完成性能诊断。
 6. 冻结源码、checkpoint、配置、场景和硬件环境。
-7. 一次性运行 G1 Test-Q21 和 Unseen-21。
+7. 一次性运行 G1 Test-Q24 和 Unseen-24。
 8. 一次性运行 G2 三平台正式计时。
 9. 运行 G3 闭环交叉核验。
 10. 独立复算并生成双门槛结论表。
