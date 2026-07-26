@@ -141,6 +141,19 @@ profile 默认值。上述 narrow addendum 仅增加 Hopper authority record/eva
 及其一致性 seal。G2 的五段计时由 root executor 对“重建请求 → 构建平台栈 →
 `plan_v2` → 独立 L2 recheck → 结果序列化”五个互不重叠的墙钟区间测量。
 
+### Narrow authorized G2 independent truth-producer addendum
+
+用户确认的一次性授权同时允许生成项目内部技术独立输入。Task 7 前新增一个隔离的
+truth-producer 子项目，完整设计和实施写集见：
+
+- `docs/superpowers/specs/2026-07-27-midterm-g2-independent-truth-producer-design-addendum.md`
+- `docs/superpowers/plans/2026-07-27-midterm-g2-independent-truth-producer.md`
+
+Producer 必须在独立源码根/进程中运行，不得 import 或调用本仓库、Path Planner provider、
+oracle、L2 或 Task 7。它先冻结 `10002 labels + 3 optima + 129 requests` 的 source
+bundle；Task 7 只能在 freeze 后做单向 codec/crosswalk/readiness。独立 reviewer 和
+artifact-bound approval 未完成前，candidate 始终 `formal_evidence_eligible=false`。
+
 ---
 
 ## Task 1: Freeze the Baseline and Add Common Contracts
@@ -712,6 +725,12 @@ The submodule record is implementation support only. Task 7 must still reject
 the Gate5B fixture and the unapproved candidate, and may resolve formal
 eligibility only from the separately hashed candidate + approval + independent
 input chain.
+
+Also complete and independently audit
+`docs/superpowers/plans/2026-07-27-midterm-g2-independent-truth-producer.md`.
+Task 7 must not generate truth or import the producer as a library; it consumes
+only a completed immutable truth bundle and writes a separate one-way execution
+bundle/crosswalk.
 
 **Files:**
 
