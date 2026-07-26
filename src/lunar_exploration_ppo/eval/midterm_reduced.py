@@ -9,7 +9,7 @@ import math
 import struct
 import sys
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import mean, median, stdev
 from types import MappingProxyType
@@ -24,12 +24,27 @@ from lunar_exploration_ppo.env.scenario_catalog import (
     StandardScenarioCatalog,
     StandardScenarioFactory,
 )
+from lunar_exploration_ppo.eval.evaluator import EvaluationSummary
+from lunar_exploration_ppo.eval.metrics import (
+    EPISODE_FIELDS,
+    episode_record,
+    summarize_episodes,
+)
 from lunar_exploration_ppo.eval.standard import (
     STANDARD_EVALUATION_WORKERS,
+    StandardEvaluationError,
     StandardEvaluationExecution,
     StandardEvaluationJob,
+    _build_standard_decision_audit,
+    _standard_episode_id,
+    _standard_step_join_key,
     partition_standard_evaluation_jobs,
     run_standard_evaluation_jobs,
+    validate_standard_fairness_audit,
+)
+from lunar_exploration_ppo.ppo.collector import (
+    PLANNER_FAILURE_REASONS,
+    validate_reset_diagnostics_payload,
 )
 from lunar_exploration_ppo.utils.artifact_io import ArtifactStore
 from lunar_exploration_ppo.utils.path_security import (
@@ -643,6 +658,295 @@ def _threshold_crossing(
     return None, None
 
 
+_EPISODE_TRACE_FIELDS = frozenset(
+    {
+        *EPISODE_FIELDS,
+        "steps_executed",
+        "reset_diagnostics",
+        "planner_failure_counts",
+        "episode_id",
+        "episode_index",
+        "scenario_id",
+        "lane_id",
+        "initial_coverage_rate",
+        "initial_covered_cell_count",
+    }
+)
+_DECISION_TRACE_BINDING_FIELDS = frozenset(
+    {"join_key", "episode_id", "scenario_id", "lane_id"}
+)
+_STEP_TRACE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "join_key",
+        "episode_id",
+        "episode_index",
+        "scenario_id",
+        "lane_id",
+        "step_index",
+        "decision_sha256",
+        "pre_observation_sha256",
+        "selected_candidate_index",
+        "selected_candidate_cell_xy",
+        "selected_theta",
+        "post_observation_sha256",
+        "planned_path_cells",
+        "path_length_m",
+        "planner_path_length_m",
+        "cumulative_path_length_m",
+        "coverage_gain_cells",
+        "coverage_gain_rate",
+        "coverage_rate",
+        "done",
+        "termination_reason",
+        "invalid_action",
+        "safety_violation",
+        "planner_diagnostics",
+    }
+)
+_SAFETY_BINDING_FIELDS = frozenset(
+    {
+        "safety_contract",
+        "safety_contract_sha256",
+        "safety_contract_source",
+        "safety_contract_config_sha256",
+    }
+)
+
+
+def _finite_number(value: object, label: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise MidtermReducedEvaluationError(
+            f"reduced {label} must be a finite number"
+        )
+    return float(value)
+
+
+def _exact_nonnegative_int(value: object, label: str) -> int:
+    if type(value) is not int or value < 0:
+        raise MidtermReducedEvaluationError(
+            f"reduced {label} must be a non-negative integer"
+        )
+    return value
+
+
+def _numbers_match(left: object, right: object) -> bool:
+    try:
+        return math.isclose(
+            _finite_number(left, "numeric evidence"),
+            _finite_number(right, "numeric evidence"),
+            rel_tol=0.0,
+            abs_tol=1.0e-15,
+        )
+    except MidtermReducedEvaluationError:
+        return False
+
+
+def _validate_summary_and_decisions(
+    *,
+    execution: StandardEvaluationExecution,
+    job_plan: MidtermReducedJobPlan,
+) -> None:
+    summary = execution.summary
+    jobs = job_plan.jobs
+    if (
+        not isinstance(summary, EvaluationSummary)
+        or summary.method != "ppo_policy"
+        or summary.scale_profile != "Standard v1"
+        or len(summary.episodes) != 24
+        or any(
+            (
+                episode.scenario_key,
+                episode.scenario_seed,
+                episode.terrain_seed,
+                episode.start_pose_seed,
+                episode.evaluation_seed,
+            )
+            != (
+                job.scenario_id,
+                job.scenario_seed,
+                job.terrain_seed,
+                job.start_pose_seed,
+                job.evaluation_seed,
+            )
+            for episode, job in zip(summary.episodes, jobs, strict=True)
+        )
+    ):
+        raise MidtermReducedEvaluationError(
+            "reduced summary episode identity drifted"
+        )
+
+    bootstrap = summary.bootstrap_audit
+    resample_count = (
+        bootstrap.get("resample_count")
+        if isinstance(bootstrap, Mapping)
+        else None
+    )
+    bootstrap_seed = (
+        bootstrap.get("bootstrap_seed")
+        if isinstance(bootstrap, Mapping)
+        else None
+    )
+    if (
+        type(resample_count) is not int
+        or resample_count <= 0
+        or type(bootstrap_seed) is not int
+    ):
+        raise MidtermReducedEvaluationError(
+            "reduced summary bootstrap audit drifted"
+        )
+    try:
+        metrics, recomputed_bootstrap = summarize_episodes(
+            summary.episodes,
+            bootstrap_resamples=resample_count,
+            bootstrap_seed=bootstrap_seed,
+        )
+    except (TypeError, ValueError) as exc:
+        raise MidtermReducedEvaluationError(
+            "reduced summary metrics could not be recomputed"
+        ) from exc
+    if metrics != summary.metrics or recomputed_bootstrap != bootstrap:
+        raise MidtermReducedEvaluationError(
+            "reduced summary metrics or bootstrap audit drifted"
+        )
+
+    fairness = summary.fairness_audit
+    environment_contract = (
+        fairness.get("shared_environment_contract")
+        if isinstance(fairness, Mapping)
+        else None
+    )
+    runtime_contract = (
+        environment_contract.get("environment_contract")
+        if isinstance(environment_contract, Mapping)
+        else None
+    )
+    if not isinstance(runtime_contract, Mapping):
+        raise MidtermReducedEvaluationError(
+            "reduced fairness environment contract is missing"
+        )
+    try:
+        binding = {
+            name: runtime_contract[name] for name in _SAFETY_BINDING_FIELDS
+        }
+        config_sha256 = binding["safety_contract_config_sha256"]
+        if not isinstance(config_sha256, str):
+            raise ValueError("config SHA is not a string")
+        safety_contract = SafetyContract.from_binding(
+            binding,
+            expected_config_sha256=config_sha256,
+        )
+        parent_pid = fairness.get("evaluation_parent_pid")
+        if type(parent_pid) is not int:
+            raise ValueError("evaluation parent PID is invalid")
+        validated_fairness = validate_standard_fairness_audit(
+            fairness,
+            episode_count=24,
+            parent_pid=parent_pid,
+            safety_contract=safety_contract,
+            config_sha256=config_sha256,
+        )
+    except (KeyError, TypeError, ValueError, StandardEvaluationError) as exc:
+        raise MidtermReducedEvaluationError(
+            "reduced fairness audit drifted"
+        ) from exc
+    if validated_fairness != fairness:
+        raise MidtermReducedEvaluationError(
+            "reduced fairness audit is not canonical"
+        )
+
+    base_decisions: list[dict[str, object]] = []
+    for row in execution.decision_rows:
+        if (
+            not isinstance(row, Mapping)
+            or not _DECISION_TRACE_BINDING_FIELDS.issubset(row)
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced decision trace schema drifted"
+            )
+        base = {
+            key: value
+            for key, value in row.items()
+            if key not in _DECISION_TRACE_BINDING_FIELDS
+        }
+        if set(row) != {*base, *_DECISION_TRACE_BINDING_FIELDS}:
+            raise MidtermReducedEvaluationError(
+                "reduced decision trace schema drifted"
+            )
+        base_decisions.append(base)
+    try:
+        decision_audit = _build_standard_decision_audit(
+            "ppo_policy",
+            base_decisions,
+        )
+    except (TypeError, ValueError, StandardEvaluationError) as exc:
+        raise MidtermReducedEvaluationError(
+            "reduced decision trace provenance drifted"
+        ) from exc
+    if fairness.get("decision_audit") != decision_audit:
+        raise MidtermReducedEvaluationError(
+            "reduced decision trace differs from fairness audit"
+        )
+
+
+def _bind_initial_covered_counts(
+    *,
+    execution: StandardEvaluationExecution,
+    frozen_manifest: FrozenScenarioManifest,
+    job_plan: MidtermReducedJobPlan,
+    cohort: Literal["test_q24", "test_c24", "unseen24"],
+) -> StandardEvaluationExecution:
+    """Bind the Standard reset rate to the frozen integer denominator."""
+
+    frozen_ids = frozen_manifest.cohorts[cohort]
+    if len(execution.episode_rows) != len(frozen_ids):
+        raise MidtermReducedEvaluationError(
+            "reduced episode trace is incomplete"
+        )
+    rows: list[dict[str, object]] = []
+    for index, (row, frozen_id) in enumerate(
+        zip(execution.episode_rows, frozen_ids, strict=True)
+    ):
+        if (
+            not isinstance(row, Mapping)
+            or row.get("scenario_id") != job_plan.jobs[index].scenario_id
+            or "initial_covered_cell_count" in row
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced initial coverage binding drifted"
+            )
+        denominator = frozen_manifest.denominator_proofs[frozen_id][
+            "coverable_cell_count"
+        ]
+        if type(denominator) is not int or denominator <= 0:
+            raise MidtermReducedEvaluationError(
+                "reduced denominator count drifted"
+            )
+        initial_rate = _finite_number(
+            row.get("initial_coverage_rate"),
+            "initial coverage",
+        )
+        initial_count = int(round(initial_rate * denominator))
+        if (
+            not 0 <= initial_count <= denominator
+            or not math.isclose(
+                initial_rate,
+                initial_count / denominator,
+                rel_tol=0.0,
+                abs_tol=1.0e-15,
+            )
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced initial coverage is not denominator-exact"
+            )
+        rows.append({**dict(row), "initial_covered_cell_count": initial_count})
+    return replace(execution, episode_rows=tuple(rows))
+
+
 def derive_midterm_reduced_trace_summary(
     *,
     execution: StandardEvaluationExecution,
@@ -679,10 +983,20 @@ def derive_midterm_reduced_trace_summary(
         raise MidtermReducedEvaluationError(
             "reduced trace job-plan identity binding drifted"
         )
+    _validate_summary_and_decisions(
+        execution=execution,
+        job_plan=job_plan,
+    )
     episode_rows = tuple(execution.episode_rows)
+    decision_rows = tuple(execution.decision_rows)
     step_rows = tuple(execution.step_rows)
     if (
         len(episode_rows) != 24
+        or any(
+            not isinstance(row, Mapping)
+            or set(row) != _EPISODE_TRACE_FIELDS
+            for row in episode_rows
+        )
         or tuple(row.get("scenario_id") for row in episode_rows)
         != expected_ids
         or tuple(row.get("episode_index") for row in episode_rows)
@@ -693,38 +1007,167 @@ def derive_midterm_reduced_trace_summary(
             "reduced episode trace is incomplete or reordered"
         )
     lane_sizes: dict[str, int] = {}
-    for row in episode_rows:
+    for index, (row, summary_episode, job) in enumerate(
+        zip(
+            episode_rows,
+            execution.summary.episodes,
+            job_plan.jobs,
+            strict=True,
+        )
+    ):
         lane_id = row.get("lane_id")
-        if not isinstance(lane_id, str) or not lane_id:
-            raise MidtermReducedEvaluationError(
-                "reduced episode lane binding is missing"
+        expected_lane = f"lane-{index % STANDARD_EVALUATION_WORKERS}"
+        expected_episode_id = _standard_episode_id(job)
+        try:
+            reset_diagnostics = validate_reset_diagnostics_payload(
+                row["reset_diagnostics"],
+                require_dual_scan=True,
             )
-        lane_sizes[lane_id] = lane_sizes.get(lane_id, 0) + 1
-    if len(lane_sizes) != 8 or tuple(sorted(lane_sizes.values())) != (3,) * 8:
+        except (TypeError, ValueError) as exc:
+            raise MidtermReducedEvaluationError(
+                "reduced episode reset diagnostics drifted"
+            ) from exc
+        planner_failure_counts = row["planner_failure_counts"]
+        if (
+            lane_id != expected_lane
+            or row.get("episode_id") != expected_episode_id
+            or row.get("scenario_key") != job.scenario_id
+            or row.get("scenario_id") != job.scenario_id
+            or {
+                name: row[name] for name in EPISODE_FIELDS
+            }
+            != episode_record(summary_episode)
+            or row["reset_diagnostics"] != reset_diagnostics
+            or not isinstance(planner_failure_counts, Mapping)
+            or set(planner_failure_counts) != set(PLANNER_FAILURE_REASONS)
+            or any(
+                type(value) is not int or value < 0
+                for value in planner_failure_counts.values()
+            )
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced episode schema, summary, or lane binding drifted"
+            )
+        lane_sizes[expected_lane] = lane_sizes.get(expected_lane, 0) + 1
+    if lane_sizes != {f"lane-{index}": 3 for index in range(8)}:
         raise MidtermReducedEvaluationError(
             "reduced episode lanes are not eight groups of three"
         )
+
+    decision_by_join_key: dict[str, Mapping[str, object]] = {}
+    for row in decision_rows:
+        episode_index = row.get("episode_index")
+        step_index = row.get("step_index")
+        if (
+            type(episode_index) is not int
+            or not 0 <= episode_index < 24
+            or type(step_index) is not int
+            or step_index < 0
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced decision episode or step identity drifted"
+            )
+        job = job_plan.jobs[episode_index]
+        join_key = _standard_step_join_key(job, step_index)
+        expected_lane = (
+            f"lane-{episode_index % STANDARD_EVALUATION_WORKERS}"
+        )
+        if (
+            row.get("join_key") != join_key
+            or row.get("episode_id") != _standard_episode_id(job)
+            or row.get("scenario_id") != job.scenario_id
+            or row.get("lane_id") != expected_lane
+            or row.get("worker_index")
+            != episode_index % STANDARD_EVALUATION_WORKERS
+            or join_key in decision_by_join_key
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced decision stable join drifted"
+            )
+        decision_by_join_key[join_key] = row
 
     grouped: dict[int, list[Mapping[str, object]]] = {
         index: [] for index in range(24)
     }
     join_keys: set[str] = set()
     for row in step_rows:
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != _STEP_TRACE_FIELDS
+            or row.get("schema_version") != "stage6-standard-step-trace/v1"
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced step trace schema drifted"
+            )
         episode_index = row.get("episode_index")
+        step_index = row.get("step_index")
         join_key = row.get("join_key")
+        decision = (
+            decision_by_join_key.get(join_key)
+            if isinstance(join_key, str)
+            else None
+        )
         if (
             type(episode_index) is not int
             or episode_index not in grouped
+            or type(step_index) is not int
+            or step_index < 0
             or not isinstance(join_key, str)
             or not join_key
             or join_key in join_keys
             or row.get("scenario_id") != expected_ids[episode_index]
+            or decision is None
         ):
             raise MidtermReducedEvaluationError(
                 "reduced step trace join drifted"
             )
+        job = job_plan.jobs[episode_index]
+        expected_lane = (
+            f"lane-{episode_index % STANDARD_EVALUATION_WORKERS}"
+        )
+        selected_cell = row.get("selected_candidate_cell_xy")
+        planned_path = row.get("planned_path_cells")
+        planner_diagnostics = row.get("planner_diagnostics")
+        if (
+            join_key != _standard_step_join_key(job, step_index)
+            or row.get("episode_id") != _standard_episode_id(job)
+            or row.get("lane_id") != expected_lane
+            or row.get("decision_sha256") != decision.get("decision_sha256")
+            or row.get("pre_observation_sha256")
+            != decision.get("policy_observation_sha256")
+            or row.get("selected_candidate_index")
+            != decision.get("selected_index")
+            or not _numbers_match(
+                row.get("selected_theta"),
+                decision.get("target_theta"),
+            )
+            or not _is_sha256(row.get("post_observation_sha256"))
+            or not isinstance(selected_cell, list)
+            or len(selected_cell) != 2
+            or any(type(value) is not int for value in selected_cell)
+            or not isinstance(planned_path, list)
+            or any(
+                not isinstance(cell, list)
+                or len(cell) != 2
+                or any(type(value) is not int for value in cell)
+                for cell in planned_path
+            )
+            or type(row.get("done")) is not bool
+            or type(row.get("invalid_action")) is not bool
+            or type(row.get("safety_violation")) is not bool
+            or not isinstance(planner_diagnostics, Mapping)
+            or planner_diagnostics.get("failure_reason")
+            not in {"none", *PLANNER_FAILURE_REASONS}
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced step decision or planner join drifted"
+            )
         join_keys.add(join_key)
         grouped[episode_index].append(row)
+    if join_keys != set(decision_by_join_key):
+        raise MidtermReducedEvaluationError(
+            "reduced decision and step traces are not one-to-one"
+        )
 
     episode_summaries: list[dict[str, object]] = []
     final_coverages: list[float] = []
@@ -738,68 +1181,166 @@ def derive_midterm_reduced_trace_summary(
             raise MidtermReducedEvaluationError(
                 "reduced step trace is not contiguous"
             )
-        initial = episode.get("initial_coverage_rate")
-        final = episode.get("final_coverage")
-        if (
-            isinstance(initial, bool)
-            or not isinstance(initial, (int, float))
-            or not math.isfinite(float(initial))
-            or isinstance(final, bool)
-            or not isinstance(final, (int, float))
-            or not math.isfinite(float(final))
-            or not 0.0 <= float(initial) <= float(final) <= 1.0
-        ):
+        steps_executed = _exact_nonnegative_int(
+            episode.get("steps_executed"),
+            "episode steps_executed",
+        )
+        if len(rows) != steps_executed:
             raise MidtermReducedEvaluationError(
-                "reduced episode coverage is invalid"
+                "reduced episode and step counts differ"
             )
-        previous_coverage = float(initial)
-        previous_path = 0.0
-        for row in rows:
-            coverage = row.get("coverage_rate")
-            path_length = row.get("cumulative_path_length_m")
-            if (
-                isinstance(coverage, bool)
-                or not isinstance(coverage, (int, float))
-                or not math.isfinite(float(coverage))
-                or isinstance(path_length, bool)
-                or not isinstance(path_length, (int, float))
-                or not math.isfinite(float(path_length))
-                or not previous_coverage <= float(coverage) <= 1.0
-                or float(path_length) < previous_path
-            ):
-                raise MidtermReducedEvaluationError(
-                    "reduced step coverage or path trace drifted"
-                )
-            previous_coverage = float(coverage)
-            previous_path = float(path_length)
-        if rows and previous_coverage != float(final):
-            raise MidtermReducedEvaluationError(
-                "reduced final coverage differs from its step trace"
-            )
-        if not rows and float(initial) != float(final):
-            raise MidtermReducedEvaluationError(
-                "zero-step reduced episode coverage drifted"
-            )
+        initial = _finite_number(
+            episode.get("initial_coverage_rate"),
+            "initial coverage",
+        )
+        initial_count = _exact_nonnegative_int(
+            episode.get("initial_covered_cell_count"),
+            "initial covered cell count",
+        )
+        final = _finite_number(
+            episode.get("final_coverage"),
+            "final coverage",
+        )
         frozen_scenario_id = expected_frozen_ids[index]
         proof = frozen_manifest.denominator_proofs[frozen_scenario_id]
+        denominator = _exact_nonnegative_int(
+            proof["coverable_cell_count"],
+            "denominator cell count",
+        )
         if (
-            proof["scenario_hash"]
+            denominator <= 0
+            or not 0 <= initial_count <= denominator
+            or not _numbers_match(initial, initial_count / denominator)
+            or not 0.0 <= initial <= final <= 1.0
+            or proof["scenario_hash"]
             != job_plan.scenario_hash_by_record_id[expected_ids[index]]
         ):
             raise MidtermReducedEvaluationError(
-                "reduced trace scenario hash binding drifted"
+                "reduced denominator or initial coverage binding drifted"
+            )
+        covered_count = initial_count
+        cumulative_path = 0.0
+        reconstructed_curve = [initial]
+        invalid_action_count = 0
+        safety_violation_count = 0
+        planner_failure_counts = {
+            reason: 0 for reason in PLANNER_FAILURE_REASONS
+        }
+        for row_index, row in enumerate(rows):
+            gain_cells = _exact_nonnegative_int(
+                row.get("coverage_gain_cells"),
+                "coverage gain cells",
+            )
+            gain_rate = _finite_number(
+                row.get("coverage_gain_rate"),
+                "coverage gain rate",
+            )
+            coverage = _finite_number(
+                row.get("coverage_rate"),
+                "step coverage",
+            )
+            executed_path = _finite_number(
+                row.get("path_length_m"),
+                "step path length",
+            )
+            planner_path = _finite_number(
+                row.get("planner_path_length_m"),
+                "planner path length",
+            )
+            cumulative_recorded = _finite_number(
+                row.get("cumulative_path_length_m"),
+                "cumulative path length",
+            )
+            covered_count += gain_cells
+            cumulative_path += executed_path
+            if (
+                covered_count > denominator
+                or executed_path < 0.0
+                or planner_path < 0.0
+                or not _numbers_match(gain_rate, gain_cells / denominator)
+                or not _numbers_match(coverage, covered_count / denominator)
+                or not _numbers_match(cumulative_recorded, cumulative_path)
+                or (row_index + 1 < len(rows) and row["done"] is not False)
+                or (
+                    row_index + 1 < len(rows)
+                    and row["termination_reason"] != "none"
+                )
+                or (
+                    row_index + 1 == len(rows)
+                    and (
+                        row["done"] is not True
+                        or row["termination_reason"]
+                        != episode["termination_reason"]
+                    )
+                )
+            ):
+                raise MidtermReducedEvaluationError(
+                    "reduced step coverage, path, or termination drifted"
+                )
+            invalid_action_count += int(row["invalid_action"])
+            safety_violation_count += int(row["safety_violation"])
+            failure_reason = row["planner_diagnostics"]["failure_reason"]
+            if failure_reason != "none":
+                planner_failure_counts[str(failure_reason)] += 1
+            reconstructed_curve.append(coverage)
+
+        coverage_curve = episode.get("coverage_curve")
+        if (
+            not isinstance(coverage_curve, list)
+            or len(coverage_curve) < len(reconstructed_curve)
+            or any(
+                not _numbers_match(actual, expected)
+                for actual, expected in zip(
+                    coverage_curve[: len(reconstructed_curve)],
+                    reconstructed_curve,
+                    strict=True,
+                )
+            )
+            or any(
+                not _numbers_match(value, reconstructed_curve[-1])
+                for value in coverage_curve[len(reconstructed_curve) :]
+            )
+            or _exact_nonnegative_int(
+                episode.get("invalid_action_count"),
+                "episode invalid action count",
+            )
+            != invalid_action_count
+            or _exact_nonnegative_int(
+                episode.get("safety_violation_count"),
+                "episode safety violation count",
+            )
+            != safety_violation_count
+            or _exact_nonnegative_int(
+                episode.get("planner_failure_count"),
+                "episode planner failure count",
+            )
+            != sum(planner_failure_counts.values())
+            or dict(episode["planner_failure_counts"])
+            != planner_failure_counts
+        ):
+            raise MidtermReducedEvaluationError(
+                "reduced episode count or coverage curve drifted"
+            )
+        reconstructed_final = reconstructed_curve[-1]
+        if rows and not _numbers_match(reconstructed_final, final):
+            raise MidtermReducedEvaluationError(
+                "reduced final coverage differs from its step trace"
+            )
+        if not rows and not _numbers_match(initial, final):
+            raise MidtermReducedEvaluationError(
+                "zero-step reduced episode coverage drifted"
             )
         steps80, path80 = _threshold_crossing(
-            initial_coverage=float(initial),
+            initial_coverage=initial,
             rows=rows,
             threshold=0.80,
         )
         steps99, path99 = _threshold_crossing(
-            initial_coverage=float(initial),
+            initial_coverage=initial,
             rows=rows,
             threshold=0.99,
         )
-        final_coverages.append(float(final))
+        final_coverages.append(final)
         episode_summaries.append(
             {
                 "episode_id": episode["episode_id"],
@@ -807,9 +1348,9 @@ def derive_midterm_reduced_trace_summary(
                 "scenario_id": expected_ids[index],
                 "frozen_scenario_id": frozen_scenario_id,
                 "lane_id": episode["lane_id"],
-                "denominator_cell_count": proof["coverable_cell_count"],
+                "denominator_cell_count": denominator,
                 "denominator_sha256": proof["coverable_mask_sha256"],
-                "final_coverage": float(final),
+                "final_coverage": final,
                 "steps_to_80": steps80,
                 "path_length_to_80_m": path80,
                 "steps_to_99": steps99,
@@ -903,6 +1444,12 @@ def run_midterm_reduced_evaluation(
         raise MidtermReducedEvaluationError(
             "explicit Standard evaluation did not return in-memory evidence"
         )
+    execution = _bind_initial_covered_counts(
+        execution=execution,
+        frozen_manifest=frozen,
+        job_plan=job_plan,
+        cohort=cohort,
+    )
     summary = derive_midterm_reduced_trace_summary(
         execution=execution,
         frozen_manifest=frozen,

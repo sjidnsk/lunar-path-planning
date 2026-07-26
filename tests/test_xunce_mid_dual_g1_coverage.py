@@ -3,19 +3,41 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import inspect
+import os
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from torch import nn
 
+from lunar_exploration_ppo.configs.stage6 import SafetyContract, load_stage6_config
+from lunar_exploration_ppo.env.env import EnvAction
 from lunar_exploration_ppo.env.standard_training import build_standard_catalog
 from lunar_exploration_ppo.eval.evaluator import EvaluationSummary
+from lunar_exploration_ppo.eval.metrics import (
+    ZERO_DISTANCE_POLICY,
+    build_episode_result,
+    episode_record,
+    summarize_episodes,
+)
+from lunar_exploration_ppo.policy.cross_attention import (
+    PolicyForwardOutput,
+    batch_policy_observations,
+)
+from lunar_exploration_ppo.policy.observation import PolicyObservation
+from lunar_exploration_ppo.ppo.collector import PLANNER_FAILURE_REASONS
 from lunar_exploration_ppo.utils.artifact_io import ArtifactStore
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = ROOT / "configs/ppo_highres_frontier_stage6_v1.json"
 
 
 @lru_cache(maxsize=1)
@@ -475,10 +497,78 @@ def test_update80_loader_is_fixed_cuda_fp32_and_rechecks_identity(
     }
 
 
-def test_denominator_audit_and_path_steps_to_80_99_are_derived_from_trace(
+@lru_cache(maxsize=1)
+def _safety_lineage() -> tuple[SafetyContract, str]:
+    return (
+        SafetyContract.from_stage6_config(load_stage6_config(CONFIG)),
+        hashlib.sha256(CONFIG.read_bytes()).hexdigest(),
+    )
+
+
+def _single_candidate_observation() -> PolicyObservation:
+    features = np.zeros((1, 22), dtype=np.float32)
+    features[0, 15] = 1.0
+    features[0, 18] = 1.0
+    return PolicyObservation(
+        prior_channels=np.zeros((7, 32, 32), dtype=np.float32),
+        coverage_summary=np.zeros((8, 32, 32), dtype=np.float32),
+        local_crop=np.zeros((8, 96, 96), dtype=np.float32),
+        frontier_features=features,
+        pose_features=np.zeros((6,), dtype=np.float32),
+        candidate_mask=np.ones((1,), dtype=bool),
+    )
+
+
+def _single_candidate_output() -> PolicyForwardOutput:
+    one = torch.ones((1, 1), dtype=torch.float32)
+    zero = torch.zeros((1, 1), dtype=torch.float32)
+    token = torch.zeros((1, 1, 4), dtype=torch.float32)
+    return PolicyForwardOutput(
+        frontier_logits=one,
+        theta_mu_sin_raw=zero,
+        theta_mu_cos_raw=one,
+        theta_kappa_raw=zero,
+        theta_mu=zero,
+        theta_kappa=one,
+        value=torch.zeros((1,), dtype=torch.float32),
+        global_map_tokens=token,
+        local_map_tokens=token,
+        pose_token=token,
+        context_tokens=token,
+        refined_frontier_tokens=token,
+        action_hidden=token,
+    )
+
+
+def _reset_diagnostics() -> dict[str, object]:
+    return {
+        "schema_version": "stage6_reset_scan_diagnostics/v1",
+        "scan_order": ["reset_local_safety", "reset_exploration"],
+        "local_safety_sensor": {
+            "sample_count": 1,
+            "ray_count": 361,
+            "cell_visit_count": 4,
+            "unique_visible_cell_count": 4,
+            "duplicate_cell_visits": 0,
+            "sample_sources": ["reset_local_safety"],
+            "sample_headings": [0.0],
+        },
+        "exploration_sensor": {
+            "sample_count": 1,
+            "ray_count": 91,
+            "cell_visit_count": 4,
+            "unique_visible_cell_count": 4,
+            "duplicate_cell_visits": 0,
+            "sample_sources": ["reset"],
+            "sample_headings": [0.0],
+        },
+    }
+
+
+def _strict_execution_fixture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> tuple[object, object, object]:
     from lunar_exploration_ppo.eval import midterm_reduced, standard
 
     frozen = _load_fixture_manifest(tmp_path, monkeypatch)
@@ -489,63 +579,234 @@ def test_denominator_audit_and_path_steps_to_80_99_are_derived_from_trace(
         cohort="test_q24",
         evaluation_seed_start=2026072600,
     )
-    scenario_ids = tuple(job.scenario_id for job in job_plan.jobs)
-    episode_rows = tuple(
-        {
-            "episode_id": f"test-q24-{index:02d}",
-            "episode_index": index,
-            "scenario_id": scenario_id,
-            "lane_id": f"lane-{index % 8}",
-            "initial_coverage_rate": 0.25,
-            "final_coverage": 0.99,
-            "steps_executed": 2,
-        }
-        for index, scenario_id in enumerate(scenario_ids)
+    jobs = job_plan.jobs
+    safety_contract, config_sha256 = _safety_lineage()
+    specs = standard.standard_evaluation_env_specs(
+        _catalog(),
+        jobs,
+        safety_contract=safety_contract,
+        config_sha256=config_sha256,
     )
-    step_rows = tuple(
-        row
-        for index, scenario_id in enumerate(scenario_ids)
-        for row in (
-            {
-                "join_key": f"{scenario_id}:0",
-                "episode_id": f"test-q24-{index:02d}",
-                "episode_index": index,
-                "scenario_id": scenario_id,
-                "step_index": 0,
-                "coverage_rate": 0.80,
-                "cumulative_path_length_m": 1.25,
-            },
-            {
-                "join_key": f"{scenario_id}:1",
-                "episode_id": f"test-q24-{index:02d}",
-                "episode_index": index,
-                "scenario_id": scenario_id,
-                "step_index": 1,
-                "coverage_rate": 0.99,
-                "cumulative_path_length_m": 2.50,
-            },
+    environment_contract = standard.build_standard_environment_contract(
+        catalog=_catalog(),
+        env_specs=specs,
+        jobs=jobs,
+        max_steps=128,
+        success_threshold=0.99,
+        safety_contract=safety_contract,
+        config_sha256=config_sha256,
+    )
+    observation = _single_candidate_observation()
+    batch = batch_policy_observations((observation,))
+    output = _single_candidate_output()
+    action = EnvAction(candidate_index=0, target_theta=0.0)
+    initial_count = 1024
+    step_counts = (3277, 4056)
+    initial_rate = initial_count / 4096
+    step_rates = tuple(value / 4096 for value in step_counts)
+    episodes = []
+    episode_rows = []
+    base_decisions = []
+    trace_decisions = []
+    step_rows = []
+    for index, job in enumerate(jobs):
+        coverage_curve = (
+            initial_rate,
+            *step_rates,
+            *((step_rates[-1],) * 126),
         )
+        path_curve = (0.0, 1.25, 2.50, *((2.50,) * 126))
+        episode = build_episode_result(
+            method="ppo_policy",
+            scale_profile="Standard v1",
+            scenario_key=job.scenario_id,
+            scenario_seed=job.scenario_seed,
+            terrain_seed=job.terrain_seed,
+            start_pose_seed=job.start_pose_seed,
+            evaluation_seed=job.evaluation_seed,
+            coverage_curve=coverage_curve,
+            cumulative_path_length_curve=path_curve,
+            steps_executed=2,
+            invalid_action_count=0,
+            planner_failure_count=0,
+            safety_violation_count=0,
+            termination_reason="success_done",
+            max_steps=128,
+            success_threshold=0.99,
+            zero_distance_policy=ZERO_DISTANCE_POLICY,
+        )
+        episodes.append(episode)
+        episode_id = standard._standard_episode_id(job)
+        lane_id = f"lane-{index % 8}"
+        episode_rows.append(
+            {
+                **episode_record(episode),
+                "steps_executed": 2,
+                "reset_diagnostics": _reset_diagnostics(),
+                "planner_failure_counts": {
+                    reason: 0 for reason in PLANNER_FAILURE_REASONS
+                },
+                "episode_id": episode_id,
+                "episode_index": index,
+                "scenario_id": job.scenario_id,
+                "lane_id": lane_id,
+                "initial_coverage_rate": initial_rate,
+                "initial_covered_cell_count": initial_count,
+            }
+        )
+        previous_count = initial_count
+        for step_index, covered_count in enumerate(step_counts):
+            decision = standard.build_standard_decision_record(
+                method="ppo_policy",
+                sequence_index=len(base_decisions),
+                episode_index=index,
+                step_index=step_index,
+                worker_index=index % 8,
+                observation=observation,
+                action=action,
+                selector_inputs={
+                    "observation_batch": batch,
+                    "policy_output": output,
+                },
+                policy_batch_row_index=0,
+            )
+            base_decisions.append(decision)
+            join_key = standard._standard_step_join_key(job, step_index)
+            trace_decisions.append(
+                {
+                    **decision,
+                    "join_key": join_key,
+                    "episode_id": episode_id,
+                    "scenario_id": job.scenario_id,
+                    "lane_id": lane_id,
+                }
+            )
+            path_length = 1.25
+            cumulative_path_length = path_length * (step_index + 1)
+            step_rows.append(
+                {
+                    "schema_version": "stage6-standard-step-trace/v1",
+                    "join_key": join_key,
+                    "episode_id": episode_id,
+                    "episode_index": index,
+                    "scenario_id": job.scenario_id,
+                    "lane_id": lane_id,
+                    "step_index": step_index,
+                    "decision_sha256": decision["decision_sha256"],
+                    "pre_observation_sha256": decision[
+                        "policy_observation_sha256"
+                    ],
+                    "selected_candidate_index": 0,
+                    "selected_candidate_cell_xy": [step_index, index],
+                    "selected_theta": 0.0,
+                    "post_observation_sha256": hashlib.sha256(
+                        f"{index}:{step_index}:post".encode("utf-8")
+                    ).hexdigest(),
+                    "planned_path_cells": [[0, 0], [1, 0]],
+                    "path_length_m": path_length,
+                    "planner_path_length_m": path_length,
+                    "cumulative_path_length_m": cumulative_path_length,
+                    "coverage_gain_cells": covered_count - previous_count,
+                    "coverage_gain_rate": (
+                        (covered_count - previous_count) / 4096
+                    ),
+                    "coverage_rate": covered_count / 4096,
+                    "done": step_index == 1,
+                    "termination_reason": (
+                        "success_done" if step_index == 1 else "none"
+                    ),
+                    "invalid_action": False,
+                    "safety_violation": False,
+                    "planner_diagnostics": {"failure_reason": "none"},
+                }
+            )
+            previous_count = covered_count
+
+    metrics, bootstrap = summarize_episodes(
+        episodes,
+        bootstrap_resamples=32,
+        bootstrap_seed=17,
+    )
+    decision_schema = standard.build_standard_decision_input_schema()
+    action_rule = standard.build_standard_action_rule_provenance("ppo_policy")
+    parent_pid = os.getpid()
+    fairness = standard.validate_standard_fairness_audit(
+        {
+            "schema_version": "stage6_standard_parallel_fairness_audit/v2",
+            "method": "ppo_policy",
+            "split": "test",
+            "worker_count": 8,
+            "worker_pids": list(range(parent_pid + 100, parent_pid + 108)),
+            "worker_start_methods": ["spawn"] * 8,
+            "evaluation_parent_pid": parent_pid,
+            "inference_pids": [parent_pid],
+            "policy_state_unchanged": True,
+            "policy_state_sha256_before": "e" * 64,
+            "policy_state_sha256_after": "e" * 64,
+            "episode_action_counts": [2] * 24,
+            "selected_action_count": 48,
+            "scenario_schedule": [job.scenario_id for job in jobs],
+            "evaluation_seeds": [job.evaluation_seed for job in jobs],
+            "theta_source": "policy_theta_mu/v1",
+            "shared_environment_contract": environment_contract,
+            "shared_environment_contract_sha256": hashlib.sha256(
+                ArtifactStore.canonical_json_bytes(environment_contract)
+            ).hexdigest(),
+            "decision_input_schema": decision_schema,
+            "decision_input_schema_sha256": hashlib.sha256(
+                ArtifactStore.canonical_json_bytes(decision_schema)
+            ).hexdigest(),
+            "action_rule": action_rule,
+            "action_rule_sha256": hashlib.sha256(
+                ArtifactStore.canonical_json_bytes(action_rule)
+            ).hexdigest(),
+            "decision_audit": standard._build_standard_decision_audit(
+                "ppo_policy",
+                base_decisions,
+            ),
+        },
+        episode_count=24,
+        parent_pid=parent_pid,
+        safety_contract=safety_contract,
+        config_sha256=config_sha256,
     )
     execution = standard.StandardEvaluationExecution(
         summary=EvaluationSummary(
             method="ppo_policy",
             scale_profile="Standard v1",
-            episodes=(),
-            metrics={"episode_count": 24},
-            bootstrap_audit={},
-            fairness_audit={},
+            episodes=tuple(episodes),
+            metrics=metrics,
+            bootstrap_audit=bootstrap,
+            fairness_audit=fairness,
         ),
-        episode_rows=episode_rows,
-        decision_rows=(),
-        step_rows=step_rows,
+        episode_rows=tuple(episode_rows),
+        decision_rows=tuple(trace_decisions),
+        step_rows=tuple(step_rows),
     )
+    return execution, frozen, job_plan
 
-    result = midterm_reduced.derive_midterm_reduced_trace_summary(
+
+def _derive_strict_fixture(execution, frozen, job_plan):
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    return midterm_reduced.derive_midterm_reduced_trace_summary(
         execution=execution,
         frozen_manifest=frozen,
         cohort="test_q24",
         job_plan=job_plan,
     )
+
+
+def test_denominator_audit_and_path_steps_to_80_99_are_derived_from_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    result = _derive_strict_fixture(execution, frozen, job_plan)
+    expected_final = 4056 / 4096
 
     assert result["schema_version"] == "midterm-reduced-trace-summary/v1"
     assert result["split"] == "test"
@@ -563,6 +824,230 @@ def test_denominator_audit_and_path_steps_to_80_99_are_derived_from_trace(
     assert result["episodes"][0]["path_length_to_80_m"] == pytest.approx(1.25)
     assert result["episodes"][0]["steps_to_99"] == 2
     assert result["episodes"][0]["path_length_to_99_m"] == pytest.approx(2.50)
-    assert result["final_coverage"]["mean"] == pytest.approx(0.99)
+    assert result["final_coverage"]["mean"] == pytest.approx(expected_final)
     assert result["final_coverage"]["coverage_80_count"] == 24
     assert result["final_coverage"]["coverage_99_count"] == 24
+
+
+def test_reduced_adapter_binds_reset_rate_to_frozen_integer_denominator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    unbound_rows = []
+    for row in execution.episode_rows:
+        unbound = dict(row)
+        unbound.pop("initial_covered_cell_count")
+        unbound_rows.append(unbound)
+    bound = midterm_reduced._bind_initial_covered_counts(
+        execution=replace(execution, episode_rows=tuple(unbound_rows)),
+        frozen_manifest=frozen,
+        job_plan=job_plan,
+        cohort="test_q24",
+    )
+
+    assert {
+        row["initial_covered_cell_count"] for row in bound.episode_rows
+    } == {1024}
+    assert _derive_strict_fixture(bound, frozen, job_plan)["episode_count"] == 24
+
+
+def test_reduced_trace_rejects_empty_fake_summary_and_fairness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    fake_summary = EvaluationSummary(
+        method="ppo_policy",
+        scale_profile="Standard v1",
+        episodes=(),
+        metrics={"episode_count": 24},
+        bootstrap_audit={},
+        fairness_audit={},
+    )
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="summary|fairness",
+    ):
+        _derive_strict_fixture(
+            replace(execution, summary=fake_summary),
+            frozen,
+            job_plan,
+        )
+
+
+@pytest.mark.parametrize("mutation", ("empty", "reordered", "sha"))
+def test_reduced_trace_rejects_missing_reordered_or_tampered_decisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    decisions = [copy.deepcopy(row) for row in execution.decision_rows]
+    if mutation == "empty":
+        decisions = []
+    elif mutation == "reordered":
+        decisions[0], decisions[1] = decisions[1], decisions[0]
+    else:
+        decisions[0]["decision_sha256"] = "0" * 64
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="decision|join|summary|fairness",
+    ):
+        _derive_strict_fixture(
+            replace(execution, decision_rows=tuple(decisions)),
+            frozen,
+            job_plan,
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    (
+        ("episode", "steps_executed", 1),
+        ("step", "done", False),
+        ("step", "termination_reason", "none"),
+        ("step", "join_key", "f" * 64),
+    ),
+)
+def test_reduced_trace_rejects_count_termination_and_join_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    field: str,
+    value: object,
+) -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    episode_rows = [copy.deepcopy(row) for row in execution.episode_rows]
+    step_rows = [copy.deepcopy(row) for row in execution.step_rows]
+    if target == "episode":
+        episode_rows[0][field] = value
+    else:
+        step_rows[1][field] = value
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="step|termination|join|episode",
+    ):
+        _derive_strict_fixture(
+            replace(
+                execution,
+                episode_rows=tuple(episode_rows),
+                step_rows=tuple(step_rows),
+            ),
+            frozen,
+            job_plan,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("coverage_gain_cells", 1),
+        ("coverage_gain_rate", 0.5),
+        ("coverage_rate", 0.90),
+        ("cumulative_path_length_m", 99.0),
+    ),
+)
+def test_reduced_trace_rejects_integer_denominator_and_path_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    step_rows = [copy.deepcopy(row) for row in execution.step_rows]
+    step_rows[0][field] = value
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="coverage|path|denominator|count",
+    ):
+        _derive_strict_fixture(
+            replace(execution, step_rows=tuple(step_rows)),
+            frozen,
+            job_plan,
+        )
+
+
+def test_reduced_trace_rejects_initial_integer_coverage_count_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    episode_rows = [copy.deepcopy(row) for row in execution.episode_rows]
+    episode_rows[0]["initial_covered_cell_count"] = 1025
+
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="denominator|initial coverage",
+    ):
+        _derive_strict_fixture(
+            replace(execution, episode_rows=tuple(episode_rows)),
+            frozen,
+            job_plan,
+        )
+
+
+def test_reduced_trace_rejects_schema_extensions_and_noncanonical_lanes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lunar_exploration_ppo.eval import midterm_reduced
+
+    execution, frozen, job_plan = _strict_execution_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    step_rows = [copy.deepcopy(row) for row in execution.step_rows]
+    step_rows[0]["unreviewed_extension"] = True
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="schema",
+    ):
+        _derive_strict_fixture(
+            replace(execution, step_rows=tuple(step_rows)),
+            frozen,
+            job_plan,
+        )
+
+    episode_rows = [copy.deepcopy(row) for row in execution.episode_rows]
+    for index, row in enumerate(episode_rows):
+        row["lane_id"] = f"lane-{(index + 1) % 8}"
+    with pytest.raises(
+        midterm_reduced.MidtermReducedEvaluationError,
+        match="lane",
+    ):
+        _derive_strict_fixture(
+            replace(execution, episode_rows=tuple(episode_rows)),
+            frozen,
+            job_plan,
+        )
