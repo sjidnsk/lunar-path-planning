@@ -17,6 +17,15 @@ class ArtifactName:
         return (self.canonical, *self.legacy)
 
 
+MID_DUAL_CONFIG = ArtifactName("mid_dual_config", "config.json")
+MID_DUAL_RESULTS = ArtifactName("mid_dual_results", "results.jsonl")
+MID_DUAL_SUMMARY = ArtifactName("mid_dual_summary", "summary.json")
+MID_DUAL_ROUTING = ArtifactName("mid_dual_routing", "routing.json")
+MID_DUAL_MANIFEST = ArtifactName("mid_dual_manifest", "manifest.json")
+MID_DUAL_PHASE_STATE = ArtifactName("mid_dual_phase_state", "phase-state.jsonl")
+MID_DUAL_REPORT = ArtifactName("mid_dual_report", "report.md")
+
+
 STAGE21_1_SUMMARY = ArtifactName(
     "stage21_1_summary",
     "summary.json",

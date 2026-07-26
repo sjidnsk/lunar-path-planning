@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 import sys
+import hashlib
+import importlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -319,3 +321,154 @@ def test_reduced_pass_fields_have_no_unqualified_pass_alias() -> None:
         "final_threshold_reduced_passed": False,
     }
     assert "passed" not in routing
+
+
+def _artifact_store_type() -> type[object]:
+    return importlib.import_module("xunce_mid_dual_artifacts").MidDualRunStore
+
+
+def _artifact_config() -> dict[str, object]:
+    return {"schema_version": "mid-dual-effective-config/v1", "run_id": "test-run", "seed": 7}
+
+
+def _artifact_rows(phase_id: str) -> list[dict[str, object]]:
+    return [{"phase_id": phase_id, "row_id": f"{phase_id}-row-1", "value": 1}]
+
+
+def _environment_probe() -> dict[str, object]:
+    return {
+        "windows_version": "Windows test",
+        "cpu_model": "test cpu",
+        "cpu_logical_count": 8,
+        "memory_bytes": 1024,
+        "gpu": {"model": "test gpu", "driver": "test driver", "cuda": "test cuda"},
+        "python_executable": "D:/conda_envs/lunar-explorer/python.exe",
+        "python_version": "3.12.0",
+        "frozen_dependencies": ["pytest==8.0"],
+        "python_hash_seed": "0",
+        "thread_variables": {"OMP_NUM_THREADS": "1"},
+        "worker_start_method": "spawn",
+        "power_mode": "best-performance",
+    }
+
+
+def test_run_store_refuses_an_existing_run_root(tmp_path: Path) -> None:
+    """Catch accidental overwrite of an existing experiment evidence root."""
+    run_root = tmp_path / "existing"
+    run_root.mkdir()
+    with pytest.raises(FileExistsError):
+        _artifact_store_type().create_new(run_root, _artifact_config())
+
+
+def test_resume_accepts_only_a_contiguous_hash_valid_phase_prefix(tmp_path: Path) -> None:
+    """Catch resume after a missing phase or a changed accepted phase payload."""
+    store_type = _artifact_store_type()
+    store = store_type.create_new(tmp_path / "resume", _artifact_config())
+    first_attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {"kind": "first"})
+    first_hash = store.accept_phase("p01", first_attempt, store.phase_attempt_row_sha256("p01", first_attempt))
+    assert len(first_hash) == 64
+    second_attempt = store.write_phase_attempt("p02", _artifact_rows("p02"), {"kind": "second"})
+    store.accept_phase("p02", second_attempt, store.phase_attempt_row_sha256("p02", second_attempt))
+    config_sha256 = store.config_sha256
+    resumed = store_type.load_for_resume(tmp_path / "resume", config_sha256)
+    assert resumed.accepted_phase_ids == ("p01", "p02")
+    from xunce_artifact_io import write_jsonl
+
+    write_jsonl(tmp_path / "resume" / "phases" / "p02" / second_attempt / "results.jsonl", [{"changed": True}])
+    with pytest.raises(ValueError, match="hash"):
+        store_type.load_for_resume(tmp_path / "resume", config_sha256)
+
+
+def test_incomplete_phase_is_not_merged_into_final_results(tmp_path: Path) -> None:
+    """Catch merging a written-but-unaccepted phase into formal final evidence."""
+    store = _artifact_store_type().create_new(tmp_path / "incomplete", _artifact_config())
+    accepted_attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {"kind": "accepted"})
+    store.accept_phase("p01", accepted_attempt, store.phase_attempt_row_sha256("p01", accepted_attempt))
+    store.write_phase_attempt("p02", _artifact_rows("p02"), {"kind": "incomplete"})
+    store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    from xunce_artifact_io import read_jsonl
+
+    assert read_jsonl(tmp_path / "incomplete" / "results.jsonl") == _artifact_rows("p01")
+
+
+def test_finalize_writes_the_seven_required_canonical_artifacts_once(tmp_path: Path) -> None:
+    """Catch incomplete finalization or overwriting a canonical evidence artifact."""
+    store = _artifact_store_type().create_new(tmp_path / "final", _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    from xunce_artifact_io import path_is_file
+
+    assert all(
+        path_is_file(tmp_path / "final" / name)
+        for name in ("config.json", "results.jsonl", "summary.json", "routing.json", "manifest.json", "phase-state.jsonl", "report.md")
+    )
+    with pytest.raises(FileExistsError):
+        store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+
+
+def test_manifest_hashes_every_artifact_except_itself(tmp_path: Path) -> None:
+    """Catch a manifest that omits a canonical artifact or tries to hash itself."""
+    store = _artifact_store_type().create_new(tmp_path / "manifest", _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    from xunce_artifact_io import read_bytes, read_json
+
+    manifest = read_json(tmp_path / "manifest" / "manifest.json")
+    hashed = {entry["path"]: entry["sha256"] for entry in manifest["artifacts"]}
+    assert "manifest.json" not in hashed
+    assert set(("config.json", "results.jsonl", "summary.json", "routing.json", "phase-state.jsonl", "report.md")).issubset(hashed)
+    assert all(hashlib.sha256(read_bytes(tmp_path / "manifest" / path)).hexdigest() == digest for path, digest in hashed.items())
+    assert store.verify_manifest(tmp_path / "manifest") is True
+
+
+def test_blocked_preflight_is_terminal_evidence_but_not_pass_evidence(tmp_path: Path) -> None:
+    """Catch a blocked machine preflight being reported as a formal gate pass."""
+    store = _artifact_store_type().create_new(tmp_path / "blocked", _artifact_config())
+    store.finalize({"status": "blocked"}, {"status": "blocked"}, "blocked before execution", {})
+    from xunce_artifact_io import read_json, read_jsonl
+
+    assert read_jsonl(tmp_path / "blocked" / "results.jsonl") == []
+    summary = read_json(tmp_path / "blocked" / "summary.json")
+    routing = read_json(tmp_path / "blocked" / "routing.json")
+    assert summary["formal_evidence_eligible"] is False
+    assert routing["formal_evidence_eligible"] is False
+    assert routing["status"] == "blocked"
+    assert routing.get("midterm_reduced_passed") is not True
+
+
+def test_artifact_module_uses_xunce_io_and_paths_only() -> None:
+    """Catch bypassing the repository artifact I/O and canonical-path contracts."""
+    module = importlib.import_module("xunce_mid_dual_artifacts")
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "xunce_artifact_io" in source
+    assert "xunce_artifact_paths" in source
+    assert not any(token in source for token in ("Path.read_text(", "Path.write_text(", "Path.exists(", "Path.is_file(", "Path.open(", "Path.mkdir("))
+
+
+def test_lineage_audit_snapshots_dirty_required_sources_by_sha256(tmp_path: Path) -> None:
+    """Catch missing byte-for-byte snapshots for required untracked source evidence."""
+    source = tmp_path / "required-source.py"
+    source.write_bytes(b"required source bytes\n")
+    store = _artifact_store_type().create_new(tmp_path / "lineage-run", _artifact_config())
+    audit = store.capture_lineage([source], "a" * 40, "b" * 40)
+    row = audit["required_sources"][0]
+    assert row["status"] == "untracked"
+    assert row["snapshot_path"] == "lineage/s0001.bin"
+    from xunce_artifact_io import read_bytes
+
+    assert read_bytes(tmp_path / "lineage-run" / row["snapshot_path"]) == b"required source bytes\n"
+    assert row["sha256"] == hashlib.sha256(b"required source bytes\n").hexdigest()
+
+
+def test_environment_audit_binds_python_cpu_gpu_threads_and_power_mode(tmp_path: Path) -> None:
+    """Catch guessed or incomplete environment evidence entering a formal run."""
+    store = _artifact_store_type().create_new(tmp_path / "environment", _artifact_config())
+    audit = store.capture_environment(_environment_probe)
+    assert audit["status"] == "captured"
+    assert audit["probe"]["python_executable"] == "D:/conda_envs/lunar-explorer/python.exe"
+    assert audit["probe"]["cpu_logical_count"] == 8
+    assert audit["probe"]["gpu"]["driver"] == "test driver"
+    assert audit["probe"]["thread_variables"] == {"OMP_NUM_THREADS": "1"}
+    assert audit["probe"]["power_mode"] == "best-performance"
