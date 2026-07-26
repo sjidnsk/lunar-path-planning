@@ -26,6 +26,8 @@ _ATTEMPT_INDEX = "phase-attempts.jsonl"
 _STORE_INDEX = "store-index.json"
 _LINEAGE_AUDIT = "lineage_audit.json"
 _ENVIRONMENT_AUDIT = "environment_audit.json"
+_FINALIZATION_STATE = "finalization/state.json"
+_FINALIZATION_STAGE_ROOT = "finalization/staged"
 _MANIFEST_SCHEMA_VERSION = "mid-dual-manifest/v1"
 _LINEAGE_AUDIT_SCHEMA_VERSION = "mid-dual-lineage-audit/v1"
 _ENVIRONMENT_AUDIT_SCHEMA_VERSION = "mid-dual-environment-audit/v1"
@@ -420,6 +422,39 @@ class MidDualRunStore:
             return False
         return None
 
+    def _fresh_required_status(self, repository_root: str, statuses: Mapping[str, str], relative_path: str) -> str | None:
+        if relative_path.startswith("external/"):
+            return None
+        if relative_path in statuses:
+            return statuses[relative_path]
+        tracked = self._git_trackedness(relative_path)
+        if tracked is None:
+            return None
+        return "clean" if tracked else "untracked"
+
+    def _lineage_audit_is_current(self, audit: object) -> bool:
+        expected_sources = self._recorded_lineage_sources()
+        if not _valid_lineage_audit(audit, self.run_root, expected_sources):
+            return False
+        repository_root, statuses, status_query_ok = self._status_inventory()
+        if not status_query_ok:
+            return False
+        inventory = {row["path"]: row["status"] for row in audit["status_inventory"]}
+        for row in audit["required_sources"]:
+            relative_path = row["original_relative_path"]
+            fresh_status = self._fresh_required_status(repository_root, statuses, relative_path)
+            if fresh_status is None:
+                if row["status"] == "clean":
+                    return False
+                continue
+            if inventory.get(relative_path) != row["status"] or fresh_status != row["status"]:
+                return False
+            if row["status"] == "clean":
+                source_path = Path(repository_root) / relative_path
+                if not artifact_io.path_is_file(source_path) or artifact_io.file_size(source_path) != row["size_bytes"] or _bytes_sha256(source_path) != row["sha256"]:
+                    return False
+        return True
+
     def _recorded_lineage_sources(self) -> list[str] | None:
         store_index_path = self._canonical_path(_STORE_INDEX)
         if not artifact_io.path_is_file(store_index_path):
@@ -481,13 +516,25 @@ class MidDualRunStore:
             "submodule_commit": submodule_commit,
             "branch": self._git_output("branch", "--show-current"),
             "required_sources": required_rows,
-            "status_inventory": [{"path": path, "status": status} for path, status in sorted(statuses.items())],
+            "status_inventory": [
+                {"path": path, "status": status}
+                for path, status in sorted(
+                    {
+                        **statuses,
+                        **{
+                            row["original_relative_path"]: row["status"]
+                            for row in required_rows
+                            if not row["original_relative_path"].startswith("external/")
+                        },
+                    }.items()
+                )
+            ],
         }
         artifact_io.write_json(self._canonical_path(_LINEAGE_AUDIT), audit)
         store_index = artifact_io.read_json(self._canonical_path(_STORE_INDEX))
         store_index["required_lineage_sources"] = [row["original_relative_path"] for row in required_rows]
         artifact_io.write_json(self._canonical_path(_STORE_INDEX), store_index)
-        self._lineage_captured = _valid_lineage_audit(audit, self.run_root, self._recorded_lineage_sources())
+        self._lineage_captured = self._lineage_audit_is_current(audit)
         if not self._lineage_captured:
             self._preflight_blocked = True
         return audit
@@ -514,9 +561,7 @@ class MidDualRunStore:
         lineage_path = self._canonical_path(_LINEAGE_AUDIT)
         environment_path = self._canonical_path(_ENVIRONMENT_AUDIT)
         try:
-            self._lineage_captured = artifact_io.path_is_file(lineage_path) and _valid_lineage_audit(
-                artifact_io.read_json(lineage_path), self.run_root, self._recorded_lineage_sources()
-            )
+            self._lineage_captured = artifact_io.path_is_file(lineage_path) and self._lineage_audit_is_current(artifact_io.read_json(lineage_path))
         except (OSError, ValueError):
             self._lineage_captured = False
         try:
@@ -569,6 +614,15 @@ class MidDualRunStore:
             _manifest_relative_path(source)
         for extra_path in extra_paths:
             paths.add(_manifest_relative_path(extra_path))
+        state_path = root / _FINALIZATION_STATE
+        if artifact_io.path_is_file(state_path):
+            state = artifact_io.read_json(state_path)
+            staged_artifacts = state.get("staged_artifacts")
+            if not isinstance(staged_artifacts, dict):
+                raise ValueError("manifest finalization state is malformed")
+            paths.add(_FINALIZATION_STATE)
+            for staged_path in staged_artifacts:
+                paths.add(_manifest_relative_path(staged_path))
         return paths
 
     @staticmethod
@@ -598,12 +652,79 @@ class MidDualRunStore:
             raise ValueError("extra audit names must be unique")
         return paths
 
+    @staticmethod
+    def _json_text(payload: Mapping[str, Any]) -> str:
+        return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+    @staticmethod
+    def _jsonl_text(rows: Iterable[Mapping[str, Any]]) -> str:
+        return "".join(json.dumps(dict(row), ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
+
+    def _stage_finalization(self, payloads: Mapping[str, str]) -> dict[str, Any]:
+        staged_artifacts: dict[str, str] = {}
+        for target_path, text in payloads.items():
+            stage_path = f"{_FINALIZATION_STAGE_ROOT}/{target_path}"
+            artifact_io.write_text(self.run_root / stage_path, text)
+            staged_artifacts[stage_path] = _bytes_sha256(self.run_root / stage_path)
+        transaction_sha256 = _json_sha256({"config_sha256": self.config_sha256, "payloads": dict(payloads)})
+        state = {
+            "schema_version": "mid-dual-finalization-state/v1",
+            "transaction_sha256": transaction_sha256,
+            "staged_artifacts": staged_artifacts,
+            "promoted_paths": [],
+        }
+        artifact_io.write_json(self.run_root / _FINALIZATION_STATE, state)
+        return state
+
+    def _load_finalization_state(self, payloads: Mapping[str, str]) -> dict[str, Any]:
+        state_path = self.run_root / _FINALIZATION_STATE
+        if not artifact_io.path_is_file(state_path):
+            return self._stage_finalization(payloads)
+        state = artifact_io.read_json(state_path)
+        if state.get("schema_version") != "mid-dual-finalization-state/v1" or not isinstance(state.get("staged_artifacts"), dict) or not isinstance(state.get("promoted_paths"), list):
+            raise ValueError("finalization state is malformed")
+        expected_transaction = _json_sha256({"config_sha256": self.config_sha256, "payloads": dict(payloads)})
+        if state.get("transaction_sha256") != expected_transaction:
+            raise ValueError("finalization transaction payload drift")
+        expected_stage_paths = {f"{_FINALIZATION_STAGE_ROOT}/{target_path}" for target_path in payloads}
+        if set(state["staged_artifacts"]) != expected_stage_paths:
+            raise ValueError("finalization state is malformed")
+        for stage_path, digest in state["staged_artifacts"].items():
+            if not isinstance(stage_path, str) or not isinstance(digest, str):
+                raise ValueError("finalization state is malformed")
+            target = self.run_root / stage_path
+            if not artifact_io.path_is_file(target) or _bytes_sha256(target) != digest:
+                raise ValueError("finalization staged bytes drift")
+        return state
+
+    def _promote_finalization(self, state: dict[str, Any], payloads: Mapping[str, str]) -> None:
+        promoted = set(state["promoted_paths"])
+        for target_path, text in payloads.items():
+            stage_path = f"{_FINALIZATION_STAGE_ROOT}/{target_path}"
+            staged_path = self.run_root / stage_path
+            target = self._canonical_path(target_path)
+            staged_digest = state["staged_artifacts"][stage_path]
+            if target_path in promoted:
+                if not artifact_io.path_is_file(target) or _bytes_sha256(target) != staged_digest:
+                    raise ValueError("finalization promoted bytes drift")
+                continue
+            if artifact_io.path_is_file(target):
+                if _bytes_sha256(target) != staged_digest and target_path != _STORE_INDEX:
+                    raise ValueError("finalization canonical bytes drift")
+            if not artifact_io.path_is_file(target) or _bytes_sha256(target) != staged_digest:
+                artifact_io.write_text(target, artifact_io.read_text(staged_path))
+            if not artifact_io.path_is_file(target) or _bytes_sha256(target) != staged_digest:
+                raise ValueError("finalization promotion verification failed")
+            promoted.add(target_path)
+            state["promoted_paths"] = sorted(promoted)
+            artifact_io.write_json(self.run_root / _FINALIZATION_STATE, state)
+
     def finalize(self, summary: Mapping[str, Any], routing: Mapping[str, Any], report: str, extra_audits: Mapping[str, Mapping[str, Any]]) -> None:
         extra_paths = self._extra_audit_paths(extra_audits)
         manifest_path = artifact_path(self.run_root, MID_DUAL_MANIFEST)
         if artifact_io.path_is_file(manifest_path):
             self.verify_manifest(self.run_root)
-        if any(artifact_io.path_exists(artifact_path(self.run_root, artifact)) for artifact in (MID_DUAL_RESULTS, MID_DUAL_SUMMARY, MID_DUAL_ROUTING, MID_DUAL_MANIFEST, MID_DUAL_REPORT)):
+        if artifact_io.path_is_file(manifest_path):
             raise FileExistsError("final canonical artifacts already exist")
         resumed = self.load_for_resume(self.run_root, self.config_sha256)
         self._attempts = resumed._attempts
@@ -614,11 +735,8 @@ class MidDualRunStore:
         rows: list[dict[str, Any]] = []
         for attempt in accepted:
             rows.extend(artifact_io.read_jsonl(self.run_root / attempt["rows_path"]))
-        for name, payload in extra_audits.items():
-            artifact_io.write_json(self._canonical_path(f"{name}_audit.json"), dict(payload))
         store_index = artifact_io.read_json(self._canonical_path(_STORE_INDEX))
         store_index["extra_audit_paths"] = extra_paths
-        artifact_io.write_json(self._canonical_path(_STORE_INDEX), store_index)
         self._restore_preflight_state()
         blocked = self._preflight_blocked or not self._lineage_captured or not self._environment_captured or summary.get("status") == "blocked" or routing.get("status") == "blocked"
         if not blocked and self.accepted_phase_ids != self.required_phase_ids:
@@ -632,10 +750,19 @@ class MidDualRunStore:
         else:
             final_summary["formal_evidence_eligible"] = True
             final_routing["formal_evidence_eligible"] = True
-        artifact_io.write_jsonl(artifact_path(self.run_root, MID_DUAL_RESULTS), rows)
-        artifact_io.write_json(artifact_path(self.run_root, MID_DUAL_SUMMARY), final_summary)
-        artifact_io.write_json(artifact_path(self.run_root, MID_DUAL_ROUTING), final_routing)
-        artifact_io.write_text(artifact_path(self.run_root, MID_DUAL_REPORT), report)
+        if not isinstance(report, str):
+            raise TypeError("report must be a string")
+        payloads: dict[str, str] = {
+            "results.jsonl": self._jsonl_text(rows),
+            "summary.json": self._json_text(final_summary),
+            "routing.json": self._json_text(final_routing),
+            "report.md": report,
+        }
+        for name, payload in extra_audits.items():
+            payloads[f"{name}_audit.json"] = self._json_text(dict(payload))
+        payloads[_STORE_INDEX] = self._json_text(store_index)
+        state = self._load_finalization_state(payloads)
+        self._promote_finalization(state, payloads)
         artifact_paths = sorted(self._expected_artifact_paths(self.run_root))
         manifest = {
             "schema_version": _MANIFEST_SCHEMA_VERSION,

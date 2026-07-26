@@ -806,3 +806,121 @@ def test_environment_schema_invalid_probe_persists_blocked_across_resume(tmp_pat
     resumed = _artifact_store_type().load_for_resume(run_root, store.config_sha256)
     resumed.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
     assert read_json(run_root / "routing.json")["formal_evidence_eligible"] is False
+
+
+def test_clean_required_lineage_source_drift_blocks_resume_and_finalize(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catch a captured clean source changing before recoverable finalization."""
+    from xunce_artifact_io import read_json
+
+    repository = tmp_path / "clean-source-repository"
+    repository.mkdir()
+    subprocess.run(("git", "init"), cwd=repository, check=True, capture_output=True)
+    subprocess.run(("git", "config", "user.email", "test@example.invalid"), cwd=repository, check=True)
+    subprocess.run(("git", "config", "user.name", "Task 2 Test"), cwd=repository, check=True)
+    source = repository / "required.py"
+    source.write_bytes(b"clean source\n")
+    subprocess.run(("git", "add", "required.py"), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-m", "tracked fixture"), cwd=repository, check=True, capture_output=True)
+    monkeypatch.chdir(repository)
+    store = _artifact_store_type().create_new(repository / "out", _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    assert store.capture_lineage([source], "a" * 40, "b" * 40)["required_sources"][0]["status"] == "clean"
+    assert store.capture_environment(_environment_probe)["status"] == "captured"
+    source.write_bytes(b"dirty source\n")
+    resumed = _artifact_store_type().load_for_resume(repository / "out", store.config_sha256)
+    resumed.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    assert read_json(repository / "out" / "summary.json")["status"] == "blocked"
+
+
+def test_rewritten_dirty_lineage_row_as_clean_is_rebound_to_fresh_git_state(tmp_path: Path) -> None:
+    """Catch a dirty required row being rewritten as clean to discard its snapshot."""
+    from xunce_artifact_io import read_json, write_json
+
+    source = tmp_path / "required.py"
+    source.write_bytes(b"untracked source\n")
+    run_root = tmp_path / "rewritten-lineage"
+    store = _artifact_store_type().create_new(run_root, _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    store.capture_lineage([source], "a" * 40, "b" * 40)
+    assert store.capture_environment(_environment_probe)["status"] == "captured"
+    audit = read_json(run_root / "lineage_audit.json")
+    audit["required_sources"][0].pop("snapshot_path")
+    audit["required_sources"][0]["status"] = "clean"
+    audit["status_inventory"] = [{"path": audit["required_sources"][0]["original_relative_path"], "status": "clean"}]
+    write_json(run_root / "lineage_audit.json", audit)
+    resumed = _artifact_store_type().load_for_resume(run_root, store.config_sha256)
+    resumed.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    assert read_json(run_root / "routing.json")["formal_evidence_eligible"] is False
+
+
+def _prepared_finalization_store(tmp_path: Path, name: str) -> object:
+    store = _artifact_store_type().create_new(tmp_path / name, _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    _capture_valid_preflight(store)
+    return store
+
+
+def test_nonserializable_final_payload_creates_no_canonical_final_artifact(tmp_path: Path) -> None:
+    """Catch serialization failure after a partial canonical finalization write."""
+    from xunce_artifact_io import path_is_file
+
+    store = _prepared_finalization_store(tmp_path, "nonserializable")
+    with pytest.raises(TypeError):
+        store.finalize({"status": "complete", "bad": {object()}}, {"status": "passed"}, "report", {})
+    assert not any(path_is_file(tmp_path / "nonserializable" / name) for name in ("results.jsonl", "summary.json", "routing.json", "report.md", "manifest.json"))
+
+
+@pytest.mark.parametrize("failed_target", ("results.jsonl", "routing.json"))
+def test_partial_finalization_retry_promotes_one_transaction_without_duplicate_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_target: str) -> None:
+    """Catch a disk failure permanently stranding a valid staged finalization."""
+    import xunce_mid_dual_artifacts as artifacts
+    from xunce_artifact_io import read_jsonl
+
+    store = _prepared_finalization_store(tmp_path, f"retry-{failed_target}")
+    original_write_text = artifacts.artifact_io.write_text
+    failed = False
+
+    def fail_once(path: str | Path, text: str, *, encoding: str = "utf-8") -> None:
+        nonlocal failed
+        if not failed and Path(path).name == failed_target and "finalization" not in Path(path).parts:
+            failed = True
+            raise OSError("deterministic promotion failure")
+        original_write_text(path, text, encoding=encoding)
+
+    monkeypatch.setattr(artifacts.artifact_io, "write_text", fail_once)
+    with pytest.raises(OSError, match="promotion failure"):
+        store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    run_root = tmp_path / f"retry-{failed_target}"
+    assert store.verify_manifest(run_root) is True
+    assert read_jsonl(run_root / "results.jsonl") == _artifact_rows("p01")
+
+
+@pytest.mark.parametrize("tampered_path", ("finalization/staged/results.jsonl", "results.jsonl"))
+def test_partial_finalization_rejects_drifted_caller_and_tampered_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tampered_path: str) -> None:
+    """Catch retry accepting a different payload or altered staged/canonical bytes after promotion starts."""
+    import xunce_mid_dual_artifacts as artifacts
+    from xunce_artifact_io import write_text
+
+    store = _prepared_finalization_store(tmp_path, "retry-drift")
+    original_write_text = artifacts.artifact_io.write_text
+    failed = False
+
+    def fail_once(path: str | Path, text: str, *, encoding: str = "utf-8") -> None:
+        nonlocal failed
+        if not failed and Path(path).name == "summary.json" and "finalization" not in Path(path).parts:
+            failed = True
+            raise OSError("deterministic promotion failure")
+        original_write_text(path, text, encoding=encoding)
+
+    monkeypatch.setattr(artifacts.artifact_io, "write_text", fail_once)
+    with pytest.raises(OSError):
+        store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    with pytest.raises(ValueError, match="finalization"):
+        store.finalize({"status": "changed"}, {"status": "passed"}, "report", {})
+    write_text(tmp_path / "retry-drift" / tampered_path, "tampered\n")
+    with pytest.raises(ValueError, match="finalization"):
+        store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
