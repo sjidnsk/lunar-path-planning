@@ -11,7 +11,7 @@ from dataclasses import dataclass, fields
 import math
 import random
 from statistics import mean, median, stdev
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Sequence
 
 
 SCALE_PROFILE = "midterm_reduced_w8x3_update80/v1"
@@ -206,36 +206,42 @@ class InterfaceReplayRow:
             raise ValueError("elapsed_ms must be non-negative")
 
 
-def _finite_values(values: Iterable[float]) -> tuple[float, ...] | None:
-    materialized = tuple(float(value) for value in values)
-    if not materialized or not all(math.isfinite(value) for value in materialized):
-        return None
-    return materialized
+def _finite_values(values: Iterable[object]) -> tuple[float, ...] | None:
+    """Accept only finite real-number evidence; never coerce formal inputs."""
+    materialized: list[float] = []
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        materialized.append(number)
+    return tuple(materialized) if materialized else None
 
 
-def nearest_rank(values: Sequence[float], q: float) -> float:
+def nearest_rank(values: Sequence[object], q: object) -> float:
     """Return the one-based nearest-rank percentile: ``ceil(q*n)``."""
     finite = _finite_values(values)
     if finite is None:
         raise ValueError("values must be non-empty and finite")
-    if not math.isfinite(q) or not 0.0 <= q <= 1.0:
+    if isinstance(q, bool) or not isinstance(q, (int, float)) or not math.isfinite(float(q)) or not 0.0 <= q <= 1.0:
         raise ValueError("q must be finite and within [0, 1]")
     index = max(1, math.ceil(q * len(finite))) - 1
     return sorted(finite)[index]
 
 
-def episode_bootstrap_ci(values: Sequence[float], *, seed: int = BOOTSTRAP_SEED) -> dict[str, float | int | str]:
+def episode_bootstrap_ci(values: Sequence[object]) -> dict[str, float | int | str]:
     """Return replayable 95% bootstrap CI using whole episodes as units."""
     finite = _finite_values(values)
     if finite is None:
         raise ValueError("bootstrap values must be non-empty and finite")
-    generator = random.Random(seed)
+    generator = random.Random(BOOTSTRAP_SEED)
     sampled_means = sorted(
         mean(generator.choice(finite) for _ in range(len(finite))) for _ in range(BOOTSTRAP_RESAMPLES)
     )
     return {
         "unit": "episode",
-        "seed": seed,
+        "seed": BOOTSTRAP_SEED,
         "resamples": BOOTSTRAP_RESAMPLES,
         "confidence_level": 0.95,
         "lower": nearest_rank(sampled_means, 0.025),
@@ -243,7 +249,7 @@ def episode_bootstrap_ci(values: Sequence[float], *, seed: int = BOOTSTRAP_SEED)
     }
 
 
-def _summary(values: Sequence[float]) -> dict[str, float | int]:
+def _summary(values: Sequence[object]) -> dict[str, float | int]:
     finite = _finite_values(values)
     if finite is None:
         raise ValueError("statistics values must be non-empty and finite")
@@ -272,10 +278,24 @@ def route_gate(*, midterm: bool, final: bool, blocked: bool = False) -> dict[str
     }
 
 
-def g1_split_statistics(job_ids: Sequence[str], coverage_values: Sequence[float]) -> dict[str, object]:
+def g1_split_statistics(
+    job_ids: Sequence[str],
+    coverage_values: Sequence[object],
+    *,
+    lane_ids: Sequence[str] | None = None,
+) -> dict[str, object]:
     """Compute one split's G1 thresholds; malformed formal evidence blocks closed."""
     if len(job_ids) != G1_EPISODES_PER_FORMAL_SPLIT or len(set(job_ids)) != G1_EPISODES_PER_FORMAL_SPLIT:
         return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_jobs_incomplete_or_duplicate"}
+    if lane_ids is None or len(lane_ids) != G1_EPISODES_PER_FORMAL_SPLIT:
+        return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_lanes_incomplete_or_unbalanced"}
+    lane_sizes: dict[str, int] = {}
+    for lane_id in lane_ids:
+        if not isinstance(lane_id, str) or not lane_id:
+            return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_lanes_incomplete_or_unbalanced"}
+        lane_sizes[lane_id] = lane_sizes.get(lane_id, 0) + 1
+    if len(lane_sizes) != len(G1_LANE_SIZES) or tuple(sorted(lane_sizes.values())) != tuple(sorted(G1_LANE_SIZES)):
+        return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_lanes_incomplete_or_unbalanced"}
     values = _finite_values(coverage_values)
     if values is None or len(values) != G1_EPISODES_PER_FORMAL_SPLIT:
         return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_nonfinite_or_incomplete_coverage"}
@@ -296,7 +316,7 @@ def g1_split_statistics(job_ids: Sequence[str], coverage_values: Sequence[float]
 evaluate_g1_split = g1_split_statistics
 
 
-def evaluate_g2_platform(*, platform: str, scale: str, outcome_kind: str, elapsed_ms: Sequence[float]) -> dict[str, object]:
+def evaluate_g2_platform(*, platform: str, scale: str, outcome_kind: str, elapsed_ms: Sequence[object]) -> dict[str, object]:
     """Summarize one G2 platform/scale/outcome partition and its time gates."""
     if platform not in G2_PLATFORMS or not scale or not outcome_kind:
         return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "invalid_g2_partition"}
@@ -329,30 +349,141 @@ def g2_statistics(rows: Sequence[PlanningCallRow]) -> dict[tuple[str, str, str],
     }
 
 
-def unique_request_semantic_consensus(rows: Sequence[PlanningCallRow]) -> dict[str, bool]:
-    """Apply the G2 five-repeat, all-success, identical-digest correctness rule."""
-    grouped: dict[str, list[PlanningCallRow]] = {}
+def _blocked(reason: str) -> dict[str, object]:
+    return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": reason}
+
+
+def _group_rows_by_platform_request(
+    rows: Sequence[PlanningCallRow],
+) -> dict[tuple[str, str], list[PlanningCallRow]]:
+    grouped: dict[tuple[str, str], list[PlanningCallRow]] = {}
     for row in rows:
-        grouped.setdefault(row.request_id, []).append(row)
+        grouped.setdefault((row.platform, row.request_id), []).append(row)
+    return grouped
+
+
+def _has_cross_platform_request_id(rows: Sequence[PlanningCallRow]) -> bool:
+    platforms_by_request: dict[str, set[str]] = {}
+    for row in rows:
+        platforms_by_request.setdefault(row.request_id, set()).add(row.platform)
+    return any(len(platforms) != 1 for platforms in platforms_by_request.values())
+
+
+def _request_provenance_is_stable(request_rows: Sequence[PlanningCallRow]) -> bool:
+    return len(
+        {
+            (
+                row.platform,
+                row.scale,
+                row.outcome_kind,
+                row.source_sha256,
+                row.config_sha256,
+                row.request_sha256,
+            )
+            for row in request_rows
+        }
+    ) == 1
+
+
+def _request_repeat_structure_is_valid(request_rows: Sequence[PlanningCallRow]) -> bool:
+    return (
+        len(request_rows) == G2_REPEATS
+        and len({row.call_id for row in request_rows}) == G2_REPEATS
+        and _request_provenance_is_stable(request_rows)
+    )
+
+
+def unique_request_semantic_consensus(rows: Sequence[PlanningCallRow]) -> dict[tuple[str, str], bool]:
+    """Apply five independent repeats per ``(platform, request_id)`` evidence key."""
+    grouped = _group_rows_by_platform_request(rows)
     return {
-        request_id: len(request_rows) == G2_REPEATS
+        key: _request_repeat_structure_is_valid(request_rows)
         and all(row.provider_success and row.route_l2_valid for row in request_rows)
         and len({row.semantic_digest for row in request_rows}) == 1
-        for request_id, request_rows in grouped.items()
+        for key, request_rows in grouped.items()
     }
 
 
 def reachable_request_success_rate(rows: Sequence[PlanningCallRow]) -> dict[str, object]:
-    """Calculate reachable-request correctness from unique requests, never calls."""
+    """Require all three platforms to supply exactly 38 complete reachable requests."""
+    if _has_cross_platform_request_id(rows):
+        return _blocked("g2_cross_platform_request_id")
     reachable = [row for row in rows if row.outcome_kind == "reachable"]
+    grouped = _group_rows_by_platform_request(reachable)
+    keys_by_platform = {platform: {key for key in grouped if key[0] == platform} for platform in G2_PLATFORMS}
+    if any(len(keys_by_platform[platform]) != 38 for platform in G2_PLATFORMS):
+        return _blocked("g2_reachable_request_count_mismatch")
+    if any(not _request_repeat_structure_is_valid(request_rows) for request_rows in grouped.values()):
+        return _blocked("g2_reachable_repeat_or_provenance_mismatch")
     consensus = unique_request_semantic_consensus(reachable)
-    if not consensus:
-        return {"status": "blocked", "blocking_reason": "no_reachable_unique_requests"}
-    success_count = sum(consensus.values())
-    total = len(consensus)
+    successes_by_platform = {
+        platform: sum(consensus[key] for key in keys_by_platform[platform]) for platform in G2_PLATFORMS
+    }
+    all_succeeded = all(successes_by_platform[platform] == 38 for platform in G2_PLATFORMS)
     return {
-        "status": "passed" if success_count / total >= FINAL_COVERAGE_THRESHOLD else "failed",
-        "reachable_unique_request_count": total,
-        "reachable_unique_success_count": success_count,
-        "reachable_unique_success_rate": success_count / total,
+        **route_gate(midterm=all_succeeded, final=all_succeeded),
+        "reachable_unique_request_count_by_platform": {platform: 38 for platform in G2_PLATFORMS},
+        "reachable_unique_success_count_by_platform": successes_by_platform,
+        "reachable_unique_success_rate_by_platform": {
+            platform: successes_by_platform[platform] / 38 for platform in G2_PLATFORMS
+        },
+    }
+
+
+def _formal_g2_matrix_blocking_reason(rows: Sequence[PlanningCallRow]) -> str | None:
+    if len(rows) != G2_FORMAL_CALLS:
+        return "g2_formal_call_count_mismatch"
+    if any(not isinstance(row, PlanningCallRow) for row in rows):
+        return "g2_formal_row_type_mismatch"
+    if len({row.call_id for row in rows}) != G2_FORMAL_CALLS:
+        return "g2_duplicate_call_id"
+    if _has_cross_platform_request_id(rows):
+        return "g2_cross_platform_request_id"
+    groups = _group_rows_by_platform_request(rows)
+    for platform in G2_PLATFORMS:
+        platform_groups = {key: value for key, value in groups.items() if key[0] == platform}
+        if len(platform_groups) != G2_STANDARD_REQUESTS + G2_KILOMETER_REQUESTS:
+            return "g2_platform_request_matrix_incomplete"
+        scale_counts = {"standard": 0, "kilometer": 0}
+        for request_rows in platform_groups.values():
+            if not _request_repeat_structure_is_valid(request_rows):
+                return "g2_request_repeat_or_provenance_mismatch"
+            scale = request_rows[0].scale
+            if scale not in scale_counts:
+                return "g2_platform_request_matrix_incomplete"
+            scale_counts[scale] += 1
+        if scale_counts != {"standard": G2_STANDARD_REQUESTS, "kilometer": G2_KILOMETER_REQUESTS}:
+            return "g2_platform_request_matrix_incomplete"
+    return None
+
+
+def evaluate_formal_g2(rows: Sequence[PlanningCallRow]) -> dict[str, object]:
+    """Route only a complete 645-call G2 matrix; partial timing is never formal pass evidence."""
+    blocking_reason = _formal_g2_matrix_blocking_reason(rows)
+    if blocking_reason is not None:
+        return _blocked(blocking_reason)
+    correctness = reachable_request_success_rate(rows)
+    if correctness["status"] == "blocked":
+        return correctness
+    timing_by_platform_scale: dict[tuple[str, str], dict[str, object]] = {}
+    for platform in G2_PLATFORMS:
+        for scale in ("standard", "kilometer"):
+            elapsed_ms = [row.elapsed_ms for row in rows if row.platform == platform and row.scale == scale]
+            timing_by_platform_scale[(platform, scale)] = evaluate_g2_platform(
+                platform=platform,
+                scale=scale,
+                outcome_kind="all_formal_outcomes",
+                elapsed_ms=elapsed_ms,
+            )
+    midterm = correctness["midterm_reduced_passed"] and all(
+        statistics["midterm_reduced_passed"] for statistics in timing_by_platform_scale.values()
+    )
+    final = correctness["final_threshold_reduced_passed"] and all(
+        statistics["final_threshold_reduced_passed"] for statistics in timing_by_platform_scale.values()
+    )
+    return {
+        **route_gate(midterm=midterm, final=final),
+        "formal_call_count": len(rows),
+        "reachable_correctness": correctness,
+        "timing_by_platform_scale": timing_by_platform_scale,
     }
