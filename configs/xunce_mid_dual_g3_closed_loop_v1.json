@@ -1,0 +1,33 @@
+{
+  "schema_version": "mid-dual-g3-config/v1",
+  "gate_id": "g3",
+  "runner_id": "run_xunce_mid_dual_g3_closed_loop/v1",
+  "scale_profile": "midterm_reduced_w8x3_update80/v1",
+  "output_base": "D:/xunce/out/mid_dual/g3",
+  "required_phase_ids": [
+    "p01",
+    "p02"
+  ],
+  "required_phases": [
+    "wheel_closed_loop",
+    "interface_replay"
+  ],
+  "formal_counts": {
+    "wheel_episodes": 10,
+    "test_q24": 5,
+    "unseen24": 5,
+    "legged_replays": 3,
+    "hopper_replays": 3
+  },
+  "thresholds": {
+    "midterm_coverage": 0.8,
+    "final_coverage": 0.99,
+    "paired_g1_delta_min": -0.01,
+    "midterm_planner_ms": 2000.0,
+    "final_planner_ms": 1000.0,
+    "absolute_max_planner_ms": 2000.0
+  },
+  "checkpoint_sha256": "35e04c86f9f973af028fb08f0175d42ab45378d09e1f2b96ee6aad6e4c12b5b5",
+  "policy_state_sha256": "3123e6adde99be41e3bd5cc2f3843068e5416892395926d759c2c6a243ffd381",
+  "timing_contract_id": "five-phase-sequential-ns/v1"
+}
