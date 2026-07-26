@@ -126,6 +126,9 @@ class PlanningCallRow:
             _require_nonempty(getattr(self, field_name), field_name)
         for field_name in ("request_sha256", "provider_sha256", "oracle_sha256"):
             _require_sha256(getattr(self, field_name), field_name)
+        for field_name in ("provider_success", "route_l2_valid"):
+            if type(getattr(self, field_name)) is not bool:
+                raise ValueError(f"{field_name} must be an exact bool")
         components = (
             self.input_validation_ms,
             self.platform_instantiation_ms,
@@ -379,6 +382,8 @@ def _request_provenance_is_stable(request_rows: Sequence[PlanningCallRow]) -> bo
                 row.source_sha256,
                 row.config_sha256,
                 row.request_sha256,
+                row.provider_sha256,
+                row.oracle_sha256,
             )
             for row in request_rows
         }

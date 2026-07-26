@@ -198,6 +198,16 @@ def test_formal_g2_blocks_missing_extra_duplicate_and_incomplete_platform_matrix
     assert evaluate_formal_g2(incomplete_platform)["status"] == "blocked"
 
 
+@pytest.mark.parametrize("hash_field", ["provider_sha256", "oracle_sha256"])
+def test_formal_g2_blocks_repeat_provider_or_oracle_provenance_drift(hash_field: str) -> None:
+    """Catch a 645-call matrix whose repeated request changes executor provenance."""
+    rows = _formal_g2_rows()
+    rows[1] = replace(rows[1], **{hash_field: "b" * 64})
+    routed = evaluate_formal_g2(rows)
+    assert routed["status"] == "blocked"
+    assert routed["blocking_reason"] == "g2_request_repeat_or_provenance_mismatch"
+
+
 def test_reachable_consensus_requires_per_platform_38_unique_repeated_requests() -> None:
     """Catch undersized, duplicate, cross-platform, or 37/38 reachable evidence."""
     rows = _formal_g2_rows()
@@ -236,6 +246,14 @@ def test_episode_bootstrap_rejects_seed_override() -> None:
     """Catch callers changing the frozen bootstrap random seed."""
     with pytest.raises(TypeError):
         episode_bootstrap_ci([0.10, 0.20], seed=1)
+
+
+@pytest.mark.parametrize("field_name", ["provider_success", "route_l2_valid"])
+@pytest.mark.parametrize("malformed", ["false", 1, None])
+def test_planning_call_row_rejects_non_bool_success_and_validity_evidence(field_name: str, malformed: object) -> None:
+    """Catch truthy strings/integers leaking through G2 success and validity evidence."""
+    with pytest.raises(ValueError):
+        replace(_formal_g2_rows()[0], **{field_name: malformed})
 
 
 def test_reduced_pass_fields_have_no_unqualified_pass_alias() -> None:
