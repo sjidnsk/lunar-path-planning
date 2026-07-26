@@ -23,6 +23,9 @@
 - Create `configs/xunce_mid_dual_scenario_sources_v1.json`
 - Create `scripts/prepare_xunce_mid_dual_scenario_sources.py`
 - Create `tests/test_xunce_mid_dual_scenario_sources.py`
+- Modify `scripts/xunce_artifact_io.py`
+  - add the missing binary `write_bytes()` primitive used for deterministic NPZ
+    publication; existing text/JSON behavior remains unchanged.
 
 ## Output
 
@@ -124,6 +127,8 @@ D:/xunce/inputs/mid_dual/scenario-sources/<source-id>/
   creating directories. With execute, write all data and masks first, verify
   bytes/hashes/one-to-one joins, then write `manifest.json`. Resume accepts only
   an exact, contiguous prefix with unchanged inputs.
+  Binary mask writes must use the additive `xunce_artifact_io.write_bytes()`
+  helper; no runner performs direct `Path.open()` or direct artifact writes.
 
 - [ ] **Step 7: Run GREEN and integration**
 
@@ -139,7 +144,7 @@ D:/xunce/inputs/mid_dual/scenario-sources/<source-id>/
 
 - [ ] **Step 8: Commit and later execute**
 
-  Commit only the three Task S1 files after exact diff review. Actual source
+  Commit only the four Task S1 files after exact diff review. Actual source
   generation happens later, after the full Stage6 coverage cache manifest is
   available and its hash is fixed; it writes a new D root and does not modify
   historical formal outputs.
