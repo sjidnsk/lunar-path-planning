@@ -43,6 +43,19 @@ _REQUIRED_ENVIRONMENT_FIELDS = (
     "worker_start_method",
     "power_mode",
 )
+_RESERVED_EXTRA_AUDIT_NAMES = {
+    "environment",
+    "lineage",
+    "store_index",
+    "phase_attempts",
+    "config",
+    "results",
+    "summary",
+    "routing",
+    "manifest",
+    "phase_state",
+    "report",
+}
 
 
 def _json_sha256(payload: Mapping[str, Any]) -> str:
@@ -97,10 +110,27 @@ def _sha256_digest(value: object) -> str:
 def _valid_environment_probe(probe: object) -> bool:
     if not isinstance(probe, Mapping):
         return False
-    if any(probe.get(field) in (None, "") for field in _REQUIRED_ENVIRONMENT_FIELDS):
+    required_strings = (
+        "windows_version",
+        "cpu_model",
+        "python_executable",
+        "python_version",
+        "python_hash_seed",
+        "worker_start_method",
+        "power_mode",
+    )
+    if any(not isinstance(probe.get(field), str) or not probe[field].strip() for field in required_strings):
+        return False
+    if any(type(probe.get(field)) is not int or probe[field] <= 0 for field in ("cpu_logical_count", "memory_bytes")):
         return False
     gpu = probe.get("gpu")
-    return isinstance(gpu, Mapping) and all(isinstance(gpu.get(field), str) and gpu[field].strip() for field in ("model", "driver", "cuda"))
+    if not isinstance(gpu, Mapping) or not all(isinstance(gpu.get(field), str) and gpu[field].strip() for field in ("model", "driver", "cuda")):
+        return False
+    dependencies = probe.get("frozen_dependencies")
+    if not isinstance(dependencies, list) or not dependencies or any(not isinstance(item, str) or not item.strip() for item in dependencies):
+        return False
+    thread_variables = probe.get("thread_variables")
+    return isinstance(thread_variables, Mapping) and all(isinstance(key, str) and isinstance(value, str) for key, value in thread_variables.items())
 
 
 def _valid_environment_audit(audit: object) -> bool:
@@ -113,12 +143,61 @@ def _valid_environment_audit(audit: object) -> bool:
     )
 
 
-def _valid_lineage_audit(audit: object) -> bool:
-    if not isinstance(audit, Mapping) or audit.get("schema_version") != _LINEAGE_AUDIT_SCHEMA_VERSION:
+def _valid_lineage_audit(audit: object, run_root: Path, expected_sources: list[str] | None = None) -> bool:
+    expected_audit_keys = {"schema_version", "status", "formal_evidence_eligible", "root_commit", "submodule_commit", "branch", "required_sources", "status_inventory"}
+    if not isinstance(audit, Mapping) or set(audit) != expected_audit_keys or audit.get("schema_version") != _LINEAGE_AUDIT_SCHEMA_VERSION:
         return False
-    if not all(isinstance(audit.get(field), str) and audit[field] for field in ("root_commit", "submodule_commit")):
+    if audit.get("status") != "captured" or audit.get("formal_evidence_eligible") is not True:
         return False
-    return isinstance(audit.get("required_sources"), list) and isinstance(audit.get("status_inventory"), list)
+    if not all(isinstance(audit.get(field), str) and audit[field] for field in ("root_commit", "submodule_commit")) or not isinstance(audit.get("branch"), str):
+        return False
+    required_sources = audit.get("required_sources")
+    status_inventory = audit.get("status_inventory")
+    if not isinstance(required_sources, list) or not isinstance(status_inventory, list):
+        return False
+    seen_sources: set[str] = set()
+    seen_snapshots: set[str] = set()
+    for row in required_sources:
+        if not isinstance(row, Mapping):
+            return False
+        status = row.get("status")
+        expected_row_keys = {"original_relative_path", "status", "size_bytes", "sha256"}
+        if status != "clean":
+            expected_row_keys.add("snapshot_path")
+        if set(row) != expected_row_keys or not isinstance(status, str) or not status or (status == "query_failed"):
+            return False
+        try:
+            source_path = _manifest_relative_path(row.get("original_relative_path"))
+            digest = _sha256_digest(row.get("sha256"))
+        except ValueError:
+            return False
+        if source_path in seen_sources or type(row.get("size_bytes")) is not int or row["size_bytes"] < 0:
+            return False
+        seen_sources.add(source_path)
+        if status == "clean":
+            continue
+        try:
+            snapshot_path = _manifest_relative_path(row.get("snapshot_path"))
+        except ValueError:
+            return False
+        snapshot_parts = PurePosixPath(snapshot_path).parts
+        if len(snapshot_parts) != 2 or snapshot_parts[0] != "lineage" or not snapshot_parts[1].startswith("s") or not snapshot_parts[1].endswith(".bin"):
+            return False
+        snapshot_index = snapshot_parts[1][1:-4]
+        if len(snapshot_index) != 4 or not snapshot_index.isdigit() or int(snapshot_index) <= 0 or snapshot_path in seen_snapshots:
+            return False
+        snapshot_target = run_root / snapshot_path
+        if not artifact_io.path_is_file(snapshot_target) or artifact_io.file_size(snapshot_target) != row["size_bytes"] or _bytes_sha256(snapshot_target) != digest:
+            return False
+        seen_snapshots.add(snapshot_path)
+    for row in status_inventory:
+        if not isinstance(row, Mapping) or set(row) != {"path", "status"} or not isinstance(row.get("status"), str) or not row["status"]:
+            return False
+        try:
+            _manifest_relative_path(row.get("path"))
+        except ValueError:
+            return False
+    return expected_sources is not None and [row["original_relative_path"] for row in required_sources] == expected_sources
 
 
 class MidDualRunStore:
@@ -150,7 +229,7 @@ class MidDualRunStore:
         artifact_io.write_json(artifact_path(root, MID_DUAL_CONFIG), payload)
         artifact_io.write_jsonl(artifact_path(root, MID_DUAL_PHASE_STATE), [])
         artifact_io.write_jsonl(root / _ATTEMPT_INDEX, [])
-        artifact_io.write_json(root / _STORE_INDEX, {"extra_audit_paths": []})
+        artifact_io.write_json(root / _STORE_INDEX, {"extra_audit_paths": [], "required_lineage_sources": []})
         return cls(root, config_sha256, required_phase_ids, [])
 
     @classmethod
@@ -299,9 +378,11 @@ class MidDualRunStore:
         result = subprocess.run(("git", *args), cwd=Path.cwd(), check=False, capture_output=True, text=True, encoding="utf-8")
         return result.stdout.strip() if result.returncode == 0 else ""
 
-    def _status_inventory(self) -> tuple[str, dict[str, str]]:
+    def _status_inventory(self) -> tuple[str, dict[str, str], bool]:
         repository_root = self._git_output("rev-parse", "--show-toplevel")
         status: dict[str, str] = {}
+        if not repository_root:
+            return "", status, False
         result = subprocess.run(
             ("git", "status", "--porcelain=v1", "-z"),
             cwd=Path.cwd(),
@@ -309,7 +390,7 @@ class MidDualRunStore:
             capture_output=True,
         )
         if result.returncode != 0:
-            return repository_root, status
+            return repository_root, status, False
         records = result.stdout.split(b"\0")
         index = 0
         while index < len(records):
@@ -324,13 +405,39 @@ class MidDualRunStore:
             status[current_path] = xy
             if "R" in xy or "C" in xy:
                 index += 1
-        return repository_root, status
+        return repository_root, status, True
+
+    def _git_trackedness(self, relative_path: str) -> bool | None:
+        result = subprocess.run(
+            ("git", "ls-files", "--error-unmatch", "--", relative_path),
+            cwd=Path.cwd(),
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return True
+        if result.returncode == 1:
+            return False
+        return None
+
+    def _recorded_lineage_sources(self) -> list[str] | None:
+        store_index_path = self._canonical_path(_STORE_INDEX)
+        if not artifact_io.path_is_file(store_index_path):
+            return None
+        try:
+            sources = artifact_io.read_json(store_index_path).get("required_lineage_sources")
+            if not isinstance(sources, list):
+                return None
+            return [_manifest_relative_path(source) for source in sources]
+        except (OSError, ValueError):
+            return None
 
     def capture_lineage(self, required_source_paths: Iterable[str | Path], root_commit: str, submodule_commit: str) -> dict[str, Any]:
-        repository_root, statuses = self._status_inventory()
+        repository_root, statuses, status_query_ok = self._status_inventory()
         root = Path(repository_root) if repository_root else None
         required_rows: list[dict[str, Any]] = []
         snapshot_index = 0
+        blocked = not status_query_ok
         for source in required_source_paths:
             path = Path(source)
             if not artifact_io.path_is_file(path):
@@ -342,7 +449,18 @@ class MidDualRunStore:
                 relative = str(path)
                 external_source = True
             relative = relative.replace("\\", "/")
-            status = statuses.get(relative, "untracked" if external_source or relative.startswith("../") else "clean")
+            if relative.startswith("../") or external_source:
+                relative = f"external/s{snapshot_index + 1:04d}.bin"
+                status = "untracked"
+            elif relative in statuses:
+                status = statuses[relative]
+            else:
+                tracked = self._git_trackedness(relative)
+                if tracked is None:
+                    status = "query_failed"
+                    blocked = True
+                else:
+                    status = "clean" if tracked else "untracked"
             row = {
                 "original_relative_path": relative,
                 "status": status,
@@ -357,6 +475,8 @@ class MidDualRunStore:
             required_rows.append(row)
         audit = {
             "schema_version": _LINEAGE_AUDIT_SCHEMA_VERSION,
+            "status": "blocked" if blocked else "captured",
+            "formal_evidence_eligible": not blocked,
             "root_commit": root_commit,
             "submodule_commit": submodule_commit,
             "branch": self._git_output("branch", "--show-current"),
@@ -364,7 +484,10 @@ class MidDualRunStore:
             "status_inventory": [{"path": path, "status": status} for path, status in sorted(statuses.items())],
         }
         artifact_io.write_json(self._canonical_path(_LINEAGE_AUDIT), audit)
-        self._lineage_captured = _valid_lineage_audit(audit)
+        store_index = artifact_io.read_json(self._canonical_path(_STORE_INDEX))
+        store_index["required_lineage_sources"] = [row["original_relative_path"] for row in required_rows]
+        artifact_io.write_json(self._canonical_path(_STORE_INDEX), store_index)
+        self._lineage_captured = _valid_lineage_audit(audit, self.run_root, self._recorded_lineage_sources())
         if not self._lineage_captured:
             self._preflight_blocked = True
         return audit
@@ -391,7 +514,9 @@ class MidDualRunStore:
         lineage_path = self._canonical_path(_LINEAGE_AUDIT)
         environment_path = self._canonical_path(_ENVIRONMENT_AUDIT)
         try:
-            self._lineage_captured = artifact_io.path_is_file(lineage_path) and _valid_lineage_audit(artifact_io.read_json(lineage_path))
+            self._lineage_captured = artifact_io.path_is_file(lineage_path) and _valid_lineage_audit(
+                artifact_io.read_json(lineage_path), self.run_root, self._recorded_lineage_sources()
+            )
         except (OSError, ValueError):
             self._lineage_captured = False
         try:
@@ -422,15 +547,26 @@ class MidDualRunStore:
                     raise ValueError("manifest lineage audit is malformed")
                 snapshot_path = row.get("snapshot_path")
                 if snapshot_path is not None:
-                    paths.add(_manifest_relative_path(snapshot_path))
+                    try:
+                        safe_snapshot_path = _manifest_relative_path(snapshot_path)
+                    except ValueError:
+                        continue
+                    if artifact_io.path_is_file(root / safe_snapshot_path):
+                        paths.add(safe_snapshot_path)
         if artifact_io.path_is_file(root / _ENVIRONMENT_AUDIT):
             paths.add(_ENVIRONMENT_AUDIT)
         store_index_path = root / _STORE_INDEX
         if not artifact_io.path_is_file(store_index_path):
             raise ValueError("manifest store index is missing")
-        extra_paths = artifact_io.read_json(store_index_path).get("extra_audit_paths")
+        store_index = artifact_io.read_json(store_index_path)
+        extra_paths = store_index.get("extra_audit_paths")
         if not isinstance(extra_paths, list):
             raise ValueError("manifest store index is malformed")
+        recorded_sources = store_index.get("required_lineage_sources")
+        if not isinstance(recorded_sources, list):
+            raise ValueError("manifest store index is malformed")
+        for source in recorded_sources:
+            _manifest_relative_path(source)
         for extra_path in extra_paths:
             paths.add(_manifest_relative_path(extra_path))
         return paths
@@ -447,7 +583,23 @@ class MidDualRunStore:
                 blocked[key] = False
         return blocked
 
+    @staticmethod
+    def _extra_audit_paths(extra_audits: Mapping[str, Mapping[str, Any]]) -> list[str]:
+        paths: list[str] = []
+        for name, payload in extra_audits.items():
+            if not isinstance(name, str) or not name.replace("_", "").isalnum():
+                raise ValueError("extra audit name must be alphanumeric with underscores")
+            if name in _RESERVED_EXTRA_AUDIT_NAMES:
+                raise ValueError("extra audit name is reserved")
+            if not isinstance(payload, Mapping):
+                raise ValueError("extra audit payload must be a mapping")
+            paths.append(f"{name}_audit.json")
+        if len(paths) != len(set(paths)):
+            raise ValueError("extra audit names must be unique")
+        return paths
+
     def finalize(self, summary: Mapping[str, Any], routing: Mapping[str, Any], report: str, extra_audits: Mapping[str, Mapping[str, Any]]) -> None:
+        extra_paths = self._extra_audit_paths(extra_audits)
         manifest_path = artifact_path(self.run_root, MID_DUAL_MANIFEST)
         if artifact_io.path_is_file(manifest_path):
             self.verify_manifest(self.run_root)
@@ -462,6 +614,12 @@ class MidDualRunStore:
         rows: list[dict[str, Any]] = []
         for attempt in accepted:
             rows.extend(artifact_io.read_jsonl(self.run_root / attempt["rows_path"]))
+        for name, payload in extra_audits.items():
+            artifact_io.write_json(self._canonical_path(f"{name}_audit.json"), dict(payload))
+        store_index = artifact_io.read_json(self._canonical_path(_STORE_INDEX))
+        store_index["extra_audit_paths"] = extra_paths
+        artifact_io.write_json(self._canonical_path(_STORE_INDEX), store_index)
+        self._restore_preflight_state()
         blocked = self._preflight_blocked or not self._lineage_captured or not self._environment_captured or summary.get("status") == "blocked" or routing.get("status") == "blocked"
         if not blocked and self.accepted_phase_ids != self.required_phase_ids:
             raise ValueError("accepted phases do not match the required phase sequence")
@@ -478,14 +636,6 @@ class MidDualRunStore:
         artifact_io.write_json(artifact_path(self.run_root, MID_DUAL_SUMMARY), final_summary)
         artifact_io.write_json(artifact_path(self.run_root, MID_DUAL_ROUTING), final_routing)
         artifact_io.write_text(artifact_path(self.run_root, MID_DUAL_REPORT), report)
-        extra_paths: list[str] = []
-        for name, payload in extra_audits.items():
-            if not name.replace("_", "").isalnum():
-                raise ValueError("extra audit name must be alphanumeric with underscores")
-            extra_path = f"{name}_audit.json"
-            extra_paths.append(extra_path)
-            artifact_io.write_json(self._canonical_path(extra_path), dict(payload))
-        artifact_io.write_json(self._canonical_path(_STORE_INDEX), {"extra_audit_paths": extra_paths})
         artifact_paths = sorted(self._expected_artifact_paths(self.run_root))
         manifest = {
             "schema_version": _MANIFEST_SCHEMA_VERSION,

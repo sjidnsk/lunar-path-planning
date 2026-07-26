@@ -694,3 +694,115 @@ def test_resume_rejects_phase_state_rows_path_not_bound_to_accepted_attempt(tmp_
     write_jsonl(state_path, state)
     with pytest.raises(ValueError, match="phase-state"):
         store_type.load_for_resume(tmp_path / "phase-state-path", store.config_sha256)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("environment", "lineage", "store_index", "config", "results", "summary", "routing", "manifest", "phase_state", "report"),
+)
+def test_finalize_rejects_reserved_extra_audit_names_before_writing_final_artifacts(tmp_path: Path, name: str) -> None:
+    """Catch extra-audit names that could overwrite canonical or authority artifacts."""
+    from xunce_artifact_io import path_is_file
+
+    store = _artifact_store_type().create_new(tmp_path / "reserved-extra", _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    _capture_valid_preflight(store)
+    with pytest.raises(ValueError, match="reserved"):
+        store.finalize({"status": "complete"}, {"status": "passed"}, "report", {name: {"kind": "test"}})
+    assert not any(path_is_file(tmp_path / "reserved-extra" / filename) for filename in ("results.jsonl", "summary.json", "routing.json", "report.md", "manifest.json"))
+
+
+@pytest.mark.parametrize("mutation", ("remove_row", "snapshot_path", "sha256", "size_bytes", "snapshot_bytes", "delete_snapshot"))
+def test_resume_and_finalize_block_tampered_required_lineage_evidence(tmp_path: Path, mutation: str) -> None:
+    """Catch a required dirty source losing its exact durable snapshot binding."""
+    from xunce_artifact_io import path_is_file, read_json, write_json, write_text
+
+    source = tmp_path / "required-dirty.py"
+    source.write_bytes(b"durable source evidence\n")
+    run_root = tmp_path / f"lineage-{mutation}"
+    store = _artifact_store_type().create_new(run_root, _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    row = store.capture_lineage([source], "a" * 40, "b" * 40)["required_sources"][0]
+    assert store.capture_environment(_environment_probe)["status"] == "captured"
+    audit_path = run_root / "lineage_audit.json"
+    audit = read_json(audit_path)
+    if mutation == "remove_row":
+        audit["required_sources"] = []
+        write_json(audit_path, audit)
+    elif mutation == "snapshot_path":
+        audit["required_sources"][0]["snapshot_path"] = "lineage/s9999.bin"
+        write_json(audit_path, audit)
+    elif mutation == "sha256":
+        audit["required_sources"][0]["sha256"] = "c" * 64
+        write_json(audit_path, audit)
+    elif mutation == "size_bytes":
+        audit["required_sources"][0]["size_bytes"] = 1
+        write_json(audit_path, audit)
+    elif mutation == "snapshot_bytes":
+        write_text(run_root / row["snapshot_path"], "tampered\n")
+    else:
+        (run_root / row["snapshot_path"]).unlink()
+    resumed = _artifact_store_type().load_for_resume(run_root, store.config_sha256)
+    resumed.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    assert read_json(run_root / "summary.json")["status"] == "blocked"
+    assert path_is_file(run_root / "manifest.json")
+    assert read_json(run_root / "manifest.json")["formal_evidence_eligible"] is False
+
+
+def test_lineage_snapshots_a_repository_local_ignored_required_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catch ignored-but-untracked required sources being mistaken for clean tracked files."""
+    from xunce_artifact_io import read_bytes
+
+    repository = tmp_path / "ignored-repository"
+    repository.mkdir()
+    subprocess.run(("git", "init"), cwd=repository, check=True, capture_output=True)
+    (repository / ".gitignore").write_text("required.ignored\n", encoding="utf-8")
+    source = repository / "required.ignored"
+    source.write_bytes(b"ignored source evidence\n")
+    monkeypatch.chdir(repository)
+    store = _artifact_store_type().create_new(repository / "out", _artifact_config())
+    row = store.capture_lineage([source], "a" * 40, "b" * 40)["required_sources"][0]
+    assert row["status"] == "untracked"
+    assert row["snapshot_path"] == "lineage/s0001.bin"
+    assert read_bytes(repository / "out" / row["snapshot_path"]) == b"ignored source evidence\n"
+
+
+@pytest.mark.parametrize(
+    "field_name,value",
+    (
+        ("windows_version", []),
+        ("cpu_model", {}),
+        ("cpu_logical_count", 0),
+        ("cpu_logical_count", True),
+        ("memory_bytes", 0),
+        ("memory_bytes", False),
+        ("gpu", "not-a-mapping"),
+        ("python_executable", []),
+        ("python_version", {}),
+        ("frozen_dependencies", "not-a-list"),
+        ("frozen_dependencies", []),
+        ("frozen_dependencies", [""]),
+        ("python_hash_seed", 0),
+        ("thread_variables", []),
+        ("thread_variables", {"OMP_NUM_THREADS": 1}),
+        ("worker_start_method", ""),
+        ("power_mode", None),
+    ),
+)
+def test_environment_schema_invalid_probe_persists_blocked_across_resume(tmp_path: Path, field_name: str, value: object) -> None:
+    """Catch malformed environment schema fields becoming eligible after a restart."""
+    from xunce_artifact_io import read_json
+
+    probe = _environment_probe()
+    probe[field_name] = value
+    run_root = tmp_path / f"environment-{field_name}-{type(value).__name__}"
+    store = _artifact_store_type().create_new(run_root, _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    store.capture_lineage([Path(__file__)], "a" * 40, "b" * 40)
+    assert store.capture_environment(lambda: probe)["status"] == "blocked"
+    resumed = _artifact_store_type().load_for_resume(run_root, store.config_sha256)
+    resumed.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    assert read_json(run_root / "routing.json")["formal_evidence_eligible"] is False
