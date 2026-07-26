@@ -122,8 +122,23 @@
 - Modify `path-planner/src/path_planner/v2/__init__.py`
   - 只导出 codec/timing 的稳定公共入口。
 
-不修改 `plan_v2()`、wheel/legged/hopper provider 搜索、L2 validator 或 profile
-默认值。G2 的五段计时由 root executor 对“重建请求 → 构建平台栈 →
+### Narrow authorized Hopper authority addendum
+
+用户于 2026-07-27 确认一次性授权后，Task 7 增加一个前置的、additive
+Hopper implementation-authority 子任务。完整设计与实施写集见：
+
+- `docs/superpowers/specs/2026-07-27-midterm-hopper-internal-simulation-proxy-authority-design-addendum.md`
+- `docs/superpowers/plans/2026-07-27-midterm-hopper-internal-simulation-proxy-authority.md`
+
+该补充只允许 path-planner 识别
+`hopper_generic_internal_computational_simulation_proxy_midterm_g2g3/v1`
+的冻结计算语义；不授予 formal evidence，不改变 Gate5B fixture、默认配置、
+192-action 生成、搜索、terrain、L2 safety 或真实硬件边界。Task 7 仍必须用独立
+candidate/approval/input/hash 链解析 `formal_evidence_eligible`。
+
+不修改 `plan_v2()`、wheel/legged/hopper provider 搜索语义、L2 safety 语义或
+profile 默认值。上述 narrow addendum 仅增加 Hopper authority record/evaluator
+及其一致性 seal。G2 的五段计时由 root executor 对“重建请求 → 构建平台栈 →
 `plan_v2` → 独立 L2 recheck → 结果序列化”五个互不重叠的墙钟区间测量。
 
 ---
@@ -690,6 +705,13 @@ Expected: all tests pass; `plan_v2` source and providers are unchanged.
 ---
 
 ## Task 7: Implement G2 Input Readiness and Independent-Source Audit
+
+**Authorized prerequisite:** first complete and verify
+`docs/superpowers/plans/2026-07-27-midterm-hopper-internal-simulation-proxy-authority.md`.
+The submodule record is implementation support only. Task 7 must still reject
+the Gate5B fixture and the unapproved candidate, and may resolve formal
+eligibility only from the separately hashed candidate + approval + independent
+input chain.
 
 **Files:**
 
