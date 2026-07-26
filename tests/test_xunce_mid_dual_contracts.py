@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from xunce_mid_dual_contracts import (  # noqa: E402
     BOOTSTRAP_RESAMPLES,
+    CoverageEpisodeRow,
     FINAL_COVERAGE_THRESHOLD,
     FINAL_TIME_MS,
     G1_EPISODES_PER_FORMAL_SPLIT,
@@ -78,6 +79,24 @@ def _formal_g2_rows() -> list[PlanningCallRow]:
                     )
                 request_index += 1
     return rows
+
+
+def _coverage_row() -> CoverageEpisodeRow:
+    return CoverageEpisodeRow(
+        schema_version="coverage-episode-row/v1",
+        scale_profile=SCALE_PROFILE,
+        run_id="run-1",
+        episode_id="episode-1",
+        scenario_id="scenario-1",
+        source_sha256=_HASH,
+        config_sha256=_HASH,
+        checkpoint_sha256=_HASH,
+        denominator_sha256=_HASH,
+        coverage=0.80,
+        elapsed_ms=10.0,
+        safety_violation_count=0,
+        masked_action_count=0,
+    )
 
 
 def test_scale_profile_freezes_w8x3_update80_contract() -> None:
@@ -198,6 +217,24 @@ def test_formal_g2_blocks_missing_extra_duplicate_and_incomplete_platform_matrix
     assert evaluate_formal_g2(incomplete_platform)["status"] == "blocked"
 
 
+def test_formal_g2_gates_each_platform_scale_outcome_partition() -> None:
+    """Catch a slow outcome partition hidden by a fast platform-scale aggregate p95."""
+    rows = _formal_g2_rows()
+    slow_indices = [
+        index
+        for index, row in enumerate(rows)
+        if row.platform == "wheel" and row.scale == "kilometer" and row.outcome_kind == "unreachable"
+    ][:2]
+    for index in slow_indices:
+        rows[index] = replace(rows[index], elapsed_ms=2001.0, search_ms=1997.0)
+
+    routed = evaluate_formal_g2(rows)
+    assert routed["midterm_reduced_passed"] is False
+    assert routed["final_threshold_reduced_passed"] is False
+    partition = routed["timing_by_platform_scale_outcome"][("wheel", "kilometer", "unreachable")]
+    assert partition["p95_ms"] == 2001.0
+
+
 @pytest.mark.parametrize("hash_field", ["provider_sha256", "oracle_sha256"])
 def test_formal_g2_blocks_repeat_provider_or_oracle_provenance_drift(hash_field: str) -> None:
     """Catch a 645-call matrix whose repeated request changes executor provenance."""
@@ -242,6 +279,15 @@ def test_statistics_boundaries_block_malformed_values_without_coercion(malformed
     )["status"] == "blocked"
 
 
+@pytest.mark.parametrize("malformed", [0, "", []])
+def test_g1_blocks_malformed_job_ids_before_set_operations(malformed: object) -> None:
+    """Catch non-string/empty/unhashable formal G1 identifiers leaking or raising."""
+    jobs: list[object] = [f"scene-{index}" for index in range(24)]
+    jobs[0] = malformed
+    lanes = tuple(f"lane-{index // 3}" for index in range(24))
+    assert evaluate_g1_split(jobs, [0.80] * 24, lane_ids=lanes)["status"] == "blocked"
+
+
 def test_episode_bootstrap_rejects_seed_override() -> None:
     """Catch callers changing the frozen bootstrap random seed."""
     with pytest.raises(TypeError):
@@ -254,6 +300,14 @@ def test_planning_call_row_rejects_non_bool_success_and_validity_evidence(field_
     """Catch truthy strings/integers leaking through G2 success and validity evidence."""
     with pytest.raises(ValueError):
         replace(_formal_g2_rows()[0], **{field_name: malformed})
+
+
+@pytest.mark.parametrize("field_name", ["safety_violation_count", "masked_action_count"])
+@pytest.mark.parametrize("malformed", [True, 1.5, None, "0"])
+def test_coverage_episode_row_rejects_non_integer_count_evidence(field_name: str, malformed: object) -> None:
+    """Catch bool, fractional, null, and string evidence in coverage count fields."""
+    with pytest.raises(ValueError):
+        replace(_coverage_row(), **{field_name: malformed})
 
 
 def test_reduced_pass_fields_have_no_unqualified_pass_alias() -> None:

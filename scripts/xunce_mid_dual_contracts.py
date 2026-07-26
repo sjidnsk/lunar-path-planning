@@ -88,8 +88,10 @@ class CoverageEpisodeRow:
             _require_sha256(getattr(self, field_name), field_name)
         for field_name in ("coverage", "elapsed_ms"):
             _require_finite(getattr(self, field_name), field_name)
-        if self.safety_violation_count < 0 or self.masked_action_count < 0:
-            raise ValueError("count fields must be non-negative")
+        for field_name in ("safety_violation_count", "masked_action_count"):
+            value = getattr(self, field_name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{field_name} must be a non-negative integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,7 +290,11 @@ def g1_split_statistics(
     lane_ids: Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Compute one split's G1 thresholds; malformed formal evidence blocks closed."""
-    if len(job_ids) != G1_EPISODES_PER_FORMAL_SPLIT or len(set(job_ids)) != G1_EPISODES_PER_FORMAL_SPLIT:
+    if len(job_ids) != G1_EPISODES_PER_FORMAL_SPLIT or any(
+        not isinstance(job_id, str) or not job_id for job_id in job_ids
+    ):
+        return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_jobs_incomplete_or_duplicate"}
+    if len(set(job_ids)) != G1_EPISODES_PER_FORMAL_SPLIT:
         return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_jobs_incomplete_or_duplicate"}
     if lane_ids is None or len(lane_ids) != G1_EPISODES_PER_FORMAL_SPLIT:
         return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g1_lanes_incomplete_or_unbalanced"}
@@ -470,25 +476,16 @@ def evaluate_formal_g2(rows: Sequence[PlanningCallRow]) -> dict[str, object]:
     correctness = reachable_request_success_rate(rows)
     if correctness["status"] == "blocked":
         return correctness
-    timing_by_platform_scale: dict[tuple[str, str], dict[str, object]] = {}
-    for platform in G2_PLATFORMS:
-        for scale in ("standard", "kilometer"):
-            elapsed_ms = [row.elapsed_ms for row in rows if row.platform == platform and row.scale == scale]
-            timing_by_platform_scale[(platform, scale)] = evaluate_g2_platform(
-                platform=platform,
-                scale=scale,
-                outcome_kind="all_formal_outcomes",
-                elapsed_ms=elapsed_ms,
-            )
+    timing_by_platform_scale_outcome = g2_statistics(rows)
     midterm = correctness["midterm_reduced_passed"] and all(
-        statistics["midterm_reduced_passed"] for statistics in timing_by_platform_scale.values()
+        statistics["midterm_reduced_passed"] for statistics in timing_by_platform_scale_outcome.values()
     )
     final = correctness["final_threshold_reduced_passed"] and all(
-        statistics["final_threshold_reduced_passed"] for statistics in timing_by_platform_scale.values()
+        statistics["final_threshold_reduced_passed"] for statistics in timing_by_platform_scale_outcome.values()
     )
     return {
         **route_gate(midterm=midterm, final=final),
         "formal_call_count": len(rows),
         "reachable_correctness": correctness,
-        "timing_by_platform_scale": timing_by_platform_scale,
+        "timing_by_platform_scale_outcome": timing_by_platform_scale_outcome,
     }
