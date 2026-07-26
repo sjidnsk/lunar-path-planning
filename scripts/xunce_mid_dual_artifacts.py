@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import subprocess
 from typing import Any, Callable, Iterable, Mapping
 
@@ -23,6 +23,7 @@ from xunce_artifact_paths import (
 
 
 _ATTEMPT_INDEX = "phase-attempts.jsonl"
+_STORE_INDEX = "store-index.json"
 _LINEAGE_AUDIT = "lineage_audit.json"
 _ENVIRONMENT_AUDIT = "environment_audit.json"
 _REQUIRED_ENVIRONMENT_FIELDS = (
@@ -62,12 +63,41 @@ def _attempt_number(attempt_id: str) -> int:
     return int(attempt_id[1:])
 
 
+def _required_phase_sequence(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("required_phase_ids must be a non-empty list")
+    phase_ids = tuple(value)
+    if any(not isinstance(phase_id, str) for phase_id in phase_ids):
+        raise ValueError("required_phase_ids must contain phase IDs")
+    expected = tuple(f"p{index:02d}" for index in range(1, len(phase_ids) + 1))
+    if phase_ids != expected:
+        raise ValueError("required_phase_ids must be a contiguous p01 sequence")
+    return phase_ids
+
+
+def _manifest_relative_path(path: object) -> str:
+    if not isinstance(path, str) or not path or "\\" in path:
+        raise ValueError("manifest path must be a relative POSIX path")
+    posix_path = PurePosixPath(path)
+    windows_path = PureWindowsPath(path)
+    if posix_path.is_absolute() or windows_path.is_absolute() or any(part in ("", ".", "..") for part in posix_path.parts):
+        raise ValueError("manifest path must not be absolute or traverse")
+    return path
+
+
+def _sha256_digest(value: object) -> str:
+    if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ValueError("manifest digest must be a lowercase SHA-256 hex digest")
+    return value
+
+
 class MidDualRunStore:
     """Persist only accepted, hash-verified phase evidence into final artifacts."""
 
-    def __init__(self, run_root: str | Path, config_sha256: str, attempts: list[dict[str, Any]]) -> None:
+    def __init__(self, run_root: str | Path, config_sha256: str, required_phase_ids: tuple[str, ...], attempts: list[dict[str, Any]]) -> None:
         self.run_root = Path(run_root)
         self.config_sha256 = config_sha256
+        self.required_phase_ids = required_phase_ids
         self._attempts = attempts
         self._preflight_blocked = False
 
@@ -78,6 +108,8 @@ class MidDualRunStore:
             raise FileExistsError(f"run root already exists: {root}")
         payload = dict(effective_config)
         supplied_sha256 = payload.pop("config_sha256", None)
+        required_phase_ids = _required_phase_sequence(payload.get("required_phase_ids"))
+        payload["required_phase_ids"] = list(required_phase_ids)
         config_sha256 = _json_sha256(payload)
         if supplied_sha256 is not None and supplied_sha256 != config_sha256:
             raise ValueError("effective config_sha256 does not match the effective config")
@@ -86,7 +118,8 @@ class MidDualRunStore:
         artifact_io.write_json(artifact_path(root, MID_DUAL_CONFIG), payload)
         artifact_io.write_jsonl(artifact_path(root, MID_DUAL_PHASE_STATE), [])
         artifact_io.write_jsonl(root / _ATTEMPT_INDEX, [])
-        return cls(root, config_sha256, [])
+        artifact_io.write_json(root / _STORE_INDEX, {"extra_audit_paths": []})
+        return cls(root, config_sha256, required_phase_ids, [])
 
     @classmethod
     def load_for_resume(cls, run_root: str | Path, expected_config_sha256: str) -> "MidDualRunStore":
@@ -100,9 +133,10 @@ class MidDualRunStore:
             raise ValueError("config drift detected")
         if recorded_sha256 != expected_config_sha256:
             raise ValueError("expected config_sha256 does not match the run")
+        required_phase_ids = _required_phase_sequence(config.get("required_phase_ids"))
         attempt_path = root / _ATTEMPT_INDEX
         attempts = artifact_io.read_jsonl(attempt_path) if artifact_io.path_is_file(attempt_path) else []
-        store = cls(root, recorded_sha256, attempts)
+        store = cls(root, recorded_sha256, required_phase_ids, attempts)
         store._validate_accepted_prefix()
         return store
 
@@ -225,11 +259,29 @@ class MidDualRunStore:
 
     def _status_inventory(self) -> tuple[str, dict[str, str]]:
         repository_root = self._git_output("rev-parse", "--show-toplevel")
-        raw_status = self._git_output("status", "--porcelain")
         status: dict[str, str] = {}
-        for line in raw_status.splitlines():
-            if len(line) >= 4:
-                status[line[3:].replace("\\", "/")] = line[:2]
+        result = subprocess.run(
+            ("git", "status", "--porcelain=v1", "-z"),
+            cwd=Path.cwd(),
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return repository_root, status
+        records = result.stdout.split(b"\0")
+        index = 0
+        while index < len(records):
+            record = records[index]
+            index += 1
+            if not record:
+                continue
+            if len(record) < 4:
+                continue
+            xy = record[:2].decode("ascii")
+            current_path = record[3:].decode("utf-8", errors="surrogateescape").replace("\\", "/")
+            status[current_path] = xy
+            if "R" in xy or "C" in xy:
+                index += 1
         return repository_root, status
 
     def capture_lineage(self, required_source_paths: Iterable[str | Path], root_commit: str, submodule_commit: str) -> dict[str, Any]:
@@ -278,6 +330,12 @@ class MidDualRunStore:
             missing = [field for field in _REQUIRED_ENVIRONMENT_FIELDS if probe.get(field) in (None, "")]
             if missing:
                 raise ValueError("missing environment fields: " + ", ".join(missing))
+            gpu = probe["gpu"]
+            if not isinstance(gpu, Mapping):
+                raise ValueError("gpu evidence must be a mapping")
+            missing_gpu_fields = [field for field in ("model", "driver", "cuda") if not isinstance(gpu.get(field), str) or not gpu[field].strip()]
+            if missing_gpu_fields:
+                raise ValueError("missing GPU evidence fields: " + ", ".join(missing_gpu_fields))
             audit = {"schema_version": "mid-dual-environment-audit/v1", "status": "captured", "formal_evidence_eligible": True, "probe": probe}
         except Exception as exc:
             self._preflight_blocked = True
@@ -290,16 +348,51 @@ class MidDualRunStore:
         artifact_io.write_json(self._canonical_path(_ENVIRONMENT_AUDIT), audit)
         return audit
 
-    def _final_artifact_paths(self, extra_audits: Mapping[str, Mapping[str, Any]]) -> list[str]:
-        paths = ["config.json", _ATTEMPT_INDEX, "phase-state.jsonl"]
-        for item in self._attempts:
-            paths.extend((item["rows_path"], item["audit_path"]))
-        for audit_name in (_LINEAGE_AUDIT, _ENVIRONMENT_AUDIT):
-            if artifact_io.path_is_file(self._canonical_path(audit_name)):
-                paths.append(audit_name)
-        paths.extend(f"{name}_audit.json" for name in extra_audits)
-        paths.extend(("results.jsonl", "summary.json", "routing.json", "report.md"))
+    @staticmethod
+    def _expected_artifact_paths(root: Path) -> set[str]:
+        paths = {"config.json", _ATTEMPT_INDEX, _STORE_INDEX, "phase-state.jsonl", "results.jsonl", "summary.json", "routing.json", "report.md"}
+        attempts_path = root / _ATTEMPT_INDEX
+        if not artifact_io.path_is_file(attempts_path):
+            raise ValueError("manifest store index is missing phase attempts")
+        for item in artifact_io.read_jsonl(attempts_path):
+            for field_name in ("rows_path", "audit_path"):
+                paths.add(_manifest_relative_path(item.get(field_name)))
+        lineage_path = root / _LINEAGE_AUDIT
+        if artifact_io.path_is_file(lineage_path):
+            paths.add(_LINEAGE_AUDIT)
+            lineage_audit = artifact_io.read_json(lineage_path)
+            rows = lineage_audit.get("required_sources")
+            if not isinstance(rows, list):
+                raise ValueError("manifest lineage audit is malformed")
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError("manifest lineage audit is malformed")
+                snapshot_path = row.get("snapshot_path")
+                if snapshot_path is not None:
+                    paths.add(_manifest_relative_path(snapshot_path))
+        if artifact_io.path_is_file(root / _ENVIRONMENT_AUDIT):
+            paths.add(_ENVIRONMENT_AUDIT)
+        store_index_path = root / _STORE_INDEX
+        if not artifact_io.path_is_file(store_index_path):
+            raise ValueError("manifest store index is missing")
+        extra_paths = artifact_io.read_json(store_index_path).get("extra_audit_paths")
+        if not isinstance(extra_paths, list):
+            raise ValueError("manifest store index is malformed")
+        for extra_path in extra_paths:
+            paths.add(_manifest_relative_path(extra_path))
         return paths
+
+    @staticmethod
+    def _blocked_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+        blocked = dict(payload)
+        blocked["status"] = "blocked"
+        blocked["formal_evidence_eligible"] = False
+        blocked["midterm_reduced_passed"] = False
+        blocked["final_threshold_reduced_passed"] = False
+        for key in tuple(blocked):
+            if "pass" in key.lower():
+                blocked[key] = False
+        return blocked
 
     def finalize(self, summary: Mapping[str, Any], routing: Mapping[str, Any], report: str, extra_audits: Mapping[str, Mapping[str, Any]]) -> None:
         manifest_path = artifact_path(self.run_root, MID_DUAL_MANIFEST)
@@ -314,14 +407,14 @@ class MidDualRunStore:
         for attempt in accepted:
             rows.extend(artifact_io.read_jsonl(self.run_root / attempt["rows_path"]))
         blocked = self._preflight_blocked or summary.get("status") == "blocked" or routing.get("status") == "blocked"
+        if not blocked and self.accepted_phase_ids != self.required_phase_ids:
+            raise ValueError("accepted phases do not match the required phase sequence")
         final_summary = dict(summary)
         final_routing = dict(routing)
         if blocked:
             rows = []
-            final_summary["formal_evidence_eligible"] = False
-            final_routing["formal_evidence_eligible"] = False
-            final_routing["status"] = "blocked"
-            final_routing.pop("midterm_reduced_passed", None)
+            final_summary = self._blocked_payload(final_summary)
+            final_routing = self._blocked_payload(final_routing)
         else:
             final_summary.setdefault("formal_evidence_eligible", True)
             final_routing.setdefault("formal_evidence_eligible", True)
@@ -329,11 +422,15 @@ class MidDualRunStore:
         artifact_io.write_json(artifact_path(self.run_root, MID_DUAL_SUMMARY), final_summary)
         artifact_io.write_json(artifact_path(self.run_root, MID_DUAL_ROUTING), final_routing)
         artifact_io.write_text(artifact_path(self.run_root, MID_DUAL_REPORT), report)
+        extra_paths: list[str] = []
         for name, payload in extra_audits.items():
             if not name.replace("_", "").isalnum():
                 raise ValueError("extra audit name must be alphanumeric with underscores")
-            artifact_io.write_json(self._canonical_path(f"{name}_audit.json"), dict(payload))
-        artifact_paths = self._final_artifact_paths(extra_audits)
+            extra_path = f"{name}_audit.json"
+            extra_paths.append(extra_path)
+            artifact_io.write_json(self._canonical_path(extra_path), dict(payload))
+        artifact_io.write_json(self._canonical_path(_STORE_INDEX), {"extra_audit_paths": extra_paths})
+        artifact_paths = sorted(self._expected_artifact_paths(self.run_root))
         manifest = {
             "schema_version": "mid-dual-manifest/v1",
             "config_sha256": self.config_sha256,
@@ -352,13 +449,17 @@ class MidDualRunStore:
         entries = manifest.get("artifacts")
         if not isinstance(entries, list):
             raise ValueError("manifest artifacts must be a list")
-        paths = [entry.get("path") for entry in entries if isinstance(entry, dict)]
-        if "manifest.json" in paths or len(paths) != len(set(paths)):
-            raise ValueError("manifest must hash every artifact except itself exactly once")
+        expected_paths = MidDualRunStore._expected_artifact_paths(root)
+        paths: list[str] = []
         for entry in entries:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str) or not isinstance(entry.get("sha256"), str):
+            if not isinstance(entry, dict):
                 raise ValueError("invalid manifest entry")
-            target = root / entry["path"]
-            if not artifact_io.path_is_file(target) or _bytes_sha256(target) != entry["sha256"]:
+            path = _manifest_relative_path(entry.get("path"))
+            digest = _sha256_digest(entry.get("sha256"))
+            paths.append(path)
+            target = root / path
+            if not artifact_io.path_is_file(target) or _bytes_sha256(target) != digest:
                 raise ValueError("manifest hash drift")
+        if "manifest.json" in paths or len(paths) != len(set(paths)) or set(paths) != expected_paths:
+            raise ValueError("manifest artifact set is incomplete or non-authoritative")
         return True

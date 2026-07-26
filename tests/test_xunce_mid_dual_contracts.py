@@ -6,6 +6,7 @@ import math
 import sys
 import hashlib
 import importlib
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -327,8 +328,13 @@ def _artifact_store_type() -> type[object]:
     return importlib.import_module("xunce_mid_dual_artifacts").MidDualRunStore
 
 
-def _artifact_config() -> dict[str, object]:
-    return {"schema_version": "mid-dual-effective-config/v1", "run_id": "test-run", "seed": 7}
+def _artifact_config(required_phase_ids: tuple[str, ...] = ("p01",)) -> dict[str, object]:
+    return {
+        "schema_version": "mid-dual-effective-config/v1",
+        "run_id": "test-run",
+        "seed": 7,
+        "required_phase_ids": list(required_phase_ids),
+    }
 
 
 def _artifact_rows(phase_id: str) -> list[dict[str, object]]:
@@ -363,7 +369,7 @@ def test_run_store_refuses_an_existing_run_root(tmp_path: Path) -> None:
 def test_resume_accepts_only_a_contiguous_hash_valid_phase_prefix(tmp_path: Path) -> None:
     """Catch resume after a missing phase or a changed accepted phase payload."""
     store_type = _artifact_store_type()
-    store = store_type.create_new(tmp_path / "resume", _artifact_config())
+    store = store_type.create_new(tmp_path / "resume", _artifact_config(("p01", "p02")))
     first_attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {"kind": "first"})
     first_hash = store.accept_phase("p01", first_attempt, store.phase_attempt_row_sha256("p01", first_attempt))
     assert len(first_hash) == 64
@@ -472,3 +478,141 @@ def test_environment_audit_binds_python_cpu_gpu_threads_and_power_mode(tmp_path:
     assert audit["probe"]["gpu"]["driver"] == "test driver"
     assert audit["probe"]["thread_variables"] == {"OMP_NUM_THREADS": "1"}
     assert audit["probe"]["power_mode"] == "best-performance"
+
+
+def _finalized_artifact_store(tmp_path: Path, name: str) -> object:
+    store = _artifact_store_type().create_new(tmp_path / name, _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {"kind": "accepted"})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    return store
+
+
+def test_manifest_rejects_snapshot_byte_drift_and_missing_or_empty_entries(tmp_path: Path) -> None:
+    """Catch manifest verification that trusts an incomplete self-declared file list."""
+    from xunce_artifact_io import read_json, write_json, write_text
+
+    source = tmp_path / "dirty-source.py"
+    source.write_bytes(b"original lineage bytes\n")
+    store = _artifact_store_type().create_new(tmp_path / "snapshot", _artifact_config())
+    store.capture_lineage([source], "a" * 40, "b" * 40)
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    run_root = tmp_path / "snapshot"
+    write_text(run_root / "lineage" / "s0001.bin", "tampered lineage bytes\n")
+    with pytest.raises(ValueError, match="manifest"):
+        store.verify_manifest(run_root)
+
+    for name, mutate in (
+        ("missing", lambda entries: entries[:-1]),
+        ("empty", lambda entries: []),
+    ):
+        other = _finalized_artifact_store(tmp_path, name)
+        manifest_path = tmp_path / name / "manifest.json"
+        manifest = read_json(manifest_path)
+        manifest["artifacts"] = mutate(manifest["artifacts"])
+        write_json(manifest_path, manifest)
+        with pytest.raises(ValueError, match="manifest"):
+            other.verify_manifest(tmp_path / name)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda entries: [*entries, dict(entries[0])],
+        lambda entries: [{**entries[0], "path": "../outside.json"}, *entries[1:]],
+        lambda entries: [{**entries[0], "path": "D:/outside.json"}, *entries[1:]],
+        lambda entries: [{**entries[0], "sha256": "not-a-sha256"}, *entries[1:]],
+    ),
+)
+def test_manifest_rejects_duplicate_unsafe_or_malformed_entries(tmp_path: Path, mutation: object) -> None:
+    """Catch duplicate, traversal, absolute, or non-digest manifest declarations."""
+    from xunce_artifact_io import read_json, write_json
+
+    store = _finalized_artifact_store(tmp_path, "bad-manifest")
+    manifest_path = tmp_path / "bad-manifest" / "manifest.json"
+    manifest = read_json(manifest_path)
+    manifest["artifacts"] = mutation(manifest["artifacts"])
+    write_json(manifest_path, manifest)
+    with pytest.raises(ValueError, match="manifest"):
+        store.verify_manifest(tmp_path / "bad-manifest")
+
+
+def test_blocked_preflight_clears_every_pass_signal_from_both_terminal_payloads(tmp_path: Path) -> None:
+    """Catch caller-provided pass fields surviving an environment-preflight block."""
+    from xunce_artifact_io import read_json
+
+    store = _artifact_store_type().create_new(tmp_path / "blocked-pass", _artifact_config())
+    assert store.capture_environment(lambda: {})["status"] == "blocked"
+    store.finalize(
+        {"status": "passed", "pass": True, "midterm_reduced_passed": True},
+        {"status": "passed", "pass": True, "midterm_reduced_passed": True, "final_threshold_reduced_passed": True},
+        "blocked preflight",
+        {},
+    )
+    for payload in (read_json(tmp_path / "blocked-pass" / "summary.json"), read_json(tmp_path / "blocked-pass" / "routing.json")):
+        assert payload["status"] == "blocked"
+        assert payload["formal_evidence_eligible"] is False
+        assert payload["midterm_reduced_passed"] is False
+        assert payload["final_threshold_reduced_passed"] is False
+        assert all(value is not True for key, value in payload.items() if "pass" in key.lower())
+
+
+def test_nonblocked_finalize_requires_the_exact_nonempty_required_phase_sequence(tmp_path: Path) -> None:
+    """Catch zero, gapped, or truncated phase evidence being finalized as eligible."""
+    store_type = _artifact_store_type()
+    zero = store_type.create_new(tmp_path / "zero", _artifact_config(("p01",)))
+    with pytest.raises(ValueError, match="required phase"):
+        zero.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+
+    tail = store_type.create_new(tmp_path / "tail", _artifact_config(("p01", "p02")))
+    attempt = tail.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    tail.accept_phase("p01", attempt, tail.phase_attempt_row_sha256("p01", attempt))
+    with pytest.raises(ValueError, match="required phase"):
+        tail.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+
+    with pytest.raises(ValueError, match="contiguous"):
+        store_type.create_new(tmp_path / "gap", _artifact_config(("p01", "p03")))
+
+
+def test_lineage_audit_snapshots_a_tracked_rename_at_its_new_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catch rename porcelain parsing that mislabels the required new path as clean."""
+    repository = tmp_path / "rename-repository"
+    repository.mkdir()
+    subprocess.run(("git", "init"), cwd=repository, check=True, capture_output=True)
+    subprocess.run(("git", "config", "user.email", "test@example.invalid"), cwd=repository, check=True)
+    subprocess.run(("git", "config", "user.name", "Task 2 Test"), cwd=repository, check=True)
+    original = repository / "original.py"
+    original.write_bytes(b"tracked rename bytes\n")
+    subprocess.run(("git", "add", "original.py"), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-m", "tracked fixture"), cwd=repository, check=True, capture_output=True)
+    renamed = repository / "renamed.py"
+    subprocess.run(("git", "mv", "original.py", "renamed.py"), cwd=repository, check=True)
+    monkeypatch.chdir(repository)
+    store = _artifact_store_type().create_new(repository / "out", _artifact_config())
+    row = store.capture_lineage([renamed], "a" * 40, "b" * 40)["required_sources"][0]
+    from xunce_artifact_io import read_bytes
+
+    assert row["status"].startswith("R")
+    assert read_bytes(repository / "out" / row["snapshot_path"]) == b"tracked rename bytes\n"
+
+
+@pytest.mark.parametrize(
+    "gpu",
+    (
+        {},
+        {"model": "", "driver": "driver", "cuda": "cuda"},
+        {"model": "model", "driver": None, "cuda": "cuda"},
+        {"model": "model", "driver": "driver", "cuda": []},
+        "not-a-mapping",
+    ),
+)
+def test_environment_audit_blocks_missing_or_malformed_gpu_subfields(tmp_path: Path, gpu: object) -> None:
+    """Catch captured environment evidence without auditable GPU model, driver, and CUDA fields."""
+    probe = _environment_probe()
+    probe["gpu"] = gpu
+    store = _artifact_store_type().create_new(tmp_path / "bad-gpu", _artifact_config())
+    audit = store.capture_environment(lambda: probe)
+    assert audit["status"] == "blocked"
+    assert audit["formal_evidence_eligible"] is False
