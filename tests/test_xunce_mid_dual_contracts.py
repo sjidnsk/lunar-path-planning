@@ -358,6 +358,11 @@ def _environment_probe() -> dict[str, object]:
     }
 
 
+def _capture_valid_preflight(store: object) -> None:
+    store.capture_lineage([Path(__file__)], "a" * 40, "b" * 40)
+    assert store.capture_environment(_environment_probe)["status"] == "captured"
+
+
 def test_run_store_refuses_an_existing_run_root(tmp_path: Path) -> None:
     """Catch accidental overwrite of an existing experiment evidence root."""
     run_root = tmp_path / "existing"
@@ -391,6 +396,7 @@ def test_incomplete_phase_is_not_merged_into_final_results(tmp_path: Path) -> No
     accepted_attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {"kind": "accepted"})
     store.accept_phase("p01", accepted_attempt, store.phase_attempt_row_sha256("p01", accepted_attempt))
     store.write_phase_attempt("p02", _artifact_rows("p02"), {"kind": "incomplete"})
+    _capture_valid_preflight(store)
     store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
     from xunce_artifact_io import read_jsonl
 
@@ -402,6 +408,7 @@ def test_finalize_writes_the_seven_required_canonical_artifacts_once(tmp_path: P
     store = _artifact_store_type().create_new(tmp_path / "final", _artifact_config())
     attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
     store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    _capture_valid_preflight(store)
     store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
     from xunce_artifact_io import path_is_file
 
@@ -418,6 +425,7 @@ def test_manifest_hashes_every_artifact_except_itself(tmp_path: Path) -> None:
     store = _artifact_store_type().create_new(tmp_path / "manifest", _artifact_config())
     attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
     store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    _capture_valid_preflight(store)
     store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
     from xunce_artifact_io import read_bytes, read_json
 
@@ -484,6 +492,7 @@ def _finalized_artifact_store(tmp_path: Path, name: str) -> object:
     store = _artifact_store_type().create_new(tmp_path / name, _artifact_config())
     attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {"kind": "accepted"})
     store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    _capture_valid_preflight(store)
     store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
     return store
 
@@ -563,12 +572,14 @@ def test_nonblocked_finalize_requires_the_exact_nonempty_required_phase_sequence
     """Catch zero, gapped, or truncated phase evidence being finalized as eligible."""
     store_type = _artifact_store_type()
     zero = store_type.create_new(tmp_path / "zero", _artifact_config(("p01",)))
+    _capture_valid_preflight(zero)
     with pytest.raises(ValueError, match="required phase"):
         zero.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
 
     tail = store_type.create_new(tmp_path / "tail", _artifact_config(("p01", "p02")))
     attempt = tail.write_phase_attempt("p01", _artifact_rows("p01"), {})
     tail.accept_phase("p01", attempt, tail.phase_attempt_row_sha256("p01", attempt))
+    _capture_valid_preflight(tail)
     with pytest.raises(ValueError, match="required phase"):
         tail.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
 
@@ -616,3 +627,70 @@ def test_environment_audit_blocks_missing_or_malformed_gpu_subfields(tmp_path: P
     audit = store.capture_environment(lambda: probe)
     assert audit["status"] == "blocked"
     assert audit["formal_evidence_eligible"] is False
+
+
+def test_eligible_finalize_without_captured_environment_forces_blocked_terminal_evidence(tmp_path: Path) -> None:
+    """Catch a pass-capable finalization that never captured machine preflight evidence."""
+    from xunce_artifact_io import read_json
+
+    store = _artifact_store_type().create_new(tmp_path / "missing-environment", _artifact_config())
+    attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", attempt, store.phase_attempt_row_sha256("p01", attempt))
+    store.finalize({"status": "complete"}, {"status": "passed"}, "report", {})
+    assert read_json(tmp_path / "missing-environment" / "summary.json")["status"] == "blocked"
+    assert read_json(tmp_path / "missing-environment" / "routing.json")["formal_evidence_eligible"] is False
+
+
+def test_blocked_environment_preflight_persists_across_resume_and_cannot_become_eligible(tmp_path: Path) -> None:
+    """Catch restart clearing a persisted environment block before terminal evidence is written."""
+    from xunce_artifact_io import read_json
+
+    store_type = _artifact_store_type()
+    store = store_type.create_new(tmp_path / "resumed-block", _artifact_config())
+    source = tmp_path / "lineage-source.py"
+    source.write_bytes(b"lineage source\n")
+    store.capture_lineage([source], "a" * 40, "b" * 40)
+    assert store.capture_environment(lambda: {})["status"] == "blocked"
+    resumed = store_type.load_for_resume(tmp_path / "resumed-block", store.config_sha256)
+    resumed.finalize({"status": "passed"}, {"status": "passed"}, "report", {})
+    assert read_json(tmp_path / "resumed-block" / "summary.json")["status"] == "blocked"
+    assert read_json(tmp_path / "resumed-block" / "manifest.json")["formal_evidence_eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "field_name,value",
+    (
+        ("schema_version", "mid-dual-manifest/v0"),
+        ("config_sha256", "b" * 64),
+        ("formal_evidence_eligible", False),
+    ),
+)
+def test_manifest_rejects_header_only_schema_config_or_eligibility_drift(tmp_path: Path, field_name: str, value: object) -> None:
+    """Catch an otherwise intact manifest whose semantic header no longer matches the run."""
+    from xunce_artifact_io import read_json, write_json
+
+    store = _finalized_artifact_store(tmp_path, f"header-{field_name}")
+    manifest_path = tmp_path / f"header-{field_name}" / "manifest.json"
+    manifest = read_json(manifest_path)
+    manifest[field_name] = value
+    write_json(manifest_path, manifest)
+    with pytest.raises(ValueError, match="manifest"):
+        store.verify_manifest(tmp_path / f"header-{field_name}")
+
+
+@pytest.mark.parametrize("rewritten_rows_path", ("phases/p01/a02/results.jsonl", "../phases/p01/a02/results.jsonl"))
+def test_resume_rejects_phase_state_rows_path_not_bound_to_accepted_attempt(tmp_path: Path, rewritten_rows_path: str) -> None:
+    """Catch phase state pointing at an identical but unaccepted attempt or an unsafe path."""
+    from xunce_artifact_io import read_jsonl, write_jsonl
+
+    store_type = _artifact_store_type()
+    store = store_type.create_new(tmp_path / "phase-state-path", _artifact_config())
+    accepted_attempt = store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    store.accept_phase("p01", accepted_attempt, store.phase_attempt_row_sha256("p01", accepted_attempt))
+    store.write_phase_attempt("p01", _artifact_rows("p01"), {})
+    state_path = tmp_path / "phase-state-path" / "phase-state.jsonl"
+    state = read_jsonl(state_path)
+    state[0]["rows_path"] = rewritten_rows_path
+    write_jsonl(state_path, state)
+    with pytest.raises(ValueError, match="phase-state"):
+        store_type.load_for_resume(tmp_path / "phase-state-path", store.config_sha256)
