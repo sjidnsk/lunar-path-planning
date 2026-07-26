@@ -364,11 +364,14 @@ class Stage6CoverageManifest:
         key = CoverageCacheKey._from_payload(metadata["key"])
         if key.sha256 != entry.key_sha256:
             raise CoverageCacheError("coverage cache scenario audit key drifted")
+        if key.payload.get("scenario_hash") != entry.scenario_hash:
+            raise CoverageCacheError("coverage cache scenario audit scenario hash is not bound to the entry key")
         masks = load_coverage_entry(result.payload, expected_key=key)
         algorithm = dict(masks.metadata)
         audit = {
             "scenario_id": entry.scenario_id,
             "scenario_hash": entry.scenario_hash,
+            "split": entry.split,
             "entry_path": entry.path,
             "entry_sha256": entry.sha256,
             "entry_size_bytes": entry.size_bytes,
