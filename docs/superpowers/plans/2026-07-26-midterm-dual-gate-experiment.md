@@ -340,6 +340,12 @@ Expected: pytest passes; `rg` returns no matches.
 
 ## Task 3: Freeze Scenario Cohorts and Denominator Evidence
 
+**Execution-source prerequisite:** before a real freeze, complete
+`docs/superpowers/plans/2026-07-27-midterm-g1-scenario-source-materialization.md`.
+That additive preparer creates only the policy-blind Standard/static/reset and
+Stage6 denominator evidence already required by Task 3; it does not change
+selection, scale, checkpoint, environment, or evaluation semantics.
+
 **Files:**
 
 - Create: `configs/xunce_mid_dual_scenario_freeze_v1.json`
