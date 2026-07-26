@@ -15,9 +15,19 @@ _FORBIDDEN_IMPORT_TOKENS = (
     "lunar_exploration_ppo",
     "xunce_mid_dual_g2_inputs",
 )
+_FORBIDDEN_PATH_SEGMENTS = frozenset(
+    {
+        "lunar-path-planning",
+        "lunar_exploration_ppo",
+        "path-planner",
+        "path_planner",
+        "xunce_mid_dual_g2_inputs",
+    }
+)
 _ENVIRONMENT_ALLOWLIST = (
     "PATH",
     "PYTHONHASHSEED",
+    "PYTHONNOUSERSITE",
     "PYTHONPATH",
     "PYTHONDONTWRITEBYTECODE",
     "TEMP",
@@ -110,6 +120,52 @@ def _module_name_and_origin(
     return name, str(getattr(module_or_origin, "__file__", "") or "")
 
 
+def _normalized_path_segments(value: object) -> tuple[str, ...]:
+    normalized = str(value).casefold().replace("\\", "/")
+    strip_characters = " \t\r\n'\"`()[]{};,"
+    return tuple(
+        segment.strip(strip_characters)
+        for segment in normalized.split("/")
+        if segment.strip(strip_characters)
+    )
+
+
+def _contains_forbidden_path_segment(value: object) -> bool:
+    return bool(
+        _FORBIDDEN_PATH_SEGMENTS.intersection(
+            _normalized_path_segments(value)
+        )
+    )
+
+
+def _is_forbidden_module_name(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.casefold()
+    return any(
+        normalized == token or normalized.startswith(f"{token}.")
+        for token in _FORBIDDEN_IMPORT_TOKENS
+    )
+
+
+def _contains_forbidden_pth_import(value: str) -> bool:
+    if _contains_forbidden_path_segment(value):
+        return True
+    identifiers = {
+        token
+        for token in (
+            value.casefold()
+            .replace(".", " ")
+            .replace(";", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+            .replace(",", " ")
+            .split()
+        )
+    }
+    return bool(set(_FORBIDDEN_IMPORT_TOKENS).intersection(identifiers))
+
+
 def collect_production_isolation_evidence(
     *,
     source_root: Path,
@@ -130,6 +186,11 @@ def collect_production_isolation_evidence(
         "output_root": Path(output_root),
     }
     reasons: list[str] = []
+    if (
+        require_d_drive
+        and environment.get("PYTHONNOUSERSITE") != "1"
+    ):
+        reasons.append("PYTHONNOUSERSITE must equal '1'")
     resolved: dict[str, Path] = {}
     for name, raw_path in named_roots.items():
         if not raw_path.is_absolute():
@@ -176,7 +237,7 @@ def collect_production_isolation_evidence(
         if (
             _is_relative_to(entry, project)
             or _is_relative_to(entry, planner)
-            or any(token in normalized for token in _FORBIDDEN_IMPORT_TOKENS)
+            or _contains_forbidden_path_segment(normalized)
         ):
             contaminated_paths.append(str(entry))
         if entry.is_dir():
@@ -196,9 +257,8 @@ def collect_production_isolation_evidence(
                         "\\", "/"
                     )
                     if candidate_text.startswith("import "):
-                        if any(
-                            token in candidate_normalized
-                            for token in _FORBIDDEN_IMPORT_TOKENS
+                        if _contains_forbidden_pth_import(
+                            candidate_normalized
                         ):
                             pth_injections.append(
                                 {
@@ -214,10 +274,10 @@ def collect_production_isolation_evidence(
                     if (
                         _is_relative_to(candidate, project)
                         or _is_relative_to(candidate, planner)
-                        or any(
-                            token in candidate_normalized
-                            for token in _FORBIDDEN_IMPORT_TOKENS
+                        or _contains_forbidden_path_segment(
+                            candidate_normalized
                         )
+                        or _contains_forbidden_path_segment(candidate)
                     ):
                         pth_injections.append(
                             {
@@ -236,19 +296,26 @@ def collect_production_isolation_evidence(
     module_origins: list[dict[str, str]] = []
     for name, module_or_origin in sorted(modules.items()):
         module_name, origin_text = _module_name_and_origin(name, module_or_origin)
-        normalized = f"{module_name}|{origin_text}".casefold().replace("\\", "/")
         if origin_text:
             module_origins.append(
                 {"module": module_name, "origin": origin_text}
             )
         origin_path = Path(origin_text).resolve() if origin_text else None
+        origin_is_independent = (
+            origin_path is not None
+            and _is_relative_to(origin_path, source)
+        )
         if (
-            any(token in normalized for token in _FORBIDDEN_IMPORT_TOKENS)
+            _is_forbidden_module_name(module_name)
             or (
                 origin_path is not None
                 and (
                     _is_relative_to(origin_path, project)
                     or _is_relative_to(origin_path, planner)
+                    or (
+                        not origin_is_independent
+                        and _contains_forbidden_path_segment(origin_path)
+                    )
                 )
             )
         ):

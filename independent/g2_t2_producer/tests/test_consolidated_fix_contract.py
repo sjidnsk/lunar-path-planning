@@ -14,6 +14,16 @@ from producer.generate_cases import generate_all_cases
 
 
 ROOT = Path(__file__).resolve().parents[1]
+_REAL_CONTAMINATED_SYS_PATH = (
+    (
+        "C:/Users/77634/.codex/worktrees/ca49/"
+        "lunar-path-planning/src"
+    ),
+    (
+        "D:/codex/worktrees/multiplatform-path-planner-v2/"
+        "path-planner/src"
+    ),
+)
 
 
 def _specification() -> dict[str, object]:
@@ -87,6 +97,150 @@ def test_preflight_fails_closed_for_missing_or_visible_project_roots(
     )
     assert visible["passed"] is False
     assert visible["project_path_entries"]
+
+
+def test_preflight_rejects_real_hyphenated_repository_paths_but_keeps_producer_origin(
+    tmp_path: Path,
+) -> None:
+    source = ROOT
+    project = tmp_path / "configured-project"
+    planner = tmp_path / "configured-provider"
+    inputs = tmp_path / "inputs"
+    for path in (project, planner, inputs):
+        path.mkdir(parents=True, exist_ok=True)
+
+    evidence = run_producer.collect_production_isolation_evidence(
+        source_root=source,
+        project_root=project,
+        path_planner_root=planner,
+        input_root=inputs,
+        output_root=inputs / "candidate",
+        environment={},
+        sys_path_entries=list(_REAL_CONTAMINATED_SYS_PATH),
+        loaded_modules={
+            "producer.canonical": str(ROOT / "producer" / "canonical.py")
+        },
+        require_d_drive=False,
+    )
+
+    assert evidence["passed"] is False
+    assert len(evidence["project_path_entries"]) == 2
+    assert "project/provider path visible in sys.path" in evidence["reasons"]
+    assert evidence["forbidden_loaded_modules"] == []
+    assert any(
+        row["module"] == "producer.canonical"
+        and Path(row["origin"]).resolve()
+        == (ROOT / "producer" / "canonical.py").resolve()
+        for row in evidence["module_origins"]
+    )
+
+
+def test_preflight_rejects_hyphenated_repository_paths_from_any_pth_line(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "isolated-source"
+    project = tmp_path / "configured-project"
+    planner = tmp_path / "configured-provider"
+    inputs = tmp_path / "inputs"
+    site = tmp_path / "site-packages"
+    for path in (source, project, planner, inputs, site):
+        path.mkdir(parents=True, exist_ok=True)
+    (site / "contaminated.pth").write_text(
+        "\n".join(
+            (
+                _REAL_CONTAMINATED_SYS_PATH[0],
+                (
+                    "import site; site.addsitedir("
+                    f"r'{_REAL_CONTAMINATED_SYS_PATH[1]}')"
+                ),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = run_producer.collect_production_isolation_evidence(
+        source_root=source,
+        project_root=project,
+        path_planner_root=planner,
+        input_root=inputs,
+        output_root=inputs / "candidate",
+        environment={},
+        sys_path_entries=[str(site)],
+        loaded_modules={},
+        require_d_drive=False,
+    )
+
+    assert evidence["passed"] is False
+    assert len(evidence["pth_injections"]) == 2
+    assert "project/provider .pth injection visible" in evidence["reasons"]
+
+
+def test_preflight_path_matching_does_not_reject_ordinary_word_fragments(
+    tmp_path: Path,
+) -> None:
+    source = ROOT
+    project = tmp_path / "configured-project"
+    planner = tmp_path / "configured-provider"
+    inputs = tmp_path / "inputs"
+    harmless = tmp_path / "path_planner_notes"
+    for path in (project, planner, inputs, harmless):
+        path.mkdir(parents=True, exist_ok=True)
+
+    evidence = run_producer.collect_production_isolation_evidence(
+        source_root=source,
+        project_root=project,
+        path_planner_root=planner,
+        input_root=inputs,
+        output_root=inputs / "candidate",
+        environment={},
+        sys_path_entries=[str(harmless)],
+        loaded_modules={
+            "path_planner_notes": str(harmless / "notes.py"),
+            "producer.canonical": str(ROOT / "producer" / "canonical.py"),
+        },
+        require_d_drive=False,
+    )
+
+    assert evidence["passed"] is True
+    assert evidence["project_path_entries"] == []
+    assert evidence["pth_injections"] == []
+    assert evidence["forbidden_loaded_modules"] == []
+
+
+@pytest.mark.parametrize("value", (None, "", "0", "true"))
+def test_production_preflight_requires_python_no_user_site_exactly_one(
+    value: str | None,
+) -> None:
+    environment = {} if value is None else {"PYTHONNOUSERSITE": value}
+    evidence = run_producer.collect_production_isolation_evidence(
+        source_root=Path("D:/missing-isolated-source"),
+        project_root=Path("D:/missing-configured-project"),
+        path_planner_root=Path("D:/missing-configured-provider"),
+        input_root=Path("D:/missing-inputs"),
+        output_root=Path("D:/missing-inputs/candidate"),
+        environment=environment,
+        sys_path_entries=[],
+        loaded_modules={},
+    )
+
+    assert "PYTHONNOUSERSITE must equal '1'" in evidence["reasons"]
+
+
+def test_production_preflight_audits_python_no_user_site_one() -> None:
+    evidence = run_producer.collect_production_isolation_evidence(
+        source_root=Path("D:/missing-isolated-source"),
+        project_root=Path("D:/missing-configured-project"),
+        path_planner_root=Path("D:/missing-configured-provider"),
+        input_root=Path("D:/missing-inputs"),
+        output_root=Path("D:/missing-inputs/candidate"),
+        environment={"PYTHONNOUSERSITE": "1"},
+        sys_path_entries=[],
+        loaded_modules={},
+    )
+
+    assert "PYTHONNOUSERSITE must equal '1'" not in evidence["reasons"]
+    assert evidence["environment"]["PYTHONNOUSERSITE"] == "1"
 
 
 def test_generated_primitive_cases_contain_geometry_not_verdict_scalars() -> None:
