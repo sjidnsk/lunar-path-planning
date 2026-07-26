@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -40,6 +41,40 @@ def path_is_dir(path: str | Path) -> bool:
 
 def file_size(path: str | Path) -> int:
     return int(os.path.getsize(windows_safe_path(path)))
+
+
+def list_relative_files(root: str | Path) -> tuple[str, ...]:
+    base = Path(root).resolve()
+    if not path_exists(base):
+        return ()
+    if not path_is_dir(base):
+        raise ValueError(f"artifact root is not a directory: {base}")
+    files: list[str] = []
+    for current, directories, names in os.walk(
+        windows_safe_path(base),
+        topdown=True,
+        followlinks=False,
+    ):
+        current_path = Path(current)
+        for name in [*directories, *names]:
+            candidate = current_path / name
+            stat_result = os.lstat(windows_safe_path(candidate))
+            attributes = int(getattr(stat_result, "st_file_attributes", 0))
+            reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+            if os.path.islink(windows_safe_path(candidate)) or (
+                reparse_flag and attributes & reparse_flag
+            ):
+                raise ValueError(f"artifact root contains a reparse point: {candidate}")
+        for name in names:
+            relative_text = os.path.relpath(
+                os.path.join(current, name),
+                windows_safe_path(base),
+            )
+            relative = Path(relative_text)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"artifact file escaped root: {current_path / name}")
+            files.append(relative.as_posix())
+    return tuple(sorted(files))
 
 
 def read_text(path: str | Path, *, encoding: str = "utf-8-sig") -> str:

@@ -8,7 +8,10 @@ import hashlib
 import io
 import json
 import math
+import os
 from pathlib import Path
+import re
+import stat
 import sys
 from typing import Iterable, Mapping, Sequence
 import zipfile
@@ -22,6 +25,7 @@ SCHEMA_VERSION = "mid-dual-scenario-source-materialization/v1"
 SOURCE_MANIFEST_SCHEMA = "mid-dual-scenario-source-manifest/v1"
 APPROVAL_ID = "mid-dual-policy-blind-source-approval-20260727/v1"
 ATTESTATION_ID = "mid-dual-policy-blind-source-attestation/v1"
+SAFETY_CONTRACT_SOURCE = "mid-dual-policy-blind-safety-contract/v1"
 AUTHORIZATION_SHA256 = (
     "720e11ef04ad2b57283421809a077ccf1f0b35167a9f482082241398ad0214d2"
 )
@@ -29,6 +33,19 @@ DENOMINATOR_SOURCE = "reachable_observable_free_highres_cells/v1"
 DENOMINATOR_ALGORITHM = "exact_reachable_safe_pose_range_los/v1"
 SPLIT_COUNTS = {"test": 150, "unseen": 64, "validation": 150}
 SOURCE_SPLITS = ("test", "unseen", "validation")
+SOURCE_SCENARIO_COUNT = sum(SPLIT_COUNTS.values())
+SENSOR_RANGE_M = 20.0
+SAFETY_CONTRACT = {
+    "vehicle_radius_m": 0.4215874761,
+    "safety_margin_m": 0.10,
+    "min_clearance_m": 0.5215874761,
+    "traversability_threshold": 0.50,
+    "max_traversable_slope_deg": 30.0,
+}
+OUTPUT_BASE = Path("D:/xunce/inputs/mid_dual/scenario-sources")
+XUNCE_D_ROOT = Path("D:/xunce")
+_MASK_PATH_RE = re.compile(r"^masks/([0-9a-f]{64})\.npz$")
+_SOURCE_ROOT_TOKEN = "${SOURCE_ROOT}"
 DESCRIPTOR_FIELDS = (
     "scenario_id",
     "scenario_hash",
@@ -66,6 +83,14 @@ DATA_FILE_NAMES = (
     "policy-blind-approval.json",
     "source-manifest.json",
 )
+_RECONSTRUCTION_FIELDS = {
+    "scenario_id",
+    "scenario_hash",
+    "key_sha256",
+    "mask_path",
+    "mask_file_sha256",
+    "mask_size_bytes",
+}
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -107,6 +132,63 @@ def _validate_relative_artifact_path(value: str) -> None:
         raise ValueError("scenario source artifact path is not safe and relative")
 
 
+def _same_resolved_path(left: str | Path, right: str | Path) -> bool:
+    return os.path.normcase(str(Path(left).resolve())) == os.path.normcase(
+        str(Path(right).resolve())
+    )
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _reject_existing_reparse_components(path: Path) -> None:
+    candidates = [path, *path.parents]
+    for candidate in reversed(candidates):
+        if not os.path.lexists(artifact_io.windows_safe_path(candidate)):
+            continue
+        result = os.lstat(artifact_io.windows_safe_path(candidate))
+        attributes = int(getattr(result, "st_file_attributes", 0))
+        reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+        if os.path.islink(artifact_io.windows_safe_path(candidate)) or (
+            reparse_flag and attributes & reparse_flag
+        ):
+            raise ValueError("execution paths must be absolute D paths without reparse points")
+
+
+def validate_execution_paths(
+    coverage_manifest_path: str | Path,
+    output_root: str | Path,
+) -> tuple[Path, Path]:
+    raw_coverage = Path(coverage_manifest_path)
+    raw_output = Path(output_root)
+    if (
+        not raw_coverage.is_absolute()
+        or not raw_output.is_absolute()
+        or raw_coverage.drive.casefold() != "d:"
+        or raw_output.drive.casefold() != "d:"
+        or ".." in raw_coverage.parts
+        or ".." in raw_output.parts
+    ):
+        raise ValueError("execution paths must be absolute D paths inside approved boundaries")
+    coverage = raw_coverage.resolve()
+    output = raw_output.resolve()
+    xunce_root = XUNCE_D_ROOT.resolve()
+    approved_output = OUTPUT_BASE.resolve()
+    if (
+        not _is_within(coverage, xunce_root)
+        or not _same_resolved_path(output, approved_output)
+    ):
+        raise ValueError("execution paths must be absolute D paths inside approved boundaries")
+    _reject_existing_reparse_components(coverage)
+    _reject_existing_reparse_components(output)
+    return coverage, output
+
+
 def _validate_source_config(payload: bytes) -> dict[str, object]:
     try:
         value = json.loads(payload.decode("utf-8"), parse_constant=_reject_nonfinite)
@@ -122,6 +204,9 @@ def _validate_source_config(payload: bytes) -> dict[str, object]:
         "policy_blind_approval_id": APPROVAL_ID,
         "project_authorization_sha256": AUTHORIZATION_SHA256,
         "publication_mode": "data_files_then_completion_manifest/v1",
+        "sensor_range_m": SENSOR_RANGE_M,
+        "safety_contract_source": SAFETY_CONTRACT_SOURCE,
+        "safety_contract": SAFETY_CONTRACT,
     }
     if not isinstance(value, dict) or value != expected:
         raise ValueError("scenario source config contract drifted")
@@ -320,101 +405,389 @@ def build_source_manifest(
     }
 
 
-def build_completion_manifest(
+def _read_json_payload(payload: bytes, *, label: str) -> dict[str, object]:
+    try:
+        value = json.loads(payload.decode("utf-8"), parse_constant=_reject_nonfinite)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(f"{label} is invalid JSON") from exc
+    if not isinstance(value, dict) or _canonical_json_bytes(value) != payload:
+        raise ValueError(f"{label} is not a canonical JSON object")
+    return value
+
+
+def _read_jsonl_payload(payload: bytes, *, label: str) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    try:
+        lines = payload.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{label} is not UTF-8 JSONL") from exc
+    for line in lines:
+        if not line:
+            raise ValueError(f"{label} contains a blank JSONL row")
+        try:
+            value = json.loads(line, parse_constant=_reject_nonfinite)
+        except ValueError as exc:
+            raise ValueError(f"{label} contains invalid JSONL") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{label} row must be an object")
+        rows.append(value)
+    if _canonical_jsonl_bytes(rows) != payload:
+        raise ValueError(f"{label} is not canonical JSONL")
+    return rows
+
+
+def _validate_exact_file_sets(
     data_files: Mapping[str, bytes],
     mask_files: Mapping[str, bytes],
-) -> bytes:
-    if not data_files or set(data_files) & set(mask_files):
-        raise ValueError("scenario source completion file set is invalid")
-    rows: list[dict[str, object]] = []
-    for name, payload in sorted({**data_files, **mask_files}.items()):
+) -> None:
+    if set(data_files) != set(DATA_FILE_NAMES):
+        raise ValueError("exact source data file set is required")
+    if len(mask_files) != SOURCE_SCENARIO_COUNT:
+        raise ValueError("exact source mask file set must contain 364 files")
+    for name, payload in {**data_files, **mask_files}.items():
         _validate_relative_artifact_path(name)
         if type(payload) is not bytes:
             raise TypeError("scenario source completion payload must be exact bytes")
-        rows.append(
-            {
-                "path": name,
-                "sha256": _sha256(payload),
-                "size_bytes": len(payload),
-            }
+    mask_hashes = []
+    for name in mask_files:
+        match = _MASK_PATH_RE.fullmatch(name)
+        if match is None:
+            raise ValueError("exact source mask path set is invalid")
+        mask_hashes.append(match.group(1))
+    if len(mask_hashes) != len(set(mask_hashes)):
+        raise ValueError("exact source mask scenario hashes are not unique")
+
+
+def _normalized_mask_path(
+    value: object,
+    *,
+    expected_relative: str,
+    source_root: Path | None,
+) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("reconstruction mask path is invalid")
+    if source_root is None:
+        if value.replace("\\", "/") != expected_relative:
+            raise ValueError("relative reconstruction mask path drifted")
+    elif not _same_resolved_path(value, source_root / expected_relative):
+        raise ValueError("absolute reconstruction mask path drifted")
+    return expected_relative
+
+
+def _normalize_source_manifest(
+    payload: bytes,
+    *,
+    data_files: Mapping[str, bytes],
+    source_root: Path | None,
+) -> bytes:
+    value = _read_json_payload(payload, label="source manifest")
+    artifact_files = {
+        "descriptor_catalog": "descriptors.jsonl",
+        "standard_catalog": "standard-catalog.json",
+        "standard_source": "standard-source.json",
+        "static_truth_cache": "static-truth-index.jsonl",
+        "reset_state": "reset-state-index.jsonl",
+    }
+    for key, relative in artifact_files.items():
+        ref = value.get(key)
+        if (
+            not isinstance(ref, dict)
+            or set(ref) != {"artifact_id", "path", "sha256"}
+            or ref.get("sha256") != _sha256(data_files[relative])
+        ):
+            raise ValueError(f"source manifest {key} reference drifted")
+        expected_path = (
+            relative
+            if source_root is None
+            else str((source_root / relative).resolve())
         )
-    payload_root = _sha256(_canonical_jsonl_bytes(rows))
+        if source_root is None:
+            path_matches = str(ref["path"]).replace("\\", "/") == relative
+        else:
+            path_matches = _same_resolved_path(ref["path"], expected_path)
+        if not path_matches:
+            raise ValueError(f"source manifest {key} path drifted")
+        ref["path"] = f"{_SOURCE_ROOT_TOKEN}/{relative}"
+    attestation = value.get("policy_blind_attestation")
+    if not isinstance(attestation, dict):
+        raise ValueError("source manifest policy-blind attestation drifted")
+    expected_approval = (
+        "policy-blind-approval.json"
+        if source_root is None
+        else str((source_root / "policy-blind-approval.json").resolve())
+    )
+    approval_path = attestation.get("approval_artifact_path")
+    if source_root is None:
+        approval_matches = str(approval_path).replace("\\", "/") == expected_approval
+    else:
+        approval_matches = _same_resolved_path(str(approval_path), expected_approval)
+    if (
+        not approval_matches
+        or attestation.get("approval_artifact_sha256")
+        != _sha256(data_files["policy-blind-approval.json"])
+    ):
+        raise ValueError("source manifest approval binding drifted")
+    attestation["approval_artifact_path"] = (
+        f"{_SOURCE_ROOT_TOKEN}/policy-blind-approval.json"
+    )
+    return _canonical_json_bytes(value)
+
+
+def _semantic_identity_payloads(
+    data_files: Mapping[str, bytes],
+    mask_files: Mapping[str, bytes],
+    *,
+    source_root: Path | None,
+) -> dict[str, bytes]:
+    _validate_exact_file_sets(data_files, mask_files)
+    descriptors = _read_jsonl_payload(
+        data_files["descriptors.jsonl"],
+        label="descriptor catalog",
+    )
+    if (
+        len(descriptors) != SOURCE_SCENARIO_COUNT
+        or any(set(row) != set(DESCRIPTOR_FIELDS) for row in descriptors)
+        or {
+            split: sum(row.get("source_split") == split for row in descriptors)
+            for split in SOURCE_SPLITS
+        }
+        != SPLIT_COUNTS
+        or bind_source_pool_hashes(descriptors) != descriptors
+    ):
+        raise ValueError("descriptor source set is not the exact 364-row contract")
+    descriptor_ids = [str(row["scenario_id"]) for row in descriptors]
+    descriptor_hashes = [str(row["scenario_hash"]) for row in descriptors]
+    if (
+        len(descriptor_ids) != len(set(descriptor_ids))
+        or len(descriptor_hashes) != len(set(descriptor_hashes))
+    ):
+        raise ValueError("descriptor identity set is not unique")
+
+    reconstruction = _read_jsonl_payload(
+        data_files["reconstruction-index.jsonl"],
+        label="reconstruction index",
+    )
+    if (
+        len(reconstruction) != SOURCE_SCENARIO_COUNT
+        or any(set(row) != _RECONSTRUCTION_FIELDS for row in reconstruction)
+        or {str(row["scenario_id"]) for row in reconstruction}
+        != set(descriptor_ids)
+    ):
+        raise ValueError("reconstruction rows do not bind descriptors one-to-one")
+    descriptor_by_id = {str(row["scenario_id"]): row for row in descriptors}
+    normalized_reconstruction: list[dict[str, object]] = []
+    seen_masks: set[str] = set()
+    for raw_row in reconstruction:
+        row = dict(raw_row)
+        scenario_id = str(row["scenario_id"])
+        descriptor = descriptor_by_id[scenario_id]
+        scenario_hash = descriptor["scenario_hash"]
+        relative = f"masks/{scenario_hash}.npz"
+        if (
+            row.get("scenario_hash") != scenario_hash
+            or not _is_sha256(row.get("key_sha256"))
+            or relative not in mask_files
+            or row.get("mask_file_sha256") != _sha256(mask_files[relative])
+            or row.get("mask_size_bytes") != len(mask_files[relative])
+            or relative in seen_masks
+        ):
+            raise ValueError("reconstruction mask binding drifted")
+        row["mask_path"] = _normalized_mask_path(
+            row.get("mask_path"),
+            expected_relative=relative,
+            source_root=source_root,
+        )
+        seen_masks.add(relative)
+        normalized_reconstruction.append(row)
+    if seen_masks != set(mask_files):
+        raise ValueError("reconstruction mask set is not exact")
+
+    approval = _read_json_payload(
+        data_files["policy-blind-approval.json"],
+        label="policy-blind approval",
+    )
+    if approval.get("formal_gate_pass_approved") is not False:
+        raise ValueError("policy-blind approval cannot approve a gate pass")
+    standard_source = _read_json_payload(
+        data_files["standard-source.json"],
+        label="standard source provenance",
+    )
+    forbidden = standard_source.get("forbidden_inputs_used")
+    if (
+        not isinstance(forbidden, dict)
+        or set(forbidden) != {"policy", "checkpoint", "reward", "runtime", "result"}
+        or any(value is not False for value in forbidden.values())
+        or "stage6_config" in standard_source
+    ):
+        raise ValueError("standard source forbidden-input attestation drifted")
+
+    normalized = dict(data_files)
+    normalized["reconstruction-index.jsonl"] = _canonical_jsonl_bytes(
+        sorted(normalized_reconstruction, key=lambda row: str(row["scenario_id"]))
+    )
+    normalized["source-manifest.json"] = _normalize_source_manifest(
+        data_files["source-manifest.json"],
+        data_files=data_files,
+        source_root=source_root,
+    )
+    return normalized
+
+
+def _file_rows(payloads: Mapping[str, bytes]) -> list[dict[str, object]]:
+    return [
+        {
+            "path": name,
+            "sha256": _sha256(payload),
+            "size_bytes": len(payload),
+        }
+        for name, payload in sorted(payloads.items())
+    ]
+
+
+def compute_source_id(
+    data_files: Mapping[str, bytes],
+    mask_files: Mapping[str, bytes],
+    *,
+    source_root: Path | None,
+) -> str:
+    normalized = _semantic_identity_payloads(
+        data_files,
+        mask_files,
+        source_root=source_root,
+    )
+    semantic_rows = _file_rows({**normalized, **mask_files})
+    return _sha256(_canonical_jsonl_bytes(semantic_rows))[:16]
+
+
+def build_completion_manifest(
+    data_files: Mapping[str, bytes],
+    mask_files: Mapping[str, bytes],
+    *,
+    source_root: Path | None = None,
+) -> bytes:
+    normalized = _semantic_identity_payloads(
+        data_files,
+        mask_files,
+        source_root=source_root,
+    )
+    semantic_rows = _file_rows({**normalized, **mask_files})
+    rows = _file_rows({**data_files, **mask_files})
+    semantic_root = _sha256(_canonical_jsonl_bytes(semantic_rows))
     return _canonical_json_bytes(
         {
             "schema_version": SCHEMA_VERSION,
             "completion_status": "complete",
             "publication_mode": "data_files_then_completion_manifest/v1",
+            "source_id": semantic_root[:16],
+            "semantic_payload_root_sha256": semantic_root,
             "file_count": len(rows),
-            "payload_root_sha256": payload_root,
+            "payload_root_sha256": _sha256(_canonical_jsonl_bytes(rows)),
             "files": rows,
         }
     )
 
 
 def _source_id(completion_manifest: bytes) -> str:
-    return _sha256(completion_manifest)[:16]
+    value = _read_json_payload(
+        completion_manifest,
+        label="scenario source completion manifest",
+    )
+    source_id = value.get("source_id")
+    if (
+        not isinstance(source_id, str)
+        or len(source_id) != 16
+        or any(character not in "0123456789abcdef" for character in source_id)
+    ):
+        raise ValueError("scenario source ID is invalid")
+    return source_id
 
 
-def _write_or_validate(path: Path, payload: bytes) -> None:
+def publication_order(
+    data_files: Mapping[str, bytes],
+    mask_files: Mapping[str, bytes],
+) -> tuple[str, ...]:
+    _validate_exact_file_sets(data_files, mask_files)
+    return (*sorted(data_files), *sorted(mask_files), "manifest.json")
+
+
+def _write_or_complete_prefix(path: Path, payload: bytes) -> None:
     if artifact_io.path_is_file(path):
-        if artifact_io.read_bytes(path) != payload:
+        existing = artifact_io.read_bytes(path)
+        if existing == payload:
+            return
+        if not payload.startswith(existing):
             raise ValueError(f"scenario source partial artifact drifted: {path.name}")
-        return
     artifact_io.write_bytes(path, payload)
     if artifact_io.read_bytes(path) != payload:
         raise ValueError(f"scenario source artifact write verification failed: {path.name}")
 
 
 def verify_source_bundle(root: str | Path) -> bool:
-    base = Path(root)
+    base = Path(root).resolve()
     manifest_path = base / "manifest.json"
     if not artifact_io.path_is_file(manifest_path):
         raise FileNotFoundError("scenario source completion manifest is missing")
     raw = artifact_io.read_bytes(manifest_path)
-    try:
-        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_nonfinite)
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise ValueError("scenario source completion manifest is invalid") from exc
+    value = _read_json_payload(raw, label="scenario source completion manifest")
+    required = {
+        "schema_version",
+        "completion_status",
+        "publication_mode",
+        "source_id",
+        "semantic_payload_root_sha256",
+        "file_count",
+        "payload_root_sha256",
+        "files",
+    }
     if (
-        not isinstance(value, dict)
-        or _canonical_json_bytes(value) != raw
-        or value.get("schema_version") != SCHEMA_VERSION
-        or value.get("completion_status") != "complete"
-        or value.get("publication_mode") != "data_files_then_completion_manifest/v1"
-        or not isinstance(value.get("files"), list)
+        set(value) != required
+        or value["schema_version"] != SCHEMA_VERSION
+        or value["completion_status"] != "complete"
+        or value["publication_mode"] != "data_files_then_completion_manifest/v1"
+        or not isinstance(value["files"], list)
+        or value["source_id"] != base.name
     ):
         raise ValueError("scenario source completion manifest drifted")
     rows = value["files"]
-    if value.get("file_count") != len(rows):
+    if value["file_count"] != len(rows):
         raise ValueError("scenario source completion count drifted")
-    canonical_rows: list[dict[str, object]] = []
-    seen: set[str] = set()
+    expected_names = [str(row.get("path")) for row in rows if isinstance(row, dict)]
+    if (
+        len(expected_names) != len(rows)
+        or len(expected_names) != len(set(expected_names))
+        or expected_names != sorted(expected_names)
+    ):
+        raise ValueError("scenario source completion file identity drifted")
+    actual_names = artifact_io.list_relative_files(base)
+    if set(actual_names) != {*expected_names, "manifest.json"}:
+        raise ValueError("scenario source root is not an exact closed file set")
+    data_files: dict[str, bytes] = {}
+    mask_files: dict[str, bytes] = {}
     for item in rows:
         if (
             not isinstance(item, dict)
             or set(item) != {"path", "sha256", "size_bytes"}
             or not isinstance(item["path"], str)
-            or item["path"] in seen
             or not _is_sha256(item["sha256"])
             or type(item["size_bytes"]) is not int
             or item["size_bytes"] < 0
         ):
             raise ValueError("scenario source completion file row drifted")
         _validate_relative_artifact_path(item["path"])
-        path = base / item["path"]
-        if not artifact_io.path_is_file(path):
-            raise ValueError("scenario source artifact is missing")
-        payload = artifact_io.read_bytes(path)
+        payload = artifact_io.read_bytes(base / item["path"])
         if len(payload) != item["size_bytes"] or _sha256(payload) != item["sha256"]:
             raise ValueError("scenario source artifact bytes drifted")
-        seen.add(item["path"])
-        canonical_rows.append(dict(item))
-    if canonical_rows != sorted(canonical_rows, key=lambda row: str(row["path"])):
-        raise ValueError("scenario source completion rows are not sorted")
-    if value.get("payload_root_sha256") != _sha256(
-        _canonical_jsonl_bytes(canonical_rows)
-    ):
-        raise ValueError("scenario source payload root drifted")
+        if item["path"] in DATA_FILE_NAMES:
+            data_files[item["path"]] = payload
+        else:
+            mask_files[item["path"]] = payload
+    expected = build_completion_manifest(
+        data_files,
+        mask_files,
+        source_root=base,
+    )
+    if expected != raw:
+        raise ValueError("scenario source completion or identity evidence drifted")
     return True
 
 
@@ -426,29 +799,37 @@ def publish_source_bundle(
     output_root: str | Path,
     source_id: str | None = None,
 ) -> Path:
-    if build_completion_manifest(data_files, mask_files) != completion_manifest:
+    declared = _source_id(completion_manifest)
+    identity = declared if source_id is None else source_id
+    if identity != declared:
+        raise ValueError("scenario source ID does not match semantic content")
+    root = Path(output_root).resolve() / identity
+    expected_completion = build_completion_manifest(
+        data_files,
+        mask_files,
+        source_root=root,
+    )
+    if expected_completion != completion_manifest:
         raise ValueError("scenario source completion manifest does not match payloads")
-    identity = _source_id(completion_manifest) if source_id is None else source_id
-    if (
-        not isinstance(identity, str)
-        or len(identity) != 16
-        or any(character not in "0123456789abcdef" for character in identity)
-    ):
-        raise ValueError("scenario source ID is invalid")
-    root = Path(output_root) / identity
-    manifest_path = root / "manifest.json"
-    if artifact_io.path_is_file(manifest_path):
-        if artifact_io.read_bytes(manifest_path) == completion_manifest and verify_source_bundle(root):
+    order = publication_order(data_files, mask_files)
+    expected_payloads = {**data_files, **mask_files, "manifest.json": completion_manifest}
+    existing = set(artifact_io.list_relative_files(root))
+    if "manifest.json" in existing and artifact_io.read_bytes(root / "manifest.json") == completion_manifest:
+        if verify_source_bundle(root):
             raise FileExistsError(f"complete scenario source root already exists: {root}")
-        raise ValueError("scenario source completion evidence drifted")
+    prefix_length = next(
+        (
+            length
+            for length in range(len(order) + 1)
+            if existing == set(order[:length])
+        ),
+        None,
+    )
+    if prefix_length is None:
+        raise ValueError("scenario source root is not a contiguous publication prefix")
     artifact_io.make_dirs(root)
-    for name, payload in sorted(data_files.items()):
-        _validate_relative_artifact_path(name)
-        _write_or_validate(root / name, payload)
-    for name, payload in sorted(mask_files.items()):
-        _validate_relative_artifact_path(name)
-        _write_or_validate(root / name, payload)
-    _write_or_validate(manifest_path, completion_manifest)
+    for name in order:
+        _write_or_complete_prefix(root / name, expected_payloads[name])
     if not verify_source_bundle(root):
         raise ValueError("scenario source completion verification failed")
     return root
@@ -557,34 +938,6 @@ def _reset_probe(
         env = None
 
 
-def _source_identity(
-    *,
-    config_sha256: str,
-    coverage_manifest_sha256: str,
-    catalog_sha256: str,
-    descriptor_sha256: str,
-    static_sha256: str,
-    reset_sha256: str,
-    reconstruction_sha256: str,
-    generator_sha256: str,
-) -> str:
-    return _sha256(
-        _canonical_json_bytes(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "config_sha256": config_sha256,
-                "coverage_manifest_sha256": coverage_manifest_sha256,
-                "catalog_sha256": catalog_sha256,
-                "descriptor_sha256": descriptor_sha256,
-                "static_sha256": static_sha256,
-                "reset_sha256": reset_sha256,
-                "reconstruction_sha256": reconstruction_sha256,
-                "generator_sha256": generator_sha256,
-            }
-        )
-    )[:16]
-
-
 def build_source_bundle_from_paths(
     *,
     config_path: str | Path,
@@ -594,14 +947,15 @@ def build_source_bundle_from_paths(
 ) -> tuple[dict[str, bytes], dict[str, bytes], bytes, str]:
     if not _is_sha256(coverage_manifest_sha256):
         raise ValueError("coverage manifest expected SHA-256 is invalid")
+    coverage_manifest_path, output_root = validate_execution_paths(
+        coverage_manifest_path,
+        output_root,
+    )
     config_bytes = artifact_io.read_bytes(config_path)
-    _validate_source_config(config_bytes)
+    source_config = _validate_source_config(config_bytes)
     config_sha256 = _sha256(config_bytes)
 
-    from lunar_exploration_ppo.configs.stage6 import (
-        SafetyContract,
-        parse_stage6_config_bytes,
-    )
+    from lunar_exploration_ppo.configs.stage6 import SafetyContract
     from lunar_exploration_ppo.env.coverage_cache import Stage6CoverageManifest
     from lunar_exploration_ppo.env.scenario_catalog import StandardScenarioFactory
     from lunar_exploration_ppo.env.standard_training import build_standard_catalog
@@ -615,11 +969,13 @@ def build_source_bundle_from_paths(
         / "project-authorization.md"
     ).resolve()
     validate_project_authorization(authorization_path)
-    stage6_config_path = repo_root / "configs" / "ppo_highres_frontier_stage6_v1.json"
-    stage6_config_bytes = artifact_io.read_bytes(stage6_config_path)
-    stage6_config = parse_stage6_config_bytes(stage6_config_bytes)
-    stage6_config_sha256 = _sha256(stage6_config_bytes)
-    safety = SafetyContract.from_stage6_config(stage6_config)
+    safety_payload = source_config["safety_contract"]
+    if not isinstance(safety_payload, Mapping):
+        raise ValueError("source safety contract is invalid")
+    safety = SafetyContract.from_dict(safety_payload)
+    sensor_range_m = source_config["sensor_range_m"]
+    if type(sensor_range_m) is not float or sensor_range_m != SENSOR_RANGE_M:
+        raise ValueError("source sensor range drifted")
     catalog = build_standard_catalog()
     coverage = Stage6CoverageManifest.load(
         coverage_manifest_path,
@@ -659,7 +1015,7 @@ def build_source_bundle_from_paths(
         ):
             raise ValueError("Stage6 denominator audit does not bind rebuilt scenario")
         settings = {
-            "sensor_range_m": 20.0,
+            "sensor_range_m": sensor_range_m,
             "min_clearance_m": safety.min_clearance_m,
             "max_slope_deg": safety.max_traversable_slope_deg,
             "traversability_threshold": safety.traversability_threshold,
@@ -685,7 +1041,7 @@ def build_source_bundle_from_paths(
             bundle=bundle,
             masks=masks,
             safety_contract=safety,
-            config_sha256=stage6_config_sha256,
+            config_sha256=config_sha256,
         )
         probe["record_scenario_id"] = record.scenario_id
         probe["source_split"] = record.split
@@ -761,12 +1117,14 @@ def build_source_bundle_from_paths(
             "schema_version": "mid-dual-standard-source-provenance/v1",
             "catalog_sha256": catalog.sha256,
             "catalog_sources": catalog.to_dict()["sources"],
-            "stage6_config": {
-                "path": str(stage6_config_path.resolve()),
-                "sha256": stage6_config_sha256,
+            "source_config": {
+                "path": str(Path(config_path).resolve()),
+                "sha256": config_sha256,
             },
+            "safety_contract_source": SAFETY_CONTRACT_SOURCE,
             "safety_contract": safety.to_dict(),
             "safety_contract_sha256": safety.sha256,
+            "sensor_range_m": sensor_range_m,
             "forbidden_inputs_used": {
                 "policy": False,
                 "checkpoint": False,
@@ -799,29 +1157,6 @@ def build_source_bundle_from_paths(
     preliminary_reconstruction_bytes = _canonical_jsonl_bytes(
         sorted(preliminary_reconstruction, key=lambda row: str(row["scenario_id"]))
     )
-    source_id = _source_identity(
-        config_sha256=config_sha256,
-        coverage_manifest_sha256=coverage_manifest_sha256,
-        catalog_sha256=catalog.sha256,
-        descriptor_sha256=_sha256(descriptor_bytes),
-        static_sha256=_sha256(static_bytes),
-        reset_sha256=_sha256(reset_bytes),
-        reconstruction_sha256=_sha256(preliminary_reconstruction_bytes),
-        generator_sha256=generator_sha256,
-    )
-    root = Path(output_root) / source_id
-    reconstruction = [
-        {
-            key: value
-            for key, value in row.items()
-            if key != "_mask_relative"
-        }
-        | {"mask_path": str((root / str(row["_mask_relative"])).resolve())}
-        for row in reconstruction_rows
-    ]
-    reconstruction_bytes = _canonical_jsonl_bytes(
-        sorted(reconstruction, key=lambda row: str(row["scenario_id"]))
-    )
     approval = {
         "schema_version": "mid-dual-policy-blind-source-approval/v1",
         "approval_id": APPROVAL_ID,
@@ -837,7 +1172,7 @@ def build_source_bundle_from_paths(
             "sha256": generator_sha256,
         },
         "coverage_manifest": {
-            "path": str(Path(coverage_manifest_path).resolve()),
+            "path": str(coverage_manifest_path),
             "sha256": coverage_manifest_sha256,
             "catalog_sha256": catalog.sha256,
         },
@@ -858,6 +1193,54 @@ def build_source_bundle_from_paths(
         "static_truth_cache": ("static-truth-index.jsonl", static_bytes),
         "reset_state": ("reset-state-index.jsonl", reset_bytes),
     }
+
+    preliminary_refs = {
+        name: {
+            "artifact_id": f"mid-dual-{name.replace('_', '-')}/v1",
+            "path": relative,
+            "sha256": _sha256(payload),
+        }
+        for name, (relative, payload) in artifact_payloads.items()
+    }
+    preliminary_source_manifest = build_source_manifest(
+        artifact_refs=preliminary_refs,
+        descriptor_generator_path=generator_path,
+        descriptor_generator_sha256=generator_sha256,
+        coverage_manifest_path=str(coverage_manifest_path),
+        coverage_manifest_sha256=coverage_manifest_sha256,
+        coverage_catalog_sha256=catalog.sha256,
+        approval_path="policy-blind-approval.json",
+        approval_sha256=_sha256(approval_bytes),
+        source_pool_hashes=source_pool_hashes,
+    )
+    preliminary_data_files = {
+        "standard-catalog.json": catalog_bytes,
+        "standard-source.json": standard_source_bytes,
+        "static-truth-index.jsonl": static_bytes,
+        "reset-state-index.jsonl": reset_bytes,
+        "descriptors.jsonl": descriptor_bytes,
+        "reconstruction-index.jsonl": preliminary_reconstruction_bytes,
+        "policy-blind-approval.json": approval_bytes,
+        "source-manifest.json": _canonical_json_bytes(preliminary_source_manifest),
+    }
+    source_id = compute_source_id(
+        preliminary_data_files,
+        mask_files,
+        source_root=None,
+    )
+    root = Path(output_root) / source_id
+    reconstruction = [
+        {
+            key: value
+            for key, value in row.items()
+            if key != "_mask_relative"
+        }
+        | {"mask_path": str((root / str(row["_mask_relative"])).resolve())}
+        for row in reconstruction_rows
+    ]
+    reconstruction_bytes = _canonical_jsonl_bytes(
+        sorted(reconstruction, key=lambda row: str(row["scenario_id"]))
+    )
     refs = {
         name: {
             "artifact_id": f"mid-dual-{name.replace('_', '-')}/v1",
@@ -870,14 +1253,13 @@ def build_source_bundle_from_paths(
         artifact_refs=refs,
         descriptor_generator_path=generator_path,
         descriptor_generator_sha256=generator_sha256,
-        coverage_manifest_path=str(Path(coverage_manifest_path).resolve()),
+        coverage_manifest_path=str(coverage_manifest_path),
         coverage_manifest_sha256=coverage_manifest_sha256,
         coverage_catalog_sha256=catalog.sha256,
         approval_path=str((root / "policy-blind-approval.json").resolve()),
         approval_sha256=_sha256(approval_bytes),
         source_pool_hashes=source_pool_hashes,
     )
-    source_manifest_bytes = _canonical_json_bytes(source_manifest)
     data_files = {
         "standard-catalog.json": catalog_bytes,
         "standard-source.json": standard_source_bytes,
@@ -886,9 +1268,15 @@ def build_source_bundle_from_paths(
         "descriptors.jsonl": descriptor_bytes,
         "reconstruction-index.jsonl": reconstruction_bytes,
         "policy-blind-approval.json": approval_bytes,
-        "source-manifest.json": source_manifest_bytes,
+        "source-manifest.json": _canonical_json_bytes(source_manifest),
     }
-    completion = build_completion_manifest(data_files, mask_files)
+    if compute_source_id(data_files, mask_files, source_root=root) != source_id:
+        raise ValueError("scenario source identity changed after root binding")
+    completion = build_completion_manifest(
+        data_files,
+        mask_files,
+        source_root=root,
+    )
     return data_files, mask_files, completion, source_id
 
 
