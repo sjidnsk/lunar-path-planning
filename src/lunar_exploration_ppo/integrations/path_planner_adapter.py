@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from time import perf_counter_ns
 from typing import Literal, Mapping
 
 import numpy as np
@@ -15,6 +16,13 @@ from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry, WorldXY, 
 
 
 PlannerFailureClassification = Literal["none", "pre_execution_invalid_action"]
+_TIMING_FIELDS = (
+    "input_validation_ns",
+    "platform_instantiation_ns",
+    "search_ns",
+    "complete_route_validation_ns",
+    "result_assembly_ns",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,25 +48,52 @@ class PathPlannerAdapter:
         target: CellXY,
         theta: float,
     ) -> PlannerResult:
+        timings = {name: 0 for name in _TIMING_FIELDS}
+        phase_started_ns = perf_counter_ns()
+
+        def finish_phase(name: str) -> None:
+            nonlocal phase_started_ns
+            ended_ns = perf_counter_ns()
+            duration_ns = ended_ns - phase_started_ns
+            if duration_ns < 0:
+                raise RuntimeError("perf_counter_ns moved backwards")
+            timings[name] = duration_ns
+
+        def assemble_failure(reason: str) -> PlannerResult:
+            assembly_started_ns = perf_counter_ns()
+            failure = self._failure(reason)
+            assembly_ended_ns = perf_counter_ns()
+            assembly_duration_ns = assembly_ended_ns - assembly_started_ns
+            if assembly_duration_ns < 0:
+                raise RuntimeError("perf_counter_ns moved backwards")
+            timings["result_assembly_ns"] = assembly_duration_ns
+            return self._with_timing(failure, timings)
+
+        def fail(reason: str, phase_name: str) -> PlannerResult:
+            finish_phase(phase_name)
+            return assemble_failure(reason)
+
         try:
             normalized_theta = normalize_theta(theta)
         except ValueError:
-            return self._failure("invalid_theta")
+            return fail("invalid_theta", "input_validation_ns")
         mask = np.asarray(safe_mask, dtype=bool)
         if mask.shape != self.geometry.shape:
-            return self._failure("invalid_safe_mask")
+            return fail("invalid_safe_mask", "input_validation_ns")
         if not self.geometry.in_bounds(start):
-            return self._failure("start_out_of_bounds")
+            return fail("start_out_of_bounds", "input_validation_ns")
         if not self.geometry.in_bounds(target):
-            return self._failure("target_out_of_bounds")
+            return fail("target_out_of_bounds", "input_validation_ns")
         if not mask[start.y, start.x]:
-            return self._failure("start_unsafe")
+            return fail("start_unsafe", "input_validation_ns")
         if not mask[target.y, target.x]:
-            return self._failure("target_unsafe")
+            return fail("target_unsafe", "input_validation_ns")
         component = reachable_component(mask, start)
         if not component[target.y, target.x]:
-            return self._failure("target_unreachable")
+            return fail("target_unreachable", "input_validation_ns")
+        finish_phase("input_validation_ns")
 
+        phase_started_ns = perf_counter_ns()
         spec = GridSpec(
             width=self.geometry.width,
             height=self.geometry.height,
@@ -66,7 +101,14 @@ class PathPlannerAdapter:
             origin=(self.geometry.origin.x, self.geometry.origin.y),
         )
         blocked_count = int(np.count_nonzero(~mask))
-        grid = CostGrid(spec=spec, cost=np.ones(mask.shape, dtype=float), passable_mask=mask)
+        grid = CostGrid(
+            spec=spec,
+            cost=np.ones(mask.shape, dtype=float),
+            passable_mask=mask,
+        )
+        finish_phase("platform_instantiation_ns")
+
+        phase_started_ns = perf_counter_ns()
         result = AStarPlanner().plan(
             grid,
             PlanRequest(
@@ -76,16 +118,49 @@ class PathPlannerAdapter:
                 prevent_corner_cutting=True,
             ),
         )
+        finish_phase("search_ns")
         if not result.success:
-            reason = result.failure_reason.value if result.failure_reason is not None else "unknown"
-            return self._failure(f"planner_{reason}")
+            reason = (
+                result.failure_reason.value
+                if result.failure_reason is not None
+                else "unknown"
+            )
+            return assemble_failure(f"planner_{reason}")
+
+        phase_started_ns = perf_counter_ns()
         path_cells = tuple(CellXY(cell.x, cell.y) for cell in result.path_cells)
-        path_centers = tuple(self.geometry.cell_to_world_center(cell) for cell in path_cells)
+        for cell in path_cells:
+            if not self.geometry.in_bounds(cell):
+                return fail(
+                    "path_out_of_bounds",
+                    "complete_route_validation_ns",
+                )
+            if not mask[cell.y, cell.x]:
+                return fail("path_unsafe", "complete_route_validation_ns")
+        finish_phase("complete_route_validation_ns")
+
+        phase_started_ns = perf_counter_ns()
+        path_centers = tuple(
+            self.geometry.cell_to_world_center(cell) for cell in path_cells
+        )
         path_length_m = sum(
             math.hypot(right.x - left.x, right.y - left.y)
-            for left, right in zip(path_centers[:-1], path_centers[1:], strict=True)
+            for left, right in zip(
+                path_centers[:-1],
+                path_centers[1:],
+                strict=True,
+            )
         )
-        return PlannerResult(
+        diagnostics = {
+            "neighbor_policy": "8-neighbor",
+            "prevent_corner_cutting": True,
+            "inflation_applied": False,
+            "planner_footprint_radius_m": None,
+            "original_blocked_count": blocked_count,
+            "inflated_blocked_count": blocked_count,
+            "expanded_count": result.expanded_count,
+        }
+        assembled = PlannerResult(
             valid=True,
             failure_reason="none",
             failure_classification="none",
@@ -93,14 +168,25 @@ class PathPlannerAdapter:
             path_world=path_centers,
             target_theta=normalized_theta,
             path_length_m=path_length_m,
+            diagnostics=diagnostics,
+        )
+        finish_phase("result_assembly_ns")
+        return self._with_timing(assembled, timings)
+
+    @staticmethod
+    def _with_timing(
+        result: PlannerResult,
+        timings: Mapping[str, int],
+    ) -> PlannerResult:
+        timing_values = {
+            name: int(timings[name]) for name in _TIMING_FIELDS
+        }
+        return replace(
+            result,
             diagnostics={
-                "neighbor_policy": "8-neighbor",
-                "prevent_corner_cutting": True,
-                "inflation_applied": False,
-                "planner_footprint_radius_m": None,
-                "original_blocked_count": blocked_count,
-                "inflated_blocked_count": blocked_count,
-                "expanded_count": result.expanded_count,
+                **result.diagnostics,
+                **timing_values,
+                "total_ns": sum(timing_values.values()),
             },
         )
 
