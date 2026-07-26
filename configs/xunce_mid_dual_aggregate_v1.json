@@ -1,0 +1,22 @@
+{
+  "actual_sample_counts": {
+    "g1_episodes_per_split": 24,
+    "g1_split_count": 2,
+    "g2_formal_calls": 645,
+    "g3_interface_replays": 6,
+    "g3_wheel_episodes": 10
+  },
+  "output_root": "D:/xunce/out/mid_dual/aggregate",
+  "reference_sample_counts": {
+    "g1_episodes_per_split": 64,
+    "g1_split_count": 2,
+    "g2_formal_calls": 1950,
+    "g3_interface_replays": 18,
+    "g3_wheel_episodes": 30
+  },
+  "required_phase_ids": [
+    "p01"
+  ],
+  "scale_profile": "midterm_reduced_w8x3_update80/v1",
+  "schema_version": "xunce-mid-dual-aggregate-config/v1"
+}
