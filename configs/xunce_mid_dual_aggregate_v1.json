@@ -80,7 +80,7 @@
       "schema_version": "xunce-mid-dual-source-contract/v1"
     },
     "g3": {
-      "config_schema_version": "mid-dual-g3-config/v1",
+      "config_schema_version": "xunce-mid-dual-g3-effective-config/v1",
       "gate_id": "g3",
       "input_audit_schema_version": "xunce-mid-dual-g3-input-audit/v1",
       "output_base": "D:/xunce/out/mid_dual/g3",
@@ -89,10 +89,17 @@
       "required_lineage_sources": [
         "configs/xunce_mid_dual_g3_closed_loop_v1.json",
         "scripts/run_xunce_mid_dual_g3_closed_loop.py",
+        "scripts/freeze_xunce_mid_dual_scenarios.py",
+        "scripts/run_xunce_mid_dual_g1_coverage.py",
+        "scripts/run_xunce_mid_dual_g2_planning_time.py",
+        "scripts/xunce_mid_dual_g2_inputs.py",
         "scripts/xunce_mid_dual_contracts.py",
         "scripts/xunce_mid_dual_artifacts.py",
         "scripts/xunce_artifact_io.py",
         "scripts/xunce_artifact_paths.py",
+        "src/lunar_exploration_ppo/eval/midterm_reduced.py",
+        "src/lunar_exploration_ppo/eval/standard.py",
+        "src/lunar_exploration_ppo/env/standard_training.py",
         "src/lunar_exploration_ppo/integrations/path_planner_adapter.py"
       ],
       "required_phase_ids": [

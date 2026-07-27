@@ -77,7 +77,7 @@ _FIXTURE_SOURCE_CONTRACTS: dict[str, dict[str, object]] = {
     "g3": {
         "schema_version": "xunce-mid-dual-source-contract/v1",
         "gate_id": "g3",
-        "config_schema_version": "mid-dual-g3-config/v1",
+        "config_schema_version": "xunce-mid-dual-g3-effective-config/v1",
         "runner_id": "run_xunce_mid_dual_g3_closed_loop/v1",
         "required_phase_ids": ["p01", "p02"],
         "output_base": "D:/xunce/out/mid_dual/g3",
@@ -244,7 +244,8 @@ def _g1_input_audit() -> dict[str, object]:
     formal_jobs: list[dict[str, object]] = []
     for split in ("test_q24", "unseen24"):
         for index in range(24):
-            scenario_id = f"{split}-scenario-{index:02d}"
+            prefix = "test" if split == "test_q24" else "unseen"
+            scenario_id = f"{prefix}/scenario-{index:02d}"
             formal_jobs.append(
                 {
                     "split": split,
@@ -282,13 +283,13 @@ def _g1_input_audit() -> dict[str, object]:
         "formal_split_order": ["test_q24", "unseen24"],
         "formal_jobs": formal_jobs,
         "test_c24_scenario_ids": [
-            f"test_c24-scenario-{index:02d}" for index in range(24)
+            f"test/c-scenario-{index:02d}" for index in range(24)
         ],
         "validation3_scenario_ids": [
-            f"validation-scenario-{index:02d}" for index in range(3)
+            f"validation/scenario-{index:02d}" for index in range(3)
         ],
         "replay3_scenario_ids": [
-            f"replay-scenario-{index:02d}" for index in range(3)
+            f"replay/scenario-{index:02d}" for index in range(3)
         ],
     }
 
@@ -475,6 +476,39 @@ def _g3_input_audit(g1_root: Path, g2_root: Path) -> dict[str, object]:
     }
 
 
+def _g3_upstream_binding(
+    g1_root: Path,
+    g2_root: Path,
+) -> dict[str, object]:
+    g1_config = artifact_io.read_json(g1_root / "config.json")
+    g2_config = artifact_io.read_json(g2_root / "config.json")
+    g1_input = artifact_io.read_json(g1_root / "source_input_audit.json")
+    g2_input = artifact_io.read_json(g2_root / "source_input_audit.json")
+    return {
+        "g1_source_manifest_sha256": _manifest_sha256(g1_root),
+        "g2_source_manifest_sha256": _manifest_sha256(g2_root),
+        "freeze_manifest_sha256": g1_input["scenario_manifest_sha256"],
+        "g1_config_sha256": g1_config["config_sha256"],
+        "g1_input_sha256": g1_config["input_sha256"],
+        "g1_code_sha256": g1_config["code_sha256"],
+        "g2_config_sha256": g2_config["config_sha256"],
+        "g2_input_sha256": g2_config["input_sha256"],
+        "g2_code_sha256": g2_config["code_sha256"],
+        "g2_input_set_id": g2_input["input_set_id"],
+        "g2_approval_sha256": _json_sha256(g2_input["approval"]),
+        "g2_cohort_sha256": g2_input["g3_replay_cohort_sha256"],
+        "g2_provider_identity_sha256": _json_sha256(
+            g2_input["provider_source"]
+        ),
+        "g2_oracle_identity_sha256": _json_sha256(
+            g2_input["oracle_source"]
+        ),
+        "g2_hopper_resolution_sha256": _json_sha256(
+            g2_input["hopper_resolution"]
+        ),
+    }
+
+
 def _source_config(
     gate_id: str,
     input_audit: Mapping[str, object],
@@ -502,6 +536,12 @@ def _source_config(
     }
     if gate_id == "g3":
         payload["upstream_binding"] = dict(upstream_binding or {})
+        payload["evidence_binding"] = {
+            "schema_version": "xunce-mid-dual-g3-evidence-binding/v1",
+            "input_audit_path": "g3_input_audit.json",
+            "lineage_audit_path": "lineage_audit.json",
+            "report_audit_path": "g3_report_audit.json",
+        }
     return payload
 
 
@@ -755,6 +795,7 @@ def _create_source_root(
     input_audit: dict[str, object] | None = None,
     input_mutation: Callable[[dict[str, object]], None] | None = None,
     upstream_binding: Mapping[str, object] | None = None,
+    extra_audits: Mapping[str, Mapping[str, object]] | None = None,
 ) -> Path:
     root = tmp_path / gate_id
     if input_audit is None:
@@ -783,12 +824,113 @@ def _create_source_root(
             row["code_sha256"] = effective_config["code_sha256"]
         if row.get("source_sha256") == _HASH_B:
             row["source_sha256"] = effective_config["code_sha256"]
+    finalized_extra_audits = {
+        name: dict(payload)
+        for name, payload in (extra_audits or {}).items()
+    }
+    g3_decisions: dict[str, object] | None = None
+    g3_observations: dict[str, object] | None = None
+    upstream_lineage_sha256: str | None = None
+    if gate_id == "g3":
+        assert upstream_binding is not None
+        g3 = importlib.import_module("run_xunce_mid_dual_g3_closed_loop")
+        wheel_rows = [
+            row for row in rows if row.get("row_kind") == "g3_wheel_step"
+        ]
+        g3_decisions, g3_observations = g3._wheel_authority_audits(  # noqa: SLF001
+            wheel_rows
+        )
+        finalized_extra_audits["g3_decisions"] = g3_decisions
+        finalized_extra_audits["g3_observations"] = g3_observations
+        upstream_lineage = finalized_extra_audits.get("upstream_lineage")
+        assert upstream_lineage is not None
+        upstream_lineage_sha256 = _sha256_bytes(
+            _json_text(upstream_lineage).encode("utf-8")
+        )
     for phase_id in _FIXTURE_SOURCE_CONTRACTS[gate_id]["required_phase_ids"]:
-        phase_rows = rows if phase_id == _FIXTURE_SOURCE_CONTRACTS[gate_id]["required_phase_ids"][-1] else []
+        if gate_id == "g3":
+            row_kind = {
+                "p01": "g3_wheel_step",
+                "p02": "g3_interface_replay",
+            }[str(phase_id)]
+            phase_rows = [
+                row for row in rows if row.get("row_kind") == row_kind
+            ]
+            g3 = importlib.import_module(
+                "run_xunce_mid_dual_g3_closed_loop"
+            )
+            projection = g3.validate_g3_phase_rows(
+                phase_id=str(phase_id),
+                rows=phase_rows,
+                accepted_phase_ids=store.accepted_phase_ids,
+            )
+            first = phase_rows[0]
+            phase_audit: dict[str, object] = {
+                "schema_version": "xunce-mid-dual-g3-phase-audit/v1",
+                "gate_id": "g3",
+                "runner_id": "run_xunce_mid_dual_g3_closed_loop/v1",
+                "phase_id": phase_id,
+                "phase_name": {
+                    "p01": "wheel_closed_loop",
+                    "p02": "interface_replay",
+                }[str(phase_id)],
+                "status": "complete",
+                "formal_sample": True,
+                "formal_evidence_eligible": True,
+                "upstream_lineage_audit_sha256": upstream_lineage_sha256,
+                "phase_projection": projection,
+                "config_sha256": first["config_sha256"],
+                "input_sha256": first["input_sha256"],
+                "code_sha256": first["code_sha256"],
+                "frozen_manifest_sha256": upstream_binding[
+                    "freeze_manifest_sha256"
+                ],
+                "g1_source_manifest_sha256": upstream_binding[
+                    "g1_source_manifest_sha256"
+                ],
+                "g2_source_manifest_sha256": upstream_binding[
+                    "g2_source_manifest_sha256"
+                ],
+            }
+            if phase_id == "p01":
+                phase_audit.update(
+                    {
+                        "decision_audit_sha256": _sha256_bytes(
+                            _json_text(g3_decisions).encode("utf-8")
+                        ),
+                        "observation_audit_sha256": _sha256_bytes(
+                            _json_text(g3_observations).encode("utf-8")
+                        ),
+                    }
+                )
+            else:
+                phase_audit.update(
+                    {
+                        "g2_cohort_sha256": upstream_binding[
+                            "g2_cohort_sha256"
+                        ],
+                        "g2_approval_sha256": upstream_binding[
+                            "g2_approval_sha256"
+                        ],
+                        "g2_hopper_resolution_sha256": upstream_binding[
+                            "g2_hopper_resolution_sha256"
+                        ],
+                    }
+                )
+        else:
+            phase_rows = (
+                rows
+                if phase_id
+                == _FIXTURE_SOURCE_CONTRACTS[gate_id][
+                    "required_phase_ids"
+                ][-1]
+                else []
+            )
+            phase_audit = {"gate_id": gate_id, "phase_id": phase_id}
         attempt = store.write_phase_attempt(
             str(phase_id),
             phase_rows,
-            {"gate_id": gate_id, "phase_id": phase_id},
+            phase_audit,
         )
         store.accept_phase(
             str(phase_id),
@@ -799,6 +941,18 @@ def _create_source_root(
     assert store.capture_environment(_environment_probe)["status"] == "captured"
     recomputed = _expected_gate_summary(gate_id, rows)
     recomputed.update(summary)
+    if gate_id == "g3":
+        recomputed.update(
+            {
+                "g1_source_manifest_sha256": upstream_binding[
+                    "g1_source_manifest_sha256"
+                ],
+                "g2_source_manifest_sha256": upstream_binding[
+                    "g2_source_manifest_sha256"
+                ],
+                "upstream_lineage_audit_sha256": upstream_lineage_sha256,
+            }
+        )
     stored = {
         "schema_version": f"xunce-mid-dual-{gate_id}-canonical-summary/v1",
         "scale_profile": SCALE_PROFILE,
@@ -808,19 +962,48 @@ def _create_source_root(
         "formal_evidence_eligible": True,
         "recomputed": recomputed,
     }
-    report = f"# {gate_id.upper()} canonical source report\n"
-    report_audit = {
-        "schema_version": "xunce-mid-dual-source-report-audit/v1",
-        "gate_id": gate_id,
-        "run_id": f"{gate_id}-run",
-        "renderer_id": _FIXTURE_SOURCE_CONTRACTS[gate_id]["report_renderer_id"],
-        "summary_projection_sha256": _json_sha256(recomputed),
-        "stored_summary_bytes_sha256": _sha256_bytes(
-            _artifact_text_bytes(_json_text(stored))
-        ),
-        "report_bytes_sha256": _sha256_bytes(_artifact_text_bytes(report)),
-        "formal_evidence_eligible": True,
-    }
+    if gate_id == "g2":
+        producer = importlib.import_module(
+            "run_xunce_mid_dual_g2_planning_time"
+        )
+        report = producer._render_report(stored)  # noqa: SLF001
+        report_audit = producer._source_report_audit(  # noqa: SLF001
+            summary=stored,
+            report=report,
+        )
+    elif gate_id == "g3":
+        producer = importlib.import_module(
+            "run_xunce_mid_dual_g3_closed_loop"
+        )
+        report = producer._render_g3_report(stored)  # noqa: SLF001
+        report_audit = producer._g3_report_audit(  # noqa: SLF001
+            summary=stored,
+            report=report,
+        )
+    else:
+        report = f"# {gate_id.upper()} canonical source report\n"
+        report_audit = {
+            "schema_version": "xunce-mid-dual-source-report-audit/v1",
+            "gate_id": gate_id,
+            "run_id": f"{gate_id}-run",
+            "renderer_id": _FIXTURE_SOURCE_CONTRACTS[gate_id][
+                "report_renderer_id"
+            ],
+            "summary_projection_sha256": _json_sha256(recomputed),
+            "stored_summary_bytes_sha256": _sha256_bytes(
+                _artifact_text_bytes(_json_text(stored))
+            ),
+            "report_bytes_sha256": _sha256_bytes(
+                _artifact_text_bytes(report)
+            ),
+            "formal_evidence_eligible": True,
+        }
+    if gate_id == "g3":
+        finalized_extra_audits["g3_input"] = input_audit
+        finalized_extra_audits["g3_report"] = report_audit
+    else:
+        finalized_extra_audits["source_input"] = input_audit
+        finalized_extra_audits["source_report"] = report_audit
     store.finalize(
         stored,
         {
@@ -831,7 +1014,7 @@ def _create_source_root(
             "formal_evidence_eligible": True,
         },
         report,
-        {"source_input": input_audit, "source_report": report_audit},
+        finalized_extra_audits,
     )
     assert store.verify_manifest(root) is True
     return root
@@ -892,6 +1075,211 @@ def _g1_rows(
     if mutation is not None:
         mutation(rows)
     return rows
+
+
+def _create_native_g1_root(tmp_path: Path) -> Path:
+    g1 = importlib.import_module("run_xunce_mid_dual_g1_coverage")
+    root = tmp_path / "g1-native"
+    run_id = "g1-native-run"
+    input_audit = _g1_input_audit()
+    base_path = (
+        Path(__file__).resolve().parents[1]
+        / "configs"
+        / "xunce_mid_dual_g1_coverage_v1.json"
+    )
+    base_bytes = artifact_io.read_bytes(base_path)
+    base_config = json.loads(base_bytes.decode("utf-8"))
+    code_lineage = g1.compute_g1_code_lineage()
+    effective = g1._effective_config(  # noqa: SLF001
+        base_config=base_config,
+        base_config_sha256=_sha256_bytes(base_bytes),
+        run_id=run_id,
+        mode="formal",
+        manifest_path=Path(input_audit["scenario_manifest_path"]),
+        manifest_sha256=input_audit["scenario_manifest_sha256"],
+        input_audit=input_audit,
+        code_lineage=code_lineage,
+        repair_lineage=None,
+    )
+    effective["output_root"] = str(root).replace("\\", "/")
+    store = MidDualRunStore.create_new(root, effective)
+    rows = _g1_rows(store.config_sha256)
+    for row in rows:
+        row.update(
+            {
+                "run_id": run_id,
+                "config_sha256": store.config_sha256,
+                "input_sha256": effective["input_sha256"],
+                "code_sha256": effective["code_sha256"],
+                "source_sha256": effective["code_sha256"],
+            }
+        )
+    store.capture_lineage(
+        g1._required_source_paths(),  # noqa: SLF001
+        _HASH_A[:40],
+        _HASH_B[:40],
+    )
+    assert store.capture_environment(_environment_probe)[
+        "formal_evidence_eligible"
+    ] is True
+
+    def accept(
+        phase_id: str,
+        phase_rows: Sequence[Mapping[str, object]],
+        audit: Mapping[str, object],
+    ) -> None:
+        attempt = store.write_phase_attempt(
+            phase_id,
+            phase_rows,
+            {
+                "schema_version": "xunce-mid-dual-g1-phase-audit/v1",
+                "gate_id": "g1",
+                "runner_id": "run_xunce_mid_dual_g1_coverage/v1",
+                "phase_id": phase_id,
+                "phase_name": g1.G1_PHASE_NAMES[phase_id],
+                **dict(audit),
+            },
+        )
+        store.accept_phase(
+            phase_id,
+            attempt,
+            store.phase_attempt_row_sha256(phase_id, attempt),
+        )
+
+    accept(
+        "p01",
+        (),
+        {
+            "status": "passed",
+            "scenario_manifest_sha256": input_audit[
+                "scenario_manifest_sha256"
+            ],
+            "input_sha256": effective["input_sha256"],
+            "code_sha256": effective["code_sha256"],
+            "checkpoint_sha256": _UPDATE80_CHECKPOINT_SHA256,
+            "policy_state_sha256": _UPDATE80_POLICY_STATE_SHA256,
+        },
+    )
+    dry_run_results = [
+        {
+            "scenario_id": scenario_id,
+            "actions": [],
+            "coverage_curve": [0.99],
+            "termination_reason": "fixture_complete",
+        }
+        for scenario_id in input_audit["validation3_scenario_ids"]
+    ]
+    accept(
+        "p02",
+        (),
+        {
+            "status": "passed",
+            "dry_run": {
+                "schema_version": (
+                    "xunce-mid-dual-g1-validation-dry-run-audit/v1"
+                ),
+                "status": "passed",
+                "scenario_count": 3,
+                "scenario_ids": input_audit[
+                    "validation3_scenario_ids"
+                ],
+                "trace_sha256": _json_sha256(dry_run_results),
+                "results": dry_run_results,
+            },
+        },
+    )
+    for phase_id, split in (("p03", "test_q24"), ("p04", "unseen24")):
+        selected = [row for row in rows if row["split"] == split]
+        first = selected[0]
+        trace_rows = [
+            {
+                "row_kind": row_kind,
+                "schema_version": schema_version,
+                "gate_id": "g1",
+                "runner_id": "run_xunce_mid_dual_g1_coverage/v1",
+                "phase_id": phase_id,
+                "phase_name": split,
+                "scale_profile": SCALE_PROFILE,
+                "run_id": run_id,
+                "split": split,
+                "episode_id": first["episode_id"],
+                "episode_index": first["episode_index"],
+                "scenario_id": first["scenario_id"],
+                "lane_id": first["lane_id"],
+                "step_index": 0,
+                "source_sha256": effective["code_sha256"],
+                "config_sha256": store.config_sha256,
+                "input_sha256": effective["input_sha256"],
+                "code_sha256": effective["code_sha256"],
+                "scenario_manifest_sha256": input_audit[
+                    "scenario_manifest_sha256"
+                ],
+                "checkpoint_sha256": _UPDATE80_CHECKPOINT_SHA256,
+                "policy_state_sha256": _UPDATE80_POLICY_STATE_SHA256,
+                "trace": {"fixture": True},
+            }
+            for row_kind, schema_version in (
+                ("decision", g1.G1_DECISION_SCHEMA_VERSION),
+                ("planner_call", g1.G1_PLANNER_CALL_SCHEMA_VERSION),
+            )
+        ]
+        accept(
+            phase_id,
+            [*selected, *trace_rows],
+            {
+                "status": "complete",
+                "cohort": split,
+                "coverage_episode_count": 24,
+                "decision_count": 1,
+                "planner_call_count": 1,
+            },
+        )
+    replay_trace = [
+        {
+            "scenario_id": scenario_id,
+            "actions": [],
+            "coverage_curve": [0.99],
+            "termination_reason": "fixture_complete",
+        }
+        for scenario_id in input_audit["replay3_scenario_ids"]
+    ]
+    replay = g1.validate_g1_replay(replay_trace, replay_trace)
+    accept("p05", (), {"status": "passed", "replay": replay})
+    native_summary = g1.recompute_g1_summary(
+        test_q24_rows=[
+            row for row in rows if row["split"] == "test_q24"
+        ],
+        unseen24_rows=[
+            row for row in rows if row["split"] == "unseen24"
+        ],
+        mode="formal",
+        replay=replay,
+    )
+    accept(
+        "p06",
+        (),
+        {
+            "status": "complete",
+            "canonical_summary_sha256": _json_sha256(native_summary),
+            "canonical_summary": native_summary,
+        },
+    )
+    accept(
+        "p07",
+        (),
+        {
+            "status": "ready",
+            "accepted_phase_ids": list(g1.G1_REQUIRED_PHASE_IDS),
+        },
+    )
+    store.finalize(
+        native_summary,
+        g1._routing(native_summary),  # noqa: SLF001
+        g1.render_g1_report(native_summary),
+        {"g1_input": input_audit},
+    )
+    assert store.verify_manifest(root) is True
+    return root
 
 
 def _g2_rows(
@@ -976,68 +1364,48 @@ def _g3_rows(
     elapsed_ms: float = 100.0,
     mutation: Callable[[list[dict[str, object]]], None] | None = None,
     input_audit: Mapping[str, object],
+    upstream_binding: Mapping[str, object] | None = None,
+    g2_rows: Sequence[Mapping[str, object]] | None = None,
 ) -> list[dict[str, object]]:
-    del config_sha256
     g3 = importlib.import_module("run_xunce_mid_dual_g3_closed_loop")
-    rows: list[dict[str, object]] = []
+    upstream = dict(
+        upstream_binding
+        or {
+            "freeze_manifest_sha256": _HASH_A,
+            "g1_source_manifest_sha256": _HASH_A,
+            "g2_source_manifest_sha256": _HASH_B,
+            "g2_approval_sha256": _HASH_A,
+            "g2_cohort_sha256": _HASH_A,
+            "g2_provider_identity_sha256": _HASH_A,
+            "g2_oracle_identity_sha256": _HASH_B,
+            "g2_hopper_resolution_sha256": _HASH_A,
+        }
+    )
+    raw_wheel: list[dict[str, object]] = []
     for selection in input_audit["wheel_selections"]:
         pre_snapshot_sha256 = _sha256_text(
             f"pre:{selection['scenario_id']}:0"
         )
         for step_index in range(2):
-            decision_sha256 = _sha256_text(
-                f"decision:{selection['scenario_id']}:{step_index}"
-            )
             candidate_id = (
                 f"g3-candidate:{selection['scenario_id']}:{step_index:03d}"
             )
             selected_cell = [step_index + 1, step_index + 2]
             selected_theta = 0.25 + step_index * 0.10
-            candidate_sha256 = g3.deterministic_candidate_sha256(
-                scenario_id=str(selection["scenario_id"]),
-                step_index=step_index,
-                pre_snapshot_sha256=pre_snapshot_sha256,
-                decision_sha256=decision_sha256,
-                candidate_id=candidate_id,
-                selected_candidate_cell_xy=selected_cell,
-                selected_theta=selected_theta,
-            )
             request_id = g3.deterministic_request_id(
                 scenario_id=str(selection["scenario_id"]),
                 step_index=step_index,
                 pre_snapshot_sha256=pre_snapshot_sha256,
             )
-            request_sha256 = g3.deterministic_request_sha256(
-                request_id=request_id,
-                candidate_sha256=candidate_sha256,
-                pre_snapshot_sha256=pre_snapshot_sha256,
-            )
             planned_path_cells = [[0, 0], selected_cell]
             planner_path_length_m = 1.0 + step_index
-            route_result_sha256 = g3.deterministic_route_result_sha256(
-                request_sha256=request_sha256,
-                planner_success=True,
-                planner_failure_reason="none",
-                planned_path_cells=planned_path_cells,
-                planner_path_length_m=planner_path_length_m,
-                route_endpoint_cell_xy=selected_cell,
-                route_endpoint_theta=selected_theta,
-            )
-            feedback_sha256 = g3.deterministic_feedback_sha256(
-                route_result_sha256=route_result_sha256,
-                feedback_pose_cell_xy=selected_cell,
-                feedback_theta=selected_theta,
-                coverage=coverage,
-                safety_violation_count=0,
-                masked_action_count=0,
-            )
             post_snapshot_sha256 = _sha256_text(
-                f"next-state:{feedback_sha256}"
+                f"next-state:{selection['scenario_id']}:{step_index}"
             )
             total_ns = int(round(elapsed_ms * 1_000_000.0))
             components = [total_ns // 5] * 4
             components.append(total_ns - sum(components))
-            rows.append(
+            raw_wheel.append(
                 {
                     "row_kind": "g3_wheel_step",
                     "schema_version": "mid-dual-g3-wheel-step/v1",
@@ -1056,10 +1424,10 @@ def _g3_rows(
                     "termination_reason": (
                         "coverage_complete" if step_index == 1 else "none"
                     ),
-                    "decision_sha256": decision_sha256,
+                    "decision_sha256": _HASH_A,
                     "candidate_id": candidate_id,
-                    "candidate_sha256": candidate_sha256,
-                    "request_candidate_sha256": candidate_sha256,
+                    "candidate_sha256": _HASH_A,
+                    "request_candidate_sha256": _HASH_A,
                     "selected_candidate_cell_xy": selected_cell,
                     "planned_path_cells": planned_path_cells,
                     "planner_path_length_m": planner_path_length_m,
@@ -1070,14 +1438,14 @@ def _g3_rows(
                     "feedback_theta": selected_theta,
                     "pre_snapshot_sha256": pre_snapshot_sha256,
                     "request_id": request_id,
-                    "request_sha256": request_sha256,
+                    "request_sha256": _HASH_A,
                     "route_request_id": request_id,
-                    "route_request_sha256": request_sha256,
-                    "route_result_sha256": route_result_sha256,
+                    "route_request_sha256": _HASH_A,
+                    "route_result_sha256": _HASH_A,
                     "feedback_request_id": request_id,
-                    "feedback_route_result_sha256": route_result_sha256,
-                    "feedback_sha256": feedback_sha256,
-                    "post_snapshot_parent_sha256": feedback_sha256,
+                    "feedback_route_result_sha256": _HASH_A,
+                    "feedback_sha256": _HASH_A,
+                    "post_snapshot_parent_sha256": _HASH_A,
                     "post_snapshot_sha256": post_snapshot_sha256,
                     "coverage": coverage,
                     "paired_g1_coverage": 0.99,
@@ -1095,11 +1463,38 @@ def _g3_rows(
                 }
             )
             pre_snapshot_sha256 = post_snapshot_sha256
+    wheel_rows, _decisions, _observations = g3.materialize_wheel_authority(
+        raw_wheel,
+        config_sha256=config_sha256,
+        input_sha256=_sha256_bytes(
+            _json_text(input_audit).encode("utf-8")
+        ),
+        code_sha256=_lineage_code_sha256(),
+        frozen_manifest_sha256=upstream["freeze_manifest_sha256"],
+        g1_source_manifest_sha256=upstream[
+            "g1_source_manifest_sha256"
+        ],
+        g2_source_manifest_sha256=upstream[
+            "g2_source_manifest_sha256"
+        ],
+    )
+    g2_by_call = {
+        str(row["call_id"]): row for row in (g2_rows or ())
+    }
+    interface_rows: list[dict[str, object]] = []
     for selection in input_audit["interface_selections"]:
+        references = [
+            g2_by_call.get(str(call_id))
+            for call_id in selection["g2_reference_call_ids"]
+        ]
+        reference = next(
+            (row for row in references if row is not None),
+            None,
+        )
         total_ns = int(round(elapsed_ms * 1_000_000.0))
         components = [total_ns // 5] * 4
         components.append(total_ns - sum(components))
-        rows.append(
+        interface_rows.append(
             {
                 "row_kind": "g3_interface_replay",
                 "schema_version": "mid-dual-g3-interface-replay/v1",
@@ -1122,8 +1517,45 @@ def _g3_rows(
                 "complete_route_validation_ns": components[3],
                 "result_assembly_ns": components[4],
                 "total_ns": total_ns,
+                "execution_class": "formal",
+                "formal_sample": True,
+                "config_sha256": config_sha256,
+                "input_sha256": _sha256_bytes(
+                    _json_text(input_audit).encode("utf-8")
+                ),
+                "code_sha256": _lineage_code_sha256(),
+                "source_sha256": _lineage_code_sha256(),
+                "g1_source_manifest_sha256": upstream[
+                    "g1_source_manifest_sha256"
+                ],
+                "g2_source_manifest_sha256": upstream[
+                    "g2_source_manifest_sha256"
+                ],
+                "truth_request_sha256": (
+                    reference["truth_sha256"]
+                    if reference is not None
+                    else _HASH_A
+                ),
+                "provider_request_sha256": selection["request_sha256"],
+                "provider_result_sha256": (
+                    reference["provider_result_sha256"]
+                    if reference is not None
+                    else _HASH_A
+                ),
+                "approval_sha256": upstream["g2_approval_sha256"],
+                "cohort_sha256": upstream["g2_cohort_sha256"],
+                "provider_identity_sha256": upstream[
+                    "g2_provider_identity_sha256"
+                ],
+                "oracle_identity_sha256": upstream[
+                    "g2_oracle_identity_sha256"
+                ],
+                "hopper_resolution_sha256": upstream[
+                    "g2_hopper_resolution_sha256"
+                ],
             }
         )
+    rows = [*wheel_rows, *interface_rows]
     if mutation is not None:
         mutation(rows)
     return rows
@@ -1168,13 +1600,65 @@ def _create_g3_source_root(
     input_audit = _g3_input_audit(g1_root, g2_root)
     if input_mutation is not None:
         input_mutation(input_audit)
-    upstream_binding = {
-        "g1_source_manifest_sha256": input_audit[
-            "g1_source_manifest_sha256"
-        ],
-        "g2_source_manifest_sha256": input_audit[
-            "g2_source_manifest_sha256"
-        ],
+    upstream_binding = _g3_upstream_binding(g1_root, g2_root)
+    g1_config = artifact_io.read_json(g1_root / "config.json")
+    g2_config = artifact_io.read_json(g2_root / "config.json")
+    g2_input = artifact_io.read_json(
+        g2_root / "source_input_audit.json"
+    )
+    g1_summary = artifact_io.read_json(g1_root / "summary.json")
+    upstream_lineage = {
+        "schema_version": "xunce-mid-dual-g3-upstream-lineage/v1",
+        "gate_id": "g3",
+        "formal_evidence_eligible": True,
+        "upstream_binding": upstream_binding,
+        "freeze": {
+            "root": "D:/xunce/inputs/mid_dual/g1",
+            "manifest_sha256": upstream_binding[
+                "freeze_manifest_sha256"
+            ],
+            "selected": {
+                "test_q24": [
+                    row["scenario_id"]
+                    for row in input_audit["wheel_selections"]
+                    if row["split"] == "test_q24"
+                ],
+                "unseen24": [
+                    row["scenario_id"]
+                    for row in input_audit["wheel_selections"]
+                    if row["split"] == "unseen24"
+                ],
+            },
+        },
+        "g1": {
+            "root": str(g1_root).replace("\\", "/"),
+            "manifest_sha256": upstream_binding[
+                "g1_source_manifest_sha256"
+            ],
+            "config_sha256": g1_config["config_sha256"],
+            "input_sha256": g1_config["input_sha256"],
+            "code_sha256": g1_config["code_sha256"],
+            "coverage_row_count": 48,
+            "trace_row_count": 0,
+            "native_summary_sha256": _json_sha256(g1_summary),
+        },
+        "g2": {
+            "root": str(g2_root).replace("\\", "/"),
+            "execution_root": str(g2_root).replace("\\", "/"),
+            "manifest_sha256": upstream_binding[
+                "g2_source_manifest_sha256"
+            ],
+            "config_sha256": g2_config["config_sha256"],
+            "input_sha256": g2_config["input_sha256"],
+            "code_sha256": g2_config["code_sha256"],
+            "formal_row_count": 645,
+            "input_set_id": g2_input["input_set_id"],
+            "approval": g2_input["approval"],
+            "cohort": g2_input["g3_replay_cohort"],
+            "provider_source": g2_input["provider_source"],
+            "oracle_source": g2_input["oracle_source"],
+            "hopper_resolution": g2_input["hopper_resolution"],
+        },
     }
     return _create_source_root(
         tmp_path,
@@ -1182,6 +1666,8 @@ def _create_g3_source_root(
         lambda config_sha256: _g3_rows(
             config_sha256,
             input_audit=input_audit,
+            upstream_binding=upstream_binding,
+            g2_rows=artifact_io.read_jsonl(g2_root / "results.jsonl"),
             mutation=mutation,
         ),
         dict(
@@ -1196,6 +1682,7 @@ def _create_g3_source_root(
         ),
         input_audit=input_audit,
         upstream_binding=upstream_binding,
+        extra_audits={"upstream_lineage": upstream_lineage},
     )
 
 
@@ -1205,6 +1692,44 @@ def _aggregate(
     return _aggregate_module().aggregate_completed_roots(
         *roots,
         source_contracts=_FIXTURE_SOURCE_CONTRACTS,
+    )
+
+
+def _recompute_g3_rows(
+    roots: tuple[Path, Path, Path],
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    module = _aggregate_module()
+    sources = {
+        gate_id: module._load_verified_source(  # noqa: SLF001
+            root,
+            gate_id,
+            _FIXTURE_SOURCE_CONTRACTS[gate_id],
+        )
+        for gate_id, root in zip(
+            ("g1", "g2", "g3"),
+            roots,
+            strict=True,
+        )
+    }
+    return module.recompute_g3(
+        rows,
+        sources["g3"]["config"],
+        sources["g3"]["input_audit"],
+        g1_rows=sources["g1"]["rows"],
+        g2_rows=sources["g2"]["rows"],
+        g1_manifest_sha256=sources["g1"]["manifest_sha256"],
+        g2_manifest_sha256=sources["g2"]["manifest_sha256"],
+        g1_config=sources["g1"]["config"],
+        g1_input_audit=sources["g1"]["input_audit"],
+        g1_native_summary=sources["g1"]["stored_summary"],
+        g1_trace_row_count=sources["g1"]["trace_row_count"],
+        g2_config=sources["g2"]["config"],
+        g2_input_audit=sources["g2"]["input_audit"],
+        upstream_lineage=sources["g3"]["upstream_lineage"],
+        upstream_lineage_audit_sha256=sources["g3"][
+            "upstream_lineage_audit_sha256"
+        ],
     )
 
 
@@ -1302,6 +1827,115 @@ def test_generic_manifest_valid_roots_are_not_formal_sources(tmp_path: Path) -> 
     assert result["status"] == "blocked"
     assert result["formal_evidence_eligible"] is False
     assert any("config_schema_version" in reason for reason in result["blockers"])
+
+
+def test_native_g1_completed_root_loads_without_wrapper_schema(
+    tmp_path: Path,
+) -> None:
+    """StageA native p01-p07 evidence is the G1 source of record."""
+    module = _aggregate_module()
+    root = _create_native_g1_root(tmp_path)
+    aggregate_config = artifact_io.read_json(
+        Path(__file__).resolve().parents[1]
+        / "configs"
+        / "xunce_mid_dual_aggregate_v1.json"
+    )
+
+    source = module._load_verified_source(  # noqa: SLF001
+        root,
+        "g1",
+        aggregate_config["source_contracts"]["g1"],
+    )
+
+    assert source["source_kind"] == "g1_native"
+    assert len(source["rows"]) == 48
+    assert source["trace_row_count"] == 4
+    assert source["native_summary"] == artifact_io.read_json(
+        root / "summary.json"
+    )
+    assert source["metric_projection"]["sample_count"] == 48
+
+
+def test_native_g1_deterministic_report_bytes_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """A manifest-rehashed report still has to match the native renderer."""
+    module = _aggregate_module()
+    root = _create_native_g1_root(tmp_path)
+    aggregate_config = artifact_io.read_json(
+        Path(__file__).resolve().parents[1]
+        / "configs"
+        / "xunce_mid_dual_aggregate_v1.json"
+    )
+    artifact_io.write_text(root / "report.md", "# drifted native report\n")
+    _refresh_manifest_entry(root, "report.md")
+
+    with pytest.raises(
+        module.AggregateBlocked,
+        match="g1_native_report_mismatch",
+    ):
+        module._load_verified_source(  # noqa: SLF001
+            root,
+            "g1",
+            aggregate_config["source_contracts"]["g1"],
+        )
+
+
+def test_g3_stagea_evidence_audits_and_upstream_binding_load(
+    tmp_path: Path,
+) -> None:
+    """Task10 consumes the current StageA G3 authority and lineage artifacts."""
+    module = _aggregate_module()
+    _g1, _g2, g3 = _valid_roots(tmp_path)
+
+    source = module._load_verified_source(  # noqa: SLF001
+        g3,
+        "g3",
+        _FIXTURE_SOURCE_CONTRACTS["g3"],
+    )
+
+    assert len(source["config"]["upstream_binding"]) == 15
+    assert source["upstream_lineage"]["upstream_binding"] == source[
+        "config"
+    ]["upstream_binding"]
+    assert source["decision_audit"]["record_count"] == 20
+    assert source["observation_audit"]["record_count"] == 20
+
+
+@pytest.mark.parametrize(
+    ("artifact_name", "blocking_fragment"),
+    (
+        (
+            "upstream_lineage_audit.json",
+            "g3_phase_audit_invalid",
+        ),
+        (
+            "g3_decisions_audit.json",
+            "g3_wheel_authority_audit_mismatch",
+        ),
+    ),
+)
+def test_g3_stagea_evidence_audit_replacement_fails_closed(
+    tmp_path: Path,
+    artifact_name: str,
+    blocking_fragment: str,
+) -> None:
+    """Manifest rehashing cannot detach G3 phase rows from authority audits."""
+    _g1, _g2, g3 = _valid_roots(tmp_path)
+
+    def mutate(payload: dict[str, object]) -> None:
+        if artifact_name == "upstream_lineage_audit.json":
+            payload["g1"]["trace_row_count"] = 99
+        else:
+            payload["records"][0]["candidate_id"] = "detached-candidate"
+
+    _rewrite_json(g3, artifact_name, mutate)
+    result = _aggregate((_g1, _g2, g3))
+
+    assert result["status"] == "blocked"
+    assert any(
+        blocking_fragment in reason for reason in result["blockers"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -1490,7 +2124,8 @@ def test_g3_cross_root_join_and_sequence_fail_closed(
     blocking_fragment: str,
 ) -> None:
     """Catch G3 self-reported joins that do not exist in G1/G2 raw evidence."""
-    g1, g2, g3 = _valid_roots(tmp_path)
+    roots = _valid_roots(tmp_path)
+    rows = artifact_io.read_jsonl(roots[2] / "results.jsonl")
 
     def mutate(rows: list[dict[str, object]]) -> None:
         wheel = [row for row in rows if row["row_kind"] == "g3_wheel_step"]
@@ -1510,11 +2145,12 @@ def test_g3_cross_root_join_and_sequence_fail_closed(
             interface[-1]["request_id"] = interface[-2]["request_id"]
             interface[-1]["request_sha256"] = interface[-2]["request_sha256"]
 
-    _rewrite_results(g3, mutate)
-    result = _aggregate((g1, g2, g3))
-
-    assert result["status"] == "blocked"
-    assert any(blocking_fragment in reason for reason in result["blockers"])
+    mutate(rows)
+    with pytest.raises(
+        _aggregate_module().AggregateBlocked,
+        match=blocking_fragment,
+    ):
+        _recompute_g3_rows(roots, rows)
 
 
 @pytest.mark.parametrize(
@@ -1840,13 +2476,12 @@ def test_aggregate_rejects_g3_missing_duplicate_and_split_leakage(
             leaked["is_terminal"] = False
             rows.append(leaked)
 
-    g1, g2, _ = _valid_roots(tmp_path / "valid")
-    g3 = _create_g3_source_root(tmp_path, g1, g2, mutation=mutate)
+    roots = _valid_roots(tmp_path)
+    rows = artifact_io.read_jsonl(roots[2] / "results.jsonl")
+    mutate(rows)
 
-    result = _aggregate((g1, g2, g3))
-
-    assert result["status"] == "blocked"
-    assert any("g3_" in reason for reason in result["blockers"])
+    with pytest.raises(_aggregate_module().AggregateBlocked, match="g3_"):
+        _recompute_g3_rows(roots, rows)
 
 
 def test_aggregate_blocks_when_recomputed_and_stored_summaries_differ(tmp_path: Path) -> None:

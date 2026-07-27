@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import fields
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -210,6 +211,24 @@ _G3_WHEEL_ROW_KEYS = frozenset(
         "planner_failure_reason",
         *_TIMING_COMPONENT_FIELDS,
         "total_ns",
+        "execution_class",
+        "formal_sample",
+        "timing_contract_id",
+        "wheel_platform",
+        "wheel_profile",
+        "wheel_capability_revision",
+        "checkpoint_sha256",
+        "policy_state_sha256",
+        "config_sha256",
+        "input_sha256",
+        "code_sha256",
+        "source_sha256",
+        "frozen_manifest_sha256",
+        "g1_source_manifest_sha256",
+        "g2_source_manifest_sha256",
+        "decision_record_id",
+        "observation_record_id",
+        "post_observation_record_sha256",
     }
 )
 _G3_INTERFACE_ROW_KEYS = frozenset(
@@ -229,6 +248,42 @@ _G3_INTERFACE_ROW_KEYS = frozenset(
         "formal_input_eligible",
         *_TIMING_COMPONENT_FIELDS,
         "total_ns",
+        "execution_class",
+        "formal_sample",
+        "config_sha256",
+        "input_sha256",
+        "code_sha256",
+        "source_sha256",
+        "g1_source_manifest_sha256",
+        "g2_source_manifest_sha256",
+        "truth_request_sha256",
+        "provider_request_sha256",
+        "provider_result_sha256",
+        "approval_sha256",
+        "cohort_sha256",
+        "provider_identity_sha256",
+        "oracle_identity_sha256",
+        "hopper_resolution_sha256",
+    }
+)
+
+_G3_UPSTREAM_BINDING_KEYS = frozenset(
+    {
+        "g1_source_manifest_sha256",
+        "g2_source_manifest_sha256",
+        "freeze_manifest_sha256",
+        "g1_config_sha256",
+        "g1_input_sha256",
+        "g1_code_sha256",
+        "g2_config_sha256",
+        "g2_input_sha256",
+        "g2_code_sha256",
+        "g2_input_set_id",
+        "g2_approval_sha256",
+        "g2_cohort_sha256",
+        "g2_provider_identity_sha256",
+        "g2_oracle_identity_sha256",
+        "g2_hopper_resolution_sha256",
     }
 )
 
@@ -366,6 +421,26 @@ def _canonical_json_sha256(value: object) -> str:
     return _sha256_bytes(payload)
 
 
+def _artifact_text_bytes(text: str) -> bytes:
+    return text.replace("\n", os.linesep).encode("utf-8")
+
+
+def _canonical_json_artifact_text(value: Mapping[str, Any]) -> str:
+    try:
+        return (
+            json.dumps(
+                dict(value),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+    except (TypeError, ValueError) as exc:
+        raise AggregateBlocked("canonical_json_invalid") from exc
+
+
 def _parse_json_bytes(payload: bytes, reason: str) -> dict[str, Any]:
     try:
         value = json.loads(payload.decode("utf-8-sig"))
@@ -390,6 +465,13 @@ def _parse_jsonl_bytes(payload: bytes, reason: str) -> list[object]:
         except json.JSONDecodeError as exc:
             raise AggregateBlocked(reason) from exc
     return rows
+
+
+def _import_local_script(module_name: str) -> Any:
+    scripts = str(Path(__file__).resolve().parent)
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    return importlib.import_module(module_name)
 
 
 def _safe_manifest_path(value: object, gate_id: str) -> str:
@@ -605,6 +687,182 @@ def _lineage_code_sha256(
     return _sha256_bytes(b"xunce-mid-dual-code/v1\0" + canonical)
 
 
+def _native_g1_code_lineage(
+    *,
+    config: Mapping[str, Any],
+    snapshot: Mapping[str, bytes],
+    expected_sources: Sequence[object],
+) -> dict[str, bytes]:
+    source_lineage = config.get("source_lineage")
+    lineage = _parse_json_bytes(
+        snapshot["lineage_audit.json"], "g1_lineage_invalid"
+    )
+    if (
+        not isinstance(source_lineage, Mapping)
+        or set(source_lineage)
+        != {
+            "schema_version",
+            "hash_algorithm",
+            "required_sources",
+        }
+        or source_lineage.get("schema_version")
+        != "xunce-mid-dual-g1-code-lineage/v1"
+        or source_lineage.get("hash_algorithm")
+        != "sha256-domain-separated-path-length-bytes/v1"
+        or set(lineage)
+        != {
+            "schema_version",
+            "status",
+            "formal_evidence_eligible",
+            "root_commit",
+            "submodule_commit",
+            "branch",
+            "required_sources",
+            "status_inventory",
+        }
+        or lineage.get("schema_version") != "mid-dual-lineage-audit/v1"
+        or lineage.get("status") != "captured"
+        or lineage.get("formal_evidence_eligible") is not True
+    ):
+        raise AggregateBlocked("g1_lineage_invalid")
+    config_rows = source_lineage.get("required_sources")
+    audit_rows = lineage.get("required_sources")
+    expected = [str(value) for value in expected_sources]
+    if (
+        not isinstance(config_rows, list)
+        or not isinstance(audit_rows, list)
+        or any(not isinstance(row, Mapping) for row in config_rows)
+        or any(not isinstance(row, Mapping) for row in audit_rows)
+        or [row.get("path") for row in config_rows] != expected
+        or [row.get("original_relative_path") for row in audit_rows]
+        != expected
+    ):
+        raise AggregateBlocked("g1_lineage_required_sources_mismatch")
+    digest = hashlib.sha256()
+    digest.update(b"xunce-mid-dual-g1-code-lineage/v1\0")
+    source_payloads: dict[str, bytes] = {}
+    repository_root = Path(__file__).resolve().parents[1]
+    for relative, config_row, audit_row in zip(
+        expected, config_rows, audit_rows, strict=True
+    ):
+        if not isinstance(config_row, Mapping) or not isinstance(
+            audit_row, Mapping
+        ):
+            raise AggregateBlocked("g1_lineage_invalid")
+        size = config_row.get("size_bytes")
+        sha256 = config_row.get("sha256")
+        if (
+            set(config_row) != {"path", "size_bytes", "sha256"}
+            or type(size) is not int
+            or size < 0
+            or not _is_sha256(sha256)
+            or audit_row.get("size_bytes") != size
+            or audit_row.get("sha256") != sha256
+        ):
+            raise AggregateBlocked("g1_lineage_invalid")
+        status = audit_row.get("status")
+        snapshot_path = audit_row.get("snapshot_path")
+        expected_audit_keys = {
+            "original_relative_path",
+            "status",
+            "size_bytes",
+            "sha256",
+        }
+        if status != "clean":
+            expected_audit_keys.add("snapshot_path")
+        if (
+            set(audit_row) != expected_audit_keys
+            or not isinstance(status, str)
+            or not status
+            or status == "query_failed"
+        ):
+            raise AggregateBlocked("g1_lineage_invalid")
+        if snapshot_path is None:
+            try:
+                payload = artifact_io.read_bytes(repository_root / relative)
+            except OSError as exc:
+                raise AggregateBlocked("g1_lineage_clean_source_missing") from exc
+        else:
+            safe_snapshot = _safe_manifest_path(snapshot_path, "g1")
+            payload = snapshot.get(safe_snapshot)
+            if payload is None:
+                raise AggregateBlocked("g1_lineage_snapshot_invalid")
+        if len(payload) != size or _sha256_bytes(payload) != sha256:
+            raise AggregateBlocked("g1_lineage_bytes_drift")
+        path_bytes = relative.encode("utf-8")
+        digest.update(len(path_bytes).to_bytes(8, "little"))
+        digest.update(path_bytes)
+        digest.update(len(payload).to_bytes(8, "little"))
+        digest.update(payload)
+        source_payloads[relative] = payload
+    if digest.hexdigest() != config.get("code_sha256"):
+        raise AggregateBlocked("g1_code_sha256_mismatch")
+    return source_payloads
+
+
+def _native_g1_phase_snapshot(
+    snapshot: Mapping[str, bytes],
+    expected_phase_ids: Sequence[object],
+) -> dict[str, dict[str, Any]]:
+    states = _parse_jsonl_bytes(
+        snapshot["phase-state.jsonl"], "g1_phase_state_invalid"
+    )
+    attempts = _parse_jsonl_bytes(
+        snapshot["phase-attempts.jsonl"], "g1_phase_attempts_invalid"
+    )
+    expected = [str(value) for value in expected_phase_ids]
+    if [row.get("phase_id") for row in states if isinstance(row, Mapping)] != expected:
+        raise AggregateBlocked("g1_required_phase_sequence_mismatch")
+    phases: dict[str, dict[str, Any]] = {}
+    for phase_id, raw_state in zip(expected, states, strict=True):
+        state = _exact_keys(
+            raw_state,
+            {"phase_id", "attempt_id", "row_sha256", "rows_path"},
+            "g1_phase_state_invalid",
+        )
+        accepted = [
+            row
+            for row in attempts
+            if isinstance(row, Mapping)
+            and row.get("phase_id") == phase_id
+            and row.get("status") == "accepted"
+        ]
+        if len(accepted) != 1:
+            raise AggregateBlocked("g1_phase_attempts_invalid")
+        attempt = accepted[0]
+        if (
+            state["attempt_id"] != attempt.get("attempt_id")
+            or state["row_sha256"] != attempt.get("row_sha256")
+            or state["rows_path"] != attempt.get("rows_path")
+            or not _is_sha256(state["row_sha256"])
+        ):
+            raise AggregateBlocked("g1_phase_attempt_binding_invalid")
+        rows_path = _safe_manifest_path(state["rows_path"], "g1")
+        audit_path = _safe_manifest_path(attempt.get("audit_path"), "g1")
+        rows_bytes = snapshot.get(rows_path)
+        audit_bytes = snapshot.get(audit_path)
+        if (
+            rows_bytes is None
+            or audit_bytes is None
+            or _sha256_bytes(rows_bytes) != state["row_sha256"]
+        ):
+            raise AggregateBlocked("g1_phase_bytes_invalid")
+        phases[phase_id] = {
+            "rows": _parse_jsonl_bytes(
+                rows_bytes, "g1_phase_results_invalid"
+            ),
+            "audit": _parse_json_bytes(
+                audit_bytes, "g1_phase_audit_invalid"
+            ),
+            "rows_bytes": rows_bytes,
+        }
+    if snapshot["results.jsonl"] != b"".join(
+        phases[phase_id]["rows_bytes"] for phase_id in expected
+    ):
+        raise AggregateBlocked("g1_results_phase_concat_invalid")
+    return phases
+
+
 def _validate_phase_sequence(
     payload: bytes,
     expected: Sequence[object],
@@ -641,6 +899,519 @@ def _validate_g2_p04_results_snapshot(snapshot: Mapping[str, bytes]) -> None:
         or snapshot["results.jsonl"] != p04_bytes
     ):
         raise AggregateBlocked("g2_results_not_canonical_p04")
+
+
+def _load_verified_native_g1_source(
+    *,
+    source_root: Path,
+    manifest: Mapping[str, Any],
+    snapshot: Mapping[str, bytes],
+    manifest_sha256: str,
+    contract: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Load a completed G1 root through its native seven-phase contract."""
+    g1 = _import_local_script("run_xunce_mid_dual_g1_coverage")
+    required_artifacts = {
+        "routing.json",
+        "phase-attempts.jsonl",
+        "environment_audit.json",
+        "g1_input_audit.json",
+    }
+    if not required_artifacts.issubset(snapshot):
+        raise AggregateBlocked("g1_native_artifact_set_incomplete")
+    expected_config_keys = {
+        "schema_version", "gate_id", "runner_id", "scale_profile",
+        "run_id", "mode", "output_root", "required_phase_ids",
+        "required_phases", "checkpoint", "scenario_manifest",
+        "denominator", "execution", "bootstrap", "schemas",
+        "base_config_sha256", "input_audit", "input_sha256",
+        "source_lineage", "code_sha256", "repair_lineage",
+        "config_sha256",
+    }
+    if set(config) != expected_config_keys:
+        raise AggregateBlocked("g1_native_config_exact_schema_mismatch")
+    run_id = _nonempty_string(config.get("run_id"), "g1_run_id")
+    expected_output_root = str(source_root).replace("\\", "/")
+    checkpoint = config.get("checkpoint")
+    scenario = config.get("scenario_manifest")
+    input_pointer = config.get("input_audit")
+    if (
+        config.get("schema_version") != contract["config_schema_version"]
+        or config.get("gate_id") != "g1"
+        or config.get("runner_id") != contract["runner_id"]
+        or config.get("scale_profile") != SCALE_PROFILE
+        or config.get("mode") != "formal"
+        or config.get("output_root") != expected_output_root
+        or config.get("required_phase_ids") != contract["required_phase_ids"]
+        or config.get("required_phases") != list(g1.G1_REQUIRED_PHASES)
+        or config.get("repair_lineage") is not None
+        or not isinstance(checkpoint, Mapping)
+        or checkpoint.get("update") != 80
+        or checkpoint.get("sha256") != _UPDATE80_CHECKPOINT_SHA256
+        or checkpoint.get("policy_state_sha256")
+        != _UPDATE80_POLICY_STATE_SHA256
+        or not isinstance(scenario, Mapping)
+        or set(scenario) != {"path", "schema_version", "sha256"}
+        or scenario.get("schema_version") != "mid-dual-scenario-freeze/v1"
+        or not isinstance(scenario.get("path"), str)
+        or not scenario["path"].replace("\\", "/").startswith("D:/")
+        or not _is_sha256(scenario.get("sha256"))
+        or not isinstance(input_pointer, Mapping)
+        or set(input_pointer) != {"path", "schema_version", "sha256"}
+        or input_pointer.get("path") != "g1_input_audit.json"
+        or input_pointer.get("schema_version")
+        != contract["input_audit_schema_version"]
+        or input_pointer.get("sha256") != config.get("input_sha256")
+        or not _is_sha256(config.get("input_sha256"))
+        or not _is_sha256(config.get("code_sha256"))
+        or config.get("config_sha256") != manifest.get("config_sha256")
+    ):
+        raise AggregateBlocked("g1_native_config_invalid")
+    config_without_sha = dict(config)
+    supplied_config_sha = config_without_sha.pop("config_sha256")
+    if supplied_config_sha != _canonical_json_sha256(config_without_sha):
+        raise AggregateBlocked("g1_config_sha256_drift")
+
+    input_audit = _parse_json_bytes(
+        snapshot["g1_input_audit.json"], "g1_input_audit_invalid"
+    )
+    input_audit_text = _canonical_json_artifact_text(input_audit)
+    if (
+        snapshot["g1_input_audit.json"]
+        != _artifact_text_bytes(input_audit_text)
+        or _canonical_json_sha256(input_audit) != config["input_sha256"]
+        or input_audit.get("scenario_manifest_sha256")
+        != scenario.get("sha256")
+        or input_audit.get("scenario_manifest_path")
+        != scenario.get("path")
+        or input_audit.get("scenario_manifest_schema_version")
+        != scenario.get("schema_version")
+    ):
+        raise AggregateBlocked("g1_input_sha256_mismatch")
+    source_payloads = _native_g1_code_lineage(
+        config=config,
+        snapshot=snapshot,
+        expected_sources=contract["required_lineage_sources"],
+    )
+    base_config_bytes = source_payloads.get(
+        "configs/xunce_mid_dual_g1_coverage_v1.json"
+    )
+    if base_config_bytes is None:
+        raise AggregateBlocked("g1_base_config_missing")
+    base_config = _parse_json_bytes(
+        base_config_bytes, "g1_base_config_invalid"
+    )
+    try:
+        validated_base = g1.validate_g1_config_payload(base_config)
+    except Exception as exc:
+        raise AggregateBlocked("g1_base_config_invalid") from exc
+    if (
+        config.get("base_config_sha256") != _sha256_bytes(base_config_bytes)
+        or config.get("checkpoint") != validated_base.get("checkpoint")
+        or config.get("denominator") != validated_base.get("denominator")
+        or config.get("execution") != validated_base.get("execution")
+        or config.get("bootstrap") != validated_base.get("bootstrap")
+        or config.get("schemas") != validated_base.get("schemas")
+    ):
+        raise AggregateBlocked("g1_base_config_binding_invalid")
+    environment = _parse_json_bytes(
+        snapshot["environment_audit.json"], "g1_environment_invalid"
+    )
+    if (
+        environment.get("schema_version") != "mid-dual-environment-audit/v1"
+        or environment.get("status") != "captured"
+        or environment.get("formal_evidence_eligible") is not True
+        or not isinstance(environment.get("probe"), Mapping)
+    ):
+        raise AggregateBlocked("g1_environment_invalid")
+
+    phases = _native_g1_phase_snapshot(
+        snapshot, contract["required_phase_ids"]
+    )
+    for phase_id in contract["required_phase_ids"]:
+        audit = phases[phase_id]["audit"]
+        if (
+            audit.get("schema_version")
+            != "xunce-mid-dual-g1-phase-audit/v1"
+            or audit.get("gate_id") != "g1"
+            or audit.get("runner_id") != contract["runner_id"]
+            or audit.get("phase_id") != phase_id
+            or audit.get("phase_name") != g1.G1_PHASE_NAMES[phase_id]
+        ):
+            raise AggregateBlocked("g1_phase_audit_invalid")
+    p01 = phases["p01"]["audit"]
+    if (
+        phases["p01"]["rows"]
+        or p01.get("schema_version") != "xunce-mid-dual-g1-phase-audit/v1"
+        or p01.get("phase_name") != "preflight"
+        or p01.get("status") != "passed"
+        or p01.get("scenario_manifest_sha256") != scenario.get("sha256")
+        or p01.get("input_sha256") != config["input_sha256"]
+        or p01.get("code_sha256") != config["code_sha256"]
+        or p01.get("checkpoint_sha256") != _UPDATE80_CHECKPOINT_SHA256
+        or p01.get("policy_state_sha256")
+        != _UPDATE80_POLICY_STATE_SHA256
+    ):
+        raise AggregateBlocked("g1_p01_invalid")
+    p02 = phases["p02"]["audit"]
+    dry_run = p02.get("dry_run")
+    dry_run_results = (
+        dry_run.get("results") if isinstance(dry_run, Mapping) else None
+    )
+    if (
+        phases["p02"]["rows"]
+        or p02.get("phase_name") != "validation_dry_run"
+        or p02.get("status") != "passed"
+        or not isinstance(dry_run, Mapping)
+        or dry_run.get("schema_version")
+        != "xunce-mid-dual-g1-validation-dry-run-audit/v1"
+        or dry_run.get("status") != "passed"
+        or dry_run.get("scenario_count") != 3
+        or dry_run.get("scenario_ids")
+        != input_audit.get("validation3_scenario_ids")
+        or not isinstance(dry_run_results, list)
+        or len(dry_run_results) != 3
+        or any(
+            not isinstance(row, Mapping)
+            for row in dry_run_results
+        )
+        or [
+            row.get("scenario_id")
+            for row in dry_run_results
+        ]
+        != input_audit.get("validation3_scenario_ids")
+        or dry_run.get("trace_sha256")
+        != _canonical_json_sha256(dry_run_results)
+    ):
+        raise AggregateBlocked("g1_p02_invalid")
+
+    coverage_rows: list[dict[str, Any]] = []
+    trace_keys: set[tuple[str, str, int]] = set()
+    for phase_id, split in (("p03", "test_q24"), ("p04", "unseen24")):
+        raw_rows = phases[phase_id]["rows"]
+        audit = phases[phase_id]["audit"]
+        coverage = [
+            dict(row)
+            for row in raw_rows
+            if isinstance(row, Mapping)
+            and row.get("row_kind") == "coverage_episode"
+        ]
+        traces = [
+            dict(row)
+            for row in raw_rows
+            if isinstance(row, Mapping)
+            and row.get("row_kind") in {"decision", "planner_call"}
+        ]
+        if (
+            len(coverage) != 24
+            or len(coverage) + len(traces) != len(raw_rows)
+            or audit.get("schema_version")
+            != "xunce-mid-dual-g1-phase-audit/v1"
+            or audit.get("phase_name") != g1.G1_PHASE_NAMES[phase_id]
+            or audit.get("status") != "complete"
+            or audit.get("cohort") != split
+            or audit.get("coverage_episode_count") != 24
+            or audit.get("decision_count")
+            != sum(row["row_kind"] == "decision" for row in traces)
+            or audit.get("planner_call_count")
+            != sum(row["row_kind"] == "planner_call" for row in traces)
+        ):
+            raise AggregateBlocked("g1_native_phase_rows_invalid")
+        for row in traces:
+            key = (
+                str(row.get("row_kind")),
+                str(row.get("episode_id")),
+                _exact_nonnegative_int(
+                    row.get("step_index"), "g1_trace_step_index"
+                ),
+            )
+            if (
+                set(row) != set(g1.G1_TRACE_ROW_KEYS)
+                or row.get("schema_version")
+                != {
+                    "decision": g1.G1_DECISION_SCHEMA_VERSION,
+                    "planner_call": g1.G1_PLANNER_CALL_SCHEMA_VERSION,
+                }[str(row.get("row_kind"))]
+                or row.get("phase_id") != phase_id
+                or row.get("phase_name") != split
+                or row.get("config_sha256") != config["config_sha256"]
+                or row.get("input_sha256") != config["input_sha256"]
+                or row.get("code_sha256") != config["code_sha256"]
+                or row.get("source_sha256") != config["code_sha256"]
+                or row.get("scenario_manifest_sha256")
+                != scenario.get("sha256")
+                or not isinstance(row.get("trace"), Mapping)
+                or key in trace_keys
+            ):
+                raise AggregateBlocked("g1_native_trace_invalid")
+            _canonical_json_sha256(row)
+            trace_keys.add(key)
+        coverage_rows.extend(coverage)
+    metric_projection = recompute_g1(coverage_rows, config, input_audit)
+    replay = phases["p05"]["audit"].get("replay")
+    if (
+        phases["p05"]["rows"]
+        or phases["p05"]["audit"].get("phase_name") != "replay3"
+        or phases["p05"]["audit"].get("status") != "passed"
+        or not isinstance(replay, Mapping)
+    ):
+        raise AggregateBlocked("g1_replay_invalid")
+    try:
+        native_summary = g1.recompute_g1_summary(
+            test_q24_rows=[
+                row for row in coverage_rows if row["split"] == "test_q24"
+            ],
+            unseen24_rows=[
+                row for row in coverage_rows if row["split"] == "unseen24"
+            ],
+            mode="formal",
+            replay=replay,
+        )
+        g1.validate_canonical_g1_summary(native_summary)
+    except Exception as exc:
+        raise AggregateBlocked("g1_native_summary_recompute_invalid") from exc
+    stored_summary = _parse_json_bytes(
+        snapshot["summary.json"], "g1_stored_summary_invalid"
+    )
+    p06 = phases["p06"]["audit"]
+    p07 = phases["p07"]["audit"]
+    if (
+        stored_summary != native_summary
+        or phases["p06"]["rows"]
+        or p06.get("phase_name") != "recompute"
+        or p06.get("status") != "complete"
+        or p06.get("canonical_summary") != native_summary
+        or p06.get("canonical_summary_sha256")
+        != _canonical_json_sha256(native_summary)
+        or phases["p07"]["rows"]
+        or p07.get("phase_name") != "finalize"
+        or p07.get("status") != "ready"
+        or p07.get("accepted_phase_ids") != contract["required_phase_ids"]
+    ):
+        raise AggregateBlocked("g1_native_summary_mismatch")
+    expected_report = _artifact_text_bytes(
+        g1.render_g1_report(native_summary)
+    )
+    if snapshot["report.md"] != expected_report:
+        raise AggregateBlocked("g1_native_report_mismatch")
+    routing = _parse_json_bytes(snapshot["routing.json"], "g1_routing_invalid")
+    if routing != g1._routing(native_summary):  # noqa: SLF001
+        raise AggregateBlocked("g1_routing_mismatch")
+    return {
+        "source_kind": "g1_native",
+        "root": source_root,
+        "run_id": run_id,
+        "config": dict(config),
+        "rows": coverage_rows,
+        "input_audit": input_audit,
+        "stored_summary": stored_summary,
+        "native_summary": native_summary,
+        "metric_projection": metric_projection,
+        "report_bytes": snapshot["report.md"],
+        "summary_bytes": snapshot["summary.json"],
+        "manifest_sha256": manifest_sha256,
+        "trace_row_count": len(trace_keys),
+    }
+
+
+def _validate_g3_evidence_snapshot(
+    *,
+    snapshot: Mapping[str, bytes],
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    g3 = _import_local_script("run_xunce_mid_dual_g3_closed_loop")
+    required = {
+        "phase-attempts.jsonl",
+        "upstream_lineage_audit.json",
+        "g3_decisions_audit.json",
+        "g3_observations_audit.json",
+        "environment_audit.json",
+    }
+    if not required.issubset(snapshot):
+        raise AggregateBlocked("g3_evidence_audit_set_incomplete")
+    environment = _parse_json_bytes(
+        snapshot["environment_audit.json"], "g3_environment_invalid"
+    )
+    if (
+        environment.get("schema_version") != "mid-dual-environment-audit/v1"
+        or environment.get("status") != "captured"
+        or environment.get("formal_evidence_eligible") is not True
+    ):
+        raise AggregateBlocked("g3_environment_invalid")
+    states = _parse_jsonl_bytes(
+        snapshot["phase-state.jsonl"], "g3_phase_state_invalid"
+    )
+    attempts = _parse_jsonl_bytes(
+        snapshot["phase-attempts.jsonl"], "g3_phase_attempts_invalid"
+    )
+    if [row.get("phase_id") for row in states if isinstance(row, Mapping)] != [
+        "p01", "p02"
+    ]:
+        raise AggregateBlocked("g3_required_phase_sequence_mismatch")
+    phase_rows: dict[str, list[dict[str, Any]]] = {}
+    phase_audits: dict[str, dict[str, Any]] = {}
+    phase_bytes: list[bytes] = []
+    accepted_prefix: list[str] = []
+    upstream_bytes = snapshot["upstream_lineage_audit.json"]
+    upstream = _parse_json_bytes(
+        upstream_bytes, "g3_upstream_lineage_invalid"
+    )
+    upstream_text = _canonical_json_artifact_text(upstream)
+    if upstream_bytes != _artifact_text_bytes(upstream_text):
+        raise AggregateBlocked("g3_upstream_lineage_bytes_noncanonical")
+    upstream_sha256 = _sha256_bytes(upstream_text.encode("utf-8"))
+    for phase_id, raw_state in zip(("p01", "p02"), states, strict=True):
+        state = _exact_keys(
+            raw_state,
+            {"phase_id", "attempt_id", "row_sha256", "rows_path"},
+            "g3_phase_state_invalid",
+        )
+        accepted = [
+            row
+            for row in attempts
+            if isinstance(row, Mapping)
+            and row.get("phase_id") == phase_id
+            and row.get("status") == "accepted"
+        ]
+        if len(accepted) != 1:
+            raise AggregateBlocked("g3_phase_attempts_invalid")
+        attempt = accepted[0]
+        if any(
+            state[field] != attempt.get(field)
+            for field in ("attempt_id", "row_sha256", "rows_path")
+        ):
+            raise AggregateBlocked("g3_phase_attempt_binding_invalid")
+        rows_path = _safe_manifest_path(state["rows_path"], "g3")
+        audit_path = _safe_manifest_path(attempt.get("audit_path"), "g3")
+        rows_bytes = snapshot.get(rows_path)
+        audit_bytes = snapshot.get(audit_path)
+        if (
+            rows_bytes is None
+            or audit_bytes is None
+            or _sha256_bytes(rows_bytes) != state["row_sha256"]
+        ):
+            raise AggregateBlocked("g3_phase_bytes_invalid")
+        rows = [
+            dict(row)
+            for row in _parse_jsonl_bytes(
+                rows_bytes, "g3_phase_results_invalid"
+            )
+            if isinstance(row, Mapping)
+        ]
+        try:
+            projection = g3.validate_g3_phase_rows(
+                phase_id=phase_id,
+                rows=rows,
+                accepted_phase_ids=accepted_prefix,
+            )
+        except Exception as exc:
+            raise AggregateBlocked("g3_phase_semantics_invalid") from exc
+        audit = _parse_json_bytes(audit_bytes, "g3_phase_audit_invalid")
+        first = rows[0]
+        if (
+            audit.get("schema_version")
+            != "xunce-mid-dual-g3-phase-audit/v1"
+            or audit.get("gate_id") != "g3"
+            or audit.get("runner_id")
+            != "run_xunce_mid_dual_g3_closed_loop/v1"
+            or audit.get("phase_id") != phase_id
+            or audit.get("phase_name")
+            != {"p01": "wheel_closed_loop", "p02": "interface_replay"}[
+                phase_id
+            ]
+            or audit.get("status") != "complete"
+            or audit.get("formal_sample") is not True
+            or audit.get("formal_evidence_eligible") is not True
+            or audit.get("upstream_lineage_audit_sha256") != upstream_sha256
+            or audit.get("phase_projection") != projection
+            or any(
+                audit.get(field) != first.get(field)
+                for field in (
+                    "config_sha256",
+                    "input_sha256",
+                    "code_sha256",
+                    "g1_source_manifest_sha256",
+                    "g2_source_manifest_sha256",
+                )
+            )
+            or audit.get("config_sha256") != config.get("config_sha256")
+            or audit.get("input_sha256") != config.get("input_sha256")
+            or audit.get("code_sha256") != config.get("code_sha256")
+            or audit.get("frozen_manifest_sha256")
+            != config["upstream_binding"].get(
+                "freeze_manifest_sha256"
+            )
+            or (
+                phase_id == "p01"
+                and audit.get("frozen_manifest_sha256")
+                != first.get("frozen_manifest_sha256")
+            )
+        ):
+            raise AggregateBlocked("g3_phase_audit_invalid")
+        if phase_id == "p02" and (
+            audit.get("g2_cohort_sha256")
+            != config["upstream_binding"].get("g2_cohort_sha256")
+            or audit.get("g2_approval_sha256")
+            != config["upstream_binding"].get("g2_approval_sha256")
+            or audit.get("g2_hopper_resolution_sha256")
+            != config["upstream_binding"].get(
+                "g2_hopper_resolution_sha256"
+            )
+        ):
+            raise AggregateBlocked("g3_phase_audit_invalid")
+        phase_rows[phase_id] = rows
+        phase_audits[phase_id] = audit
+        phase_bytes.append(rows_bytes)
+        accepted_prefix.append(phase_id)
+    if snapshot["results.jsonl"] != b"".join(phase_bytes):
+        raise AggregateBlocked("g3_results_phase_concat_invalid")
+    wheel_rows = phase_rows["p01"]
+    try:
+        decisions, observations = g3._wheel_authority_audits(  # noqa: SLF001
+            wheel_rows
+        )
+    except Exception as exc:
+        raise AggregateBlocked("g3_wheel_authority_invalid") from exc
+    stored_decisions = _parse_json_bytes(
+        snapshot["g3_decisions_audit.json"], "g3_decision_audit_invalid"
+    )
+    stored_observations = _parse_json_bytes(
+        snapshot["g3_observations_audit.json"],
+        "g3_observation_audit_invalid",
+    )
+    if stored_decisions != decisions or stored_observations != observations:
+        raise AggregateBlocked("g3_wheel_authority_audit_mismatch")
+    decision_text = _canonical_json_artifact_text(stored_decisions)
+    observation_text = _canonical_json_artifact_text(stored_observations)
+    if (
+        snapshot["g3_decisions_audit.json"]
+        != _artifact_text_bytes(decision_text)
+        or snapshot["g3_observations_audit.json"]
+        != _artifact_text_bytes(observation_text)
+    ):
+        raise AggregateBlocked("g3_wheel_authority_audit_noncanonical")
+    if (
+        phase_audits["p01"].get("decision_audit_sha256")
+        != _sha256_bytes(decision_text.encode("utf-8"))
+        or phase_audits["p01"].get("observation_audit_sha256")
+        != _sha256_bytes(observation_text.encode("utf-8"))
+    ):
+        raise AggregateBlocked("g3_wheel_authority_audit_binding_invalid")
+    if (
+        upstream.get("schema_version")
+        != "xunce-mid-dual-g3-upstream-lineage/v1"
+        or upstream.get("gate_id") != "g3"
+        or upstream.get("formal_evidence_eligible") is not True
+        or upstream.get("upstream_binding") != config.get("upstream_binding")
+    ):
+        raise AggregateBlocked("g3_upstream_lineage_invalid")
+    return {
+        "upstream_lineage": upstream,
+        "upstream_lineage_audit_sha256": upstream_sha256,
+        "decision_audit": stored_decisions,
+        "observation_audit": stored_observations,
+    }
 
 
 def _load_verified_source(
@@ -684,15 +1455,14 @@ def _load_verified_source(
         snapshot["config.json"],
         f"{gate_id}_config_schema_invalid",
     )
-    # G1's effective config and the current G3 config are genuine upstream
-    # schemas, but neither has the immutable aggregate evidence wrapper.  Do
-    # not mistake their ordinary runner config for a Task10 source snapshot.
-    # This deliberately reports the missing producer-side fields rather than
-    # fabricating paths or silently weakening the aggregate contract.
-    if gate_id in {"g1", "g3"} and "evidence_binding" not in config:
-        raise AggregateBlocked(
-            f"{gate_id}_evidence_wrapper_missing:"
-            "input_audit_path,lineage_audit_path,report_audit_path"
+    if gate_id == "g1" and "evidence_binding" not in config:
+        return _load_verified_native_g1_source(
+            source_root=source_root,
+            manifest=manifest,
+            snapshot=snapshot,
+            manifest_sha256=manifest_sha256,
+            contract=contract,
+            config=config,
         )
     expected_config_keys = {
         "schema_version",
@@ -762,15 +1532,10 @@ def _load_verified_source(
         snapshot[input_path],
         f"{gate_id}_input_audit_invalid",
     )
-    canonical_input_bytes = (
-        json.dumps(
-            input_audit,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n"
-    ).encode("utf-8")
+    canonical_input_text = _canonical_json_artifact_text(input_audit)
+    canonical_input_bytes = canonical_input_text.encode("utf-8")
+    if snapshot[input_path] != _artifact_text_bytes(canonical_input_text):
+        raise AggregateBlocked(f"{gate_id}_input_audit_bytes_noncanonical")
     if _sha256_bytes(canonical_input_bytes) != config["input_sha256"]:
         raise AggregateBlocked(f"{gate_id}_input_sha256_mismatch")
     lineage_audit = _parse_json_bytes(
@@ -813,7 +1578,7 @@ def _load_verified_source(
         snapshot["results.jsonl"],
         f"{gate_id}_results_jsonl_invalid",
     )
-    return {
+    source = {
         "root": source_root,
         "run_id": run_id,
         "config": config,
@@ -825,6 +1590,17 @@ def _load_verified_source(
         "summary_bytes": snapshot["summary.json"],
         "manifest_sha256": manifest_sha256,
     }
+    if gate_id == "g1":
+        source["trace_row_count"] = sum(
+            isinstance(row, Mapping)
+            and row.get("row_kind") in {"decision", "planner_call"}
+            for row in rows
+        )
+    if gate_id == "g3":
+        source.update(
+            _validate_g3_evidence_snapshot(snapshot=snapshot, config=config)
+        )
+    return source
 
 
 def _validate_row_lineage(
@@ -1666,7 +2442,7 @@ def _g3_route_result_sha256(row: Mapping[str, Any]) -> str:
 def _g3_feedback_sha256(row: Mapping[str, Any]) -> str:
     return _canonical_json_sha256(
         {
-            "schema_version": "mid-dual-g3-feedback-binding/v1",
+            "schema_version": "mid-dual-g3-feedback-binding/v2",
             "route_result_sha256": row["route_result_sha256"],
             "feedback_pose_cell_xy": list(
                 _g3_cell(
@@ -1690,6 +2466,7 @@ def _g3_feedback_sha256(row: Mapping[str, Any]) -> str:
                 row.get("masked_action_count"),
                 "g3_wheel_hash_chain",
             ),
+            "post_snapshot_sha256": row["post_snapshot_sha256"],
         }
     )
 
@@ -1703,6 +2480,14 @@ def recompute_g3(
     g2_rows: Sequence[object],
     g1_manifest_sha256: str,
     g2_manifest_sha256: str,
+    g1_config: Mapping[str, Any],
+    g1_input_audit: Mapping[str, Any],
+    g1_native_summary: Mapping[str, Any] | None,
+    g1_trace_row_count: int,
+    g2_config: Mapping[str, Any],
+    g2_input_audit: Mapping[str, Any],
+    upstream_lineage: Mapping[str, Any],
+    upstream_lineage_audit_sha256: str,
 ) -> dict[str, Any]:
     """Independently recalculate G3 from its raw rows and G1/G2 raw roots."""
 
@@ -1723,12 +2508,48 @@ def recompute_g3(
     )
     upstream = _exact_keys(
         config.get("upstream_binding"),
-        {
-            "g1_source_manifest_sha256",
-            "g2_source_manifest_sha256",
-        },
+        _G3_UPSTREAM_BINDING_KEYS,
         "g3_upstream_binding_invalid",
     )
+    for field in _G3_UPSTREAM_BINDING_KEYS - {"g2_input_set_id"}:
+        if not _is_sha256(upstream[field]):
+            raise AggregateBlocked("g3_upstream_binding_invalid")
+    if (
+        not isinstance(upstream["g2_input_set_id"], str)
+        or not upstream["g2_input_set_id"]
+        or upstream["g2_provider_identity_sha256"]
+        == upstream["g2_oracle_identity_sha256"]
+    ):
+        raise AggregateBlocked("g3_upstream_binding_invalid")
+    expected_upstream = {
+        "g1_source_manifest_sha256": g1_manifest_sha256,
+        "g2_source_manifest_sha256": g2_manifest_sha256,
+        "freeze_manifest_sha256": g1_input_audit.get(
+            "scenario_manifest_sha256"
+        ),
+        "g1_config_sha256": g1_config.get("config_sha256"),
+        "g1_input_sha256": g1_config.get("input_sha256"),
+        "g1_code_sha256": g1_config.get("code_sha256"),
+        "g2_config_sha256": g2_config.get("config_sha256"),
+        "g2_input_sha256": g2_config.get("input_sha256"),
+        "g2_code_sha256": g2_config.get("code_sha256"),
+        "g2_input_set_id": g2_input_audit.get("input_set_id"),
+        "g2_approval_sha256": _canonical_json_sha256(
+            g2_input_audit.get("approval")
+        ),
+        "g2_cohort_sha256": g2_input_audit.get(
+            "g3_replay_cohort_sha256"
+        ),
+        "g2_provider_identity_sha256": _canonical_json_sha256(
+            g2_input_audit.get("provider_source")
+        ),
+        "g2_oracle_identity_sha256": _canonical_json_sha256(
+            g2_input_audit.get("oracle_source")
+        ),
+        "g2_hopper_resolution_sha256": _canonical_json_sha256(
+            g2_input_audit.get("hopper_resolution")
+        ),
+    }
     if (
         audit["schema_version"] != "xunce-mid-dual-g3-input-audit/v1"
         or audit["gate_id"] != "g3"
@@ -1737,12 +2558,112 @@ def recompute_g3(
         or audit["formal_evidence_eligible"] is not True
         or audit["g1_source_manifest_sha256"] != g1_manifest_sha256
         or audit["g2_source_manifest_sha256"] != g2_manifest_sha256
-        or upstream != {
-            "g1_source_manifest_sha256": g1_manifest_sha256,
-            "g2_source_manifest_sha256": g2_manifest_sha256,
-        }
+        or upstream != expected_upstream
     ):
         raise AggregateBlocked("g3_cross_root_manifest_binding")
+    lineage_envelope = _exact_keys(
+        upstream_lineage,
+        {
+            "schema_version",
+            "gate_id",
+            "formal_evidence_eligible",
+            "upstream_binding",
+            "freeze",
+            "g1",
+            "g2",
+        },
+        "g3_upstream_lineage_invalid",
+    )
+    if (
+        lineage_envelope["schema_version"]
+        != "xunce-mid-dual-g3-upstream-lineage/v1"
+        or lineage_envelope["gate_id"] != "g3"
+        or lineage_envelope["formal_evidence_eligible"] is not True
+        or upstream_lineage.get("upstream_binding") != upstream
+        or _sha256_bytes(
+            (
+                json.dumps(
+                    dict(upstream_lineage),
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        != upstream_lineage_audit_sha256
+    ):
+        raise AggregateBlocked("g3_upstream_lineage_invalid")
+    lineage_g1 = _exact_keys(
+        lineage_envelope["g1"],
+        {
+            "root",
+            "manifest_sha256",
+            "config_sha256",
+            "input_sha256",
+            "code_sha256",
+            "coverage_row_count",
+            "trace_row_count",
+            "native_summary_sha256",
+        },
+        "g3_upstream_lineage_invalid",
+    )
+    lineage_g2 = _exact_keys(
+        lineage_envelope["g2"],
+        {
+            "root",
+            "execution_root",
+            "manifest_sha256",
+            "config_sha256",
+            "input_sha256",
+            "code_sha256",
+            "formal_row_count",
+            "input_set_id",
+            "approval",
+            "cohort",
+            "provider_source",
+            "oracle_source",
+            "hopper_resolution",
+        },
+        "g3_upstream_lineage_invalid",
+    )
+    lineage_freeze = _exact_keys(
+        lineage_envelope["freeze"],
+        {"root", "manifest_sha256", "selected"},
+        "g3_upstream_lineage_invalid",
+    )
+    if (
+        lineage_freeze.get("manifest_sha256")
+        != upstream["freeze_manifest_sha256"]
+        or lineage_g1.get("manifest_sha256") != g1_manifest_sha256
+        or lineage_g1.get("config_sha256")
+        != g1_config.get("config_sha256")
+        or lineage_g1.get("input_sha256") != g1_config.get("input_sha256")
+        or lineage_g1.get("code_sha256") != g1_config.get("code_sha256")
+        or lineage_g1.get("coverage_row_count") != 48
+        or lineage_g1.get("trace_row_count") != g1_trace_row_count
+        or g1_native_summary is None
+        or lineage_g1.get("native_summary_sha256")
+        != _canonical_json_sha256(g1_native_summary)
+        or lineage_g2.get("manifest_sha256") != g2_manifest_sha256
+        or lineage_g2.get("config_sha256")
+        != g2_config.get("config_sha256")
+        or lineage_g2.get("input_sha256") != g2_config.get("input_sha256")
+        or lineage_g2.get("code_sha256") != g2_config.get("code_sha256")
+        or lineage_g2.get("formal_row_count") != G2_FORMAL_CALLS
+        or lineage_g2.get("input_set_id")
+        != g2_input_audit.get("input_set_id")
+        or lineage_g2.get("approval") != g2_input_audit.get("approval")
+        or lineage_g2.get("cohort")
+        != g2_input_audit.get("g3_replay_cohort")
+        or lineage_g2.get("provider_source")
+        != g2_input_audit.get("provider_source")
+        or lineage_g2.get("oracle_source")
+        != g2_input_audit.get("oracle_source")
+        or lineage_g2.get("hopper_resolution")
+        != g2_input_audit.get("hopper_resolution")
+    ):
+        raise AggregateBlocked("g3_upstream_lineage_invalid")
 
     g1_index: dict[tuple[str, str], dict[str, Any]] = {}
     if len(g1_rows) != 48:
@@ -1807,6 +2728,26 @@ def recompute_g3(
         selection_split_counts[str(split)] += 1
     if selection_split_counts != {"test_q24": 5, "unseen24": 5}:
         raise AggregateBlocked("g3_g1_cross_root_join")
+    selected_from_lineage = lineage_freeze.get("selected")
+    if (
+        not isinstance(selected_from_lineage, Mapping)
+        or set(selected_from_lineage) != {"test_q24", "unseen24"}
+        or {
+            split: list(selected_from_lineage[split])
+            if isinstance(selected_from_lineage[split], list)
+            else None
+            for split in ("test_q24", "unseen24")
+        }
+        != {
+            split: [
+                row["scenario_id"]
+                for row in wheel_selections
+                if row["split"] == split
+            ]
+            for split in ("test_q24", "unseen24")
+        }
+    ):
+        raise AggregateBlocked("g3_upstream_lineage_invalid")
 
     if any(not isinstance(row, Mapping) for row in rows):
         raise AggregateBlocked("g3_row_schema_invalid")
@@ -1852,8 +2793,33 @@ def recompute_g3(
             row["schema_version"] != "mid-dual-g3-wheel-step/v1"
             or row["scale_profile"] != SCALE_PROFILE
             or row["run_id"] != config["run_id"]
+            or row["execution_class"] != "formal"
+            or row["formal_sample"] is not True
+            or row["timing_contract_id"] != _TIMING_CONTRACT_ID
+            or row["wheel_platform"] != "wheel"
+            or row["wheel_profile"] != "ppo-standard-wheel-grid/v1"
+            or row["wheel_capability_revision"]
+            != "ppo-path-planner-adapter/v1"
+            or row["checkpoint_sha256"] != _UPDATE80_CHECKPOINT_SHA256
+            or row["policy_state_sha256"]
+            != _UPDATE80_POLICY_STATE_SHA256
+            or row["config_sha256"] != config["config_sha256"]
+            or row["input_sha256"] != config["input_sha256"]
+            or row["code_sha256"] != config["code_sha256"]
+            or row["source_sha256"] != config["code_sha256"]
+            or row["frozen_manifest_sha256"]
+            != upstream["freeze_manifest_sha256"]
+            or row["g1_source_manifest_sha256"] != g1_manifest_sha256
+            or row["g2_source_manifest_sha256"] != g2_manifest_sha256
         ):
             raise AggregateBlocked("g3_wheel_row_schema")
+        for identity_field in (
+            "decision_record_id",
+            "observation_record_id",
+        ):
+            _nonempty_string(row[identity_field], "g3_wheel_authority")
+        if not _is_sha256(row["post_observation_record_sha256"]):
+            raise AggregateBlocked("g3_wheel_authority")
         episode_id = _nonempty_string(
             row["episode_id"],
             "g3_g1_cross_root_join",
@@ -2070,6 +3036,22 @@ def recompute_g3(
             row["schema_version"] != "mid-dual-g3-interface-replay/v1"
             or row["scale_profile"] != SCALE_PROFILE
             or row["run_id"] != config["run_id"]
+            or row["execution_class"] != "formal"
+            or row["formal_sample"] is not True
+            or row["config_sha256"] != config["config_sha256"]
+            or row["input_sha256"] != config["input_sha256"]
+            or row["code_sha256"] != config["code_sha256"]
+            or row["source_sha256"] != config["code_sha256"]
+            or row["g1_source_manifest_sha256"] != g1_manifest_sha256
+            or row["g2_source_manifest_sha256"] != g2_manifest_sha256
+            or row["approval_sha256"] != upstream["g2_approval_sha256"]
+            or row["cohort_sha256"] != upstream["g2_cohort_sha256"]
+            or row["provider_identity_sha256"]
+            != upstream["g2_provider_identity_sha256"]
+            or row["oracle_identity_sha256"]
+            != upstream["g2_oracle_identity_sha256"]
+            or row["hopper_resolution_sha256"]
+            != upstream["g2_hopper_resolution_sha256"]
         ):
             raise AggregateBlocked("g3_interface_row_schema")
         replay_id = _nonempty_string(
@@ -2125,6 +3107,13 @@ def recompute_g3(
                 for reference in typed_references
             }
             != {request_sha}
+            or {reference["truth_sha256"] for reference in typed_references}
+            != {row["truth_request_sha256"]}
+            or {
+                reference["provider_result_sha256"]
+                for reference in typed_references
+            }
+            != {row["provider_result_sha256"]}
             or {
                 reference["repeat_index"]
                 for reference in typed_references
@@ -2141,7 +3130,8 @@ def recompute_g3(
             raise AggregateBlocked("g3_g2_cross_root_join")
         semantic = next(iter(semantics))
         if (
-            row["g2_semantic_digest"] != semantic
+            row["provider_request_sha256"] != request_sha
+            or row["g2_semantic_digest"] != semantic
             or row["replay_semantic_digest"] != semantic
             or selection["g2_semantic_digest"] != semantic
             or row["timing_contract_id"] != _TIMING_CONTRACT_ID
@@ -2202,6 +3192,9 @@ def recompute_g3(
     )
     return {
         "status": _status_for(midterm),
+        "g1_source_manifest_sha256": g1_manifest_sha256,
+        "g2_source_manifest_sha256": g2_manifest_sha256,
+        "upstream_lineage_audit_sha256": upstream_lineage_audit_sha256,
         "wheel_episode_count": len(episodes),
         "wheel_step_count": len(wheel_raw),
         "interface_replay_count": len(interface_raw),
@@ -2257,6 +3250,50 @@ def _report_audit_matches(
     audit = source["report_audit"]
     if not isinstance(audit, Mapping):
         return False
+    expected_summary = {
+        "schema_version": (
+            f"xunce-mid-dual-{gate_id}-canonical-summary/v1"
+        ),
+        "scale_profile": SCALE_PROFILE,
+        "gate_id": gate_id,
+        "run_id": source["run_id"],
+        "status": recomputed.get("status"),
+        "formal_evidence_eligible": True,
+        "recomputed": dict(recomputed),
+    }
+    if gate_id in {"g2", "g3"}:
+        producer = _import_local_script(
+            {
+                "g2": "run_xunce_mid_dual_g2_planning_time",
+                "g3": "run_xunce_mid_dual_g3_closed_loop",
+            }[gate_id]
+        )
+        report = (
+            producer._render_report(expected_summary)  # noqa: SLF001
+            if gate_id == "g2"
+            else producer._render_g3_report(  # noqa: SLF001
+                expected_summary
+            )
+        )
+        expected_audit = (
+            producer._source_report_audit(  # noqa: SLF001
+                summary=expected_summary,
+                report=report,
+            )
+            if gate_id == "g2"
+            else producer._g3_report_audit(  # noqa: SLF001
+                summary=expected_summary,
+                report=report,
+            )
+        )
+        return (
+            source["summary_bytes"]
+            == _artifact_text_bytes(
+                _canonical_json_artifact_text(expected_summary)
+            )
+            and source["report_bytes"] == _artifact_text_bytes(report)
+            and dict(audit) == expected_audit
+        )
     expected = {
         "schema_version": contract["report_audit_schema_version"],
         "gate_id": gate_id,
@@ -2323,10 +3360,11 @@ def aggregate_completed_roots(
             continue
         try:
             recomputed = (
-                recompute_g1(
-                    source["rows"],
-                    source["config"],
-                    source["input_audit"],
+                dict(source["metric_projection"])
+                if gate_id == "g1"
+                and source.get("source_kind") == "g1_native"
+                else recompute_g1(
+                    source["rows"], source["config"], source["input_audit"]
                 )
                 if gate_id == "g1"
                 else recompute_g2(
@@ -2336,14 +3374,18 @@ def aggregate_completed_roots(
                 )
             )
             gates[gate_id] = recomputed
-            if not _stored_summary_matches(
+            native_g1 = (
+                gate_id == "g1"
+                and source.get("source_kind") == "g1_native"
+            )
+            if not native_g1 and not _stored_summary_matches(
                 gate_id,
                 recomputed,
                 source["stored_summary"],
                 run_id=source["run_id"],
             ):
                 blockers.append(f"{gate_id}_stored_summary_mismatch")
-            if not _report_audit_matches(
+            if not native_g1 and not _report_audit_matches(
                 gate_id=gate_id,
                 source=source,
                 recomputed=recomputed,
@@ -2404,6 +3446,18 @@ def aggregate_completed_roots(
                 g2_rows=sources["g2"]["rows"],
                 g1_manifest_sha256=sources["g1"]["manifest_sha256"],
                 g2_manifest_sha256=sources["g2"]["manifest_sha256"],
+                g1_config=sources["g1"]["config"],
+                g1_input_audit=sources["g1"]["input_audit"],
+                g1_native_summary=sources["g1"].get(
+                    "native_summary", sources["g1"]["stored_summary"]
+                ),
+                g1_trace_row_count=sources["g1"]["trace_row_count"],
+                g2_config=sources["g2"]["config"],
+                g2_input_audit=sources["g2"]["input_audit"],
+                upstream_lineage=g3_source["upstream_lineage"],
+                upstream_lineage_audit_sha256=g3_source[
+                    "upstream_lineage_audit_sha256"
+                ],
             )
             gates["g3"] = recomputed_g3
             if not _stored_summary_matches(
