@@ -1,0 +1,123 @@
+{
+  "schema_version": "xunce-mid-dual-figures-config/v1",
+  "renderer_id": "render_xunce_mid_dual_figures/v1",
+  "backend": "python-matplotlib",
+  "scale_profile": "midterm_reduced_w8x3_update80/v1",
+  "output_base": "D:/xunce/out/mid_dual/figures",
+  "required_figure_families": [
+    "fig01_dual_gate_overview",
+    "fig02_g1_coverage",
+    "fig03_g2_timing",
+    "fig04_g3_crosscheck"
+  ],
+  "export_formats": [
+    "svg",
+    "pdf",
+    "png",
+    "tiff"
+  ],
+  "source_data_formats": [
+    "json",
+    "csv"
+  ],
+  "raster_dpi": 600,
+  "bootstrap": {
+    "seed": 20260727,
+    "resamples": 10000,
+    "confidence": 0.95,
+    "method": "deterministic-percentile-bootstrap-mean-nearest-rank/v1"
+  },
+  "thresholds": {
+    "coverage_midterm": 0.8,
+    "coverage_final": 0.99,
+    "timing_midterm_ms": 2000.0,
+    "timing_final_ms": 1000.0,
+    "paired_g1_delta_min": -0.01
+  },
+  "sample_contract": {
+    "g1_test_q24": 24,
+    "g1_unseen24": 24,
+    "g2_platform_count": 3,
+    "g2_requests_per_platform": 43,
+    "g2_repeats": 5,
+    "g2_formal_calls": 645,
+    "g3_wheel_episodes": 10,
+    "g3_legged_replays": 3,
+    "g3_hopper_replays": 3
+  },
+  "figure_sizes_inches": {
+    "fig01_dual_gate_overview": [
+      7.2,
+      4.2
+    ],
+    "fig02_g1_coverage": [
+      7.2,
+      3.8
+    ],
+    "fig03_g2_timing": [
+      7.2,
+      7.0
+    ],
+    "fig04_g3_crosscheck": [
+      7.2,
+      4.0
+    ]
+  },
+  "style": {
+    "palette_id": "okabe-ito/v1",
+    "colors": {
+      "orange": "#E69F00",
+      "sky_blue": "#56B4E9",
+      "bluish_green": "#009E73",
+      "yellow": "#F0E442",
+      "blue": "#0072B2",
+      "vermillion": "#D55E00",
+      "reddish_purple": "#CC79A7",
+      "black": "#000000",
+      "neutral": "#7A7A7A",
+      "light_neutral": "#D9D9D9"
+    },
+    "font_fallback": [
+      "Arial",
+      "Helvetica",
+      "DejaVu Sans",
+      "Liberation Sans"
+    ],
+    "base_font_pt": 7.0,
+    "panel_label_pt": 8.0,
+    "axes_linewidth": 0.8,
+    "grid_alpha": 0.18,
+    "white_background": true
+  },
+  "rendering_behavior": {
+    "passed": "render",
+    "failed": "render",
+    "blocked": "reject_without_output"
+  },
+  "canvas_contract": {
+    "canonical_bbox": "fixed_canvas",
+    "dimension_tolerance_mm": 0.2,
+    "raster_dpi_tolerance": 1.0,
+    "width_mm": 182.88
+  },
+  "runtime_source_contract": {
+    "schema_version": "xunce-mid-dual-figure-runtime-source-contract/v1",
+    "required_paths": [
+      "scripts/render_xunce_mid_dual_figures.py",
+      "configs/xunce_mid_dual_figures_v1.json",
+      "scripts/run_xunce_mid_dual_aggregate.py",
+      "scripts/xunce_mid_dual_artifacts.py",
+      "scripts/xunce_artifact_io.py",
+      "scripts/xunce_artifact_paths.py"
+    ],
+    "transitive_project_imports_required": true,
+    "snapshot_dirty_untracked": true
+  },
+  "visible_content_scope": "result_only/v1",
+  "claims": {
+    "physical_capability_certified": false,
+    "hardware_certified": false,
+    "legged_kind": "simulation_proxy",
+    "hopper_kind": "simulation_proxy"
+  }
+}
