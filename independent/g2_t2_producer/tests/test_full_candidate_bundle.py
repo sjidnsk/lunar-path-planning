@@ -300,7 +300,9 @@ def test_full_fixture_bundle_is_hash_bound_formally_ineligible_and_auditable(
     bundle_root, freeze, audit = full_fixture_baseline
     assert freeze["counts"] == {
         "primitive_labels": 10002,
+        "raw_request_candidates": 1056,
         "raw_request_pool": 1056,
+        "raw_request_rejects": 0,
         "repeat_mapping": 645,
         "requests": 129,
         "small_map_optima": 3,

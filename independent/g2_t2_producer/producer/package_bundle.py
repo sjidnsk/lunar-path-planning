@@ -19,7 +19,7 @@ from .finite_graph import build_all_optima
 from .generate_cases import generate_all_cases
 from .generate_requests import (
     build_repeat_mapping,
-    generate_raw_request_sources,
+    generate_raw_request_source_admission,
     provider_blind_request,
     request_graph_from_cache,
     select_requests,
@@ -33,6 +33,7 @@ from .models import (
     validate_provider_blind_request,
     validate_producer_specification,
     validate_published_truth_request,
+    validate_raw_source_reject,
     validate_request_certificate,
     validate_request_graph,
     validate_source_attestation,
@@ -384,11 +385,29 @@ def _bundle_payloads(
     optima = build_all_optima(
         specification, hopper_parameter_record=hopper_parameter_record
     )
-    raw_request_sources = generate_raw_request_sources(
-        specification,
-        lola_provenance=lola_provenance,
-        hopper_parameter_record=hopper_parameter_record,
+    raw_request_sources, raw_source_rejects = (
+        generate_raw_request_source_admission(
+            specification,
+            lola_provenance=lola_provenance,
+            hopper_parameter_record=hopper_parameter_record,
+        )
     )
+    for reject in raw_source_rejects:
+        validate_raw_source_reject(reject)
+    expected_admission_counts = (
+        (1056, 0) if fixture_only else (1007, 49)
+    )
+    if (
+        len(raw_request_sources),
+        len(raw_source_rejects),
+    ) != expected_admission_counts:
+        raise ValueError(
+            "raw request source admission count mismatch: "
+            f"expected {expected_admission_counts[0]} admitted + "
+            f"{expected_admission_counts[1]} rejected, got "
+            f"{len(raw_request_sources)} admitted + "
+            f"{len(raw_source_rejects)} rejected"
+        )
     graph_cache: dict[
         str, tuple[dict[str, Any], str, str]
     ] = {}
@@ -415,6 +434,9 @@ def _bundle_payloads(
         "raw/oracle-rows.jsonl": canonical_jsonl_bytes(labels),
         "raw/request-source-pool.jsonl": canonical_jsonl_bytes(
             raw_request_sources
+        ),
+        "raw/request-source-rejects.jsonl": canonical_jsonl_bytes(
+            raw_source_rejects
         ),
         "raw/request-pool.jsonl": canonical_jsonl_bytes(
             {
@@ -592,6 +614,13 @@ def _bundle_payloads(
 
     reject_rows = [
         {
+            "artifact_kind": reject["artifact_kind"],
+            "artifact_sha256": reject["artifact_sha256"],
+            "reason_code": reject["reason_code"],
+        }
+        for reject in raw_source_rejects
+    ] + [
+        {
             "artifact_kind": "primitive_label",
             "artifact_sha256": row["case_sha256"],
             "reason_code": row["oracle_reason_code"],
@@ -653,7 +682,11 @@ def _bundle_payloads(
 
     counts = {
         "primitive_labels": len(labels),
+        "raw_request_candidates": (
+            len(raw_request_sources) + len(raw_source_rejects)
+        ),
         "raw_request_pool": len(request_pool),
+        "raw_request_rejects": len(raw_source_rejects),
         "repeat_mapping": len(repeat_mapping),
         "requests": len(request_rows),
         "small_map_optima": len(optima),
@@ -673,6 +706,9 @@ def _bundle_payloads(
             == len(labels),
             "platform_label_counts": platform_label_counts,
             "platform_request_counts": platform_request_counts,
+            "raw_request_candidate_conservation": (
+                len(raw_request_sources) + len(raw_source_rejects) == 1056
+            ),
             "raw_request_hashes_unique": len(
                 {row["truth_request_sha256"] for row in request_pool}
             )

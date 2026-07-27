@@ -1557,6 +1557,149 @@ def validate_truth_freeze(value: Mapping[str, Any]) -> None:
     canonical_json_bytes(value)
 
 
+def validate_raw_source_reject(row: dict[str, Any]) -> None:
+    if (
+        type(row) is not dict
+        or row.get("schema_version") != "g2-raw-request-source-reject/v1"
+    ):
+        raise ValueError("raw request source reject schema mismatch")
+    required = {
+        "action_envelope_sha256",
+        "artifact_kind",
+        "artifact_sha256",
+        "base_index",
+        "determinism_seed",
+        "endpoint_admission_policy",
+        "endpoint_admission_policy_sha256",
+        "evaluated_frame_count",
+        "frame_admission_root_sha256",
+        "frame_admission_witnesses",
+        "platform_kind",
+        "raw_source_reject_id",
+        "raw_source_reject_sha256",
+        "reason_code",
+        "scale",
+        "schema_version",
+        "terrain_arrays_sha256",
+        "terrain_provenance_sha256",
+    }
+    _require_exact_keys(row, required=required, name="raw request source reject")
+    if (
+        row["artifact_kind"] != "raw_request_source_candidate"
+        or row["reason_code"] != "G2I_RAW_ENDPOINT_UNSAFE_ALL_FRAMES"
+        or row["platform_kind"] not in {"wheel", "legged", "hopper"}
+        or row["scale"] not in {"standard", "kilometer"}
+        or row["endpoint_admission_policy"]
+        != "actual-platform-endpoint-safe-then-frame-rank/v1"
+    ):
+        raise ValueError("raw request source reject contract mismatch")
+    for field in (
+        "action_envelope_sha256",
+        "artifact_sha256",
+        "endpoint_admission_policy_sha256",
+        "frame_admission_root_sha256",
+        "raw_source_reject_sha256",
+        "terrain_arrays_sha256",
+        "terrain_provenance_sha256",
+    ):
+        _require_sha256(row[field], name=f"raw request source reject {field}")
+    expected_policy_sha = domain_hash(
+        "g2-raw-request-endpoint-admission-policy/v1",
+        str(row["endpoint_admission_policy"]).encode("ascii"),
+    )
+    if row["endpoint_admission_policy_sha256"] != expected_policy_sha:
+        raise ValueError("raw request source reject admission policy hash mismatch")
+    candidate_identity = {
+        "action_envelope_sha256": row["action_envelope_sha256"],
+        "base_index": row["base_index"],
+        "determinism_seed": row["determinism_seed"],
+        "platform_kind": row["platform_kind"],
+        "scale": row["scale"],
+        "terrain_arrays_sha256": row["terrain_arrays_sha256"],
+        "terrain_provenance_sha256": row["terrain_provenance_sha256"],
+    }
+    expected_artifact_sha = domain_hash(
+        "g2-raw-request-source-candidate/v1",
+        canonical_json_bytes(candidate_identity),
+    )
+    if row["artifact_sha256"] != expected_artifact_sha:
+        raise ValueError("raw request source candidate identity mismatch")
+    witnesses = row["frame_admission_witnesses"]
+    if (
+        not isinstance(witnesses, list)
+        or len(witnesses) != int(row["evaluated_frame_count"])
+        or [witness.get("frame_rank") for witness in witnesses]
+        != list(range(len(witnesses)))
+    ):
+        raise ValueError("raw request source reject frame coverage mismatch")
+    witness_required = {
+        "frame_rank",
+        "goal_endpoint_safety_sha256",
+        "goal_failure_reasons",
+        "goal_safe",
+        "source_to_local_transform_sha256",
+        "start_endpoint_safety_sha256",
+        "start_failure_reasons",
+        "start_safe",
+    }
+    for witness in witnesses:
+        if not isinstance(witness, dict):
+            raise ValueError("raw request source reject frame witness missing")
+        _require_exact_keys(
+            witness,
+            required=witness_required,
+            name="raw request source reject frame witness",
+        )
+        for field in (
+            "goal_endpoint_safety_sha256",
+            "source_to_local_transform_sha256",
+            "start_endpoint_safety_sha256",
+        ):
+            _require_sha256(
+                witness[field],
+                name=f"raw request source reject frame witness {field}",
+            )
+        if (
+            type(witness["start_safe"]) is not bool
+            or type(witness["goal_safe"]) is not bool
+            or (
+                witness["start_safe"] is True
+                and witness["goal_safe"] is True
+            )
+        ):
+            raise ValueError("raw request source reject contains a safe frame")
+        if (
+            not isinstance(witness["start_failure_reasons"], list)
+            or not isinstance(witness["goal_failure_reasons"], list)
+        ):
+            raise ValueError("raw request source reject reasons missing")
+    expected_frame_root = domain_hash(
+        "g2-raw-request-frame-admission-root/v1",
+        canonical_json_bytes(witnesses),
+    )
+    if row["frame_admission_root_sha256"] != expected_frame_root:
+        raise ValueError("raw request source reject frame root mismatch")
+    reject_core = {
+        key: value
+        for key, value in row.items()
+        if key not in {"raw_source_reject_id", "raw_source_reject_sha256"}
+    }
+    expected_reject_sha = domain_hash(
+        "g2-raw-request-source-reject/v1",
+        canonical_json_bytes(reject_core),
+    )
+    if (
+        row["raw_source_reject_sha256"] != expected_reject_sha
+        or row["raw_source_reject_id"]
+        != (
+            f"g2i-reject-{row['platform_kind']}-{row['scale']}-"
+            f"{expected_reject_sha[:20]}"
+        )
+    ):
+        raise ValueError("raw request source reject identity mismatch")
+    canonical_json_bytes(row)
+
+
 def validate_truth_blind_case(row: dict[str, Any]) -> None:
     _reject_keys(row, _TRUTH_BLIND_FORBIDDEN)
     schema = row.get("schema_version")

@@ -71,6 +71,70 @@ def _lola_provenance(*, relief_delta_mm: int = 0) -> dict[str, Any]:
     }
 
 
+def _official_lola_roi0_witness() -> dict[str, Any]:
+    return {
+        "interpolation_schema_version": "integer-bilinear-macro-only/v1",
+        "jp2_sha256": (
+            "fff7c2017a192788066a0867d78fd1cc"
+            "f783216e26974b5e65287669aa472bac"
+        ),
+        "lbl_sha256": (
+            "9318f41503c7d02251ed643e6dd74b73"
+            "7d76378be49cd492c3abb9e05d431aaa"
+        ),
+        "macro_source_kind": "derived_lola_20m_macro_interpolation",
+        "micro_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+        "physical_obstacle_cells_written": False,
+        "roi_records": [
+            {
+                "height_mm": [
+                    [-1734000, -1731500, -1730000, -1728500, -1726500],
+                    [-1735500, -1733500, -1732000, -1730500, -1728500],
+                    [-1738500, -1736000, -1734500, -1732500, -1730500],
+                    [-1740500, -1739000, -1737000, -1735500, -1734000],
+                    [-1742500, -1742000, -1739500, -1739000, -1737000],
+                ],
+                "raw_sample_sha256": (
+                    "076faad03fe13944a0b33fc8fb6df226"
+                    "d7787a7a99f1c76d6507031b124f0760"
+                ),
+                "roi_geometry_sha256": (
+                    "4ff5e08681a7e1004c68bc4292c53b2d"
+                    "9a53a60d8b9249484e93aa11926a0365"
+                ),
+                "roi_index": 0,
+                "window_col_row_width_height": [900, 900, 5, 5],
+            }
+        ],
+        "roi_root_sha256": (
+            "fb81264a0d4adaf087e762ddf2195bad"
+            "816dc90df0aa63b68477d24a1e6efbb7"
+        ),
+    }
+
+
+def _official_lola_roi3_record() -> dict[str, Any]:
+    return {
+        "height_mm": [
+            [-341500, -342500, -342500, -343500, -343500],
+            [-344000, -344500, -344500, -345000, -345500],
+            [-346000, -346000, -346000, -347000, -347500],
+            [-348500, -348500, -348500, -349500, -349000],
+            [-351000, -350500, -350500, -351000, -351500],
+        ],
+        "raw_sample_sha256": (
+            "fe6b470bb26936c85db2ab20d191245d"
+            "c7d3d79515aa3a9301a1cdc44ce869e9"
+        ),
+        "roi_geometry_sha256": (
+            "838155902a3df5ca7e699780cdc980e3"
+            "fee91e559ab9c2a173a094948bf1fc21"
+        ),
+        "roi_index": 3,
+        "window_col_row_width_height": [2400, 900, 5, 5],
+    }
+
+
 @pytest.fixture(scope="module")
 def raw_sources() -> list[dict[str, Any]]:
     return generate_requests.generate_raw_request_sources(
@@ -91,6 +155,65 @@ def solved_rows(
         producer_implementation_sha256="d" * 64,
         hopper_parameter_record=_hopper_record(),
     )
+
+
+def test_official_lola_roi0_never_emits_endpoint_unsafe_truth_raw() -> None:
+    provenance = _official_lola_roi0_witness()
+    provenance["roi_records"].append(_official_lola_roi3_record())
+    rows, rejects = generate_requests.generate_raw_request_source_admission(
+        _specification(),
+        lola_provenance=provenance,
+        hopper_parameter_record=_hopper_record(),
+    )
+    unsafe = [
+        (
+            row["platform_kind"],
+            row["scale"],
+            row["base_index"],
+            endpoint_name,
+            row["metric_problem"][endpoint_name]["endpoint_safety"][
+                "failure_reasons"
+            ],
+        )
+        for row in rows
+        for endpoint_name in ("start", "goal")
+        if not row["metric_problem"][endpoint_name]["endpoint_safety"]["safe"]
+    ]
+    assert unsafe == []
+    assert len(rows) + len(rejects) == 1056
+    roi0_reject = next(
+        row
+        for row in rejects
+        if row["platform_kind"] == "hopper"
+        and row["scale"] == "kilometer"
+        and row["base_index"] == 0
+    )
+    assert roi0_reject["artifact_kind"] == "raw_request_source_candidate"
+    assert roi0_reject["reason_code"] == (
+        "G2I_RAW_ENDPOINT_UNSAFE_ALL_FRAMES"
+    )
+    assert roi0_reject["evaluated_frame_count"] == 32
+    assert all(
+        not (witness["start_safe"] and witness["goal_safe"])
+        for witness in roi0_reject["frame_admission_witnesses"]
+    )
+    roi3_admitted = next(
+        row
+        for row in rows
+        if row["platform_kind"] == "hopper"
+        and row["scale"] == "kilometer"
+        and row["base_index"] == 1
+    )
+    transform = roi3_admitted["metric_problem"]["source_to_local_transform"]
+    assert transform["endpoint_admission_rank"] == 14
+    assert transform["source_gradient_x_ppm_in_local_frame"] == -75_000
+    assert transform["source_gradient_y_ppm_in_local_frame"] == 0
+    models.validate_raw_source_reject(roi0_reject)
+    tampered = copy.deepcopy(roi0_reject)
+    tampered["frame_admission_witnesses"][0]["start_safe"] = True
+    tampered["frame_admission_witnesses"][0]["goal_safe"] = True
+    with pytest.raises(ValueError, match="contains a safe frame"):
+        models.validate_raw_source_reject(tampered)
 
 
 def _raw(

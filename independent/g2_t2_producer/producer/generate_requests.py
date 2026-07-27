@@ -30,6 +30,7 @@ from .models import (
     truth_request_identity,
     validate_provider_local_snapshot,
     validate_producer_specification,
+    validate_raw_source_reject,
     validate_request_graph,
     validate_truth_blind_case,
     validate_truth_row,
@@ -52,6 +53,9 @@ _LOCAL_FRAME_ID = "g2-local-metric-frame-mm/v1"
 _LOCAL_NODE_ORIGIN_MM = 1250
 _LEGGED_NODE_ORIGIN_MM = 1250
 _REQUEST_DIRECTIONS = ((1, 0),)
+_ENDPOINT_ADMISSION_POLICY = (
+    "actual-platform-endpoint-safe-then-frame-rank/v1"
+)
 
 
 def _graph_shape(platform: str) -> tuple[int, int]:
@@ -987,14 +991,14 @@ def _local_proxy_difficulty_mode(base_index: int) -> str:
     return "nominal"
 
 
-def _select_local_macro_frame(
+def _local_macro_frame_candidates(
     terrain_arrays: dict[str, Any],
     *,
     scale: str,
     macro_cell_size_mm: int,
     hopper_ballistic_contract: dict[str, Any],
     hopper_parameter_record: dict[str, Any],
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     height_mm = terrain_arrays["height_mm"]
     if scale == "standard":
         candidates = [(0, 0, "source_x_then_y", (1, 0), (0, 1))]
@@ -1086,7 +1090,24 @@ def _select_local_macro_frame(
                 frame,
             )
         )
-    return min(ranked, key=lambda item: item[0])[1]
+    return [frame for _, frame in sorted(ranked, key=lambda item: item[0])]
+
+
+def _select_local_macro_frame(
+    terrain_arrays: dict[str, Any],
+    *,
+    scale: str,
+    macro_cell_size_mm: int,
+    hopper_ballistic_contract: dict[str, Any],
+    hopper_parameter_record: dict[str, Any],
+) -> dict[str, Any]:
+    return _local_macro_frame_candidates(
+        terrain_arrays,
+        scale=scale,
+        macro_cell_size_mm=macro_cell_size_mm,
+        hopper_ballistic_contract=hopper_ballistic_contract,
+        hopper_parameter_record=hopper_parameter_record,
+    )[0]
 
 
 def _hopper_landing_required_radius_mm(
@@ -1294,16 +1315,18 @@ def _metric_problem(
     hopper_ballistic_contract: dict[str, Any],
     legged_cycle: dict[str, Any],
     base_index: int,
+    local_macro_frame: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     height, width = _terrain_array_shape(terrain_arrays)
     macro_cell_size_mm = _macro_cell_size_mm(scale)
-    local_macro_frame = _select_local_macro_frame(
-        terrain_arrays,
-        scale=scale,
-        macro_cell_size_mm=macro_cell_size_mm,
-        hopper_ballistic_contract=hopper_ballistic_contract,
-        hopper_parameter_record=hopper_parameter_record,
-    )
+    if local_macro_frame is None:
+        local_macro_frame = _select_local_macro_frame(
+            terrain_arrays,
+            scale=scale,
+            macro_cell_size_mm=macro_cell_size_mm,
+            hopper_ballistic_contract=hopper_ballistic_contract,
+            hopper_parameter_record=hopper_parameter_record,
+        )
     origin_height_mm = int(local_macro_frame["origin_height_mm"])
     local_height_plane = {
         "gradient_x_ppm": int(
@@ -1758,12 +1781,104 @@ def _lola_height_for_index(
     )
 
 
-def generate_raw_request_sources(
+def _frame_admission_witness(
+    metric_problem: dict[str, Any],
+    *,
+    frame_rank: int,
+) -> dict[str, Any]:
+    start = metric_problem["start"]["endpoint_safety"]
+    goal = metric_problem["goal"]["endpoint_safety"]
+    return {
+        "frame_rank": frame_rank,
+        "goal_endpoint_safety_sha256": goal["endpoint_safety_sha256"],
+        "goal_failure_reasons": list(goal["failure_reasons"]),
+        "goal_safe": bool(goal["safe"]),
+        "source_to_local_transform_sha256": domain_hash(
+            "g2-local-macro-frame/v1",
+            canonical_json_bytes(metric_problem["source_to_local_transform"]),
+        ),
+        "start_endpoint_safety_sha256": start["endpoint_safety_sha256"],
+        "start_failure_reasons": list(start["failure_reasons"]),
+        "start_safe": bool(start["safe"]),
+    }
+
+
+def _raw_source_reject(
+    *,
+    action_envelope: dict[str, Any],
+    base_index: int,
+    determinism_seed: int,
+    frame_admission_witnesses: list[dict[str, Any]],
+    platform: str,
+    scale: str,
+    terrain_arrays: dict[str, Any],
+    terrain_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    action_envelope_sha = domain_hash(
+        "g2-request-action-envelope/v2",
+        canonical_json_bytes(action_envelope),
+    )
+    terrain_arrays_sha = domain_hash(
+        "g2-request-terrain-arrays/v1",
+        canonical_json_bytes(terrain_arrays),
+    )
+    terrain_provenance_sha = domain_hash(
+        "g2-raw-request-terrain-provenance/v1",
+        canonical_json_bytes(terrain_provenance),
+    )
+    candidate_identity = {
+        "action_envelope_sha256": action_envelope_sha,
+        "base_index": base_index,
+        "determinism_seed": determinism_seed,
+        "platform_kind": platform,
+        "scale": scale,
+        "terrain_arrays_sha256": terrain_arrays_sha,
+        "terrain_provenance_sha256": terrain_provenance_sha,
+    }
+    candidate_sha = domain_hash(
+        "g2-raw-request-source-candidate/v1",
+        canonical_json_bytes(candidate_identity),
+    )
+    policy_sha = domain_hash(
+        "g2-raw-request-endpoint-admission-policy/v1",
+        _ENDPOINT_ADMISSION_POLICY.encode("ascii"),
+    )
+    reject_core = {
+        **candidate_identity,
+        "artifact_kind": "raw_request_source_candidate",
+        "artifact_sha256": candidate_sha,
+        "endpoint_admission_policy": _ENDPOINT_ADMISSION_POLICY,
+        "endpoint_admission_policy_sha256": policy_sha,
+        "evaluated_frame_count": len(frame_admission_witnesses),
+        "frame_admission_root_sha256": domain_hash(
+            "g2-raw-request-frame-admission-root/v1",
+            canonical_json_bytes(frame_admission_witnesses),
+        ),
+        "frame_admission_witnesses": frame_admission_witnesses,
+        "reason_code": "G2I_RAW_ENDPOINT_UNSAFE_ALL_FRAMES",
+        "schema_version": "g2-raw-request-source-reject/v1",
+    }
+    reject_sha = domain_hash(
+        "g2-raw-request-source-reject/v1",
+        canonical_json_bytes(reject_core),
+    )
+    reject = {
+        **reject_core,
+        "raw_source_reject_id": (
+            f"g2i-reject-{platform}-{scale}-{reject_sha[:20]}"
+        ),
+        "raw_source_reject_sha256": reject_sha,
+    }
+    validate_raw_source_reject(reject)
+    return reject
+
+
+def generate_raw_request_source_admission(
     specification: dict[str, Any],
     *,
     lola_provenance: dict[str, Any],
     hopper_parameter_record: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     validate_producer_specification(specification)
     if lola_provenance.get("physical_obstacle_cells_written") is not False:
         raise ValueError("kilometer synthetic obstacles cannot be physical")
@@ -1777,6 +1892,11 @@ def generate_raw_request_sources(
     hopper_ballistics = _hopper_ballistic_contract(specification)
     root_seed = int(specification["root_seed"])
     rows: list[dict[str, Any]] = []
+    rejects: list[dict[str, Any]] = []
+    endpoint_admission_policy_sha = domain_hash(
+        "g2-raw-request-endpoint-admission-policy/v1",
+        _ENDPOINT_ADMISSION_POLICY.encode("ascii"),
+    )
     for scale, count in (
         ("standard", int(specification["request_pool"]["standard_base_terrains"])),
         ("kilometer", int(specification["request_pool"]["kilometer_base_terrains"])),
@@ -1856,16 +1976,71 @@ def generate_raw_request_sources(
                     platform,
                     legged_cycle=legged_cycle if platform == "legged" else None,
                 )
-                metric_problem, provider_local_snapshot = _metric_problem(
-                    platform=platform,
-                    scale=scale,
-                    terrain_arrays=terrain_arrays,
-                    terrain_provenance=provenance,
-                    hopper_parameter_record=record,
-                    hopper_ballistic_contract=hopper_ballistics,
-                    legged_cycle=legged_cycle,
-                    base_index=base_index,
+                determinism_seed = derive_seed(
+                    root_seed, platform, "requests", scale, base_index
                 )
+                frame_admission_witnesses: list[dict[str, Any]] = []
+                selected: tuple[dict[str, Any], dict[str, Any]] | None = None
+                frames = _local_macro_frame_candidates(
+                    terrain_arrays,
+                    scale=scale,
+                    macro_cell_size_mm=_macro_cell_size_mm(scale),
+                    hopper_ballistic_contract=hopper_ballistics,
+                    hopper_parameter_record=record,
+                )
+                for frame_rank, candidate_frame in enumerate(frames):
+                    admitted_frame = {
+                        **candidate_frame,
+                        "endpoint_admission_policy": (
+                            _ENDPOINT_ADMISSION_POLICY
+                        ),
+                        "endpoint_admission_policy_sha256": (
+                            endpoint_admission_policy_sha
+                        ),
+                        "endpoint_admission_rank": frame_rank,
+                    }
+                    metric_problem, provider_local_snapshot = _metric_problem(
+                        platform=platform,
+                        scale=scale,
+                        terrain_arrays=terrain_arrays,
+                        terrain_provenance=provenance,
+                        hopper_parameter_record=record,
+                        hopper_ballistic_contract=hopper_ballistics,
+                        legged_cycle=legged_cycle,
+                        base_index=base_index,
+                        local_macro_frame=admitted_frame,
+                    )
+                    witness = _frame_admission_witness(
+                        metric_problem,
+                        frame_rank=frame_rank,
+                    )
+                    frame_admission_witnesses.append(witness)
+                    if (
+                        selected is None
+                        and witness["start_safe"] is True
+                        and witness["goal_safe"] is True
+                    ):
+                        selected = (
+                            metric_problem,
+                            provider_local_snapshot,
+                        )
+                if selected is None:
+                    rejects.append(
+                        _raw_source_reject(
+                            action_envelope=envelope,
+                            base_index=base_index,
+                            determinism_seed=determinism_seed,
+                            frame_admission_witnesses=(
+                                frame_admission_witnesses
+                            ),
+                            platform=platform,
+                            scale=scale,
+                            terrain_arrays=terrain_arrays,
+                            terrain_provenance=provenance,
+                        )
+                    )
+                    continue
+                metric_problem, provider_local_snapshot = selected
                 provider_provenance = {
                     **provenance,
                     "provider_local_proxy_semantic_audit_sha256": (
@@ -1877,9 +2052,7 @@ def generate_raw_request_sources(
                 source_core = {
                     "action_envelope": envelope,
                     "base_index": base_index,
-                    "determinism_seed": derive_seed(
-                        root_seed, platform, "requests", scale, base_index
-                    ),
+                    "determinism_seed": determinism_seed,
                     "goal_cell_xy": [goal_x, goal_y],
                     "platform_kind": platform,
                     "scale": scale,
@@ -1906,8 +2079,30 @@ def generate_raw_request_sources(
                 }
                 validate_truth_blind_case(row)
                 rows.append(row)
-    if len(rows) != 1056:
-        raise ValueError(f"raw request source count mismatch: {len(rows)}")
+    expected_candidates = len(_PLATFORMS) * sum(
+        int(specification["request_pool"][field])
+        for field in ("standard_base_terrains", "kilometer_base_terrains")
+    )
+    if len(rows) + len(rejects) != expected_candidates:
+        raise ValueError(
+            "raw request source admission conservation mismatch: "
+            f"{len(rows)} admitted + {len(rejects)} rejected "
+            f"!= {expected_candidates}"
+        )
+    return rows, rejects
+
+
+def generate_raw_request_sources(
+    specification: dict[str, Any],
+    *,
+    lola_provenance: dict[str, Any],
+    hopper_parameter_record: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    rows, _ = generate_raw_request_source_admission(
+        specification,
+        lola_provenance=lola_provenance,
+        hopper_parameter_record=hopper_parameter_record,
+    )
     return rows
 
 
@@ -3956,8 +4151,11 @@ def solve_raw_request_sources(
         }
         validate_truth_row(row)
         solved_rows.append(row)
-    if len(solved_rows) != 1056:
-        raise ValueError(f"solved request source count mismatch: {len(solved_rows)}")
+    if len(solved_rows) != len(raw_sources):
+        raise ValueError(
+            "solved request source count mismatch: "
+            f"{len(solved_rows)} != {len(raw_sources)}"
+        )
     return solved_rows
 
 

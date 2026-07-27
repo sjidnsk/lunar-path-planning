@@ -529,7 +529,9 @@ def test_request_pool_has_truth_blind_raw_sources_before_oracle_solution() -> No
         (
             {
                 "primitive_labels": 10001,
+                "raw_request_candidates": 1056,
                 "raw_request_pool": 1056,
+                "raw_request_rejects": 0,
                 "requests": 129,
                 "small_map_optima": 3,
                 "repeat_mapping": 645,
@@ -539,12 +541,14 @@ def test_request_pool_has_truth_blind_raw_sources_before_oracle_solution() -> No
         (
             {
                 "primitive_labels": 10002,
+                "raw_request_candidates": 1056,
                 "raw_request_pool": 1055,
+                "raw_request_rejects": 0,
                 "requests": 129,
                 "small_map_optima": 3,
                 "repeat_mapping": 645,
             },
-            "raw_request_pool",
+            "raw request admission conservation",
         ),
     ],
 )

@@ -26,7 +26,7 @@ from .generate_cases import generate_all_cases
 from .generate_requests import (
     _graph_from_raw_source,
     build_repeat_mapping,
-    generate_raw_request_sources,
+    generate_raw_request_source_admission,
     provider_blind_request,
     request_graph_from_cache,
     select_requests,
@@ -40,6 +40,7 @@ from .models import (
     validate_provider_blind_request,
     validate_provider_local_snapshot,
     validate_published_truth_request,
+    validate_raw_source_reject,
     validate_request_certificate,
     validate_request_graph,
     validate_source_attestation,
@@ -58,7 +59,7 @@ _FORBIDDEN_IMPORT_PREFIXES = (
 )
 _EXPECTED_CARDINALITIES = {
     "primitive_labels": 10002,
-    "raw_request_pool": 1056,
+    "raw_request_candidates": 1056,
     "repeat_mapping": 645,
     "requests": 129,
     "small_map_optima": 3,
@@ -1417,6 +1418,12 @@ def audit_expected_cardinalities(
             reasons.append(
                 f"{field} cardinality mismatch: expected {expected}, got {actual}"
             )
+    if (
+        counts.get("raw_request_pool", 0)
+        + counts.get("raw_request_rejects", 0)
+        != counts.get("raw_request_candidates")
+    ):
+        reasons.append("raw request admission conservation mismatch")
     return reasons
 
 
@@ -1808,6 +1815,7 @@ def audit_bundle(bundle_root: Path) -> dict[str, Any]:
     expected_labels: list[dict[str, Any]] = []
     expected_optima: dict[str, dict[str, Any]] = {}
     expected_raw_sources: list[dict[str, Any]] = []
+    expected_raw_rejects: list[dict[str, Any]] = []
     expected_pool: list[dict[str, Any]] = []
     expected_requests: list[dict[str, Any]] = []
     expected_repeat_mapping: list[dict[str, Any]] = []
@@ -1881,16 +1889,30 @@ def audit_bundle(bundle_root: Path) -> dict[str, Any]:
                 if not verify_optimum_record(artifact):
                     reasons.append("regenerated optimum certificate invalid")
 
-            expected_raw_sources = generate_raw_request_sources(
-                specification,
-                lola_provenance=lola_provenance,
-                hopper_parameter_record=hopper_record,
+            expected_raw_sources, expected_raw_rejects = (
+                generate_raw_request_source_admission(
+                    specification,
+                    lola_provenance=lola_provenance,
+                    hopper_parameter_record=hopper_record,
+                )
             )
             _compare_bytes(
                 reasons,
                 path=bundle_root / "raw" / "request-source-pool.jsonl",
                 expected=canonical_jsonl_bytes(expected_raw_sources),
                 label="truth-blind request source regeneration",
+            )
+            for reject in expected_raw_rejects:
+                validate_raw_source_reject(reject)
+            _compare_bytes(
+                reasons,
+                path=(
+                    bundle_root
+                    / "raw"
+                    / "request-source-rejects.jsonl"
+                ),
+                expected=canonical_jsonl_bytes(expected_raw_rejects),
+                label="raw request source reject regeneration",
             )
             expected_snapshot_entries: list[dict[str, Any]] = []
             for raw in expected_raw_sources:
@@ -1982,6 +2004,36 @@ def audit_bundle(bundle_root: Path) -> dict[str, Any]:
                     for row in expected_pool
                 ),
                 label="raw request pool regeneration",
+            )
+            expected_reject_ledger = [
+                {
+                    "artifact_kind": reject["artifact_kind"],
+                    "artifact_sha256": reject["artifact_sha256"],
+                    "reason_code": reject["reason_code"],
+                }
+                for reject in expected_raw_rejects
+            ] + [
+                {
+                    "artifact_kind": "primitive_label",
+                    "artifact_sha256": row["case_sha256"],
+                    "reason_code": row["oracle_reason_code"],
+                }
+                for row in expected_labels
+                if not bool(row["oracle_safe"])
+            ] + [
+                {
+                    "artifact_kind": "request_pool",
+                    "artifact_sha256": row["truth_request_sha256"],
+                    "reason_code": "G2I_REQUEST_UNREACHABLE",
+                }
+                for row in expected_pool
+                if not bool(row["oracle_reachable"])
+            ]
+            _compare_bytes(
+                reasons,
+                path=bundle_root / "reject-ledger.jsonl",
+                expected=canonical_jsonl_bytes(expected_reject_ledger),
+                label="reject ledger regeneration",
             )
             expected_requests = select_requests(expected_pool, specification)
             reasons.extend(
@@ -2207,6 +2259,9 @@ def audit_bundle(bundle_root: Path) -> dict[str, Any]:
             bundle_root / "truth" / "request-sidecar.jsonl"
         )
         raw_pool = _jsonl(bundle_root / "raw" / "request-pool.jsonl")
+        raw_source_rejects = _jsonl(
+            bundle_root / "raw" / "request-source-rejects.jsonl"
+        )
         repeat_mapping = _jsonl(bundle_root / "repeat-mapping.jsonl")
     except (OSError, ValueError) as error:
         reasons.append(f"primary row artifact unreadable: {error}")
@@ -2216,8 +2271,14 @@ def audit_bundle(bundle_root: Path) -> dict[str, Any]:
             requests,
             truth_sidecar,
             raw_pool,
+            raw_source_rejects,
             repeat_mapping,
-        ) = [], [], [], [], [], []
+        ) = [], [], [], [], [], [], []
+    for reject in raw_source_rejects:
+        try:
+            validate_raw_source_reject(reject)
+        except (KeyError, TypeError, ValueError) as error:
+            reasons.append(f"raw request source reject invalid: {error}")
     for request in requests:
         try:
             validate_provider_blind_request(request)
@@ -2273,12 +2334,28 @@ def audit_bundle(bundle_root: Path) -> dict[str, Any]:
     )
     counts = {
         "primitive_labels": len(labels),
+        "raw_request_candidates": len(raw_pool) + len(raw_source_rejects),
         "raw_request_pool": len(raw_pool),
+        "raw_request_rejects": len(raw_source_rejects),
         "repeat_mapping": len(repeat_mapping),
         "requests": len(requests),
         "small_map_optima": len(optima),
     }
     reasons.extend(audit_expected_cardinalities(counts))
+    expected_admitted, expected_rejected = (
+        (1056, 0) if freeze.get("fixture_only") is True else (1007, 49)
+    )
+    if (
+        counts["raw_request_pool"],
+        counts["raw_request_rejects"],
+    ) != (expected_admitted, expected_rejected):
+        reasons.append(
+            "raw request admission count mismatch: "
+            f"expected {expected_admitted} admitted + "
+            f"{expected_rejected} rejected, got "
+            f"{counts['raw_request_pool']} admitted + "
+            f"{counts['raw_request_rejects']} rejected"
+        )
     if counts != freeze.get("counts"):
         reasons.append(f"freeze count mismatch: {counts}")
     if len({row.get("label_id") for row in labels}) != len(labels):
