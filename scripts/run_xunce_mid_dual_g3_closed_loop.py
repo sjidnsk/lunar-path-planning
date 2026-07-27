@@ -46,6 +46,14 @@ MID_TIME_MS = 2000.0
 FINAL_TIME_MS = 1000.0
 PAIRED_G1_DELTA_MIN = -0.01
 TIMING_CONTRACT_ID = "five-phase-sequential-ns/v1"
+MAX_TRAVERSABLE_SLOPE_DEG = 30.0
+ACTIVE_PLATFORMS = ("wheel", "legged", "hopper")
+PLATFORM_INVARIANTS = {
+    platform: {
+        "max_traversable_slope_deg": MAX_TRAVERSABLE_SLOPE_DEG,
+    }
+    for platform in ACTIVE_PLATFORMS
+}
 G3_OUTPUT_BASE = "D:/xunce/out/mid_dual/g3"
 G3_FROZEN_BASE = "D:/xunce/inputs/mid_dual/scenarios"
 G1_OUTPUT_BASE = "D:/xunce/out/mid_dual/g1"
@@ -98,6 +106,8 @@ G3_SOURCE_CONTRACT = {
     "runner_id": RUNNER_ID,
     "required_phase_ids": list(G3_REQUIRED_PHASE_IDS),
     "output_base": G3_OUTPUT_BASE,
+    "active_platforms": list(ACTIVE_PLATFORMS),
+    "platform_invariants": PLATFORM_INVARIANTS,
     "input_audit_schema_version": G3_INPUT_AUDIT_SCHEMA_VERSION,
     "report_audit_schema_version": "xunce-mid-dual-source-report-audit/v1",
     "report_renderer_id": "xunce-mid-dual-g3-canonical-report/v1",
@@ -117,6 +127,8 @@ _G3_CONFIG_FIELDS = frozenset(
         "runner_id",
         "scale_profile",
         "output_base",
+        "active_platforms",
+        "platform_invariants",
         "required_phase_ids",
         "required_phases",
         "phase_contract",
@@ -299,6 +311,42 @@ class G3Blocked(ValueError):
         self.reason = reason
 
 
+def validate_platform_invariants(
+    active_platforms: object,
+    platform_invariants: object,
+    *,
+    expected_platforms: Sequence[str] = ACTIVE_PLATFORMS,
+) -> dict[str, object]:
+    """验证每个 active platform 都严格绑定 30°，不接受诊断放宽。"""
+
+    expected = tuple(expected_platforms)
+    if (
+        not isinstance(active_platforms, (list, tuple))
+        or tuple(active_platforms) != expected
+        or not isinstance(platform_invariants, Mapping)
+        or set(platform_invariants) != set(expected)
+    ):
+        raise G3Blocked("g3_platform_slope_invariant")
+    copied: dict[str, dict[str, float]] = {}
+    for platform in expected:
+        invariant = platform_invariants.get(platform)
+        if (
+            not isinstance(invariant, Mapping)
+            or set(invariant) != {"max_traversable_slope_deg"}
+            or type(invariant.get("max_traversable_slope_deg")) is not float
+            or invariant.get("max_traversable_slope_deg")
+            != MAX_TRAVERSABLE_SLOPE_DEG
+        ):
+            raise G3Blocked("g3_platform_slope_invariant")
+        copied[platform] = {
+            "max_traversable_slope_deg": MAX_TRAVERSABLE_SLOPE_DEG,
+        }
+    return {
+        "active_platforms": list(expected),
+        "platform_invariants": copied,
+    }
+
+
 def validate_g3_config_payload(
     payload: object,
 ) -> dict[str, object]:
@@ -308,12 +356,18 @@ def validate_g3_config_payload(
         _G3_CONFIG_FIELDS
     ):
         raise G3Blocked("g3_config_invalid")
+    validate_platform_invariants(
+        payload.get("active_platforms"),
+        payload.get("platform_invariants"),
+    )
     expected = {
         "schema_version": "mid-dual-g3-config/v1",
         "gate_id": "g3",
         "runner_id": RUNNER_ID,
         "scale_profile": SCALE_PROFILE,
         "output_base": "D:/xunce/out/mid_dual/g3",
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
         "required_phase_ids": ["p01", "p02"],
         "required_phases": ["wheel_closed_loop", "interface_replay"],
         "phase_contract": {
@@ -445,6 +499,7 @@ def _timing_statistics(values: Sequence[float]) -> dict[str, object]:
     p95 = _nearest_rank(rows, 0.95)
     p99 = _nearest_rank(rows, 0.99)
     average = mean(rows)
+    count_le_1000ms = sum(value <= FINAL_TIME_MS for value in rows)
     return {
         "sample_count": len(rows),
         "mean_ms": average,
@@ -454,7 +509,8 @@ def _timing_statistics(values: Sequence[float]) -> dict[str, object]:
         "max_ms": max(rows),
         "p95_ms": p95,
         "p99_ms": p99,
-        "count_le_1000ms": sum(value <= FINAL_TIME_MS for value in rows),
+        "count_le_1000ms": count_le_1000ms,
+        "at_or_below_1000_fraction": count_le_1000ms / len(rows),
         "count_le_2000ms": sum(value <= MID_TIME_MS for value in rows),
         "midterm_reduced_passed": (
             average <= MID_TIME_MS
@@ -464,8 +520,7 @@ def _timing_statistics(values: Sequence[float]) -> dict[str, object]:
         "final_threshold_reduced_passed": (
             average <= FINAL_TIME_MS
             and p95 <= FINAL_TIME_MS
-            and sum(value <= FINAL_TIME_MS for value in rows)
-            >= math.ceil(0.95 * len(rows))
+            and count_le_1000ms >= math.ceil(0.95 * len(rows))
             and max(rows) <= MID_TIME_MS
         ),
     }
@@ -726,10 +781,20 @@ def _validate_upstream_binding(value: object) -> dict[str, object]:
         "g2_oracle_identity_sha256",
         "g2_hopper_resolution_sha256",
     }
-    expected = {*required_hashes, "g2_input_set_id"}
+    expected = {
+        *required_hashes,
+        "g2_input_set_id",
+        "active_platforms",
+        "platform_invariants",
+    }
     if not isinstance(value, Mapping) or set(value) != expected:
         raise G3Blocked("g3_upstream_binding_invalid")
     copied = dict(value)
+    invariant_projection = validate_platform_invariants(
+        copied["active_platforms"],
+        copied["platform_invariants"],
+    )
+    copied.update(invariant_projection)
     for field in required_hashes:
         _require_sha256(copied[field], "g3_upstream_binding_invalid")
     _require_nonempty(copied["g2_input_set_id"], "g3_upstream_binding_invalid")
@@ -752,6 +817,10 @@ def build_g3_effective_config(
     validate_g3_config_payload(base_config)
     validated_run_id = validate_g3_run_id(run_id)
     upstream = _validate_upstream_binding(upstream_binding)
+    input_invariants = validate_platform_invariants(
+        input_audit.get("active_platforms"),
+        input_audit.get("platform_invariants"),
+    )
     if (
         input_audit.get("schema_version") != G3_INPUT_AUDIT_SCHEMA_VERSION
         or input_audit.get("gate_id") != "g3"
@@ -768,6 +837,7 @@ def build_g3_effective_config(
         "run_id": validated_run_id,
         "output_root": G3_OUTPUT_BASE,
         "scale_profile": SCALE_PROFILE,
+        **input_invariants,
         "input_sha256": _json_artifact_sha256(input_audit),
         "code_sha256": str(code_lineage["code_sha256"]),
         "required_phase_ids": list(G3_REQUIRED_PHASE_IDS),
@@ -777,6 +847,9 @@ def build_g3_effective_config(
             "input_audit_path": "g3_input_audit.json",
             "lineage_audit_path": "lineage_audit.json",
             "report_audit_path": "g3_report_audit.json",
+            "platform_invariants_audit_path": (
+                "platform_invariants_audit.json"
+            ),
         },
         "upstream_binding": upstream,
     }
@@ -1197,8 +1270,29 @@ def load_verified_g1_root(
     base_config_bytes = source_payloads.get(
         "configs/xunce_mid_dual_g1_coverage_v1.json"
     )
-    if base_config_bytes is None:
+    stage6_config_bytes = source_payloads.get(
+        "configs/ppo_highres_frontier_stage6_v1.json"
+    )
+    if base_config_bytes is None or stage6_config_bytes is None:
         raise G3Blocked("g3_g1_base_config_invalid")
+    stage6_config = _parse_json_bytes(
+        stage6_config_bytes,
+        "g3_g1_platform_slope_invariant",
+    )
+    stage6_safety = stage6_config.get("safety")
+    if not isinstance(stage6_safety, Mapping):
+        raise G3Blocked("g3_g1_platform_slope_invariant")
+    g1_platform_projection = validate_platform_invariants(
+        ["wheel"],
+        {
+            "wheel": {
+                "max_traversable_slope_deg": stage6_safety.get(
+                    "max_traversable_slope_deg"
+                ),
+            }
+        },
+        expected_platforms=("wheel",),
+    )
     try:
         base_config = g1.validate_g1_config_payload(
             _parse_json_bytes(
@@ -1405,6 +1499,12 @@ def load_verified_g1_root(
         "coverage_rows": coverage_rows,
         "native_summary": recomputed,
         "trace_row_count": len(trace_ids),
+        "platform_invariants": g1_platform_projection[
+            "platform_invariants"
+        ],
+        "platform_invariants_source_sha256": _bytes_sha256(
+            stage6_config_bytes
+        ),
     }
 
 
@@ -1457,6 +1557,8 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         "required_phase_ids",
         "source_contract_sha256",
         "evidence_binding",
+        "active_platforms",
+        "platform_invariants",
         "config_sha256",
     }
     if (
@@ -1468,6 +1570,14 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         or config.get("scale_profile") != SCALE_PROFILE
         or config.get("required_phase_ids")
         != list(g2.G2_REQUIRED_PHASE_IDS)
+        or validate_platform_invariants(
+            config.get("active_platforms"),
+            config.get("platform_invariants"),
+        )
+        != {
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
+        }
         or config.get("source_contract_sha256")
         != _canonical_sha256(g2.G2_SOURCE_CONTRACT)
         or config.get("config_sha256") != manifest.get("config_sha256")
@@ -1490,6 +1600,12 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
     p01 = phases["p01"]["audit"]
     p02 = phases["p02"]["audit"]
     p03 = phases["p03"]["audit"]
+    for phase_id in g2.G2_REQUIRED_PHASE_IDS:
+        phase_audit = phases[phase_id]["audit"]
+        validate_platform_invariants(
+            phase_audit.get("active_platforms"),
+            phase_audit.get("platform_invariants"),
+        )
     if (
         p01.get("schema_version") != "xunce-mid-dual-g2-phase-audit/v1"
         or p01.get("phase_name") != "preflight"
@@ -1557,6 +1673,8 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
             "run_id": config.get("run_id"),
             "status": recomputed["status"],
             "formal_evidence_eligible": True,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
             "recomputed": recomputed,
         }
         or report != g2._render_report(stored)  # noqa: SLF001
@@ -1584,6 +1702,10 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         or input_audit.get("blockers") != []
     ):
         raise G3Blocked("g3_g2_input_audit_invalid")
+    validate_platform_invariants(
+        input_audit.get("active_platforms"),
+        input_audit.get("platform_invariants"),
+    )
     p01 = phases["p01"]["audit"]
     execution_manifest_sha256 = _require_sha256(
         p01.get("input_manifest_sha256"),
@@ -1644,6 +1766,66 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         )
     ):
         raise G3Blocked("g3_g2_o2_cohort_identity_invalid")
+    runtime_closure_sha256 = _require_sha256(
+        input_audit.get("path_planner_runtime_source_closure_sha256"),
+        "g3_g2_runtime_source_closure_invalid",
+    )
+    if (
+        approval.get("path_planner_runtime_source_closure_sha256")
+        != runtime_closure_sha256
+        or any(
+            phases[phase_id]["audit"].get(
+                "path_planner_runtime_source_closure_sha256"
+            )
+            != runtime_closure_sha256
+            for phase_id in g2.G2_REQUIRED_PHASE_IDS
+        )
+    ):
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    platform_audit_bytes = snapshot.get(
+        "g2_platform_invariants_audit.json",
+        b"",
+    )
+    platform_audit = _parse_json_bytes(
+        platform_audit_bytes,
+        "g3_g2_platform_invariants_audit_invalid",
+    )
+    if (
+        set(platform_audit)
+        != {
+            "schema_version",
+            "gate_id",
+            "scale_profile",
+            "run_id",
+            "status",
+            "formal_evidence_eligible",
+            "active_platforms",
+            "platform_invariants",
+            "config_sha256",
+            "input_sha256",
+            "code_sha256",
+            "path_planner_runtime_source_closure_sha256",
+        }
+        or platform_audit.get("schema_version")
+        != "xunce-mid-dual-g2-platform-invariants-audit/v1"
+        or platform_audit.get("gate_id") != "g2"
+        or platform_audit.get("scale_profile") != SCALE_PROFILE
+        or platform_audit.get("run_id") != config.get("run_id")
+        or platform_audit.get("status") != "passed"
+        or platform_audit.get("formal_evidence_eligible") is not True
+        or platform_audit.get("config_sha256") != config.get("config_sha256")
+        or platform_audit.get("input_sha256") != config.get("input_sha256")
+        or platform_audit.get("code_sha256") != config.get("code_sha256")
+        or platform_audit.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_closure_sha256
+    ):
+        raise G3Blocked("g3_g2_platform_invariants_audit_invalid")
+    validate_platform_invariants(
+        platform_audit.get("active_platforms"),
+        platform_audit.get("platform_invariants"),
+    )
     calls_by_request: dict[tuple[str, str, str], list[dict[str, object]]] = {}
     for row in p04_rows:
         key = (
@@ -1683,6 +1865,10 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         "cohort_calls": cohort_calls,
         "approval": approval,
         "hopper_resolution": hopper,
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "platform_invariants_audit_sha256": _bytes_sha256(
+            platform_audit_bytes
+        ),
         "provider_source": provider,
         "oracle_source": oracle,
     }
@@ -1767,6 +1953,8 @@ def validate_g3_phase_rows(
             "row_count": len(materialized),
             "episode_count": 10,
             "fixture_ids": [],
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
         }
     if any(
         set(row) != set(_INTERFACE_ROW_FIELDS | _FORMAL_INTERFACE_EXTRA_FIELDS)
@@ -1785,6 +1973,8 @@ def validate_g3_phase_rows(
         "row_count": 6,
         "platform_counts": {"legged": 3, "hopper": 3},
         "fixture_ids": [],
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
     }
 
 
@@ -1855,6 +2045,7 @@ def materialize_wheel_authority(
             "candidate_id": row["candidate_id"],
             "selected_candidate_cell_xy": row["selected_candidate_cell_xy"],
             "selected_theta": row["selected_theta"],
+            "platform_invariant": PLATFORM_INVARIANTS[WHEEL_PLATFORM],
             "policy_identity": {
                 key: value
                 for key, value in identity.items()
@@ -1995,6 +2186,8 @@ def validate_wheel_authority_records(
             or decision.get("selected_candidate_cell_xy")
             != row.get("selected_candidate_cell_xy")
             or decision.get("selected_theta") != row.get("selected_theta")
+            or decision.get("platform_invariant")
+            != PLATFORM_INVARIANTS[WHEEL_PLATFORM]
             or observation.get("record_sha256")
             != row.get("post_observation_record_sha256")
             or observation.get("observation_sha256")
@@ -2847,6 +3040,9 @@ def _evaluate_wheel(
     coverage_99_count = sum(
         value >= FINAL_COVERAGE_THRESHOLD for value in final_coverages
     )
+    coverage_all_episodes_passed = coverage_80_count == 10
+    coverage_mean_passed = coverage_mean >= MID_COVERAGE_THRESHOLD
+    paired_g1_delta_passed = paired_delta_mean >= PAIRED_G1_DELTA_MIN
     return {
         "wheel_episode_count": 10,
         "wheel_step_count": len(wheel_rows),
@@ -2854,11 +3050,14 @@ def _evaluate_wheel(
         "coverage_80_count": coverage_80_count,
         "coverage_99_count": coverage_99_count,
         "paired_g1_coverage_delta_mean": paired_delta_mean,
+        "coverage_all_episodes_passed": coverage_all_episodes_passed,
+        "coverage_mean_passed": coverage_mean_passed,
+        "paired_g1_delta_passed": paired_g1_delta_passed,
         "timing": timing,
         "midterm_reduced_passed": (
-            coverage_mean >= MID_COVERAGE_THRESHOLD
-            and coverage_80_count == 10
-            and paired_delta_mean >= PAIRED_G1_DELTA_MIN
+            coverage_mean_passed
+            and coverage_all_episodes_passed
+            and paired_g1_delta_passed
             and timing["midterm_reduced_passed"] is True
         ),
         "final_threshold_reduced_passed": (
@@ -3420,6 +3619,8 @@ def _evaluate_interface(
         "interface_replay_count": 6,
         "platform_counts": platform_counts,
         "cross_root_join_passed": True,
+        "interface_correctness_passed": True,
+        "required_replay_identities_passed": True,
         "timing": timing,
         "midterm_reduced_passed": timing["midterm_reduced_passed"],
         "final_threshold_reduced_passed": timing[
@@ -3453,6 +3654,9 @@ def evaluate_g3_evidence(
         return {
             "schema_version": "mid-dual-g3-summary/v1",
             "scale_profile": SCALE_PROFILE,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
+            "full_scale_acceptance": False,
             "status": "blocked",
             "formal_evidence_eligible": False,
             "blockers": [exc.reason],
@@ -3470,6 +3674,9 @@ def evaluate_g3_evidence(
     return {
         "schema_version": "mid-dual-g3-summary/v1",
         "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
         "status": "passed" if midterm else "failed",
         "formal_evidence_eligible": True,
         "blockers": [],
@@ -3494,6 +3701,8 @@ def _build_g3_input_audit(
     g1_rows = g1_source.get("coverage_rows")
     cohort = g2_source.get("cohort")
     cohort_calls = g2_source.get("cohort_calls")
+    g1_invariants = g1_source.get("platform_invariants")
+    g2_invariants = g2_source.get("platform_invariants")
     if (
         not isinstance(selected, Mapping)
         or not isinstance(g1_rows, list)
@@ -3502,6 +3711,15 @@ def _build_g3_input_audit(
         or not isinstance(cohort_calls, list)
     ):
         raise G3Blocked("g3_input_audit_source_invalid")
+    validate_platform_invariants(
+        ["wheel"],
+        g1_invariants,
+        expected_platforms=("wheel",),
+    )
+    validate_platform_invariants(
+        ACTIVE_PLATFORMS,
+        g2_invariants,
+    )
     g1_index = _g1_index(g1_rows)
     wheel_selections: list[dict[str, object]] = []
     for split in ("test_q24", "unseen24"):
@@ -3589,6 +3807,8 @@ def _build_g3_input_audit(
         "run_id": run_id,
         "scale_profile": SCALE_PROFILE,
         "formal_evidence_eligible": True,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
         "g1_source_manifest_sha256": g1_source["manifest_sha256"],
         "g2_source_manifest_sha256": g2_source["manifest_sha256"],
         "wheel_selections": wheel_selections,
@@ -3638,6 +3858,8 @@ def _build_upstream_binding(
             "g2_hopper_resolution_sha256": _canonical_sha256(
                 g2_source["hopper_resolution"]
             ),
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
         }
     )
 
@@ -3653,6 +3875,8 @@ def _build_upstream_lineage_audit(
         "schema_version": "xunce-mid-dual-g3-upstream-lineage/v1",
         "gate_id": "g3",
         "formal_evidence_eligible": True,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
         "upstream_binding": dict(upstream_binding),
         "freeze": {
             "root": str(frozen["root"]).replace("\\", "/"),
@@ -3673,6 +3897,12 @@ def _build_upstream_lineage_audit(
             "native_summary_sha256": _canonical_sha256(
                 g1_source["native_summary"]
             ),
+            "platform_invariants": dict(
+                g1_source["platform_invariants"]
+            ),
+            "platform_invariants_source_sha256": g1_source[
+                "platform_invariants_source_sha256"
+            ],
         },
         "g2": {
             "root": str(g2_source["root"]).replace("\\", "/"),
@@ -3690,6 +3920,12 @@ def _build_upstream_lineage_audit(
             "provider_source": dict(g2_source["provider_source"]),
             "oracle_source": dict(g2_source["oracle_source"]),
             "hopper_resolution": dict(g2_source["hopper_resolution"]),
+            "platform_invariants": dict(
+                g2_source["platform_invariants"]
+            ),
+            "platform_invariants_audit_sha256": g2_source[
+                "platform_invariants_audit_sha256"
+            ],
         },
     }
 
@@ -3761,6 +3997,8 @@ def _accept_g3_phase(
         "schema_version": "xunce-mid-dual-g3-phase-audit/v1",
         "gate_id": "g3",
         "runner_id": RUNNER_ID,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
         "phase_id": phase_id,
         "phase_name": G3_PHASE_NAMES[phase_id],
         "status": "complete",
@@ -3782,6 +4020,7 @@ def _revalidate_g3_accepted_prefix(
     store: MidDualRunStore,
     *,
     upstream_lineage_sha256: str,
+    platform_invariants_audit_sha256: str,
 ) -> None:
     previous: list[str] = []
     for phase_id in store.accepted_phase_ids:
@@ -3798,6 +4037,14 @@ def _revalidate_g3_accepted_prefix(
             != "xunce-mid-dual-g3-phase-audit/v1"
             or audit.get("gate_id") != "g3"
             or audit.get("runner_id") != RUNNER_ID
+            or validate_platform_invariants(
+                audit.get("active_platforms"),
+                audit.get("platform_invariants"),
+            )
+            != {
+                "active_platforms": list(ACTIVE_PLATFORMS),
+                "platform_invariants": PLATFORM_INVARIANTS,
+            }
             or audit.get("phase_id") != phase_id
             or audit.get("phase_name") != G3_PHASE_NAMES[phase_id]
             or audit.get("status") != "complete"
@@ -3805,6 +4052,8 @@ def _revalidate_g3_accepted_prefix(
             or audit.get("formal_evidence_eligible") is not True
             or audit.get("upstream_lineage_audit_sha256")
             != upstream_lineage_sha256
+            or audit.get("platform_invariants_audit_sha256")
+            != platform_invariants_audit_sha256
             or audit.get("phase_projection") != expected_projection
             or any(
                 audit.get(field) != first.get(field)
@@ -3861,6 +4110,7 @@ def _wheel_authority_audits(
                 "selected_candidate_cell_xy"
             ],
             "selected_theta": row["selected_theta"],
+            "platform_invariant": PLATFORM_INVARIANTS[WHEEL_PLATFORM],
             "policy_identity": policy_identity,
         }
         observation = {
@@ -3895,6 +4145,8 @@ def _wheel_authority_audits(
             "schema_version": "xunce-mid-dual-g3-decision-audit/v1",
             "gate_id": "g3",
             "formal_evidence_eligible": True,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
             "record_count": len(decisions),
             "records": decisions,
         },
@@ -3902,6 +4154,8 @@ def _wheel_authority_audits(
             "schema_version": "xunce-mid-dual-g3-observation-audit/v1",
             "gate_id": "g3",
             "formal_evidence_eligible": True,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
             "record_count": len(observations),
             "records": observations,
         },
@@ -4008,6 +4262,9 @@ def _aggregate_style_timing(
     average = mean(materialized)
     p95 = _nearest_rank(materialized, 0.95)
     maximum = max(materialized)
+    at_or_below_1000_count = sum(
+        value <= FINAL_TIME_MS for value in materialized
+    )
     return {
         "sample_count": len(materialized),
         "mean_ms": average,
@@ -4019,8 +4276,9 @@ def _aggregate_style_timing(
         ),
         "min_ms": min(materialized),
         "max_ms": maximum,
-        "at_or_below_1000_count": sum(
-            value <= FINAL_TIME_MS for value in materialized
+        "at_or_below_1000_count": at_or_below_1000_count,
+        "at_or_below_1000_fraction": (
+            at_or_below_1000_count / len(materialized)
         ),
         "over_2000_count": sum(
             value > MID_TIME_MS for value in materialized
@@ -4033,9 +4291,7 @@ def _aggregate_style_timing(
         "final_threshold_reduced_passed": (
             average <= FINAL_TIME_MS
             and p95 <= FINAL_TIME_MS
-            and sum(value <= FINAL_TIME_MS for value in materialized)
-            / len(materialized)
-            >= 0.95
+            and at_or_below_1000_count / len(materialized) >= 0.95
             and maximum <= MID_TIME_MS
         ),
     }
@@ -4084,8 +4340,26 @@ def recompute_g3_canonical_projection(
         [_timing_ms(row) for row in interface_rows]
     )
     selected = validate_g3_manifest(frozen_manifest)
+    wheel_coverage_80_count = sum(
+        value >= MID_COVERAGE_THRESHOLD for value in coverages
+    )
+    wheel_coverage_mean = mean(coverages)
+    paired_delta_mean = round(mean(paired_deltas), 15)
     return {
         "status": evaluated["status"],
+        "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
+        "thresholds": {
+            "midterm_coverage": MID_COVERAGE_THRESHOLD,
+            "final_coverage": FINAL_COVERAGE_THRESHOLD,
+            "paired_g1_delta_min": PAIRED_G1_DELTA_MIN,
+            "midterm_planner_ms": MID_TIME_MS,
+            "final_planner_ms": FINAL_TIME_MS,
+            "final_proportion_at_or_below_1000": 0.95,
+            "absolute_max_planner_ms": MID_TIME_MS,
+        },
         "g1_source_manifest_sha256": _require_sha256(
             g1_source_manifest_sha256,
             "g3_summary_upstream_binding",
@@ -4111,21 +4385,45 @@ def recompute_g3_canonical_projection(
         "g3_final_crosscheck_passed": evaluated[
             "g3_final_crosscheck_passed"
         ],
-        "wheel_coverage_mean": mean(coverages),
-        "wheel_coverage_80_count": sum(
-            value >= MID_COVERAGE_THRESHOLD for value in coverages
-        ),
+        "wheel_coverage_mean": wheel_coverage_mean,
+        "wheel_coverage_80_count": wheel_coverage_80_count,
         "wheel_coverage_99_count": sum(
             value >= FINAL_COVERAGE_THRESHOLD for value in coverages
         ),
-        "paired_g1_coverage_delta_mean": mean(paired_deltas),
+        "paired_g1_coverage_delta_mean": paired_delta_mean,
         "paired_g1_coverage_delta_sample_stddev": (
             stdev(paired_deltas) if len(paired_deltas) > 1 else 0.0
         ),
         "wheel_timing": wheel_timing,
         "interface_timing": interface_timing,
+        "wheel_coverage_all_episodes_passed": (
+            wheel_coverage_80_count == 10
+        ),
+        "wheel_coverage_mean_passed": (
+            wheel_coverage_mean >= MID_COVERAGE_THRESHOLD
+        ),
+        "paired_g1_delta_passed": (
+            paired_delta_mean >= PAIRED_G1_DELTA_MIN
+        ),
+        "wheel_timing_midterm_passed": wheel_timing[
+            "midterm_reduced_passed"
+        ],
+        "wheel_timing_final_passed": wheel_timing[
+            "final_threshold_reduced_passed"
+        ],
+        "interface_timing_midterm_passed": interface_timing[
+            "midterm_reduced_passed"
+        ],
+        "interface_timing_final_passed": interface_timing[
+            "final_threshold_reduced_passed"
+        ],
         "wheel_integrity_passed": True,
-        "interface_correctness_passed": True,
+        "interface_correctness_passed": evaluated["interface"][
+            "interface_correctness_passed"
+        ],
+        "required_replay_identities_passed": evaluated["interface"][
+            "required_replay_identities_passed"
+        ],
     }
 
 
@@ -4134,9 +4432,21 @@ def _g3_summary(
     run_id: str,
     recomputed: Mapping[str, object],
 ) -> dict[str, object]:
+    invariant_projection = validate_platform_invariants(
+        recomputed.get("active_platforms"),
+        recomputed.get("platform_invariants"),
+    )
+    if (
+        recomputed.get("scale_profile") != SCALE_PROFILE
+        or recomputed.get("full_scale_acceptance") is not False
+        or recomputed.get("status") not in {"passed", "failed"}
+    ):
+        raise G3Blocked("g3_summary_projection_invalid")
     return {
         "schema_version": "xunce-mid-dual-g3-canonical-summary/v1",
         "scale_profile": SCALE_PROFILE,
+        **invariant_projection,
+        "full_scale_acceptance": False,
         "gate_id": "g3",
         "run_id": run_id,
         "status": recomputed["status"],
@@ -4149,12 +4459,24 @@ def _g3_routing(summary: Mapping[str, object]) -> dict[str, object]:
     recomputed = summary.get("recomputed")
     if not isinstance(recomputed, Mapping):
         raise G3Blocked("g3_summary_projection_invalid")
+    invariant_projection = validate_platform_invariants(
+        summary.get("active_platforms"),
+        summary.get("platform_invariants"),
+    )
+    if (
+        summary.get("scale_profile") != SCALE_PROFILE
+        or summary.get("full_scale_acceptance") is not False
+    ):
+        raise G3Blocked("g3_summary_projection_invalid")
     status = str(summary.get("status"))
     return {
         "schema_version": "xunce-mid-dual-g3-routing/v1",
         "gate_id": "g3",
         "run_id": summary.get("run_id"),
         "status": status,
+        "scale_profile": SCALE_PROFILE,
+        **invariant_projection,
+        "full_scale_acceptance": False,
         "formal_evidence_eligible": True,
         "midterm_reduced_passed": (
             recomputed.get("g3_midterm_crosscheck_passed") is True
@@ -4173,16 +4495,66 @@ def _render_g3_report(summary: Mapping[str, object]) -> str:
     recomputed = summary.get("recomputed")
     if not isinstance(recomputed, Mapping):
         raise G3Blocked("g3_summary_projection_invalid")
+    validate_platform_invariants(
+        summary.get("active_platforms"),
+        summary.get("platform_invariants"),
+    )
+    if (
+        summary.get("scale_profile") != SCALE_PROFILE
+        or summary.get("full_scale_acceptance") is not False
+        or summary.get("status") not in {"passed", "failed"}
+    ):
+        raise G3Blocked("g3_summary_projection_invalid")
+    status = str(summary["status"])
+    conclusion = (
+        "通过既定中期双门槛交叉检查。"
+        if status == "passed"
+        else "未通过既定中期双门槛交叉检查，保留真实失败结果。"
+    )
+    wheel_timing = recomputed.get("wheel_timing")
+    interface_timing = recomputed.get("interface_timing")
+    if not isinstance(wheel_timing, Mapping) or not isinstance(
+        interface_timing,
+        Mapping,
+    ):
+        raise G3Blocked("g3_summary_projection_invalid")
     lines = [
-        "# G3 闭环覆盖与接口回放正式实验报告",
+        "# G3 缩减规模闭环覆盖与接口回放正式实验报告",
         "",
         f"- 运行标识：`{summary.get('run_id')}`",
-        f"- 证据状态：`{summary.get('status')}`",
-        f"- wheel episode：{recomputed.get('wheel_episode_count')}",
-        f"- wheel step：{recomputed.get('wheel_step_count')}",
-        f"- interface replay：{recomputed.get('interface_replay_count')}",
+        f"- 缩减规模标识：`{SCALE_PROFILE}`",
+        f"- 缩减规模判定状态：`{status}`",
+        "- 坡度硬约束：wheel、legged、hopper 均为 "
+        "`max_traversable_slope_deg == 30.0`",
+        "- wheel 覆盖率："
+        f"{recomputed.get('wheel_coverage_80_count')}/10 达到 80%，"
+        f"均值={recomputed.get('wheel_coverage_mean')}，"
+        "要求 10/10 wheel episode 单独达到 80% 且均值达到 80%",
+        "- wheel 与 G1 配对覆盖率差均值："
+        f"{recomputed.get('paired_g1_coverage_delta_mean')}，要求 ≥ -0.01",
+        "- wheel 中期计时公式：mean / P95 / max ≤ 2000 ms；"
+        f"实测 mean={wheel_timing.get('mean_ms')} ms，"
+        f"P95={wheel_timing.get('p95_ms')} ms，"
+        f"max={wheel_timing.get('max_ms')} ms",
+        "- wheel 最终计时公式：mean / P95 ≤ 1000 ms，"
+        "至少 95% ≤ 1000 ms，max ≤ 2000 ms；"
+        f"实测比例={wheel_timing.get('at_or_below_1000_fraction')}",
+        "- interface 合并计时（3 条 legged + 3 条 Hopper）："
+        "中期 mean / P95 / max ≤ 2000 ms；最终 mean / P95 ≤ 1000 ms，"
+        "至少 95% ≤ 1000 ms，max ≤ 2000 ms；"
+        f"实测 mean={interface_timing.get('mean_ms')} ms，"
+        f"P95={interface_timing.get('p95_ms')} ms，"
+        f"max={interface_timing.get('max_ms')} ms，"
+        f"比例={interface_timing.get('at_or_below_1000_fraction')}",
+        "- 接口正确性与回放身份："
+        f"correctness={recomputed.get('interface_correctness_passed')}，"
+        "exact 3+3="
+        f"{recomputed.get('required_replay_identities_passed')}",
         f"- 中期双门交叉检查：{recomputed.get('g3_midterm_crosscheck_passed')}",
         f"- 最终双门交叉检查：{recomputed.get('g3_final_crosscheck_passed')}",
+        "- 验收范围：本结果仅适用于上述缩减规模与 update80，"
+        "不构成全尺度验收。",
+        f"- 缩减规模结论：{conclusion}",
         "",
         "所有正式样本仅来自已验证的 Task3 freeze、G1 原生正式根和 "
         "Task8 G2 正式根；p01 为十个 wheel episode 的逐步闭环记录，"
@@ -4199,6 +4571,15 @@ def _g3_report_audit(
     recomputed = summary.get("recomputed")
     if not isinstance(recomputed, Mapping):
         raise G3Blocked("g3_summary_projection_invalid")
+    invariant_projection = validate_platform_invariants(
+        summary.get("active_platforms"),
+        summary.get("platform_invariants"),
+    )
+    if (
+        summary.get("scale_profile") != SCALE_PROFILE
+        or summary.get("full_scale_acceptance") is not False
+    ):
+        raise G3Blocked("g3_summary_projection_invalid")
     summary_bytes = (
         json.dumps(
             dict(summary),
@@ -4212,11 +4593,53 @@ def _g3_report_audit(
         "schema_version": "xunce-mid-dual-source-report-audit/v1",
         "gate_id": "g3",
         "run_id": summary["run_id"],
+        "scale_profile": SCALE_PROFILE,
+        **invariant_projection,
+        "full_scale_acceptance": False,
         "renderer_id": "xunce-mid-dual-g3-canonical-report/v1",
         "summary_projection_sha256": _canonical_sha256(recomputed),
         "stored_summary_bytes_sha256": _bytes_sha256(summary_bytes),
         "report_bytes_sha256": _bytes_sha256(report.encode("utf-8")),
         "formal_evidence_eligible": True,
+    }
+
+
+def _g3_platform_invariants_audit(
+    *,
+    run_id: str,
+    config_sha256: str,
+    input_sha256: str,
+    code_sha256: str,
+    upstream_lineage_audit_sha256: str,
+) -> dict[str, object]:
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g3-platform-invariants-audit/v1"
+        ),
+        "gate_id": "g3",
+        "scale_profile": SCALE_PROFILE,
+        "run_id": validate_g3_run_id(run_id),
+        "status": "passed",
+        "formal_evidence_eligible": True,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
+        "config_sha256": _require_sha256(
+            config_sha256,
+            "g3_platform_invariants_audit_invalid",
+        ),
+        "input_sha256": _require_sha256(
+            input_sha256,
+            "g3_platform_invariants_audit_invalid",
+        ),
+        "code_sha256": _require_sha256(
+            code_sha256,
+            "g3_platform_invariants_audit_invalid",
+        ),
+        "upstream_lineage_audit_sha256": _require_sha256(
+            upstream_lineage_audit_sha256,
+            "g3_platform_invariants_audit_invalid",
+        ),
     }
 
 
@@ -4293,6 +4716,8 @@ def _finalize_input_blocker(
         "run_id": run_id,
         "scale_profile": SCALE_PROFILE,
         "formal_evidence_eligible": False,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
         "g1_source_manifest_sha256": None,
         "g2_source_manifest_sha256": None,
         "wheel_selections": [],
@@ -4306,6 +4731,8 @@ def _finalize_input_blocker(
         "run_id": run_id,
         "output_root": G3_OUTPUT_BASE,
         "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
         "input_sha256": _json_artifact_sha256(input_audit),
         "code_sha256": code_lineage["code_sha256"],
         "required_phase_ids": list(G3_REQUIRED_PHASE_IDS),
@@ -4315,10 +4742,15 @@ def _finalize_input_blocker(
             "input_audit_path": "g3_input_audit.json",
             "lineage_audit_path": "lineage_audit.json",
             "report_audit_path": "g3_report_audit.json",
+            "platform_invariants_audit_path": (
+                "platform_invariants_audit.json"
+            ),
         },
         "upstream_binding": {
             "status": "blocked",
             "blocking_reason": reason,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
         },
     }
     store = MidDualRunStore.create_new(run_root, effective_config)
@@ -4331,9 +4763,16 @@ def _finalize_input_blocker(
     summary = {
         "schema_version": "xunce-mid-dual-g3-canonical-summary/v1",
         "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
         "gate_id": "g3",
         "run_id": run_id,
         "status": "blocked",
+        "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
         "formal_evidence_eligible": False,
         "blockers": [reason],
         "recomputed": None,
@@ -4350,15 +4789,23 @@ def _finalize_input_blocker(
         "blocking_reasons": [reason],
     }
     report = (
-        "# G3 正式实验阻塞报告\n\n"
+        "# G3 缩减规模正式实验阻塞报告\n\n"
         f"- 运行标识：`{run_id}`\n"
+        f"- 缩减规模标识：`{SCALE_PROFILE}`\n"
+        "- 坡度硬约束：wheel、legged、hopper 均为 "
+        "`max_traversable_slope_deg == 30.0`\n"
         f"- 阻塞原因：`{reason}`\n"
         "- 未产生或接受任何正式 p01/p02 样本。\n"
+        "- 本状态不构成全尺度验收。\n"
     )
     report_audit = {
         "schema_version": "xunce-mid-dual-source-report-audit/v1",
         "gate_id": "g3",
         "run_id": run_id,
+        "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
         "renderer_id": "xunce-mid-dual-g3-canonical-report/v1",
         "formal_evidence_eligible": False,
         "blocking_reason": reason,
@@ -4377,7 +4824,23 @@ def _finalize_input_blocker(
                 ),
                 "gate_id": "g3",
                 "formal_evidence_eligible": False,
+                "active_platforms": list(ACTIVE_PLATFORMS),
+                "platform_invariants": PLATFORM_INVARIANTS,
                 "blockers": [reason],
+            },
+            "platform_invariants": {
+                "schema_version": (
+                    "xunce-mid-dual-g3-platform-invariants-audit/v1"
+                ),
+                "gate_id": "g3",
+                "scale_profile": SCALE_PROFILE,
+                "run_id": run_id,
+                "status": "blocked",
+                "formal_evidence_eligible": False,
+                "active_platforms": list(ACTIVE_PLATFORMS),
+                "platform_invariants": PLATFORM_INVARIANTS,
+                "full_scale_acceptance": False,
+                "blocking_reason": reason,
             },
         },
     )
@@ -4478,6 +4941,8 @@ def run_g3(
             "formal_evidence_eligible": False,
             "blockers": [],
             "run_id": validated_run_id,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
             "validated_inputs": {
                 "freeze_manifest_sha256": frozen["manifest_sha256"],
                 "g1_source_manifest_sha256": g1_source["manifest_sha256"],
@@ -4507,12 +4972,25 @@ def run_g3(
         environment = store.capture_environment(g1._environment_probe)  # noqa: SLF001
         if environment.get("formal_evidence_eligible") is not True:
             raise G3Blocked("g3_environment_capture_blocked")
+    input_sha256 = str(effective_config["input_sha256"])
+    code_sha256 = str(effective_config["code_sha256"])
+    platform_invariants_audit = _g3_platform_invariants_audit(
+        run_id=validated_run_id,
+        config_sha256=store.config_sha256,
+        input_sha256=input_sha256,
+        code_sha256=code_sha256,
+        upstream_lineage_audit_sha256=upstream_lineage_sha256,
+    )
+    platform_invariants_audit_sha256 = _json_artifact_sha256(
+        platform_invariants_audit
+    )
     _revalidate_g3_accepted_prefix(
         store,
         upstream_lineage_sha256=upstream_lineage_sha256,
+        platform_invariants_audit_sha256=(
+            platform_invariants_audit_sha256
+        ),
     )
-    input_sha256 = str(effective_config["input_sha256"])
-    code_sha256 = str(effective_config["code_sha256"])
     if "p01" not in store.accepted_phase_ids:
         g1 = _import_local_script("run_xunce_mid_dual_g1_coverage")
 
@@ -4544,6 +5022,8 @@ def run_g3(
             "schema_version": "xunce-mid-dual-g3-decision-audit/v1",
             "gate_id": "g3",
             "formal_evidence_eligible": True,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
             "record_count": len(decisions),
             "records": decisions,
         }
@@ -4551,6 +5031,8 @@ def run_g3(
             "schema_version": "xunce-mid-dual-g3-observation-audit/v1",
             "gate_id": "g3",
             "formal_evidence_eligible": True,
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": PLATFORM_INVARIANTS,
             "record_count": len(observations),
             "records": observations,
         }
@@ -4593,6 +5075,9 @@ def run_g3(
                 "frozen_manifest_sha256": frozen["manifest_sha256"],
                 "g1_source_manifest_sha256": g1_source["manifest_sha256"],
                 "g2_source_manifest_sha256": g2_source["manifest_sha256"],
+                "platform_invariants_audit_sha256": (
+                    platform_invariants_audit_sha256
+                ),
             },
         )
     else:
@@ -4666,6 +5151,9 @@ def run_g3(
                 "g2_hopper_resolution_sha256": upstream_binding[
                     "g2_hopper_resolution_sha256"
                 ],
+                "platform_invariants_audit_sha256": (
+                    platform_invariants_audit_sha256
+                ),
             },
         )
     else:
@@ -4677,6 +5165,9 @@ def run_g3(
     _revalidate_g3_accepted_prefix(
         store,
         upstream_lineage_sha256=upstream_lineage_sha256,
+        platform_invariants_audit_sha256=(
+            platform_invariants_audit_sha256
+        ),
     )
     _validate_formal_row_lineage(
         wheel_rows=wheel_rows,
@@ -4729,6 +5220,7 @@ def run_g3(
             "upstream_lineage": upstream_lineage,
             "g3_decisions": decision_audit,
             "g3_observations": observation_audit,
+            "platform_invariants": platform_invariants_audit,
         },
     )
     try:

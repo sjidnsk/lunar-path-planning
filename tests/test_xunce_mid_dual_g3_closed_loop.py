@@ -21,6 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/run_xunce_mid_dual_g3_closed_loop.py"
 CONFIG = ROOT / "configs/xunce_mid_dual_g3_closed_loop_v1.json"
 SCALE_PROFILE = "midterm_reduced_w8x3_update80/v1"
+ACTIVE_PLATFORMS = ["wheel", "legged", "hopper"]
+PLATFORM_INVARIANTS = {
+    platform: {"max_traversable_slope_deg": 30.0}
+    for platform in ACTIVE_PLATFORMS
+}
 UPDATE80_CHECKPOINT_SHA256 = (
     "35e04c86f9f973af028fb08f0175d42ab45378d09e1f2b96ee6aad6e4c12b5b5"
 )
@@ -394,6 +399,8 @@ def test_wheel_gate_requires_ten_of_ten_threshold_successes() -> None:
     )
     assert result["status"] == "failed"
     assert result["wheel"]["coverage_80_count"] == 9
+    assert result["wheel"]["coverage_all_episodes_passed"] is False
+    assert result["wheel"]["coverage_mean_passed"] is False
     assert result["g3_midterm_crosscheck_passed"] is False
 
 
@@ -404,6 +411,7 @@ def test_wheel_g1_paired_coverage_delta_mean_is_at_least_minus_001() -> None:
         row["paired_g1_coverage"] = 0.99
     result = _evaluate(module, wheel_rows=rows)
     assert result["wheel"]["paired_g1_coverage_delta_mean"] == -0.01
+    assert result["wheel"]["paired_g1_delta_passed"] is True
     assert result["status"] == "passed"
 
     rows[0]["coverage"] = 0.9799
@@ -411,6 +419,37 @@ def test_wheel_g1_paired_coverage_delta_mean_is_at_least_minus_001() -> None:
     result = _evaluate(module, wheel_rows=rows)
     assert result["status"] == "failed"
     assert result["wheel"]["paired_g1_coverage_delta_mean"] < -0.01
+    assert result["wheel"]["paired_g1_delta_passed"] is False
+
+
+def test_g3_timing_formulas_cover_midterm_final_and_95_percent_boundary() -> None:
+    module = _module()
+
+    nineteen_of_twenty = module._timing_statistics(  # noqa: SLF001
+        [900.0] * 19 + [1900.0]
+    )
+    assert nineteen_of_twenty["mean_ms"] <= 1000.0
+    assert nineteen_of_twenty["p95_ms"] <= 1000.0
+    assert nineteen_of_twenty["max_ms"] <= 2000.0
+    assert nineteen_of_twenty["count_le_1000ms"] == 19
+    assert nineteen_of_twenty["at_or_below_1000_fraction"] == 0.95
+    assert nineteen_of_twenty["midterm_reduced_passed"] is True
+    assert nineteen_of_twenty["final_threshold_reduced_passed"] is True
+
+    eighteen_of_twenty = module._timing_statistics(  # noqa: SLF001
+        [800.0] * 18 + [1100.0, 1200.0]
+    )
+    assert eighteen_of_twenty["mean_ms"] <= 1000.0
+    assert eighteen_of_twenty["max_ms"] <= 2000.0
+    assert eighteen_of_twenty["at_or_below_1000_fraction"] == 0.90
+    assert eighteen_of_twenty["final_threshold_reduced_passed"] is False
+
+    over_absolute_max = module._timing_statistics(  # noqa: SLF001
+        [100.0] * 20 + [2000.0001]
+    )
+    assert over_absolute_max["max_ms"] > 2000.0
+    assert over_absolute_max["midterm_reduced_passed"] is False
+    assert over_absolute_max["final_threshold_reduced_passed"] is False
 
 
 def test_every_planner_call_preserves_the_g2_timing_field_contract() -> None:
@@ -436,6 +475,8 @@ def test_legged_and_hopper_each_have_three_platform_correct_replays() -> None:
         "hopper": 3,
     }
     assert result["interface"]["cross_root_join_passed"] is True
+    assert result["interface"]["interface_correctness_passed"] is True
+    assert result["interface"]["required_replay_identities_passed"] is True
 
     interface = _interface_rows()
     interface[0]["request_id"] = interface[1]["request_id"]
@@ -508,6 +549,8 @@ def test_g3_config_freezes_exact_scale_counts_thresholds_and_two_phases() -> Non
     }
     assert payload["checkpoint_sha256"] == UPDATE80_CHECKPOINT_SHA256
     assert payload["policy_state_sha256"] == UPDATE80_POLICY_STATE_SHA256
+    assert payload["active_platforms"] == ACTIVE_PLATFORMS
+    assert payload["platform_invariants"] == PLATFORM_INVARIANTS
     assert payload["phase_contract"] == {
         "p01": {
             "name": "wheel_closed_loop",
@@ -528,6 +571,123 @@ def test_g3_config_freezes_exact_scale_counts_thresholds_and_two_phases() -> Non
         "profile": "ppo-standard-wheel-grid/v1",
         "capability_revision": "ppo-path-planner-adapter/v1",
     }
+
+
+def test_g3_slope_invariant_is_exact_for_every_active_platform() -> None:
+    module = _module()
+    assert module.validate_platform_invariants(
+        ACTIVE_PLATFORMS,
+        PLATFORM_INVARIANTS,
+    ) == {
+        "active_platforms": ACTIVE_PLATFORMS,
+        "platform_invariants": PLATFORM_INVARIANTS,
+    }
+
+    for platform in ACTIVE_PLATFORMS:
+        drifted = copy.deepcopy(PLATFORM_INVARIANTS)
+        drifted[platform]["max_traversable_slope_deg"] = 29.999
+        with pytest.raises(
+            module.G3Blocked,
+            match="g3_platform_slope_invariant",
+        ):
+            module.validate_platform_invariants(ACTIVE_PLATFORMS, drifted)
+
+    missing = copy.deepcopy(PLATFORM_INVARIANTS)
+    del missing["hopper"]
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_platform_slope_invariant",
+    ):
+        module.validate_platform_invariants(ACTIVE_PLATFORMS, missing)
+
+
+@pytest.mark.parametrize("status", ("passed", "failed"))
+def test_g3_report_is_explicitly_reduced_scale_for_passed_and_failed(
+    status: str,
+) -> None:
+    module = _module()
+    recomputed = {
+        "status": status,
+        "scale_profile": SCALE_PROFILE,
+        "active_platforms": ACTIVE_PLATFORMS,
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
+        "wheel_episode_count": 10,
+        "wheel_step_count": 10,
+        "interface_replay_count": 6,
+        "wheel_coverage_mean": 0.8,
+        "wheel_coverage_80_count": 10,
+        "paired_g1_coverage_delta_mean": -0.01,
+        "wheel_timing": {
+            "mean_ms": 900.0,
+            "p95_ms": 950.0,
+            "max_ms": 1000.0,
+            "at_or_below_1000_fraction": 1.0,
+        },
+        "interface_timing": {
+            "mean_ms": 900.0,
+            "p95_ms": 950.0,
+            "max_ms": 1000.0,
+            "at_or_below_1000_fraction": 1.0,
+        },
+        "wheel_coverage_all_episodes_passed": status == "passed",
+        "wheel_coverage_mean_passed": status == "passed",
+        "paired_g1_delta_passed": status == "passed",
+        "wheel_timing_midterm_passed": status == "passed",
+        "wheel_timing_final_passed": status == "passed",
+        "interface_timing_midterm_passed": status == "passed",
+        "interface_timing_final_passed": status == "passed",
+        "interface_correctness_passed": True,
+        "required_replay_identities_passed": True,
+        "g3_midterm_crosscheck_passed": status == "passed",
+        "g3_final_crosscheck_passed": status == "passed",
+    }
+    summary = module._g3_summary(  # noqa: SLF001
+        run_id=f"g3-{status}",
+        recomputed=recomputed,
+    )
+    report = module._render_g3_report(summary)  # noqa: SLF001
+    audit = module._g3_report_audit(  # noqa: SLF001
+        summary=summary,
+        report=report,
+    )
+    routing = module._g3_routing(summary)  # noqa: SLF001
+
+    assert report.startswith("# G3 缩减规模闭环覆盖与接口回放正式实验报告")
+    assert f"- 缩减规模判定状态：`{status}`" in report
+    assert f"`{SCALE_PROFILE}`" in report
+    assert "10/10 wheel episode" in report
+    assert "mean / P95 / max ≤ 2000 ms" in report
+    assert "mean / P95 ≤ 1000 ms" in report
+    assert "至少 95% ≤ 1000 ms" in report
+    assert "3 条 legged + 3 条 Hopper" in report
+    assert "不构成全尺度验收" in report
+    assert "- 缩减规模结论：" in report
+    assert summary["scale_profile"] == SCALE_PROFILE
+    assert summary["full_scale_acceptance"] is False
+    assert summary["active_platforms"] == ACTIVE_PLATFORMS
+    assert summary["platform_invariants"] == PLATFORM_INVARIANTS
+    assert audit["scale_profile"] == SCALE_PROFILE
+    assert audit["full_scale_acceptance"] is False
+    assert audit["active_platforms"] == ACTIVE_PLATFORMS
+    assert audit["platform_invariants"] == PLATFORM_INVARIANTS
+    assert routing["scale_profile"] == SCALE_PROFILE
+    assert routing["full_scale_acceptance"] is False
+    assert routing["active_platforms"] == ACTIVE_PLATFORMS
+    assert routing["platform_invariants"] == PLATFORM_INVARIANTS
+
+    drifted = copy.deepcopy(recomputed)
+    drifted["platform_invariants"]["hopper"][
+        "max_traversable_slope_deg"
+    ] = 30.1
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_platform_slope_invariant",
+    ):
+        module._g3_summary(  # noqa: SLF001
+            run_id=f"g3-{status}-drifted",
+            recomputed=drifted,
+        )
 
 
 def test_g3_production_uses_exact_ten_without_standard_schedule_padding() -> None:
@@ -1037,6 +1197,8 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
         "run_id": "g3-formal",
         "scale_profile": SCALE_PROFILE,
         "formal_evidence_eligible": True,
+        "active_platforms": ACTIVE_PLATFORMS,
+        "platform_invariants": PLATFORM_INVARIANTS,
         "g1_source_manifest_sha256": g1_manifest,
         "g2_source_manifest_sha256": g2_manifest,
         "wheel_selections": [],
@@ -1063,6 +1225,8 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
         "g2_provider_identity_sha256": _sha("provider-identity"),
         "g2_oracle_identity_sha256": _sha("oracle-identity"),
         "g2_hopper_resolution_sha256": _sha("hopper-resolution"),
+        "active_platforms": ACTIVE_PLATFORMS,
+        "platform_invariants": PLATFORM_INVARIANTS,
     }
     effective = module.build_g3_effective_config(
         base_config=base,
@@ -1084,14 +1248,53 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
         "source_contract_sha256",
         "evidence_binding",
         "upstream_binding",
+        "active_platforms",
+        "platform_invariants",
     }
     assert effective["evidence_binding"] == {
         "schema_version": "xunce-mid-dual-g3-evidence-binding/v1",
         "input_audit_path": "g3_input_audit.json",
         "lineage_audit_path": "lineage_audit.json",
         "report_audit_path": "g3_report_audit.json",
+        "platform_invariants_audit_path": (
+            "platform_invariants_audit.json"
+        ),
     }
     assert effective["upstream_binding"] == upstream
+    assert effective["active_platforms"] == ACTIVE_PLATFORMS
+    assert effective["platform_invariants"] == PLATFORM_INVARIANTS
+
+    drifted_input = copy.deepcopy(input_audit)
+    drifted_input["platform_invariants"]["wheel"][
+        "max_traversable_slope_deg"
+    ] = 29.0
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_platform_slope_invariant",
+    ):
+        module.build_g3_effective_config(
+            base_config=base,
+            run_id="g3-formal",
+            input_audit=drifted_input,
+            code_lineage=lineage,
+            upstream_binding=upstream,
+        )
+
+    drifted_upstream = copy.deepcopy(upstream)
+    drifted_upstream["platform_invariants"]["legged"][
+        "max_traversable_slope_deg"
+    ] = 31.0
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_platform_slope_invariant",
+    ):
+        module.build_g3_effective_config(
+            base_config=base,
+            run_id="g3-formal",
+            input_audit=input_audit,
+            code_lineage=lineage,
+            upstream_binding=drifted_upstream,
+        )
 
 
 def test_g1_native_effective_config_does_not_require_generic_evidence_wrapper() -> None:
@@ -1160,11 +1363,22 @@ def test_g1_native_effective_config_does_not_require_generic_evidence_wrapper() 
 
 def test_g3_phase_semantics_reject_fixture_wrong_kind_and_p02_before_p01() -> None:
     module = _module()
-    wheel = _wheel_rows(module)
-    for row in wheel:
-        row["execution_class"] = "formal"
-        row["formal_sample"] = True
-        row["timing_contract_id"] = "five-phase-sequential-ns/v1"
+    wheel, _, _ = module.materialize_wheel_authority(
+        _wheel_rows(module),
+        config_sha256=_sha("g3-config"),
+        input_sha256=_sha("g3-input"),
+        code_sha256=_sha("g3-code"),
+        frozen_manifest_sha256=_sha("freeze-manifest"),
+        g1_source_manifest_sha256=_sha("g1-manifest"),
+        g2_source_manifest_sha256=_sha("g2-manifest"),
+    )
+    p01_projection = module.validate_g3_phase_rows(
+        phase_id="p01",
+        rows=wheel,
+        accepted_phase_ids=(),
+    )
+    assert p01_projection["active_platforms"] == ACTIVE_PLATFORMS
+    assert p01_projection["platform_invariants"] == PLATFORM_INVARIANTS
     with pytest.raises(module.G3Blocked, match="g3_phase_requires_p01"):
         module.validate_g3_phase_rows(
             phase_id="p02",

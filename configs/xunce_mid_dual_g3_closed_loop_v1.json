@@ -4,6 +4,22 @@
   "runner_id": "run_xunce_mid_dual_g3_closed_loop/v1",
   "scale_profile": "midterm_reduced_w8x3_update80/v1",
   "output_base": "D:/xunce/out/mid_dual/g3",
+  "active_platforms": [
+    "wheel",
+    "legged",
+    "hopper"
+  ],
+  "platform_invariants": {
+    "wheel": {
+      "max_traversable_slope_deg": 30.0
+    },
+    "legged": {
+      "max_traversable_slope_deg": 30.0
+    },
+    "hopper": {
+      "max_traversable_slope_deg": 30.0
+    }
+  },
   "required_phase_ids": [
     "p01",
     "p02"
