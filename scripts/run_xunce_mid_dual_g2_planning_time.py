@@ -58,6 +58,7 @@ G2_PHASE_NAMES = {
     "p04": "formal_worker_four",
 }
 G2_MODES = ("preflight", "diagnostic", "formal")
+R3_TERMINAL_BLOCKED_FILE = "terminal-blocked.json"
 TIMING_CONTRACT_ID = "five-phase-sequential-ns/v1"
 STATIC_CACHE_CONTRACT_ID = "immutable-terrain-static-validation-only/v1"
 FORMAL_ENVIRONMENT_POLICY_SCHEMA_VERSION = (
@@ -1754,6 +1755,1785 @@ def build_nonformal_schedules(
     }
 
 
+def _validated_r3_blind_request_matrix(
+    requests: Sequence[Mapping[str, object]],
+    *,
+    producer_schema_contract: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Validate quotas without importing truth labels into provider rows."""
+
+    import xunce_mid_dual_g2_inputs as inputs
+
+    if not isinstance(requests, Sequence) or len(requests) != 129:
+        raise G2Blocked("g2_r3_request_matrix")
+    validated = [
+        inputs.validate_r3_provider_blind_request(
+            row,
+            producer_schema_contract,
+        )
+        for row in requests
+    ]
+    exact_binding = (
+        producer_schema_contract.get("schema_version")
+        == inputs.R3_PRODUCER_BINDING_SCHEMA_VERSION
+    )
+    if exact_binding:
+        request_ids = {
+            str(row["provider_request_id"]) for row in validated
+        }
+        request_sha256s = {
+            str(row["provider_request_sha256"]) for row in validated
+        }
+    else:
+        request_ids = {str(row["request_id"]) for row in validated}
+        request_sha256s = {
+            str(row["provider_request_identity_sha256"])
+            for row in validated
+        }
+    if len(request_ids) != 129 or len(request_sha256s) != 129:
+        raise G2Blocked("g2_r3_request_matrix")
+    normalized: list[dict[str, object]] = []
+    for platform in G2_PLATFORMS:
+        platform_rows = [
+            row
+            for row in validated
+            if (
+                row["platform_kind"] if exact_binding else row["platform"]
+            )
+            == platform
+        ]
+        if (
+            len(platform_rows) != 43
+            or sum(row["scale"] == "standard" for row in platform_rows) != 33
+            or sum(row["scale"] == "kilometer" for row in platform_rows) != 10
+        ):
+            raise G2Blocked("g2_r3_request_matrix")
+        for request_index, row in enumerate(platform_rows):
+            if exact_binding:
+                execution_request = (
+                    inputs.build_r3_provider_execution_request(
+                        row,
+                        producer_binding=producer_schema_contract,
+                    )
+                )
+                normalized.append(
+                    {
+                        "execution_request_sha256": execution_request[
+                            "execution_request_sha256"
+                        ],
+                        "platform": row["platform_kind"],
+                        "provider_blind_request": row,
+                        "provider_execution_request": execution_request,
+                        "provider_request_identity_sha256": row[
+                            "provider_request_sha256"
+                        ],
+                        "provider_request_sha256": row[
+                            "provider_request_sha256"
+                        ],
+                        "request_id": row["provider_request_id"],
+                        "request_index": request_index,
+                        "resource_policy": execution_request[
+                            "resource_policy"
+                        ],
+                        "resource_policy_sha256": execution_request[
+                            "resource_policy_sha256"
+                        ],
+                        "scale": row["scale"],
+                    }
+                )
+            else:
+                normalized.append(
+                    {
+                        **row,
+                        "request_index": request_index,
+                    }
+                )
+    return normalized
+
+
+def _scheduled_r3_call(
+    request: Mapping[str, object],
+    *,
+    repeat_index: int,
+    formal_sample: bool,
+    schedule_kind: str,
+    probe_class: str | None = None,
+) -> dict[str, object]:
+    exact_execution = request.get("provider_execution_request")
+    identity = str(
+        request.get(
+            "execution_request_sha256",
+            request["provider_request_identity_sha256"],
+        )
+    )
+    repeat_tag = (
+        f"r{repeat_index}"
+        if repeat_index >= 0
+        else f"d{schedule_kind}"
+    )
+    call_id = (
+        f"g2-r3-call-{identity[:24]}-{repeat_tag}"
+        if formal_sample
+        else f"g2-r3-diagnostic-{schedule_kind}-{identity[:20]}"
+    )
+    call = {
+        "call_id": call_id,
+        "request_id": request["request_id"],
+        "platform": request["platform"],
+        "scale": request["scale"],
+        "request_index": request["request_index"],
+        "provider_request_identity_sha256": identity,
+        "provider_worker_request": (
+            exact_execution
+            if type(exact_execution) is dict
+            else {
+                key: value
+                for key, value in request.items()
+                if key != "request_index"
+            }
+        ),
+        "repeat_index": repeat_index,
+        "formal_sample": formal_sample,
+        "schedule_kind": schedule_kind,
+    }
+    if type(exact_execution) is dict:
+        call.update(
+            {
+                "execution_request_sha256": request[
+                    "execution_request_sha256"
+                ],
+                "provider_request_sha256": request[
+                    "provider_request_sha256"
+                ],
+                "resource_policy_sha256": request[
+                    "resource_policy_sha256"
+                ],
+            }
+        )
+    if probe_class is not None:
+        call["probe_class"] = probe_class
+    return call
+
+
+def build_r3_formal_schedule(
+    input_set_id: str,
+    requests: Sequence[Mapping[str, object]],
+    *,
+    producer_schema_contract: Mapping[str, object],
+) -> dict[str, object]:
+    """Build the fixed 129 x 5 schedule from blind rows only."""
+
+    if type(input_set_id) is not str or not input_set_id:
+        raise G2Blocked("g2_r3_input_set_id")
+    normalized = _validated_r3_blind_request_matrix(
+        requests,
+        producer_schema_contract=producer_schema_contract,
+    )
+    calls: list[dict[str, object]] = []
+    for platform in G2_PLATFORMS:
+        platform_rows = [
+            row for row in normalized if row["platform"] == platform
+        ]
+        for repeat_index in range(G2_REPEATS):
+            ordered = sorted(
+                platform_rows,
+                key=lambda row: _domain_hash(
+                    "xunce-mid-dual-g2-formal-order/v2",
+                    input_set_id.encode("utf-8"),
+                    platform.encode("ascii"),
+                    str(repeat_index).encode("ascii"),
+                    str(
+                        row["provider_request_identity_sha256"]
+                    ).encode("ascii"),
+                ),
+            )
+            calls.extend(
+                _scheduled_r3_call(
+                    row,
+                    repeat_index=repeat_index,
+                    formal_sample=True,
+                    schedule_kind="formal",
+                )
+                for row in ordered
+            )
+    for submission_index, call in enumerate(calls):
+        call["submission_index"] = submission_index
+    if (
+        len(calls) != 645
+        or len({str(call["call_id"]) for call in calls}) != 645
+    ):
+        raise G2Blocked("g2_r3_formal_schedule")
+    identity_binding = (
+        {
+            "producer_binding_sha256": producer_schema_contract.get(
+                "binding_sha256"
+            )
+        }
+        if producer_schema_contract.get("schema_version")
+        == "xunce-mid-dual-g2-producer-binding/v1"
+        else {
+            "producer_schema_contract_sha256": (
+                producer_schema_contract.get("contract_sha256")
+            )
+        }
+    )
+    core = {
+        "schema_version": "xunce-mid-dual-g2-formal-schedule/v2",
+        "input_set_id": input_set_id,
+        **identity_binding,
+        "repeat_count": 5,
+        "formal_worker_count": 4,
+        "calls": calls,
+    }
+    return {
+        **core,
+        "schedule_sha256": _domain_hash(
+            "xunce-mid-dual-g2-formal-schedule/v2",
+            _canonical_bytes(core),
+        ),
+    }
+
+
+def build_r3_nonformal_schedules(
+    requests: Sequence[Mapping[str, object]],
+    *,
+    producer_schema_contract: Mapping[str, object],
+    probe_selection: Sequence[Mapping[str, object]],
+) -> dict[str, list[dict[str, object]]]:
+    """Build 3 cold, 30 warmup, and exact 12 + 12 p03 calls."""
+
+    normalized = _validated_r3_blind_request_matrix(
+        requests,
+        producer_schema_contract=producer_schema_contract,
+    )
+    by_id = {str(row["request_id"]): row for row in normalized}
+    expected_probe_keys = {
+        (platform, scale, request_class)
+        for platform in G2_PLATFORMS
+        for scale in G2_SCALES
+        for request_class in ("normal_reachable", "hard_reachable")
+    }
+    selected: list[tuple[dict[str, object], str]] = []
+    observed_probe_keys: set[tuple[str, str, str]] = set()
+    if not isinstance(probe_selection, Sequence) or len(probe_selection) != 12:
+        raise G2Blocked("g2_r3_probe_selection")
+    for raw in probe_selection:
+        if type(raw) is not dict or set(raw) != {
+            "request_id",
+            "platform",
+            "scale",
+            "probe_class",
+        }:
+            raise G2Blocked("g2_r3_probe_selection")
+        request = by_id.get(str(raw["request_id"]))
+        probe_key = (
+            str(raw["platform"]),
+            str(raw["scale"]),
+            str(raw["probe_class"]),
+        )
+        if (
+            request is None
+            or request["platform"] != raw["platform"]
+            or request["scale"] != raw["scale"]
+            or probe_key in observed_probe_keys
+        ):
+            raise G2Blocked("g2_r3_probe_selection")
+        observed_probe_keys.add(probe_key)
+        selected.append((request, str(raw["probe_class"])))
+    if observed_probe_keys != expected_probe_keys:
+        raise G2Blocked("g2_r3_probe_selection")
+    cold: list[dict[str, object]] = []
+    warmup: list[dict[str, object]] = []
+    for platform in G2_PLATFORMS:
+        platform_rows = [
+            row for row in normalized if row["platform"] == platform
+        ]
+        cold.append(
+            _scheduled_r3_call(
+                platform_rows[0],
+                repeat_index=-1,
+                formal_sample=False,
+                schedule_kind="cold",
+            )
+        )
+        warmup.extend(
+            _scheduled_r3_call(
+                row,
+                repeat_index=-1,
+                formal_sample=False,
+                schedule_kind=f"warmup-{index:02d}",
+            )
+            for index, row in enumerate(platform_rows[:10])
+        )
+    worker_one = [
+        _scheduled_r3_call(
+            request,
+            repeat_index=-1,
+            formal_sample=False,
+            schedule_kind="worker-one",
+            probe_class=probe_class,
+        )
+        for request, probe_class in selected
+    ]
+    worker_four = [
+        _scheduled_r3_call(
+            request,
+            repeat_index=-1,
+            formal_sample=False,
+            schedule_kind="worker-four",
+            probe_class=probe_class,
+        )
+        for request, probe_class in selected
+    ]
+    return {
+        "cold_start": cold,
+        "warmup": warmup,
+        "worker_one": worker_one,
+        "worker_four": worker_four,
+    }
+
+
+def canonicalize_r3_provider_outcome(
+    raw: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate mutually exclusive success/failure payloads before hashing."""
+
+    success_keys = {
+        "outcome_type",
+        "request_id",
+        "platform_kind",
+        "route",
+        "validation",
+    }
+    failure_keys = {
+        "outcome_type",
+        "request_id",
+        "platform_kind",
+        "category",
+        "reason_code",
+        "stage",
+        "checks",
+    }
+    if type(raw) is not dict or raw.get("outcome_type") not in {
+        "success",
+        "failure",
+    }:
+        raise G2Blocked("g2_r3_outcome_schema")
+    if (
+        type(raw.get("request_id")) is not str
+        or not raw["request_id"]
+        or raw.get("platform_kind") not in G2_PLATFORMS
+    ):
+        raise G2Blocked("g2_r3_outcome_schema")
+    if raw["outcome_type"] == "success":
+        validation = raw.get("validation")
+        if (
+            set(raw) != success_keys
+            or type(raw.get("route")) is not list
+            or not raw["route"]
+            or type(validation) is not dict
+            or set(validation)
+            != {"validator_id", "level", "passed", "checks"}
+            or type(validation.get("validator_id")) is not str
+            or not validation["validator_id"]
+            or validation.get("level") != "L2"
+            or validation.get("passed") is not True
+            or type(validation.get("checks")) is not list
+        ):
+            raise G2Blocked("g2_r3_outcome_schema")
+        provider_success = True
+        route_l2_valid = True
+    else:
+        if (
+            set(raw) != failure_keys
+            or any(
+                type(raw.get(field)) is not str or not raw[field]
+                for field in ("category", "reason_code", "stage")
+            )
+            or type(raw.get("checks")) is not list
+        ):
+            raise G2Blocked("g2_r3_outcome_schema")
+        provider_success = False
+        route_l2_valid = False
+    canonical_outcome = dict(raw)
+    return {
+        "canonical_outcome": canonical_outcome,
+        "provider_success": provider_success,
+        "route_l2_valid": route_l2_valid,
+        "provider_result_sha256": _domain_hash(
+            "xunce-mid-dual-g2-provider-result/v2",
+            _canonical_bytes(canonical_outcome),
+        ),
+    }
+
+
+def open_r3_truth_after_provider_batch(
+    provider_rows: Sequence[Mapping[str, object]],
+    *,
+    expected_call_count: int,
+    truth_loader: Callable[[], object],
+) -> object:
+    """Open truth lazily only after the complete provider batch is durable."""
+
+    if (
+        type(expected_call_count) is not int
+        or expected_call_count <= 0
+        or not isinstance(provider_rows, Sequence)
+        or len(provider_rows) != expected_call_count
+        or len(
+            {
+                str(row.get("call_id"))
+                for row in provider_rows
+                if type(row) is dict and row.get("call_id")
+            }
+        )
+        != expected_call_count
+    ):
+        raise G2Blocked("g2_r3_provider_batch_incomplete")
+    if not callable(truth_loader):
+        raise G2Blocked("g2_r3_truth_loader")
+    truth = truth_loader()
+    if not isinstance(truth, Sequence):
+        raise G2Blocked("g2_r3_truth_sidecar")
+    return truth
+
+
+def open_r3_truth_after_provider_batches(
+    worker_one_rows: Sequence[Mapping[str, object]],
+    worker_four_rows: Sequence[Mapping[str, object]],
+    *,
+    truth_loader: Callable[[], object],
+) -> object:
+    """Open parent-owned truth only after both fixed p03 batches are complete."""
+
+    if (
+        len(worker_one_rows) != 12
+        or len(worker_four_rows) != 12
+        or len(
+            {
+                str(row.get("call_id"))
+                for row in worker_one_rows
+                if type(row) is dict and row.get("call_id")
+            }
+        )
+        != 12
+        or len(
+            {
+                str(row.get("call_id"))
+                for row in worker_four_rows
+                if type(row) is dict and row.get("call_id")
+            }
+        )
+        != 12
+    ):
+        raise G2Blocked("g2_r3_provider_batch_incomplete")
+    return open_r3_truth_after_provider_batch(
+        [*worker_one_rows, *worker_four_rows],
+        expected_call_count=24,
+        truth_loader=truth_loader,
+    )
+
+
+def select_r3_formal_timing_rows(
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Select only the exact 645 p04 rows for a formal timing distribution."""
+
+    selected = [
+        dict(row)
+        for row in rows
+        if type(row) is dict and row.get("formal_sample") is True
+    ]
+    if (
+        len(selected) != 645
+        or len({str(row.get("call_id")) for row in selected}) != 645
+        or any(
+            row.get("schedule_kind") != "formal"
+            or type(row.get("call_id")) is not str
+            or not row["call_id"]
+            for row in selected
+        )
+    ):
+        raise G2Blocked("g2_r3_formal_timing_distribution")
+    for row in selected:
+        validate_timing_payload(row.get("timing"))
+    return selected
+
+
+def execute_r3_timing_pure_pipeline(
+    encoded_request: object,
+    *,
+    preload_request: Callable[[object], object],
+    enqueue_request: Callable[[object], object],
+    execute_timed_provider: Callable[[object], Mapping[str, object]],
+    open_truth: Callable[[], object],
+    journal_result: Callable[[object], object],
+    summarize_result: Callable[[object], object],
+) -> dict[str, object]:
+    """Make the single timed Provider region explicit and auditable."""
+
+    callbacks = (
+        preload_request,
+        enqueue_request,
+        execute_timed_provider,
+        open_truth,
+        journal_result,
+        summarize_result,
+    )
+    if not all(callable(callback) for callback in callbacks):
+        raise G2Blocked("g2_r3_timing_purity")
+    preloaded = preload_request(encoded_request)
+    queued = enqueue_request(preloaded)
+    timed = execute_timed_provider(queued)
+    if type(timed) is not dict:
+        raise G2Blocked("g2_r3_timing_purity")
+    timing = validate_timing_payload(timed.get("timing"))
+    truth = open_truth()
+    journal = journal_result(timed)
+    summary = summarize_result(journal)
+    return {
+        **dict(timed),
+        "timing": timing,
+        "truth": truth,
+        "journal": journal,
+        "summary": summary,
+        "outside_clock_ignored": True,
+    }
+
+
+def recompute_r3_six_strata_summary(
+    formal_rows: Sequence[Mapping[str, object]],
+    truth_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Independently recompute six platform/scale cells from raw rows."""
+
+    if len(formal_rows) != 645 or len(truth_rows) != 129:
+        raise G2Blocked("g2_r3_summary_matrix")
+    truth_by_id: dict[str, dict[str, object]] = {}
+    for raw in truth_rows:
+        if (
+            type(raw) is not dict
+            or set(raw)
+            != {"request_id", "platform", "scale", "oracle_reachable"}
+            or type(raw.get("request_id")) is not str
+            or raw.get("platform") not in G2_PLATFORMS
+            or raw.get("scale") not in G2_SCALES
+            or type(raw.get("oracle_reachable")) is not bool
+            or raw["request_id"] in truth_by_id
+        ):
+            raise G2Blocked("g2_r3_truth_sidecar")
+        truth_by_id[str(raw["request_id"])] = dict(raw)
+    grouped: dict[str, list[dict[str, object]]] = {}
+    call_ids: set[str] = set()
+    for raw in formal_rows:
+        required = {
+            "call_id",
+            "request_id",
+            "platform",
+            "scale",
+            "repeat_index",
+            "provider_success",
+            "route_l2_valid",
+            "elapsed_ms",
+        }
+        if type(raw) is not dict or not required.issubset(raw):
+            raise G2Blocked("g2_r3_formal_row")
+        call_id = raw["call_id"]
+        request_id = raw["request_id"]
+        truth = truth_by_id.get(str(request_id))
+        if (
+            type(call_id) is not str
+            or not call_id
+            or call_id in call_ids
+            or truth is None
+            or raw["platform"] != truth["platform"]
+            or raw["scale"] != truth["scale"]
+            or type(raw["repeat_index"]) is not int
+            or not 0 <= raw["repeat_index"] < 5
+            or type(raw["provider_success"]) is not bool
+            or type(raw["route_l2_valid"]) is not bool
+            or type(raw["elapsed_ms"]) not in {int, float}
+            or isinstance(raw["elapsed_ms"], bool)
+            or not math.isfinite(float(raw["elapsed_ms"]))
+            or float(raw["elapsed_ms"]) < 0.0
+            or (raw["route_l2_valid"] and not raw["provider_success"])
+        ):
+            raise G2Blocked("g2_r3_formal_row")
+        call_ids.add(call_id)
+        grouped.setdefault(str(request_id), []).append(dict(raw))
+    if set(grouped) != set(truth_by_id):
+        raise G2Blocked("g2_r3_summary_matrix")
+    for request_id, rows in grouped.items():
+        if (
+            len(rows) != 5
+            or {int(row["repeat_index"]) for row in rows} != set(range(5))
+            or len(
+                {
+                    (
+                        row["platform"],
+                        row["scale"],
+                        row["provider_success"],
+                        row["route_l2_valid"],
+                    )
+                    for row in rows
+                }
+            )
+            != 1
+        ):
+            raise G2Blocked("g2_r3_summary_matrix")
+        if truth_by_id[request_id]["oracle_reachable"] is False and any(
+            row["route_l2_valid"] for row in rows
+        ):
+            raise G2Blocked("g2_r3_unreachable_l2")
+    reachable_unique = sum(
+        truth["oracle_reachable"] is True for truth in truth_by_id.values()
+    )
+    if reachable_unique != 114:
+        raise G2Blocked("g2_r3_truth_quota")
+    strata: dict[str, dict[str, object]] = {}
+    for platform in G2_PLATFORMS:
+        for scale in G2_SCALES:
+            request_ids = [
+                request_id
+                for request_id, truth in truth_by_id.items()
+                if truth["platform"] == platform and truth["scale"] == scale
+            ]
+            expected_count = 33 if scale == "standard" else 10
+            expected_reachable = 30 if scale == "standard" else 8
+            if (
+                len(request_ids) != expected_count
+                or sum(
+                    truth_by_id[request_id]["oracle_reachable"] is True
+                    for request_id in request_ids
+                )
+                != expected_reachable
+            ):
+                raise G2Blocked("g2_r3_truth_quota")
+            rows = [
+                row
+                for request_id in request_ids
+                for row in grouped[request_id]
+            ]
+            reachable_rows = [
+                row
+                for request_id in request_ids
+                if truth_by_id[request_id]["oracle_reachable"] is True
+                for row in grouped[request_id]
+            ]
+            elapsed = [float(row["elapsed_ms"]) for row in reachable_rows]
+            passed_1s = sum(value <= 1000.0 for value in elapsed)
+            passed_2s = sum(value <= 2000.0 for value in elapsed)
+            key = f"{platform}/{scale}"
+            strata[key] = {
+                "unique_request_count": len(request_ids),
+                "reachable_expected_unique_request_count": expected_reachable,
+                "unreachable_unique_request_count": (
+                    expected_count - expected_reachable
+                ),
+                "raw_call_count": len(rows),
+                "reachable_expected_call_count": len(reachable_rows),
+                "provider_success_count": sum(
+                    row["provider_success"] for row in reachable_rows
+                ),
+                "route_l2_valid_count": sum(
+                    row["route_l2_valid"] for row in reachable_rows
+                ),
+                "at_or_below_1000ms_count": passed_1s,
+                "at_or_below_1000ms_proportion": passed_1s / len(elapsed),
+                "at_or_below_2000ms_count": passed_2s,
+                "at_or_below_2000ms_proportion": passed_2s / len(elapsed),
+                "mean_ms": sum(elapsed) / len(elapsed),
+                "p50_ms": _nearest_rank(elapsed, 0.50),
+                "p95_ms": _nearest_rank(elapsed, 0.95),
+                "max_ms": max(elapsed),
+            }
+    return {
+        "schema_version": "xunce-mid-dual-g2-canonical-summary/v2",
+        "formal_call_count": 645,
+        "unique_request_count": 129,
+        "reachable_unique_request_count": reachable_unique,
+        "unreachable_unique_request_count": 15,
+        "strata": strata,
+    }
+
+
+def validate_r3_execution_manifest(
+    manifest: Mapping[str, object],
+) -> dict[str, object]:
+    """Reject legacy roots and accept only a new artifact-bound v2 manifest."""
+
+    if (
+        type(manifest) is not dict
+        or manifest.get("schema_version")
+        != "xunce-mid-dual-g2-execution-bundle/v2"
+        or manifest.get("approval_schema_version")
+        != "xunce-mid-dual-g2-artifact-bound-approval/v2"
+    ):
+        raise G2Blocked("g2_r3_legacy_bundle_ineligible")
+    required = {
+        "approval_artifact_path",
+        "approval_artifact_sha256",
+        "approval_schema_version",
+        "approval_target_schema_version",
+        "approval_target_sha256",
+        "blockers",
+        "candidate_id",
+        "consumer_activation_contract_sha256",
+        "consumer_source_closure_sha256",
+        "crosswalk_count",
+        "execution_data_root_sha256",
+        "execution_request_root_sha256",
+        "formal_call_count",
+        "formal_evidence_eligible",
+        "formal_schedule_sha256",
+        "hopper_parameter_record_sha256",
+        "input_set_id",
+        "manifest_core_sha256",
+        "p03_probe_selection_sha256",
+        "payload_index",
+        "payload_root_sha256",
+        "producer_binding_sha256",
+        "producer_manifest_file_sha256",
+        "producer_payload_root_sha256",
+        "producer_repeatability_audit_sha256",
+        "provider_blind_payload_sha256",
+        "provider_blind_requests_file_sha256",
+        "provider_runtime_source_closure_sha256",
+        "publication_order",
+        "request_count",
+        "resource_policy_root_sha256",
+        "schema_version",
+        "truth_request_sidecar_file_sha256",
+        "truth_sidecar_payload_sha256",
+    }
+    if (
+        set(manifest) != required
+        or manifest.get("request_count") != 129
+        or manifest.get("crosswalk_count") != 129
+        or manifest.get("formal_call_count") != 645
+        or manifest.get("publication_order")
+        != "data-first-manifest-last"
+        or manifest.get("formal_evidence_eligible") is not True
+        or manifest.get("blockers") != []
+    ):
+        raise G2Blocked("g2_r3_execution_manifest")
+    for field in (
+        "approval_artifact_sha256",
+        "approval_target_sha256",
+        "consumer_activation_contract_sha256",
+        "consumer_source_closure_sha256",
+        "execution_data_root_sha256",
+        "execution_request_root_sha256",
+        "formal_schedule_sha256",
+        "hopper_parameter_record_sha256",
+        "manifest_core_sha256",
+        "p03_probe_selection_sha256",
+        "payload_root_sha256",
+        "producer_binding_sha256",
+        "producer_manifest_file_sha256",
+        "producer_payload_root_sha256",
+        "producer_repeatability_audit_sha256",
+        "provider_blind_payload_sha256",
+        "provider_blind_requests_file_sha256",
+        "provider_runtime_source_closure_sha256",
+        "resource_policy_root_sha256",
+        "truth_request_sidecar_file_sha256",
+        "truth_sidecar_payload_sha256",
+    ):
+        _require_sha256(manifest.get(field), "g2_r3_execution_manifest")
+    if (
+        manifest["provider_blind_payload_sha256"]
+        == manifest["truth_sidecar_payload_sha256"]
+    ):
+        raise G2Blocked("g2_r3_execution_manifest")
+    return dict(manifest)
+
+
+def _r3_input_call(
+    operation: Callable[[], object],
+) -> object:
+    """Translate the producer/consumer input contract into runner blockers."""
+
+    import xunce_mid_dual_g2_inputs as inputs
+
+    try:
+        return operation()
+    except inputs.G2InputContractError as exc:
+        raise G2Blocked(exc.code) from exc
+
+
+def read_r3_execution_bundle(
+    root: str | Path,
+    *,
+    config: Mapping[str, object],
+) -> dict[str, object]:
+    """Load and independently revalidate one sealed R3 execution bundle."""
+
+    import xunce_mid_dual_g2_inputs as inputs
+
+    validated_config = _r3_input_call(
+        lambda: inputs.validate_r3_activation_config(
+            config,
+            require_resolved=True,
+        )
+    )
+    if not isinstance(validated_config, Mapping):
+        raise G2Blocked("g2_r3_config_invalid")
+    formal_inputs = validated_config["formal_inputs"]
+    activation = validated_config["activation_binding"]
+    configured_binding = validated_config["producer_binding"]
+    bundle_root = Path(root)
+    if (
+        bundle_root.resolve()
+        != Path(str(formal_inputs["execution_bundle"])).resolve()
+    ):
+        raise G2Blocked("g2_r3_execution_bundle_path")
+
+    sealed = _r3_input_call(
+        lambda: inputs.validate_r3_sealed_execution_bundle(
+            bundle_root,
+            approval_path=str(formal_inputs["artifact_bound_approval"]),
+        )
+    )
+    if not isinstance(sealed, Mapping):
+        raise G2Blocked("g2_r3_execution_manifest")
+    manifest = validate_r3_execution_manifest(sealed["manifest"])
+    manifest_bytes = artifact_read_bytes(bundle_root / "manifest.json")
+    if (
+        _sha256(manifest_bytes)
+        != formal_inputs["execution_manifest_sha256"]
+        or sealed.get("manifest_file_sha256")
+        != formal_inputs["execution_manifest_sha256"]
+        or manifest["approval_artifact_sha256"]
+        != formal_inputs["artifact_bound_approval_sha256"]
+        or Path(str(manifest["approval_artifact_path"])).resolve()
+        != Path(str(formal_inputs["artifact_bound_approval"])).resolve()
+        or manifest["provider_blind_requests_file_sha256"]
+        != formal_inputs["provider_blind_requests_sha256"]
+        or manifest["truth_request_sidecar_file_sha256"]
+        != formal_inputs["truth_request_sidecar_sha256"]
+        or manifest["hopper_parameter_record_sha256"]
+        != formal_inputs["hopper_parameter_record_sha256"]
+        or manifest["producer_manifest_file_sha256"]
+        != formal_inputs["producer_manifest_sha256"]
+    ):
+        raise G2Blocked("g2_r3_execution_manifest_binding")
+
+    activation_manifest_fields = {
+        "candidate_id": "candidate_id",
+        "input_set_id": "input_set_id",
+        "manifest_core_sha256": "manifest_core_sha256",
+        "producer_payload_root_sha256": "producer_payload_root_sha256",
+        "producer_repeatability_audit_sha256": (
+            "producer_repeatability_audit_sha256"
+        ),
+        "provider_runtime_source_closure_sha256": (
+            "provider_runtime_source_closure_sha256"
+        ),
+        "consumer_source_closure_sha256": (
+            "consumer_source_closure_sha256"
+        ),
+        "consumer_activation_contract_sha256": (
+            "consumer_activation_contract_sha256"
+        ),
+        "resource_policy_root_sha256": "resource_policy_root_sha256",
+        "execution_request_root_sha256": (
+            "execution_request_root_sha256"
+        ),
+        "p03_probe_selection_sha256": "p03_probe_selection_sha256",
+        "formal_schedule_sha256": "formal_schedule_sha256",
+        "execution_data_root_sha256": "execution_data_root_sha256",
+        "approval_target_sha256": "approval_target_sha256",
+    }
+    if any(
+        activation[config_field] != manifest[manifest_field]
+        for config_field, manifest_field in activation_manifest_fields.items()
+    ):
+        raise G2Blocked("g2_r3_activation_binding_drift")
+    if (
+        inputs.r3_consumer_activation_contract_sha256(validated_config)
+        != activation["consumer_activation_contract_sha256"]
+    ):
+        raise G2Blocked("g2_r3_activation_binding_drift")
+
+    producer_binding = artifact_io.read_json(
+        bundle_root / "producer-binding.json"
+    )
+    validated_binding = _r3_input_call(
+        lambda: inputs.validate_r3_producer_binding(producer_binding)
+    )
+    if (
+        validated_binding != configured_binding
+        or validated_binding["binding_sha256"]
+        != manifest["producer_binding_sha256"]
+        or validated_binding["bundle_root"]
+        != formal_inputs["producer_candidate_bundle"]
+        or validated_binding["hopper_parameter_record_sha256"]
+        != manifest["hopper_parameter_record_sha256"]
+    ):
+        raise G2Blocked("g2_r3_producer_binding_drift")
+
+    blind_path = bundle_root / "provider-blind-requests.jsonl"
+    sidecar_path = bundle_root / "truth" / "request-sidecar.jsonl"
+    blind_payload = artifact_read_bytes(blind_path)
+    sidecar_payload = artifact_read_bytes(sidecar_path)
+    if (
+        _sha256(blind_payload)
+        != manifest["provider_blind_requests_file_sha256"]
+        or _sha256(sidecar_payload)
+        != manifest["truth_request_sidecar_file_sha256"]
+    ):
+        raise G2Blocked("g2_r3_execution_payload_drift")
+    provider_blind_requests = artifact_io.read_jsonl(blind_path)
+    parent_truth_sidecars = artifact_io.read_jsonl(sidecar_path)
+    if (
+        len(provider_blind_requests) != 129
+        or len(parent_truth_sidecars) != 129
+    ):
+        raise G2Blocked("g2_r3_request_matrix")
+    validated_requests = [
+        _r3_input_call(
+            lambda row=row: inputs.validate_r3_provider_blind_request(
+                row,
+                validated_binding,
+            )
+        )
+        for row in provider_blind_requests
+    ]
+    parent_static_audit = _r3_input_call(
+        lambda: inputs.validate_r3_parent_static_hop_resource_join(
+            validated_requests,
+            parent_truth_sidecars,
+            producer_binding=validated_binding,
+        )
+    )
+    if (
+        not isinstance(parent_static_audit, Mapping)
+        or artifact_io.read_json(bundle_root / "parent-static-audit.json")
+        != parent_static_audit
+    ):
+        raise G2Blocked("g2_r3_parent_static_audit_drift")
+
+    execution_requests = [
+        _r3_input_call(
+            lambda row=row: inputs.build_r3_provider_execution_request(
+                row,
+                producer_binding=validated_binding,
+            )
+        )
+        for row in validated_requests
+    ]
+    stored_execution_requests = artifact_io.read_jsonl(
+        bundle_root / "provider-execution-requests.jsonl"
+    )
+    stored_crosswalk = artifact_io.read_jsonl(
+        bundle_root / "truth-free-execution-crosswalk.jsonl"
+    )
+    if (
+        stored_execution_requests != execution_requests
+        or stored_crosswalk != parent_static_audit["execution_crosswalk"]
+        or len(stored_crosswalk) != 129
+    ):
+        raise G2Blocked("g2_r3_execution_request_drift")
+    resource_policies = [
+        _r3_input_call(
+            lambda platform=platform: inputs.r3_provider_resource_policy(
+                platform
+            )
+        )
+        for platform in G2_PLATFORMS
+    ]
+    resource_policy_root_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-r3-resource-policy-root/v1",
+        _canonical_bytes(resource_policies),
+    )
+    execution_request_root_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-r3-execution-request-root/v1",
+        _canonical_bytes(execution_requests),
+    )
+    if (
+        resource_policy_root_sha256
+        != manifest["resource_policy_root_sha256"]
+        or execution_request_root_sha256
+        != manifest["execution_request_root_sha256"]
+    ):
+        raise G2Blocked("g2_r3_execution_request_drift")
+
+    hopper_record = artifact_io.read_json(
+        bundle_root / "hopper-parameter-record.json"
+    )
+    if _sha256(_canonical_bytes(hopper_record)) != manifest[
+        "hopper_parameter_record_sha256"
+    ]:
+        raise G2Blocked("G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH")
+    provider_source_closure = artifact_io.read_json(
+        bundle_root / "source" / "provider-runtime-source-closure.json"
+    )
+    consumer_source_closure = artifact_io.read_json(
+        bundle_root / "source" / "consumer-source-closure.json"
+    )
+    live_provider_source_closure = _r3_input_call(
+        inputs.capture_path_planner_runtime_source_closure
+    )
+    live_consumer_source_closure = _r3_input_call(
+        inputs.capture_r3_consumer_source_closure
+    )
+    if (
+        type(provider_source_closure) is not dict
+        or provider_source_closure != live_provider_source_closure
+        or provider_source_closure.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != manifest["provider_runtime_source_closure_sha256"]
+        or type(consumer_source_closure) is not dict
+        or consumer_source_closure.get("consumer_source_closure_sha256")
+        != manifest["consumer_source_closure_sha256"]
+        or consumer_source_closure != live_consumer_source_closure
+    ):
+        raise G2Blocked("g2_r3_source_closure")
+
+    worker_inputs: dict[str, dict[str, object]] = {}
+    for request, execution_request in zip(
+        validated_requests,
+        execution_requests,
+        strict=True,
+    ):
+        snapshot_sha256 = str(request["provider_local_snapshot_sha256"])
+        snapshot_path = (
+            bundle_root
+            / "terrain"
+            / "provider-local"
+            / f"{snapshot_sha256}.json"
+        )
+        snapshot_payload = artifact_read_bytes(snapshot_path)
+        if _sha256(snapshot_payload) != request[
+            "provider_local_snapshot_payload_sha256"
+        ]:
+            raise G2Blocked("g2_r3_snapshot_payload_drift")
+        snapshot = artifact_io.read_json(snapshot_path)
+        projected = _r3_input_call(
+            lambda snapshot=snapshot, request=request: (
+                inputs.project_r3_local_snapshot(
+                    snapshot,
+                    scale=str(request["scale"]),
+                )
+            )
+        )
+        policy = execution_request["resource_policy"]
+        execution_signature_sha256 = _r3_input_call(
+            lambda request=request, snapshot=snapshot, policy=policy: (
+                inputs._r3_execution_signature(
+                    request,
+                    snapshot,
+                    policy,
+                )
+            )
+        )
+        start_pose = _r3_input_call(
+            lambda request=request: inputs.project_r3_canonical_pose(
+                request["start"]["pose_binary64_m_rad"]
+            )
+        )
+        goal_pose = _r3_input_call(
+            lambda request=request: inputs.project_r3_canonical_pose(
+                request["goal"]["pose_binary64_m_rad"]
+            )
+        )
+        execution_sha256 = str(
+            execution_request["execution_request_sha256"]
+        )
+        worker_inputs[execution_sha256] = {
+            "provider_execution_request": execution_request,
+            "provider_local_snapshot_payload": snapshot_payload,
+            "projection_sha256": projected["projection_sha256"],
+            "binary64_pose_projection_sha256": _domain_hash(
+                "xunce-mid-dual-g2-r3-binary64-pose-projection/v1",
+                _canonical_bytes(
+                    {
+                        "start": start_pose,
+                        "goal": goal_pose,
+                    }
+                ),
+            ),
+            "provider_local_snapshot_sha256": snapshot_sha256,
+            "terrain_geometry_sha256": request[
+                "terrain_geometry_sha256"
+            ],
+            "profile_or_parameter_record_sha256": request[
+                "profile_or_parameter_record_sha256"
+            ],
+            "capability_id": policy["capability_id"],
+            "hopper_parameter_record_sha256": (
+                manifest["hopper_parameter_record_sha256"]
+                if request["platform_kind"] == "hopper"
+                else None
+            ),
+            "execution_signature_sha256": execution_signature_sha256,
+        }
+    if len(worker_inputs) != 129:
+        raise G2Blocked("g2_r3_execution_request_drift")
+
+    probe_payload = artifact_io.read_json(
+        bundle_root / "p03-probe-selection.json"
+    )
+    if (
+        type(probe_payload) is not dict
+        or set(probe_payload)
+        != {"schema_version", "rows", "selection_sha256"}
+        or probe_payload.get("schema_version")
+        != "xunce-mid-dual-g2-r3-p03-input-side-sha256-rank/v1"
+        or type(probe_payload.get("rows")) is not list
+        or len(probe_payload["rows"]) != 12
+        or probe_payload.get("selection_sha256")
+        != _domain_hash(
+            "xunce-mid-dual-g2-r3-p03-input-side-sha256-rank/v1",
+            _canonical_bytes(probe_payload["rows"]),
+        )
+        or probe_payload["selection_sha256"]
+        != manifest["p03_probe_selection_sha256"]
+    ):
+        raise G2Blocked("g2_r3_probe_selection")
+    request_to_execution = {
+        str(row["provider_blind_request"]["provider_request_id"]): str(
+            row["execution_request_sha256"]
+        )
+        for row in execution_requests
+    }
+    for selected in probe_payload["rows"]:
+        if (
+            type(selected) is not dict
+            or set(selected)
+            != {
+                "request_id",
+                "platform",
+                "scale",
+                "probe_class",
+                "execution_signature_sha256",
+            }
+            or request_to_execution.get(str(selected["request_id"]))
+            not in worker_inputs
+            or worker_inputs[
+                request_to_execution[str(selected["request_id"])]
+            ]["execution_signature_sha256"]
+            != selected["execution_signature_sha256"]
+        ):
+            raise G2Blocked("g2_r3_probe_selection")
+    p03_probe_selection = [
+        {
+            key: selected[key]
+            for key in ("request_id", "platform", "scale", "probe_class")
+        }
+        for selected in probe_payload["rows"]
+    ]
+    p03_execution_signatures = {
+        str(selected["request_id"]): str(
+            selected["execution_signature_sha256"]
+        )
+        for selected in probe_payload["rows"]
+    }
+    formal_schedule = build_r3_formal_schedule(
+        str(manifest["input_set_id"]),
+        validated_requests,
+        producer_schema_contract=validated_binding,
+    )
+    if (
+        formal_schedule["schedule_sha256"]
+        != manifest["formal_schedule_sha256"]
+    ):
+        raise G2Blocked("g2_r3_formal_schedule")
+
+    return {
+        "schema_version": "xunce-mid-dual-g2-r3-loaded-bundle/v1",
+        "root": bundle_root.as_posix(),
+        "manifest": manifest,
+        "manifest_file_sha256": _sha256(manifest_bytes),
+        "approval": sealed["approval"],
+        "producer_binding": dict(validated_binding),
+        "provider_blind_requests": [
+            dict(row) for row in validated_requests
+        ],
+        "parent_truth_sidecars": [
+            dict(row) for row in parent_truth_sidecars
+        ],
+        "parent_static_audit": dict(parent_static_audit),
+        "provider_execution_requests": [
+            dict(row) for row in execution_requests
+        ],
+        "worker_inputs": worker_inputs,
+        "p03_probe_selection": p03_probe_selection,
+        "p03_execution_signatures": p03_execution_signatures,
+        "formal_schedule": formal_schedule,
+        "resource_policy_root_sha256": resource_policy_root_sha256,
+        "execution_request_root_sha256": execution_request_root_sha256,
+        "provider_source_closure": provider_source_closure,
+        "consumer_source_closure": consumer_source_closure,
+        "request_count": 129,
+        "truth_sidecar_count": 129,
+        "formal_call_count": 645,
+    }
+
+
+def hydrate_r3_calls(
+    calls: Sequence[Mapping[str, object]],
+    *,
+    bundle: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Attach only the sealed execution request and local snapshot payload."""
+
+    worker_inputs = bundle.get("worker_inputs")
+    producer_binding = bundle.get("producer_binding")
+    if type(worker_inputs) is not dict or type(producer_binding) is not dict:
+        raise G2Blocked("g2_r3_worker_hydration")
+    hydrated: list[dict[str, object]] = []
+    for raw in calls:
+        if type(raw) is not dict:
+            raise G2Blocked("g2_r3_worker_hydration")
+        execution_sha256 = raw.get("execution_request_sha256")
+        worker_input = worker_inputs.get(execution_sha256)
+        if (
+            type(execution_sha256) is not str
+            or type(worker_input) is not dict
+            or raw.get("provider_worker_request")
+            != worker_input.get("provider_execution_request")
+        ):
+            raise G2Blocked("g2_r3_worker_hydration")
+        worker_safe_call = {
+            key: value
+            for key, value in raw.items()
+            if key != "probe_class"
+        }
+        hydrated.append(
+            {
+                **worker_safe_call,
+                "_provider_execution_request": worker_input[
+                    "provider_execution_request"
+                ],
+                "_provider_local_snapshot_payload": worker_input[
+                    "provider_local_snapshot_payload"
+                ],
+                "_producer_binding": producer_binding,
+                **{
+                    f"_{key}": worker_input[key]
+                    for key in (
+                        "projection_sha256",
+                        "binary64_pose_projection_sha256",
+                        "provider_local_snapshot_sha256",
+                        "terrain_geometry_sha256",
+                        "profile_or_parameter_record_sha256",
+                        "capability_id",
+                        "hopper_parameter_record_sha256",
+                        "execution_signature_sha256",
+                    )
+                },
+            }
+        )
+    return hydrated
+
+
+def build_r3_provider_diagnostic_row(
+    task: Mapping[str, object],
+    outcome: Mapping[str, object],
+    timing: Mapping[str, object],
+) -> dict[str, object]:
+    """Build one complete, non-formal R3 Provider diagnostic row."""
+
+    normalized = canonicalize_r3_provider_outcome(outcome)
+    validated_timing = validate_timing_payload(timing)
+    required_task_fields = {
+        "call_id",
+        "request_id",
+        "platform",
+        "scale",
+        "schedule_kind",
+        "repeat_index",
+        "formal_sample",
+        "provider_request_sha256",
+        "execution_request_sha256",
+        "resource_policy_sha256",
+        "_projection_sha256",
+        "_binary64_pose_projection_sha256",
+        "_provider_local_snapshot_sha256",
+        "_terrain_geometry_sha256",
+        "_profile_or_parameter_record_sha256",
+        "_capability_id",
+        "_hopper_parameter_record_sha256",
+        "_execution_signature_sha256",
+        "_worker_count",
+    }
+    if (
+        not required_task_fields.issubset(task)
+        or task.get("formal_sample") is not False
+        or type(task.get("_worker_count")) is not int
+        or task["_worker_count"] not in {1, 4}
+        or normalized["canonical_outcome"].get("request_id")
+        != task["request_id"]
+        or normalized["canonical_outcome"].get("platform_kind")
+        != task["platform"]
+    ):
+        raise G2Blocked("g2_r3_diagnostic_row")
+    identity = {
+        "request_id": task["request_id"],
+        "platform": task["platform"],
+        "scale": task["scale"],
+        "provider_request_sha256": task["provider_request_sha256"],
+        "execution_request_sha256": task["execution_request_sha256"],
+        "resource_policy_sha256": task["resource_policy_sha256"],
+        "projection_sha256": task["_projection_sha256"],
+        "binary64_pose_projection_sha256": task[
+            "_binary64_pose_projection_sha256"
+        ],
+        "provider_local_snapshot_sha256": task[
+            "_provider_local_snapshot_sha256"
+        ],
+        "terrain_geometry_sha256": task["_terrain_geometry_sha256"],
+        "profile_or_parameter_record_sha256": task[
+            "_profile_or_parameter_record_sha256"
+        ],
+        "capability_id": task["_capability_id"],
+        "hopper_parameter_record_sha256": task[
+            "_hopper_parameter_record_sha256"
+        ],
+        "execution_signature_sha256": task[
+            "_execution_signature_sha256"
+        ],
+        "provider_result_sha256": normalized["provider_result_sha256"],
+    }
+    return {
+        "schema_version": "xunce-mid-dual-g2-r3-diagnostic-row/v1",
+        "call_id": task["call_id"],
+        "request_id": task["request_id"],
+        "platform": task["platform"],
+        "scale": task["scale"],
+        "schedule_kind": task["schedule_kind"],
+        "worker_count": task["_worker_count"],
+        "repeat_index": task["repeat_index"],
+        "formal_sample": False,
+        **identity,
+        "canonical_outcome": normalized["canonical_outcome"],
+        "provider_success": normalized["provider_success"],
+        "route_l2_valid": normalized["route_l2_valid"],
+        "semantic_digest": _domain_hash(
+            "xunce-mid-dual-g2-r3-provider-semantics/v1",
+            _canonical_bytes(identity),
+        ),
+        "timing": validated_timing,
+        **_timing_ms_projection(validated_timing),
+    }
+
+
+def build_r3_provider_formal_row(
+    task: Mapping[str, object],
+    outcome: Mapping[str, object],
+    timing: Mapping[str, object],
+) -> dict[str, object]:
+    """Build one exact p04 row without any parent-owned truth fields."""
+
+    normalized = canonicalize_r3_provider_outcome(outcome)
+    validated_timing = validate_timing_payload(timing)
+    required = {
+        "call_id",
+        "request_id",
+        "platform",
+        "scale",
+        "submission_index",
+        "repeat_index",
+        "formal_sample",
+        "schedule_kind",
+        "provider_request_sha256",
+        "execution_request_sha256",
+        "resource_policy_sha256",
+        "_projection_sha256",
+        "_binary64_pose_projection_sha256",
+        "_provider_local_snapshot_sha256",
+        "_terrain_geometry_sha256",
+        "_profile_or_parameter_record_sha256",
+        "_capability_id",
+        "_hopper_parameter_record_sha256",
+        "_execution_signature_sha256",
+        "_worker_count",
+    }
+    if (
+        not required.issubset(task)
+        or task.get("formal_sample") is not True
+        or task.get("schedule_kind") != "formal"
+        or task.get("_worker_count") != 4
+        or "probe_class" in task
+        or normalized["canonical_outcome"].get("request_id")
+        != task["request_id"]
+        or normalized["canonical_outcome"].get("platform_kind")
+        != task["platform"]
+    ):
+        raise G2Blocked("g2_r3_formal_row")
+    identity = {
+        "request_id": task["request_id"],
+        "platform": task["platform"],
+        "scale": task["scale"],
+        "provider_request_sha256": task["provider_request_sha256"],
+        "execution_request_sha256": task["execution_request_sha256"],
+        "resource_policy_sha256": task["resource_policy_sha256"],
+        "projection_sha256": task["_projection_sha256"],
+        "binary64_pose_projection_sha256": task[
+            "_binary64_pose_projection_sha256"
+        ],
+        "provider_local_snapshot_sha256": task[
+            "_provider_local_snapshot_sha256"
+        ],
+        "terrain_geometry_sha256": task["_terrain_geometry_sha256"],
+        "profile_or_parameter_record_sha256": task[
+            "_profile_or_parameter_record_sha256"
+        ],
+        "capability_id": task["_capability_id"],
+        "hopper_parameter_record_sha256": task[
+            "_hopper_parameter_record_sha256"
+        ],
+        "execution_signature_sha256": task[
+            "_execution_signature_sha256"
+        ],
+        "provider_result_sha256": normalized["provider_result_sha256"],
+    }
+    return {
+        "schema_version": "xunce-mid-dual-g2-r3-formal-row/v1",
+        "call_id": task["call_id"],
+        "request_id": task["request_id"],
+        "platform": task["platform"],
+        "scale": task["scale"],
+        "submission_index": task["submission_index"],
+        "worker_count": 4,
+        "repeat_index": task["repeat_index"],
+        "formal_sample": True,
+        "schedule_kind": "formal",
+        **identity,
+        "canonical_outcome": normalized["canonical_outcome"],
+        "provider_success": normalized["provider_success"],
+        "route_l2_valid": normalized["route_l2_valid"],
+        "semantic_digest": _domain_hash(
+            "xunce-mid-dual-g2-r3-provider-semantics/v1",
+            _canonical_bytes(identity),
+        ),
+        "timing": validated_timing,
+        **_timing_ms_projection(validated_timing),
+    }
+
+
+def _prepare_r3_provider_task(
+    task: Mapping[str, object],
+) -> dict[str, object]:
+    """Decode and preload immutable request data before the Provider timer."""
+
+    import xunce_mid_dual_g2_inputs as inputs
+
+    execution_request = task.get("_provider_execution_request")
+    snapshot_payload = task.get("_provider_local_snapshot_payload")
+    producer_binding = task.get("_producer_binding")
+    if (
+        type(execution_request) is not dict
+        or type(snapshot_payload) is not bytes
+        or type(producer_binding) is not dict
+    ):
+        raise G2Blocked("g2_r3_worker_hydration")
+    decoded = _r3_input_call(
+        lambda: inputs.decode_r3_provider_execution_request(
+            execution_request,
+            snapshot_payload,
+            producer_binding=producer_binding,
+        )
+    )
+    if not isinstance(decoded, Mapping):
+        raise G2Blocked("g2_r3_worker_decode")
+    identity_pairs = {
+        "projection_sha256": "_projection_sha256",
+        "provider_local_snapshot_sha256": (
+            "_provider_local_snapshot_sha256"
+        ),
+        "terrain_geometry_sha256": "_terrain_geometry_sha256",
+        "execution_signature_sha256": "_execution_signature_sha256",
+        "execution_request_sha256": "execution_request_sha256",
+        "provider_request_sha256": "provider_request_sha256",
+        "resource_policy_sha256": "resource_policy_sha256",
+    }
+    if any(
+        decoded.get(decoded_field) != task.get(task_field)
+        for decoded_field, task_field in identity_pairs.items()
+    ):
+        raise G2Blocked("g2_r3_worker_decode_identity")
+    return {**task, "_decoded_r3_request": dict(decoded)}
+
+
+def execute_r3_provider_timed_call(
+    task: Mapping[str, object],
+) -> dict[str, object]:
+    """Execute one preloaded R3 diagnostic call with the approved Provider."""
+
+    from path_planner.v2.contracts import (
+        PlanningFailureV2,
+        PlanningSuccessV2,
+        ValidationEvidenceV2,
+    )
+    from path_planner.v2.timing import execute_timed_request_v2
+    import xunce_mid_dual_g2_inputs as inputs
+
+    decoded = task.get("_decoded_r3_request")
+    if type(decoded) is not dict:
+        raise G2Blocked("g2_r3_worker_decode")
+    planning_request = decoded.get("planning_request")
+    platform = str(task.get("platform"))
+
+    def validate_preloaded(request: object) -> object:
+        if request is not planning_request:
+            raise G2Blocked("g2_r3_worker_decode_identity")
+        return request
+
+    def build(request: object) -> object:
+        return inputs.build_approved_platform_execution_stack(
+            platform,
+            request,
+        )
+
+    def plan(_request: object, stack: object) -> object:
+        if type(stack) is not dict or not callable(stack.get("plan")):
+            raise G2Blocked("g2_r3_provider_stack_invalid")
+        return stack["plan"]()
+
+    def revalidate(
+        request: object,
+        outcome: object,
+        stack: object,
+    ) -> object:
+        if type(outcome) is PlanningFailureV2:
+            return None
+        if type(outcome) is not PlanningSuccessV2 or type(stack) is not dict:
+            return None
+        if platform == "wheel":
+            evidence = outcome.validation_evidence
+            return ValidationEvidenceV2(
+                validator_id=evidence.validator_id,
+                level=evidence.level,
+                passed=evidence.passed,
+                checks=evidence.checks,
+            )
+        validator = stack.get("l2_validator")
+        if not callable(validator):
+            return None
+        authority = (
+            stack["execution_profile"]
+            if platform == "legged"
+            else stack["provider"].hopper_authority
+        )
+        result = validator(
+            outcome.route,
+            request,
+            stack["anchor"],
+            authority,
+            stack["deadline"],
+        )
+        return getattr(result, "evidence", None)
+
+    timed = execute_timed_request_v2(
+        planning_request,
+        decode_request=validate_preloaded,
+        build_platform_stack=build,
+        plan_request=plan,
+        revalidate_success_route=revalidate,
+        assemble_result=lambda outcome, _validation, _timing: (
+            _normalize_provider_outcome(outcome)
+        ),
+    )
+    if timed.timing.timing_measurement_valid is not True:
+        raise G2Blocked("g2_timing_measurement_invalid")
+    normalized_outcome = _normalize_provider_outcome(timed.outcome)
+    if (
+        normalized_outcome.get("outcome_type") == "failure"
+        and normalized_outcome.get("platform_kind") is None
+    ):
+        normalized_outcome["platform_kind"] = platform
+    builder = (
+        build_r3_provider_formal_row
+        if task.get("formal_sample") is True
+        else build_r3_provider_diagnostic_row
+    )
+    return builder(task, normalized_outcome, timed.timing.as_dict())
+
+
+def _default_r3_batch_executor(
+    calls: Sequence[Mapping[str, object]],
+    *,
+    max_workers: int,
+) -> list[dict[str, object]]:
+    worker_calls = [
+        {**dict(call), "_worker_count": max_workers}
+        for call in calls
+    ]
+    rows = execute_preloaded_batch(
+        worker_calls,
+        prepare_task=_prepare_r3_provider_task,
+        execute_task=execute_r3_provider_timed_call,
+        max_workers=max_workers,
+    )
+    if any(type(row) is not dict for row in rows):
+        raise G2Blocked("g2_r3_diagnostic_row")
+    return [dict(row) for row in rows]
+
+
+def _default_r3_formal_task_executor(
+    task: Mapping[str, object],
+) -> dict[str, object]:
+    worker_task = {**dict(task), "_worker_count": 4}
+    prepared = _prepare_r3_provider_task(worker_task)
+    row = execute_r3_provider_timed_call(prepared)
+    if type(row) is not dict:
+        raise G2Blocked("g2_r3_formal_row")
+    return dict(row)
+
+
+def validate_r3_p03_diagnostic_rows(
+    worker_one_rows: Sequence[Mapping[str, object]],
+    worker_four_rows: Sequence[Mapping[str, object]],
+    *,
+    expected_execution_signatures: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Require exact 12 + 12 successful L2 rows with semantic parity."""
+
+    if len(worker_one_rows) != 12 or len(worker_four_rows) != 12:
+        raise G2Blocked("g2_r3_p03_row_count")
+    one = [dict(row) for row in worker_one_rows]
+    four = [dict(row) for row in worker_four_rows]
+    if [row.get("request_id") for row in one] != [
+        row.get("request_id") for row in four
+    ]:
+        raise G2Blocked("g2_r3_p03_request_identity")
+    if expected_execution_signatures is not None and (
+        type(expected_execution_signatures) is not dict
+        or set(expected_execution_signatures)
+        != {str(row["request_id"]) for row in one}
+        or any(
+            not _is_sha256(signature)
+            for signature in expected_execution_signatures.values()
+        )
+        or any(
+            row.get("execution_signature_sha256")
+            != expected_execution_signatures[str(row["request_id"])]
+            for row in [*one, *four]
+        )
+    ):
+        raise G2Blocked("g2_r3_p03_signature_uncovered")
+    semantic_identity_fields = (
+        "provider_request_sha256",
+        "execution_request_sha256",
+        "resource_policy_sha256",
+        "projection_sha256",
+        "binary64_pose_projection_sha256",
+        "provider_local_snapshot_sha256",
+        "terrain_geometry_sha256",
+        "profile_or_parameter_record_sha256",
+        "capability_id",
+        "hopper_parameter_record_sha256",
+        "execution_signature_sha256",
+        "canonical_outcome",
+        "provider_result_sha256",
+        "semantic_digest",
+    )
+    stable_fields = (
+        "request_id",
+        "platform",
+        "scale",
+        "probe_class",
+        *semantic_identity_fields,
+    )
+    for left, right in zip(one, four, strict=True):
+        if (
+            left.get("formal_sample") is not False
+            or right.get("formal_sample") is not False
+            or left.get("worker_count") != 1
+            or right.get("worker_count") != 4
+            or left.get("schedule_kind") != "worker-one"
+            or right.get("schedule_kind") != "worker-four"
+        ):
+            raise G2Blocked("g2_r3_p03_row_schema")
+        validate_timing_payload(left.get("timing"))
+        validate_timing_payload(right.get("timing"))
+        for row in (left, right):
+            try:
+                canonical = canonicalize_r3_provider_outcome(
+                    row.get("canonical_outcome")
+                )
+            except G2Blocked as exc:
+                raise G2Blocked("g2_r3_p03_not_all_l2") from exc
+            identity = {
+                field: row.get(field)
+                for field in (
+                    "request_id",
+                    "platform",
+                    "scale",
+                    "provider_request_sha256",
+                    "execution_request_sha256",
+                    "resource_policy_sha256",
+                    "projection_sha256",
+                    "binary64_pose_projection_sha256",
+                    "provider_local_snapshot_sha256",
+                    "terrain_geometry_sha256",
+                    "profile_or_parameter_record_sha256",
+                    "capability_id",
+                    "hopper_parameter_record_sha256",
+                    "execution_signature_sha256",
+                    "provider_result_sha256",
+                )
+            }
+            if (
+                canonical["canonical_outcome"]
+                != row.get("canonical_outcome")
+                or canonical["provider_result_sha256"]
+                != row.get("provider_result_sha256")
+                or canonical["provider_success"]
+                is not row.get("provider_success")
+                or canonical["route_l2_valid"]
+                is not row.get("route_l2_valid")
+                or row.get("semantic_digest")
+                != _domain_hash(
+                    "xunce-mid-dual-g2-r3-provider-semantics/v1",
+                    _canonical_bytes(identity),
+                )
+            ):
+                raise G2Blocked("g2_r3_p03_semantic_drift")
+        if any(left.get(field) != right.get(field) for field in stable_fields):
+            raise G2Blocked("g2_r3_p03_semantic_drift")
+        if (
+            left.get("provider_success") is not True
+            or right.get("provider_success") is not True
+            or left.get("route_l2_valid") is not True
+            or right.get("route_l2_valid") is not True
+        ):
+            raise G2Blocked("g2_r3_p03_not_all_l2")
+    expected_probe_keys = {
+        (platform, scale, probe_class)
+        for platform in G2_PLATFORMS
+        for scale in G2_SCALES
+        for probe_class in ("normal_reachable", "hard_reachable")
+    }
+    observed_probe_keys = {
+        (
+            str(row["platform"]),
+            str(row["scale"]),
+            str(row["probe_class"]),
+        )
+        for row in one
+    }
+    if observed_probe_keys != expected_probe_keys:
+        raise G2Blocked("g2_r3_p03_signature_uncovered")
+    return {
+        "schema_version": "xunce-mid-dual-g2-r3-p03-audit/v1",
+        "status": "passed",
+        "formal_sample": False,
+        "worker_one_count": 12,
+        "worker_four_count": 12,
+        "request_count": 12,
+        "call_count": 24,
+        "semantic_identity_fields": list(semantic_identity_fields),
+        "request_ids": [str(row["request_id"]) for row in one],
+        "worker_one_results_sha256": _canonical_sha256(one),
+        "worker_four_results_sha256": _canonical_sha256(four),
+    }
+
+
 def execute_preloaded_batch(
     tasks: Sequence[Mapping[str, object]],
     *,
@@ -3171,6 +4951,38 @@ def _environment_probe() -> dict[str, object]:
     }
 
 
+def validate_r3_cli_config_schema(
+    path: str | Path,
+    *,
+    require_resolved: bool = False,
+) -> dict[str, object]:
+    """Select the v2 activation path and reject legacy v1 before execution."""
+
+    supplied = Path(path).resolve()
+    if not artifact_io.path_is_file(supplied):
+        raise G2Blocked("g2_r3_config_missing")
+    try:
+        config = json.loads(
+            artifact_read_bytes(supplied).decode("utf-8-sig")
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise G2Blocked("g2_r3_config_invalid") from exc
+    if (
+        type(config) is dict
+        and config.get("schema_version") == G2_CONFIG_SCHEMA_VERSION
+    ):
+        raise G2Blocked("g2_r3_legacy_config_ineligible")
+    import xunce_mid_dual_g2_inputs as inputs
+
+    try:
+        return inputs.validate_r3_activation_config(
+            config,
+            require_resolved=require_resolved,
+        )
+    except inputs.G2InputContractError as exc:
+        raise G2Blocked(exc.code) from exc
+
+
 def _load_config(path: str | Path) -> tuple[dict[str, object], str]:
     supplied = Path(path).resolve()
     if supplied != CANONICAL_CONFIG_PATH.resolve():
@@ -3331,6 +5143,31 @@ def _accept_phase(
         "schema_version": "xunce-mid-dual-g2-phase-audit/v1",
         "gate_id": G2_GATE_ID,
         "runner_id": G2_RUNNER_ID,
+        "phase_id": phase_id,
+        "phase_name": G2_PHASE_NAMES[phase_id],
+        **dict(audit),
+    }
+    attempt_id = store.write_phase_attempt(phase_id, rows, phase_audit)
+    digest = store.phase_attempt_row_sha256(phase_id, attempt_id)
+    store.accept_phase(phase_id, attempt_id, digest)
+
+
+def _accept_r3_phase(
+    store: MidDualRunStore,
+    *,
+    phase_id: str,
+    rows: Sequence[Mapping[str, object]],
+    audit: Mapping[str, object],
+) -> None:
+    if phase_id in store.accepted_phase_ids:
+        return
+    expected = f"p{len(store.accepted_phase_ids) + 1:02d}"
+    if phase_id != expected:
+        raise G2Blocked("g2_r3_resume_phase_prefix")
+    phase_audit = {
+        "schema_version": "xunce-mid-dual-g2-r3-phase-audit/v1",
+        "gate_id": G2_GATE_ID,
+        "runner_id": "xunce-mid-dual-g2-planning-time-runner/v2",
         "phase_id": phase_id,
         "phase_name": G2_PHASE_NAMES[phase_id],
         **dict(audit),
@@ -3745,6 +5582,836 @@ def _diagnostic_projection(
         }
         for row in rows
     ]
+
+
+def _validate_r3_diagnostic_batch(
+    rows: Sequence[Mapping[str, object]],
+    calls: Sequence[Mapping[str, object]],
+    *,
+    worker_count: int,
+    probe_classes_by_call_id: Mapping[str, str] | None = None,
+) -> list[dict[str, object]]:
+    materialized = [dict(row) for row in rows]
+    if len(materialized) != len(calls):
+        raise G2Blocked("g2_r3_provider_batch_incomplete")
+    expected_probe_classes = (
+        {}
+        if probe_classes_by_call_id is None
+        else dict(probe_classes_by_call_id)
+    )
+    if probe_classes_by_call_id is not None and (
+        set(expected_probe_classes)
+        != {str(call.get("call_id")) for call in calls}
+        or any(
+            value not in {"normal_reachable", "hard_reachable"}
+            for value in expected_probe_classes.values()
+        )
+    ):
+        raise G2Blocked("g2_r3_probe_selection")
+    for row, call in zip(materialized, calls, strict=True):
+        if (
+            row.get("schema_version")
+            != "xunce-mid-dual-g2-r3-diagnostic-row/v1"
+            or "probe_class" in row
+            or row.get("call_id") != call.get("call_id")
+            or row.get("request_id") != call.get("request_id")
+            or row.get("platform") != call.get("platform")
+            or row.get("scale") != call.get("scale")
+            or row.get("schedule_kind") != call.get("schedule_kind")
+            or row.get("worker_count") != worker_count
+            or row.get("formal_sample") is not False
+            or row.get("execution_request_sha256")
+            != call.get("execution_request_sha256")
+            or row.get("provider_request_sha256")
+            != call.get("provider_request_sha256")
+            or row.get("resource_policy_sha256")
+            != call.get("resource_policy_sha256")
+        ):
+            raise G2Blocked("g2_r3_diagnostic_row")
+        canonical = canonicalize_r3_provider_outcome(
+            row.get("canonical_outcome")
+        )
+        if (
+            canonical["provider_result_sha256"]
+            != row.get("provider_result_sha256")
+            or canonical["provider_success"]
+            is not row.get("provider_success")
+            or canonical["route_l2_valid"]
+            is not row.get("route_l2_valid")
+        ):
+            raise G2Blocked("g2_r3_diagnostic_row")
+        validate_timing_payload(row.get("timing"))
+        if probe_classes_by_call_id is not None:
+            row["probe_class"] = expected_probe_classes[str(row["call_id"])]
+    return materialized
+
+
+def _validate_r3_formal_batch(
+    rows: Sequence[Mapping[str, object]],
+    calls: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    materialized = [dict(row) for row in rows]
+    if len(materialized) != 645 or len(calls) != 645:
+        raise G2Blocked("g2_r3_provider_batch_incomplete")
+    for row, call in zip(materialized, calls, strict=True):
+        if (
+            row.get("schema_version")
+            != "xunce-mid-dual-g2-r3-formal-row/v1"
+            or "probe_class" in row
+            or row.get("call_id") != call.get("call_id")
+            or row.get("request_id") != call.get("request_id")
+            or row.get("platform") != call.get("platform")
+            or row.get("scale") != call.get("scale")
+            or row.get("submission_index")
+            != call.get("submission_index")
+            or row.get("repeat_index") != call.get("repeat_index")
+            or row.get("worker_count") != 4
+            or row.get("formal_sample") is not True
+            or row.get("schedule_kind") != "formal"
+            or row.get("execution_request_sha256")
+            != call.get("execution_request_sha256")
+            or row.get("provider_request_sha256")
+            != call.get("provider_request_sha256")
+            or row.get("resource_policy_sha256")
+            != call.get("resource_policy_sha256")
+        ):
+            raise G2Blocked("g2_r3_formal_row")
+        canonical = canonicalize_r3_provider_outcome(
+            row.get("canonical_outcome")
+        )
+        if (
+            canonical["provider_result_sha256"]
+            != row.get("provider_result_sha256")
+            or canonical["provider_success"]
+            is not row.get("provider_success")
+            or canonical["route_l2_valid"]
+            is not row.get("route_l2_valid")
+        ):
+            raise G2Blocked("g2_r3_formal_row")
+        validate_timing_payload(row.get("timing"))
+    return select_r3_formal_timing_rows(materialized)
+
+
+def _r3_truth_summary_rows(
+    sidecars: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    projected: list[dict[str, object]] = []
+    for sidecar in sidecars:
+        truth = (
+            sidecar.get("truth_request")
+            if isinstance(sidecar, Mapping)
+            else None
+        )
+        if (
+            not isinstance(truth, Mapping)
+            or type(sidecar.get("provider_request_id")) is not str
+        ):
+            raise G2Blocked("g2_r3_truth_sidecar")
+        projected.append(
+            {
+                "request_id": sidecar["provider_request_id"],
+                "platform": truth.get("platform_kind"),
+                "scale": truth.get("scale"),
+                "oracle_reachable": truth.get("oracle_reachable"),
+            }
+        )
+    if len(projected) != 129:
+        raise G2Blocked("g2_r3_truth_sidecar")
+    return projected
+
+
+def _r3_gate_summary(
+    recomputed: Mapping[str, object],
+    *,
+    thresholds: Mapping[str, object],
+) -> dict[str, object]:
+    strata = recomputed.get("strata")
+    if not isinstance(strata, Mapping) or len(strata) != 6:
+        raise G2Blocked("g2_r3_summary_matrix")
+    cells = list(strata.values())
+    if any(not isinstance(cell, Mapping) for cell in cells):
+        raise G2Blocked("g2_r3_summary_matrix")
+    correctness_passed = all(
+        cell["provider_success_count"]
+        == cell["reachable_expected_call_count"]
+        and cell["route_l2_valid_count"]
+        == cell["reachable_expected_call_count"]
+        for cell in cells
+    )
+    midterm_passed = correctness_passed and all(
+        float(cell["mean_ms"]) <= float(thresholds["midterm_mean"])
+        and float(cell["p95_ms"]) <= float(thresholds["midterm_p95"])
+        and float(cell["max_ms"]) <= float(thresholds["absolute_max"])
+        for cell in cells
+    )
+    final_passed = correctness_passed and all(
+        float(cell["mean_ms"]) <= float(thresholds["final_mean"])
+        and float(cell["p95_ms"]) <= float(thresholds["final_p95"])
+        and float(cell["at_or_below_1000ms_proportion"])
+        >= float(thresholds["final_proportion_at_or_below"])
+        for cell in cells
+    )
+    return {
+        "status": "passed" if midterm_passed else "failed",
+        "correctness_passed": correctness_passed,
+        "midterm_reduced_passed": midterm_passed,
+        "final_threshold_reduced_passed": final_passed,
+    }
+
+
+def _render_r3_formal_report(summary: Mapping[str, object]) -> str:
+    lines = [
+        "# G2 R3 规划时间正式实验",
+        "",
+        f"- 状态：`{summary['status']}`",
+        f"- 正式调用：`{summary['formal_call_count']}`",
+        f"- 中期 2 s 门槛：`{summary['midterm_reduced_passed']}`",
+        f"- 最终 1 s 门槛：`{summary['final_threshold_reduced_passed']}`",
+        "",
+        "## 六个平台/尺度分层",
+        "",
+    ]
+    for key, cell in summary["recomputed"]["strata"].items():
+        lines.append(
+            f"- `{key}`：mean={cell['mean_ms']:.3f} ms，"
+            f"p95={cell['p95_ms']:.3f} ms，max={cell['max_ms']:.3f} ms"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _effective_r3_config(
+    *,
+    run_id: str,
+    config_file_sha256: str,
+    bundle: Mapping[str, object],
+) -> dict[str, object]:
+    manifest = bundle["manifest"]
+    return {
+        "schema_version": "xunce-mid-dual-g2-effective-config/v2",
+        "gate_id": G2_GATE_ID,
+        "runner_id": "xunce-mid-dual-g2-planning-time-runner/v2",
+        "scale_profile": SCALE_PROFILE,
+        "run_id": run_id,
+        "required_phase_ids": list(G2_REQUIRED_PHASE_IDS),
+        "config_file_sha256": _require_sha256(
+            config_file_sha256,
+            "g2_r3_config_invalid",
+        ),
+        "execution_manifest_sha256": bundle["manifest_file_sha256"],
+        "approval_artifact_sha256": manifest["approval_artifact_sha256"],
+        "approval_target_sha256": manifest["approval_target_sha256"],
+        "producer_binding_sha256": manifest["producer_binding_sha256"],
+        "provider_runtime_source_closure_sha256": manifest[
+            "provider_runtime_source_closure_sha256"
+        ],
+        "consumer_source_closure_sha256": manifest[
+            "consumer_source_closure_sha256"
+        ],
+        "consumer_activation_contract_sha256": manifest[
+            "consumer_activation_contract_sha256"
+        ],
+        "resource_policy_root_sha256": manifest[
+            "resource_policy_root_sha256"
+        ],
+        "execution_request_root_sha256": manifest[
+            "execution_request_root_sha256"
+        ],
+        "p03_probe_selection_sha256": manifest[
+            "p03_probe_selection_sha256"
+        ],
+        "formal_schedule_sha256": manifest["formal_schedule_sha256"],
+        "execution_data_root_sha256": manifest[
+            "execution_data_root_sha256"
+        ],
+    }
+
+
+def _r3_phase_binding(
+    bundle: Mapping[str, object],
+) -> dict[str, object]:
+    manifest = bundle["manifest"]
+    return {
+        "execution_manifest_sha256": bundle["manifest_file_sha256"],
+        "approval_artifact_sha256": manifest["approval_artifact_sha256"],
+        "approval_target_sha256": manifest["approval_target_sha256"],
+        "producer_binding_sha256": manifest["producer_binding_sha256"],
+        "provider_runtime_source_closure_sha256": manifest[
+            "provider_runtime_source_closure_sha256"
+        ],
+        "consumer_source_closure_sha256": manifest[
+            "consumer_source_closure_sha256"
+        ],
+        "consumer_activation_contract_sha256": manifest[
+            "consumer_activation_contract_sha256"
+        ],
+        "resource_policy_root_sha256": manifest[
+            "resource_policy_root_sha256"
+        ],
+        "execution_request_root_sha256": manifest[
+            "execution_request_root_sha256"
+        ],
+        "p03_probe_selection_sha256": manifest[
+            "p03_probe_selection_sha256"
+        ],
+        "formal_schedule_sha256": manifest["formal_schedule_sha256"],
+        "execution_data_root_sha256": manifest[
+            "execution_data_root_sha256"
+        ],
+    }
+
+
+def _write_r3_terminal_blocked_marker(
+    *,
+    store: MidDualRunStore,
+    run_id: str,
+    bundle: Mapping[str, object],
+    reason: str,
+) -> None:
+    marker_path = store.run_root / R3_TERMINAL_BLOCKED_FILE
+    if artifact_io.path_exists(marker_path):
+        raise G2Blocked("g2_r3_terminal_blocked_run_id")
+    artifact_io.write_json(
+        marker_path,
+        {
+            "schema_version": (
+                "xunce-mid-dual-g2-r3-terminal-blocked/v1"
+            ),
+            "status": "terminal_blocked",
+            "gate_id": G2_GATE_ID,
+            "runner_id": "xunce-mid-dual-g2-planning-time-runner/v2",
+            "run_id": run_id,
+            "blocking_reason": reason,
+            "config_sha256": store.config_sha256,
+            "execution_manifest_sha256": bundle[
+                "manifest_file_sha256"
+            ],
+            "accepted_phase_ids": list(store.accepted_phase_ids),
+            "formal_row_count": 0,
+            "p04_started": False,
+            "requires_new_run_id": True,
+        },
+    )
+
+
+def _reject_r3_terminal_blocked_run(
+    run_root: Path,
+    *,
+    run_id: str,
+    expected_config_sha256: str,
+    execution_manifest_sha256: str,
+) -> None:
+    marker_path = run_root / R3_TERMINAL_BLOCKED_FILE
+    if not artifact_io.path_exists(marker_path):
+        return
+    if not artifact_io.path_is_file(marker_path):
+        raise G2Blocked("g2_r3_terminal_blocked_marker_drift")
+    marker = artifact_io.read_json(marker_path)
+    if (
+        type(marker) is not dict
+        or marker.get("schema_version")
+        != "xunce-mid-dual-g2-r3-terminal-blocked/v1"
+        or marker.get("status") != "terminal_blocked"
+        or marker.get("gate_id") != G2_GATE_ID
+        or marker.get("runner_id")
+        != "xunce-mid-dual-g2-planning-time-runner/v2"
+        or marker.get("run_id") != run_id
+        or marker.get("config_sha256") != expected_config_sha256
+        or marker.get("execution_manifest_sha256")
+        != execution_manifest_sha256
+        or marker.get("formal_row_count") != 0
+        or marker.get("p04_started") is not False
+        or marker.get("requires_new_run_id") is not True
+    ):
+        raise G2Blocked("g2_r3_terminal_blocked_marker_drift")
+    raise G2Blocked("g2_r3_terminal_blocked_run_id")
+
+
+def _revalidate_r3_accepted_prefix(
+    store: MidDualRunStore,
+    *,
+    bundle: Mapping[str, object],
+    nonformal: Mapping[str, Sequence[Mapping[str, object]]],
+) -> None:
+    accepted = list(store.accepted_phase_ids)
+    if accepted != list(G2_REQUIRED_PHASE_IDS[: len(accepted)]):
+        raise G2Blocked("g2_r3_resume_phase_prefix")
+    phase_binding = _r3_phase_binding(bundle)
+    if "p01" in accepted:
+        audit = _accepted_phase_audit(store, "p01")
+        if (
+            audit.get("schema_version")
+            != "xunce-mid-dual-g2-r3-phase-audit/v1"
+            or audit.get("runner_id")
+            != "xunce-mid-dual-g2-planning-time-runner/v2"
+            or audit.get("provider_called") is not False
+            or audit.get("formal_row_count") != 0
+            or any(
+                audit.get(key) != value
+                for key, value in phase_binding.items()
+            )
+            or _accepted_phase_rows(store, "p01") != []
+        ):
+            raise G2Blocked("g2_r3_resume_phase_drift")
+    if "p02" in accepted:
+        rows = _accepted_phase_rows(store, "p02")
+        cold = [row for row in rows if row.get("schedule_kind") == "cold"]
+        warmup = [
+            row
+            for row in rows
+            if str(row.get("schedule_kind", "")).startswith("warmup-")
+        ]
+        _validate_r3_diagnostic_batch(
+            cold,
+            nonformal["cold_start"],
+            worker_count=1,
+        )
+        _validate_r3_diagnostic_batch(
+            warmup,
+            nonformal["warmup"],
+            worker_count=4,
+        )
+        if len(rows) != 33:
+            raise G2Blocked("g2_r3_resume_phase_drift")
+    if "p03" in accepted:
+        rows = _accepted_phase_rows(store, "p03")
+        worker_one = [
+            row for row in rows if row.get("schedule_kind") == "worker-one"
+        ]
+        worker_four = [
+            row for row in rows if row.get("schedule_kind") == "worker-four"
+        ]
+        validate_r3_p03_diagnostic_rows(
+            worker_one,
+            worker_four,
+            expected_execution_signatures=bundle[
+                "p03_execution_signatures"
+            ],
+        )
+        if len(rows) != 24:
+            raise G2Blocked("g2_r3_resume_phase_drift")
+
+
+def run_g2_r3(
+    *,
+    config_path: str | Path,
+    input_bundle: str | Path,
+    run_id: str,
+    mode: str,
+    output_base: str | Path | None = None,
+    batch_executor: Callable[..., Sequence[Mapping[str, object]]] | None = None,
+) -> dict[str, object]:
+    """Run only the R3 activation phases; p04 remains explicitly unreachable."""
+
+    run_id = _validated_run_id(run_id)
+    if mode not in G2_MODES:
+        raise G2Blocked("g2_mode_invalid")
+    config_bytes = artifact_read_bytes(config_path)
+    config = validate_r3_cli_config_schema(
+        config_path,
+        require_resolved=True,
+    )
+    bundle = read_r3_execution_bundle(input_bundle, config=config)
+    nonformal = build_r3_nonformal_schedules(
+        bundle["provider_blind_requests"],
+        producer_schema_contract=bundle["producer_binding"],
+        probe_selection=bundle["p03_probe_selection"],
+    )
+    effective = _effective_r3_config(
+        run_id=run_id,
+        config_file_sha256=_sha256(config_bytes),
+        bundle=bundle,
+    )
+    run_root = (
+        Path(output_base)
+        if output_base is not None
+        else Path(str(config["output_base"]))
+    ) / run_id
+    _reject_r3_terminal_blocked_run(
+        run_root,
+        run_id=run_id,
+        expected_config_sha256=_canonical_sha256(effective),
+        execution_manifest_sha256=str(bundle["manifest_file_sha256"]),
+    )
+    try:
+        store, _created = _open_store(run_root, effective)
+    except (FileNotFoundError, ValueError) as exc:
+        raise G2Blocked("g2_r3_resume_phase_drift") from exc
+    _revalidate_r3_accepted_prefix(
+        store,
+        bundle=bundle,
+        nonformal=nonformal,
+    )
+    phase_binding = _r3_phase_binding(bundle)
+    if "p01" not in store.accepted_phase_ids:
+        _accept_r3_phase(
+            store,
+            phase_id="p01",
+            rows=(),
+            audit={
+                "status": "complete",
+                "formal_sample": False,
+                "provider_called": False,
+                "formal_row_count": 0,
+                "request_count": 129,
+                "truth_sidecar_count": 129,
+                **phase_binding,
+            },
+        )
+    if mode == "preflight":
+        return {
+            "execution_status": "incomplete",
+            "gate_status": "preflight_complete",
+            "formal_row_count": 0,
+            "provider_called": False,
+            "p04_started": False,
+            "run_root": run_root.as_posix(),
+            "accepted_phase_ids": list(store.accepted_phase_ids),
+        }
+
+    execute_batch = batch_executor or _default_r3_batch_executor
+    provider_called = False
+
+    def terminal_p03_result(reason: str) -> dict[str, object]:
+        _write_r3_terminal_blocked_marker(
+            store=store,
+            run_id=run_id,
+            bundle=bundle,
+            reason=reason,
+        )
+        return {
+            "execution_status": "incomplete",
+            "gate_status": "blocked",
+            "blocking_reason": reason,
+            "formal_row_count": 0,
+            "provider_called": True,
+            "p04_started": False,
+            "run_root": run_root.as_posix(),
+            "accepted_phase_ids": list(store.accepted_phase_ids),
+        }
+
+    if "p02" not in store.accepted_phase_ids:
+        cold_calls = hydrate_r3_calls(
+            nonformal["cold_start"],
+            bundle=bundle,
+        )
+        warmup_calls = hydrate_r3_calls(
+            nonformal["warmup"],
+            bundle=bundle,
+        )
+        provider_called = True
+        cold_rows = _validate_r3_diagnostic_batch(
+            execute_batch(cold_calls, max_workers=1),
+            cold_calls,
+            worker_count=1,
+        )
+        warmup_rows = _validate_r3_diagnostic_batch(
+            execute_batch(warmup_calls, max_workers=4),
+            warmup_calls,
+            worker_count=4,
+        )
+        _accept_r3_phase(
+            store,
+            phase_id="p02",
+            rows=[*cold_rows, *warmup_rows],
+            audit={
+                "status": "complete",
+                "formal_sample": False,
+                "formal_row_count": 0,
+                "cold_start_count": 3,
+                "warmup_count": 30,
+                "cold_start_results_sha256": _canonical_sha256(cold_rows),
+                "warmup_results_sha256": _canonical_sha256(warmup_rows),
+                **phase_binding,
+            },
+        )
+
+    if "p03" not in store.accepted_phase_ids:
+        try:
+            worker_one_calls = hydrate_r3_calls(
+                nonformal["worker_one"],
+                bundle=bundle,
+            )
+            worker_four_calls = hydrate_r3_calls(
+                nonformal["worker_four"],
+                bundle=bundle,
+            )
+            provider_called = True
+            worker_one_raw = list(
+                execute_batch(worker_one_calls, max_workers=1)
+            )
+            worker_four_raw = list(
+                execute_batch(worker_four_calls, max_workers=4)
+            )
+            if (
+                len(worker_one_raw) == 12
+                and len(worker_four_raw) == 12
+                and any(
+                    row.get("provider_success") is not True
+                    or row.get("route_l2_valid") is not True
+                    for row in [*worker_one_raw, *worker_four_raw]
+                    if isinstance(row, Mapping)
+                )
+            ):
+                raise G2Blocked("g2_r3_p03_not_all_l2")
+            worker_one_rows = _validate_r3_diagnostic_batch(
+                worker_one_raw,
+                worker_one_calls,
+                worker_count=1,
+                probe_classes_by_call_id={
+                    str(call["call_id"]): str(call["probe_class"])
+                    for call in nonformal["worker_one"]
+                },
+            )
+            worker_four_rows = _validate_r3_diagnostic_batch(
+                worker_four_raw,
+                worker_four_calls,
+                worker_count=4,
+                probe_classes_by_call_id={
+                    str(call["call_id"]): str(call["probe_class"])
+                    for call in nonformal["worker_four"]
+                },
+            )
+            p03_audit = validate_r3_p03_diagnostic_rows(
+                worker_one_rows,
+                worker_four_rows,
+                expected_execution_signatures=bundle[
+                    "p03_execution_signatures"
+                ],
+            )
+            open_r3_truth_after_provider_batches(
+                worker_one_rows,
+                worker_four_rows,
+                truth_loader=lambda: bundle["parent_truth_sidecars"],
+            )
+        except G2Blocked as exc:
+            return terminal_p03_result(exc.reason)
+        except (KeyboardInterrupt, SystemExit, MemoryError):
+            raise
+        except Exception as exc:
+            return terminal_p03_result(
+                f"g2_r3_p03_internal_exception:{type(exc).__name__}"
+            )
+        _accept_r3_phase(
+            store,
+            phase_id="p03",
+            rows=[*worker_one_rows, *worker_four_rows],
+            audit={
+                **p03_audit,
+                "formal_row_count": 0,
+                **phase_binding,
+            },
+        )
+
+    p02_rows = _accepted_phase_rows(store, "p02")
+    p03_rows = _accepted_phase_rows(store, "p03")
+    if mode == "diagnostic":
+        return {
+            "execution_status": "incomplete",
+            "gate_status": "diagnostic_complete",
+            "formal_row_count": 0,
+            "provider_called": provider_called,
+            "p04_started": False,
+            "p02_row_count": len(p02_rows),
+            "p02_cold_start_count": sum(
+                row.get("schedule_kind") == "cold" for row in p02_rows
+            ),
+            "p02_warmup_count": sum(
+                str(row.get("schedule_kind", "")).startswith("warmup-")
+                for row in p02_rows
+            ),
+            "p03_row_count": len(p03_rows),
+            "run_root": run_root.as_posix(),
+            "accepted_phase_ids": list(store.accepted_phase_ids),
+        }
+
+    formal_schedule = bundle["formal_schedule"]
+    formal_calls = hydrate_r3_calls(
+        formal_schedule["calls"],
+        bundle=bundle,
+    )
+    formal_environment_audit: dict[str, object]
+    if "p04" not in store.accepted_phase_ids:
+        store_index = artifact_io.read_json(run_root / "store-index.json")
+        if not store_index.get("required_lineage_sources"):
+            source_paths = [
+                REPO_ROOT / str(row["relative_path"])
+                for row in bundle["consumer_source_closure"]["files"]
+            ]
+            root_commit, submodule_commit = _root_and_submodule_commits()
+            lineage = store.capture_lineage(
+                source_paths,
+                root_commit,
+                submodule_commit,
+            )
+            if lineage.get("formal_evidence_eligible") is not True:
+                raise G2Blocked("g2_lineage_capture_blocked")
+        if not artifact_io.path_is_file(run_root / "environment_audit.json"):
+            environment = store.capture_environment(_environment_probe)
+            if environment.get("formal_evidence_eligible") is not True:
+                raise G2Blocked("g2_environment_capture_blocked")
+        policy = validate_formal_environment_policy(
+            config["execution"]["formal_environment_gate"]
+        )
+        formal_guard = G2FormalEnvironmentGuard(
+            run_id=run_id,
+            policy=policy,
+            lease=G2FormalLease(
+                lease_path=str(policy["lease_path"]),
+                run_id=run_id,
+                run_root=run_root,
+            ),
+            capture_environment=capture_windows_formal_environment,
+        )
+        try:
+            with formal_guard:
+                provider_called = True
+                formal_rows = execute_recoverable_batch(
+                    formal_calls,
+                    execute_task=_default_r3_formal_task_executor,
+                    state_path=run_root / "job-state.jsonl",
+                    schedule_sha256=str(
+                        formal_schedule["schedule_sha256"]
+                    ),
+                    max_workers=4,
+                )
+                formal_rows = _validate_r3_formal_batch(
+                    formal_rows,
+                    formal_calls,
+                )
+                formal_guard.set_formal_row_count(len(formal_rows))
+        except G2Interrupted:
+            return {
+                "execution_status": "interrupted",
+                "gate_status": "incomplete",
+                "formal_row_count": 0,
+                "formal_environment_gate_status": "blocked",
+                "provider_called": True,
+                "p04_started": True,
+                "run_root": run_root.as_posix(),
+                "accepted_phase_ids": list(store.accepted_phase_ids),
+            }
+        formal_environment_audit = dict(formal_guard.audit)
+        truth_rows = open_r3_truth_after_provider_batch(
+            formal_rows,
+            expected_call_count=645,
+            truth_loader=lambda: _r3_truth_summary_rows(
+                bundle["parent_truth_sidecars"]
+            ),
+        )
+        recomputed = recompute_r3_six_strata_summary(
+            formal_rows,
+            truth_rows,
+        )
+        _accept_r3_phase(
+            store,
+            phase_id="p04",
+            rows=formal_rows,
+            audit={
+                "status": "complete",
+                "formal_sample": True,
+                "formal_worker_count": 4,
+                "formal_call_count": 645,
+                "formal_row_count": 645,
+                "schedule_sha256": formal_schedule["schedule_sha256"],
+                "timing_contract_id": TIMING_CONTRACT_ID,
+                "independent_recomputed_sha256": _canonical_sha256(
+                    recomputed
+                ),
+                **formal_environment_phase_audit_fields(
+                    formal_environment_audit
+                ),
+                **phase_binding,
+            },
+        )
+    else:
+        phase_audit = _accepted_phase_audit(store, "p04")
+        formal_environment_audit = (
+            validate_formal_environment_phase_audit(phase_audit)
+        )
+        formal_rows = _validate_r3_formal_batch(
+            _accepted_phase_rows(store, "p04"),
+            formal_calls,
+        )
+        truth_rows = _r3_truth_summary_rows(
+            bundle["parent_truth_sidecars"]
+        )
+        recomputed = recompute_r3_six_strata_summary(
+            formal_rows,
+            truth_rows,
+        )
+
+    gate = _r3_gate_summary(
+        recomputed,
+        thresholds=config["thresholds_ms"],
+    )
+    summary = {
+        "schema_version": "xunce-mid-dual-g2-r3-summary/v1",
+        "scale_profile": SCALE_PROFILE,
+        "gate_id": G2_GATE_ID,
+        "run_id": run_id,
+        **gate,
+        "formal_evidence_eligible": True,
+        "formal_call_count": 645,
+        **phase_binding,
+        "recomputed": recomputed,
+    }
+    routing = {
+        "schema_version": "xunce-mid-dual-g2-r3-routing/v1",
+        "gate_id": G2_GATE_ID,
+        "status": summary["status"],
+        "formal_evidence_eligible": True,
+        "route": (
+            "midterm_g2_passed"
+            if summary["midterm_reduced_passed"]
+            else "midterm_g2_failed"
+        ),
+    }
+    store.finalize(
+        summary,
+        routing,
+        _render_r3_formal_report(summary),
+        {
+            "g2_r3_activation": phase_binding,
+            "g2_r3_formal_environment": formal_environment_audit,
+            "g2_r3_recompute": recomputed,
+            "g2_r3_schedule": {
+                "schema_version": formal_schedule["schema_version"],
+                "schedule_sha256": formal_schedule["schedule_sha256"],
+                "formal_worker_count": 4,
+                "formal_call_count": 645,
+            },
+        },
+    )
+    MidDualRunStore.verify_manifest(run_root)
+    return {
+        "execution_status": "complete",
+        "gate_status": summary["status"],
+        "formal_row_count": 645,
+        "formal_environment_gate_status": "passed",
+        "provider_called": True,
+        "p04_started": True,
+        "run_root": run_root.as_posix(),
+        "accepted_phase_ids": list(store.accepted_phase_ids),
+        "summary": summary,
+    }
+
+
+def run_g2_activation(
+    *,
+    config_path: str | Path,
+    input_bundle: str | Path,
+    run_id: str,
+    mode: str,
+) -> dict[str, object]:
+    """CLI selector that rejects v1 before any bundle or Provider access."""
+
+    validate_r3_cli_config_schema(config_path, require_resolved=True)
+    return run_g2_r3(
+        config_path=config_path,
+        input_bundle=input_bundle,
+        run_id=run_id,
+        mode=mode,
+    )
 
 
 def run_g2(
@@ -4230,7 +6897,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        result = run_g2(
+        result = run_g2_activation(
             config_path=args.config,
             input_bundle=args.input_bundle,
             run_id=args.run_id,
@@ -4238,7 +6905,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except G2Blocked as exc:
         result = {
-            "execution_status": "not_started",
+            "execution_status": "complete",
             "gate_status": "blocked",
             "formal_row_count": 0,
             "formal_environment_gate_status": "not_run",

@@ -21,7 +21,7 @@ import re
 import struct
 import subprocess
 import sys
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 import zipfile
 
 import numpy as np
@@ -154,6 +154,99 @@ _PROVIDER_FORBIDDEN_KEYS = {
     "truth_certificate",
     "truth_certificate_sha256",
 }
+_R3_PROVIDER_TRUTH_TOKENS = frozenset(
+    {
+        "certificate",
+        "difficulty",
+        "frontier",
+        "optimal",
+        "oracle",
+        "outcome",
+        "sidecar",
+        "truth",
+    }
+)
+_BINARY64_WORD_RE = re.compile(r"^[0-9a-f]{16}$")
+R3_PRODUCER_SCHEMA_CONTRACT_VERSION = (
+    "xunce-mid-dual-g2-producer-schema-contract/v1"
+)
+R3_PRODUCER_BINDING_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-producer-binding/v1"
+)
+R3_PROVIDER_BLIND_SCHEMA_VERSION = "g2-provider-blind-request/v1"
+R3_PROVIDER_EXECUTION_REQUEST_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-provider-execution-request/v3"
+)
+R3_CONFIG_SCHEMA_VERSION = "xunce-mid-dual-g2-planning-time-config/v2"
+R3_RUNNER_ID = "run_xunce_mid_dual_g2_planning_time/v2"
+R3_EXECUTION_BUNDLE_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-execution-bundle/v2"
+)
+R3_APPROVAL_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-artifact-bound-approval/v2"
+)
+R3_APPROVAL_TARGET_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-r3-approval-target/v1"
+)
+R3_FINAL_CANDIDATE_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-r3-final-candidate/v1"
+)
+R3_P03_SELECTION_CONTRACT = (
+    "xunce-mid-dual-g2-r3-p03-input-side-sha256-rank/v1"
+)
+R3_LOCAL_SNAPSHOT_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-local-snapshot-normalized/v1"
+)
+R3_PROVIDER_LOCAL_SNAPSHOT_SCHEMA_VERSION = (
+    "g2-provider-local-terrain-snapshot/v1"
+)
+R3_RESOURCE_POLICY_SCHEMA_VERSION = "g2-provider-resource-policy/v2"
+R3_HOPPER_SUPPORT_PLANE_MODEL_ID = (
+    "hopper_horizontal_same_support_full_envelope_50mm/v1"
+)
+R3_HOPPER_CAPABILITY_ID = (
+    "simulation_proxy_generic_internal_lunar_ballistic/v3"
+)
+_R3_PROVIDER_BLIND_BASE_KEYS = frozenset(
+    {
+        "action_envelope",
+        "action_envelope_sha256",
+        "execution_graph",
+        "frame_id",
+        "goal",
+        "metric_problem",
+        "metric_problem_sha256",
+        "objective",
+        "objective_sha256",
+        "platform_kind",
+        "producer_implementation_sha256",
+        "profile_or_parameter_record_sha256",
+        "provider_local_snapshot_payload_sha256",
+        "provider_local_snapshot_ref",
+        "provider_local_snapshot_sha256",
+        "provider_request_id",
+        "provider_request_sha256",
+        "resource_budget",
+        "scale",
+        "schema_version",
+        "start",
+        "terrain_geometry_sha256",
+        "terrain_sha256",
+        "vertical_datum",
+    }
+)
+_R3_PROVIDER_FORBIDDEN_EXACT_KEYS = frozenset(
+    {
+        "cost_milli",
+        "difficulty_class",
+        "oracle_reachable",
+        "path_edge_ids",
+        "truth_certificate",
+        "truth_certificate_sha256",
+        "truth_request_sha256",
+        "truth_sidecar",
+    }
+)
 
 
 class G2InputContractError(ValueError):
@@ -1133,6 +1226,2921 @@ def _node_xy(node: object, *, width: int, height: int) -> tuple[int, int]:
     if x >= width or y >= height:
         _fail("request_node_out_of_terrain", value)
     return x, y
+
+
+def _r3_truth_token_present(value: object) -> bool:
+    """Return whether a provider-reachable object exposes truth semantics."""
+
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            folded = str(key).casefold()
+            if any(token in folded for token in _R3_PROVIDER_TRUTH_TOKENS):
+                return True
+            if _r3_truth_token_present(child):
+                return True
+        return False
+    if isinstance(value, (list, tuple)):
+        return any(_r3_truth_token_present(child) for child in value)
+    return False
+
+
+def _r3_forbidden_provider_key_present(value: object) -> bool:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if str(key).casefold() in _R3_PROVIDER_FORBIDDEN_EXACT_KEYS:
+                return True
+            if _r3_forbidden_provider_key_present(child):
+                return True
+        return False
+    if isinstance(value, (list, tuple)):
+        return any(
+            _r3_forbidden_provider_key_present(child) for child in value
+        )
+    return False
+
+
+def validate_r3_producer_binding(
+    binding: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate caller-supplied final Producer identity without freezing it."""
+
+    required = {
+        "binding_sha256",
+        "bundle_root",
+        "hopper_parameter_record_sha256",
+        "input_contract_sha256",
+        "producer_implementation_sha256",
+        "provider_blind_schema_version",
+        "schema_version",
+    }
+    if type(binding) is not dict or set(binding) != required:
+        _fail("r3_producer_binding")
+    bundle_root = binding.get("bundle_root")
+    if (
+        binding.get("schema_version")
+        != R3_PRODUCER_BINDING_SCHEMA_VERSION
+        or binding.get("provider_blind_schema_version")
+        != R3_PROVIDER_BLIND_SCHEMA_VERSION
+        or type(bundle_root) is not str
+        or re.fullmatch(r"[A-Za-z]:/[^\x00]+", bundle_root) is None
+        or "\\" in bundle_root
+        or bundle_root.endswith("/")
+        or ".." in PurePosixPath(bundle_root).parts
+    ):
+        _fail("r3_producer_binding")
+    for field in (
+        "hopper_parameter_record_sha256",
+        "input_contract_sha256",
+        "producer_implementation_sha256",
+    ):
+        _require_sha256(binding.get(field), "r3_producer_binding")
+    core = {
+        key: binding[key] for key in required if key != "binding_sha256"
+    }
+    if binding.get("binding_sha256") != _domain_hash(
+        R3_PRODUCER_BINDING_SCHEMA_VERSION,
+        _canonical_json_bytes(core),
+    ):
+        _fail("r3_producer_binding")
+    return dict(binding)
+
+
+def _validate_r3_exact_provider_endpoint(
+    endpoint: object,
+    *,
+    metric_endpoint: object,
+    node_states: Mapping[str, object],
+    snapshot_sha256: str,
+) -> None:
+    exact_keys = {
+        "endpoint_safety",
+        "node_id",
+        "node_state",
+        "pose_binary64_m_rad",
+        "pose_mm_urad",
+    }
+    metric_keys = exact_keys - {"node_state"}
+    if (
+        type(endpoint) is not dict
+        or set(endpoint) != exact_keys
+        or type(metric_endpoint) is not dict
+        or set(metric_endpoint) != metric_keys
+        or endpoint["node_id"] not in node_states
+        or endpoint["node_state"] != node_states[endpoint["node_id"]]
+        or {
+            key: value
+            for key, value in endpoint.items()
+            if key != "node_state"
+        }
+        != metric_endpoint
+        or type(endpoint["endpoint_safety"]) is not dict
+        or endpoint["endpoint_safety"].get("snapshot_sha256")
+        != snapshot_sha256
+        or type(endpoint["pose_mm_urad"]) is not list
+        or len(endpoint["pose_mm_urad"]) != 3
+        or any(type(value) is not int for value in endpoint["pose_mm_urad"])
+    ):
+        _fail("r3_blind_execution_join")
+    projected = project_r3_canonical_pose(endpoint["pose_binary64_m_rad"])
+    state = endpoint["node_state"]
+    state_pose = state.get("body_pose", state.get("pose"))
+    if state_pose != endpoint["pose_binary64_m_rad"]:
+        _fail("r3_blind_execution_join")
+    pose = projected["pose"]
+    expected_display = [
+        round(float(pose["x_m"]) * 1000.0),
+        round(float(pose["y_m"]) * 1000.0),
+        round(float(pose["heading_rad"]) * 1_000_000.0),
+    ]
+    if endpoint["pose_mm_urad"] != expected_display:
+        _fail("r3_blind_pose_display_join")
+
+
+def _validate_r3_exact_provider_blind_request(
+    row: Mapping[str, object],
+    producer_binding: Mapping[str, object],
+) -> dict[str, object]:
+    binding = validate_r3_producer_binding(producer_binding)
+    if type(row) is not dict:
+        _fail("r3_blind_schema")
+    platform = row.get("platform_kind")
+    expected_keys = set(_R3_PROVIDER_BLIND_BASE_KEYS)
+    if platform == "hopper":
+        expected_keys.add("hopper_parameter_record")
+    if (
+        platform not in G2_PLATFORMS
+        or set(row) != expected_keys
+        or row.get("schema_version") != R3_PROVIDER_BLIND_SCHEMA_VERSION
+        or row.get("scale") not in {"standard", "kilometer"}
+    ):
+        _fail("r3_blind_schema")
+    if (
+        row.get("producer_implementation_sha256")
+        != binding["producer_implementation_sha256"]
+    ):
+        _fail("r3_producer_binding_mismatch")
+    if _r3_forbidden_provider_key_present(row):
+        _fail("g2_provider_truth_leak_v3")
+    for field in (
+        "action_envelope_sha256",
+        "metric_problem_sha256",
+        "objective_sha256",
+        "profile_or_parameter_record_sha256",
+        "provider_local_snapshot_payload_sha256",
+        "provider_local_snapshot_sha256",
+        "provider_request_sha256",
+        "terrain_geometry_sha256",
+        "terrain_sha256",
+    ):
+        _require_sha256(row.get(field), "r3_blind_schema")
+
+    execution = row.get("execution_graph")
+    metric = row.get("metric_problem")
+    if (
+        type(execution) is not dict
+        or set(execution)
+        != {
+            "node_state_root_sha256",
+            "node_states",
+            "nodes",
+            "schema_version",
+        }
+        or execution.get("schema_version")
+        != "g2-provider-execution-topology/v1"
+        or type(execution.get("nodes")) is not list
+        or len(execution["nodes"]) != len(set(execution["nodes"]))
+        or type(execution.get("node_states")) is not dict
+        or set(execution["nodes"]) != set(execution["node_states"])
+        or type(metric) is not dict
+        or metric.get("schema_version") != "g2-metric-planning-problem/v3"
+        or metric.get("node_states") != execution["node_states"]
+        or metric.get("node_state_root_sha256")
+        != execution["node_state_root_sha256"]
+        or metric.get("provider_local_snapshot_sha256")
+        != row["provider_local_snapshot_sha256"]
+        or row.get("frame_id") != metric.get("frame_id")
+        or row.get("vertical_datum") != metric.get("vertical_datum")
+    ):
+        _fail("r3_blind_execution_join")
+    expected_node_root = _domain_hash(
+        "g2-request-node-state-root/v1",
+        _canonical_json_bytes(execution["node_states"]),
+    )
+    if execution["node_state_root_sha256"] != expected_node_root:
+        _fail("r3_blind_execution_join")
+    _validate_r3_exact_provider_endpoint(
+        row.get("start"),
+        metric_endpoint=metric.get("start"),
+        node_states=execution["node_states"],
+        snapshot_sha256=str(row["provider_local_snapshot_sha256"]),
+    )
+    _validate_r3_exact_provider_endpoint(
+        row.get("goal"),
+        metric_endpoint=metric.get("goal"),
+        node_states=execution["node_states"],
+        snapshot_sha256=str(row["provider_local_snapshot_sha256"]),
+    )
+    if (
+        row["action_envelope_sha256"]
+        != _domain_hash(
+            "g2-request-action-envelope/v2",
+            _canonical_json_bytes(row["action_envelope"]),
+        )
+        or row["metric_problem_sha256"]
+        != _domain_hash(
+            "g2-request-metric-problem/v3",
+            _canonical_json_bytes(metric),
+        )
+        or row["objective_sha256"]
+        != _domain_hash(
+            "g2-request-objective/v1",
+            _canonical_json_bytes(row["objective"]),
+        )
+    ):
+        _fail("r3_blind_execution_join")
+    resource_budget = row.get("resource_budget")
+    if (
+        type(resource_budget) is not dict
+        or set(resource_budget)
+        != {
+            "final_target_runtime_ms",
+            "max_path_primitives",
+            "midterm_max_runtime_ms",
+        }
+        or resource_budget.get("final_target_runtime_ms") != 1000
+        or resource_budget.get("midterm_max_runtime_ms") != 2000
+        or type(resource_budget.get("max_path_primitives")) is not int
+        or resource_budget["max_path_primitives"] <= 0
+    ):
+        _fail("r3_blind_resource_budget")
+    snapshot_ref = (
+        "terrain/provider-local/"
+        f"{row['provider_local_snapshot_sha256']}.json"
+    )
+    if row.get("provider_local_snapshot_ref") != snapshot_ref:
+        _fail("r3_blind_snapshot_ref")
+
+    if platform == "hopper":
+        record = _validate_r3_exact_hopper_parameter_record(
+            row.get("hopper_parameter_record")
+        )
+        record_sha256 = _sha256(_canonical_json_bytes(record))
+        if (
+            record_sha256 != row["profile_or_parameter_record_sha256"]
+            or record_sha256
+            != binding["hopper_parameter_record_sha256"]
+        ):
+            _fail(
+                "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+                "g2_hopper_parameter_record_mismatch",
+            )
+
+    core = {
+        key: value
+        for key, value in row.items()
+        if key not in {"provider_request_id", "provider_request_sha256"}
+    }
+    expected_sha256 = _domain_hash(
+        R3_PROVIDER_BLIND_SCHEMA_VERSION,
+        _canonical_json_bytes(core),
+    )
+    expected_id = (
+        f"g2i-provider-{platform}-{row['scale']}-"
+        f"{expected_sha256[:20]}"
+    )
+    if (
+        row.get("provider_request_sha256") != expected_sha256
+        or row.get("provider_request_id") != expected_id
+    ):
+        _fail("r3_blind_identity")
+    _canonical_json_bytes(row)
+    return dict(row)
+
+
+def _validated_r3_producer_schema_contract(
+    contract: Mapping[str, object],
+) -> dict[str, object]:
+    required = {
+        "schema_version",
+        "provider_blind_schema_version",
+        "provider_blind_exact_keys",
+        "contract_sha256",
+    }
+    if type(contract) is not dict or set(contract) != required:
+        _fail("r3_producer_schema_contract")
+    exact_keys = contract.get("provider_blind_exact_keys")
+    if (
+        contract.get("schema_version")
+        != R3_PRODUCER_SCHEMA_CONTRACT_VERSION
+        or type(contract.get("provider_blind_schema_version")) is not str
+        or not contract["provider_blind_schema_version"]
+        or type(exact_keys) is not list
+        or not exact_keys
+        or any(type(key) is not str or not key for key in exact_keys)
+        or exact_keys != sorted(set(exact_keys))
+    ):
+        _fail("r3_producer_schema_contract")
+    core = {
+        key: contract[key]
+        for key in (
+            "schema_version",
+            "provider_blind_schema_version",
+            "provider_blind_exact_keys",
+        )
+    }
+    if contract.get("contract_sha256") != _domain_hash(
+        R3_PRODUCER_SCHEMA_CONTRACT_VERSION,
+        _canonical_json_bytes(core),
+    ):
+        _fail("r3_producer_schema_contract")
+    return dict(contract)
+
+
+def validate_r3_provider_blind_request(
+    row: Mapping[str, object],
+    producer_schema_contract: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate a frozen exact row, with legacy test-fixture compatibility."""
+
+    if (
+        isinstance(producer_schema_contract, Mapping)
+        and producer_schema_contract.get("schema_version")
+        == R3_PRODUCER_BINDING_SCHEMA_VERSION
+    ):
+        return _validate_r3_exact_provider_blind_request(
+            row,
+            producer_schema_contract,
+        )
+
+    contract = _validated_r3_producer_schema_contract(
+        producer_schema_contract
+    )
+    exact_keys = set(contract["provider_blind_exact_keys"])
+    if (
+        type(row) is not dict
+        or set(row) != exact_keys
+        or row.get("schema_version")
+        != contract["provider_blind_schema_version"]
+    ):
+        _fail("r3_blind_schema")
+    if _r3_truth_token_present(row):
+        _fail("g2_provider_truth_leak_v3")
+    if (
+        row.get("platform") not in G2_PLATFORMS
+        or row.get("scale") not in {"standard", "kilometer"}
+        or type(row.get("request_id")) is not str
+        or not row["request_id"]
+        or not _is_sha256(row.get("provider_request_identity_sha256"))
+    ):
+        _fail("r3_blind_schema")
+    _canonical_json_bytes(row)
+    return dict(row)
+
+
+def _r3_reachable_strings(value: object) -> Iterable[str]:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            yield str(key)
+            yield from _r3_reachable_strings(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _r3_reachable_strings(child)
+    elif type(value) is str:
+        yield value
+    elif type(value) is bytes:
+        yield value.decode("utf-8", errors="ignore")
+
+
+def validate_r3_provider_worker_isolation(
+    spec: Mapping[str, object],
+    *,
+    truth_sidecar_path: str,
+) -> dict[str, object]:
+    """Fail closed when any spawn-reachable worker object exposes truth."""
+
+    required = {
+        "schema_version",
+        "provider_request",
+        "terrain_payload",
+        "terrain_payload_sha256",
+        "environment",
+        "accessible_paths",
+        "working_directory",
+    }
+    if type(spec) is not dict or set(spec) != required:
+        _fail("g2_provider_truth_leak_v3")
+    environment = spec.get("environment")
+    if (
+        spec.get("schema_version")
+        != "xunce-mid-dual-g2-provider-worker-spec/v3"
+        or type(spec.get("provider_request")) is not dict
+        or type(spec.get("terrain_payload")) is not bytes
+        or _sha256(spec["terrain_payload"])
+        != spec.get("terrain_payload_sha256")
+        or type(environment) is not dict
+        or any(
+            type(key) is not str or type(value) is not str
+            for key, value in environment.items()
+        )
+        or spec.get("accessible_paths") != []
+        or spec.get("working_directory") is not None
+    ):
+        _fail("g2_provider_truth_leak_v3")
+    if _r3_forbidden_provider_key_present(spec):
+        _fail("g2_provider_truth_leak_v3")
+    normalized_truth = truth_sidecar_path.replace("\\", "/").casefold()
+    for value in _r3_reachable_strings(spec):
+        if normalized_truth and normalized_truth in value.replace(
+            "\\",
+            "/",
+        ).casefold():
+            _fail("g2_provider_truth_leak_v3")
+    return dict(spec)
+
+
+def build_r3_provider_worker_spec(
+    provider_blind_request: Mapping[str, object],
+    *,
+    producer_schema_contract: Mapping[str, object],
+    terrain_payload: bytes,
+    environment: Mapping[str, str],
+) -> dict[str, object]:
+    """Build the spawn payload; truth sidecars have no parameter slot."""
+
+    request = validate_r3_provider_blind_request(
+        provider_blind_request,
+        producer_schema_contract,
+    )
+    provider_request = (
+        build_r3_provider_execution_request(
+            request,
+            producer_binding=producer_schema_contract,
+        )
+        if producer_schema_contract.get("schema_version")
+        == R3_PRODUCER_BINDING_SCHEMA_VERSION
+        else request
+    )
+    if type(terrain_payload) is not bytes or not terrain_payload:
+        _fail("r3_provider_terrain_payload")
+    if (
+        type(environment) is not dict
+        or any(
+            type(key) is not str
+            or not key
+            or type(value) is not str
+            or any(
+                token in key.casefold()
+                for token in _R3_PROVIDER_TRUTH_TOKENS
+            )
+            for key, value in environment.items()
+        )
+    ):
+        _fail("g2_provider_truth_leak_v3")
+    return {
+        "schema_version": "xunce-mid-dual-g2-provider-worker-spec/v3",
+        "provider_request": provider_request,
+        "terrain_payload": terrain_payload,
+        "terrain_payload_sha256": _sha256(terrain_payload),
+        "environment": dict(sorted(environment.items())),
+        "accessible_paths": [],
+        "working_directory": None,
+    }
+
+
+def _decode_r3_binary64_word(value: object, code: str) -> float:
+    if type(value) is not str or _BINARY64_WORD_RE.fullmatch(value) is None:
+        _fail(code)
+    number = struct.unpack(">d", bytes.fromhex(value))[0]
+    if (
+        not math.isfinite(number)
+        or (number == 0.0 and math.copysign(1.0, number) < 0.0)
+        or struct.pack(">d", number).hex() != value
+    ):
+        _fail(code)
+    return number
+
+
+def project_r3_canonical_pose(
+    binary64_words: Mapping[str, object],
+) -> dict[str, object]:
+    """Decode only canonical words; node IDs and macro scaling have no path."""
+
+    legacy_keys = {"x_m", "y_m", "heading_rad"}
+    exact_keys = {
+        "heading_rad_hex",
+        "heading_rad_word_hex",
+        "x_m_hex",
+        "x_m_word_hex",
+        "y_m_hex",
+        "y_m_word_hex",
+    }
+    if type(binary64_words) is not dict:
+        _fail("r3_canonical_pose_schema")
+    if set(binary64_words) == exact_keys:
+        words = {
+            "x_m": binary64_words["x_m_word_hex"],
+            "y_m": binary64_words["y_m_word_hex"],
+            "heading_rad": binary64_words["heading_rad_word_hex"],
+        }
+        hex_values = {
+            "x_m": binary64_words["x_m_hex"],
+            "y_m": binary64_words["y_m_hex"],
+            "heading_rad": binary64_words["heading_rad_hex"],
+        }
+    elif set(binary64_words) == legacy_keys:
+        words = {
+            key: str(binary64_words[key]) for key in sorted(legacy_keys)
+        }
+        hex_values = None
+    else:
+        _fail("r3_canonical_pose_schema")
+    pose = {
+        key: _decode_r3_binary64_word(
+            words[key],
+            "r3_canonical_pose_binary64",
+        )
+        for key in ("x_m", "y_m", "heading_rad")
+    }
+    if any(
+        struct.pack(">d", pose[key]).hex() != words[key]
+        for key in legacy_keys
+    ):
+        _fail("r3_canonical_pose_roundtrip")
+    if hex_values is not None and any(
+        type(hex_values[key]) is not str
+        or pose[key].hex() != hex_values[key]
+        for key in legacy_keys
+    ):
+        _fail("r3_canonical_pose_roundtrip")
+    return {
+        "binary64_words": (
+            dict(binary64_words)
+            if set(binary64_words) == legacy_keys
+            else dict(words)
+        ),
+        "canonical_identity": (
+            None if hex_values is None else dict(binary64_words)
+        ),
+        "pose": pose,
+    }
+
+
+def validate_r3_hopper_one_ulp_witness(
+    witness: Mapping[str, object],
+) -> dict[str, object]:
+    required = {
+        "start_x_binary64",
+        "goal_x_binary64",
+        "modeled_range_binary64",
+        "node_l2_binary64",
+        "ulp_distance",
+        "cost_milli",
+    }
+    if type(witness) is not dict or set(witness) != required:
+        _fail("r3_hopper_ulp_witness")
+    start = _decode_r3_binary64_word(
+        witness["start_x_binary64"],
+        "r3_hopper_ulp_witness",
+    )
+    goal = _decode_r3_binary64_word(
+        witness["goal_x_binary64"],
+        "r3_hopper_ulp_witness",
+    )
+    modeled_range = _decode_r3_binary64_word(
+        witness["modeled_range_binary64"],
+        "r3_hopper_ulp_witness",
+    )
+    node_l2 = _decode_r3_binary64_word(
+        witness["node_l2_binary64"],
+        "r3_hopper_ulp_witness",
+    )
+    observed = goal - start
+    if (
+        type(witness.get("ulp_distance")) is not int
+        or witness["ulp_distance"] != 1
+        or type(witness.get("cost_milli")) is not int
+        or witness["cost_milli"] != 1389
+        or struct.pack(">d", observed).hex()
+        != witness["node_l2_binary64"]
+        or observed != node_l2
+        or math.nextafter(modeled_range, math.inf) != node_l2
+        or math.nextafter(node_l2, -math.inf) != modeled_range
+        or round(modeled_range * 1000.0) != witness["cost_milli"]
+    ):
+        _fail("r3_hopper_ulp_witness")
+    return dict(witness)
+
+
+def _r3_relative_relief_um(
+    elevation_um: Sequence[Sequence[int]],
+) -> list[list[int]]:
+    reference = int(elevation_um[0][0])
+    return [
+        [int(value) - reference for value in row]
+        for row in elevation_um
+    ]
+
+
+def _r3_exact_int_grid(
+    value: object,
+    *,
+    minimum: int,
+    maximum: int,
+) -> list[list[int]]:
+    if (
+        type(value) is not list
+        or len(value) != 20
+        or any(type(row) is not list or len(row) != 20 for row in value)
+        or any(
+            type(cell) is not int or not minimum <= cell <= maximum
+            for row in value
+            for cell in row
+        )
+    ):
+        _fail("r3_local_snapshot_arrays")
+    return [list(row) for row in value]
+
+
+def _project_r3_materialized_local_snapshot(
+    snapshot: Mapping[str, object],
+) -> dict[str, object]:
+    required = {
+        "arrays",
+        "frame_id",
+        "origin_mm",
+        "physical_obstacle_cells_written",
+        "platform_kind",
+        "proxy_modification_witness",
+        "relief_preservation_sha256",
+        "resolution_mm",
+        "schema_version",
+        "shape_height_width",
+        "snapshot_sha256",
+        "source_kind",
+        "vertical_translation",
+    }
+    if (
+        type(snapshot) is not dict
+        or set(snapshot) != required
+        or snapshot.get("schema_version")
+        != R3_PROVIDER_LOCAL_SNAPSHOT_SCHEMA_VERSION
+        or snapshot.get("frame_id") != "g2-local-metric-frame-mm/v1"
+        or snapshot.get("origin_mm") != [0, 0]
+        or snapshot.get("resolution_mm") != 500
+        or snapshot.get("shape_height_width") != [20, 20]
+        or snapshot.get("platform_kind") not in G2_PLATFORMS
+        or snapshot.get("physical_obstacle_cells_written") is not False
+        or type(snapshot.get("source_kind")) is not str
+        or not snapshot["source_kind"]
+    ):
+        _fail("r3_local_snapshot_schema")
+    arrays = snapshot.get("arrays")
+    if (
+        type(arrays) is not dict
+        or set(arrays)
+        != {
+            "confidence_ppm",
+            "elevation_um",
+            "hard_obstacle",
+            "known",
+            "slope_cdeg",
+            "traversable",
+        }
+    ):
+        _fail("r3_local_snapshot_arrays")
+    confidence = _r3_exact_int_grid(
+        arrays["confidence_ppm"],
+        minimum=0,
+        maximum=1_000_000,
+    )
+    elevation = _r3_exact_int_grid(
+        arrays["elevation_um"],
+        minimum=-(10**12),
+        maximum=10**12,
+    )
+    hard_obstacle = _r3_exact_int_grid(
+        arrays["hard_obstacle"],
+        minimum=0,
+        maximum=1,
+    )
+    known = _r3_exact_int_grid(
+        arrays["known"],
+        minimum=0,
+        maximum=1,
+    )
+    slope = _r3_exact_int_grid(
+        arrays["slope_cdeg"],
+        minimum=0,
+        maximum=9000,
+    )
+    traversable = _r3_exact_int_grid(
+        arrays["traversable"],
+        minimum=0,
+        maximum=1,
+    )
+
+    translation = snapshot.get("vertical_translation")
+    translation_keys = {
+        "anchor_cell_xy",
+        "anchor_node_id",
+        "delta_z_um",
+        "input_anchor_elevation_um",
+        "input_elevation_sha256",
+        "input_relief_sha256",
+        "input_snapshot_sha256",
+        "output_elevation_sha256",
+        "output_relief_sha256",
+        "semantic_kind",
+        "translation_sha256",
+    }
+    if (
+        type(translation) is not dict
+        or set(translation) != translation_keys
+        or translation.get("semantic_kind")
+        != "uniform-vertical-translation/v1"
+        or type(translation.get("anchor_cell_xy")) is not list
+        or len(translation["anchor_cell_xy"]) != 2
+        or any(
+            type(value) is not int or not 0 <= value < 20
+            for value in translation["anchor_cell_xy"]
+        )
+        or type(translation.get("anchor_node_id")) is not str
+        or not translation["anchor_node_id"]
+        or type(translation.get("delta_z_um")) is not int
+        or type(translation.get("input_anchor_elevation_um")) is not int
+    ):
+        _fail("r3_local_snapshot_vertical_translation")
+    for field in (
+        "input_elevation_sha256",
+        "input_relief_sha256",
+        "input_snapshot_sha256",
+        "output_elevation_sha256",
+        "output_relief_sha256",
+        "translation_sha256",
+    ):
+        _require_sha256(
+            translation.get(field),
+            "r3_local_snapshot_vertical_translation",
+        )
+    delta_z_um = int(translation["delta_z_um"])
+    input_elevation = [
+        [cell - delta_z_um for cell in row] for row in elevation
+    ]
+    anchor_x, anchor_y = translation["anchor_cell_xy"]
+    input_anchor = input_elevation[anchor_y][anchor_x]
+    if (
+        input_anchor != translation["input_anchor_elevation_um"]
+        or delta_z_um != -input_anchor
+        or elevation[anchor_y][anchor_x] != 0
+    ):
+        _fail("r3_local_snapshot_vertical_translation")
+    input_relief = _r3_relative_relief_um(input_elevation)
+    output_relief = _r3_relative_relief_um(elevation)
+    input_elevation_sha = _domain_hash(
+        "g2-provider-local-elevation-um/v1",
+        _canonical_json_bytes(input_elevation),
+    )
+    output_elevation_sha = _domain_hash(
+        "g2-provider-local-elevation-um/v1",
+        _canonical_json_bytes(elevation),
+    )
+    input_relief_sha = _domain_hash(
+        "g2-provider-local-relative-relief-um/v1",
+        _canonical_json_bytes(input_relief),
+    )
+    output_relief_sha = _domain_hash(
+        "g2-provider-local-relative-relief-um/v1",
+        _canonical_json_bytes(output_relief),
+    )
+    if (
+        input_relief != output_relief
+        or translation["input_elevation_sha256"] != input_elevation_sha
+        or translation["output_elevation_sha256"] != output_elevation_sha
+        or translation["input_relief_sha256"] != input_relief_sha
+        or translation["output_relief_sha256"] != output_relief_sha
+        or snapshot.get("relief_preservation_sha256") != output_relief_sha
+    ):
+        _fail("r3_local_snapshot_relief")
+    translation_core = {
+        key: value
+        for key, value in translation.items()
+        if key != "translation_sha256"
+    }
+    if translation["translation_sha256"] != _domain_hash(
+        "g2-provider-uniform-vertical-translation/v1",
+        _canonical_json_bytes(translation_core),
+    ):
+        _fail("r3_local_snapshot_vertical_translation")
+
+    witness = snapshot.get("proxy_modification_witness")
+    if (
+        type(witness) is not dict
+        or set(witness)
+        != {
+            "operations",
+            "physical_obstacle_cells_written",
+            "semantic_audit_sha256",
+            "source_kind",
+        }
+        or type(witness.get("operations")) is not list
+        or witness.get("physical_obstacle_cells_written") is not False
+        or witness.get("source_kind")
+        != "synthetic_terrain_obstacle_proxy/v1"
+    ):
+        _fail("r3_local_snapshot_proxy_semantics")
+    witness_core = {
+        key: value
+        for key, value in witness.items()
+        if key != "semantic_audit_sha256"
+    }
+    if witness.get("semantic_audit_sha256") != _domain_hash(
+        "g2-provider-local-proxy-semantic-audit/v1",
+        _canonical_json_bytes(witness_core),
+        _canonical_json_bytes(input_relief),
+        _canonical_json_bytes(hard_obstacle),
+    ):
+        _fail("r3_local_snapshot_proxy_semantics")
+    snapshot_core = {
+        key: value
+        for key, value in snapshot.items()
+        if key != "snapshot_sha256"
+    }
+    snapshot_sha256 = _domain_hash(
+        R3_PROVIDER_LOCAL_SNAPSHOT_SCHEMA_VERSION,
+        _canonical_json_bytes(snapshot_core),
+    )
+    if snapshot.get("snapshot_sha256") != snapshot_sha256:
+        _fail("r3_local_snapshot_hash")
+    return {
+        "shape": (20, 20),
+        "resolution_m": 0.5,
+        "origin_m": (0.0, 0.0),
+        "frame_id": snapshot["frame_id"],
+        "platform_kind": snapshot["platform_kind"],
+        "elevation_m": (
+            np.asarray(elevation, dtype="<f8") / 1_000_000.0
+        ),
+        "slope_deg": np.asarray(slope, dtype="<f8") / 100.0,
+        "hard_obstacle": np.asarray(hard_obstacle, dtype="u1"),
+        "known": np.asarray(known, dtype="u1"),
+        "traversable": np.asarray(traversable, dtype="u1"),
+        "confidence_ppm": np.asarray(confidence, dtype="<u4"),
+        "source_snapshot_sha256": snapshot_sha256,
+        "source_payload_sha256": _sha256(
+            _canonical_json_bytes(snapshot)
+        ),
+        "relief_preservation_sha256": output_relief_sha,
+        "projection_sha256": _domain_hash(
+            "xunce-mid-dual-g2-local-snapshot-projection/v1",
+            snapshot_sha256.encode("ascii"),
+        ),
+    }
+
+
+def project_r3_local_snapshot(
+    snapshot: Mapping[str, object],
+    *,
+    scale: str,
+) -> dict[str, object]:
+    """Validate the normalized 10 m snapshot without any resampling branch."""
+
+    if scale not in {"standard", "kilometer"}:
+        _fail("r3_local_snapshot_scale")
+    if (
+        isinstance(snapshot, Mapping)
+        and snapshot.get("schema_version")
+        == R3_PROVIDER_LOCAL_SNAPSHOT_SCHEMA_VERSION
+    ):
+        return _project_r3_materialized_local_snapshot(snapshot)
+    core_keys = {
+        "schema_version",
+        "width",
+        "height",
+        "resolution_m_binary64",
+        "origin_x_m_binary64",
+        "origin_y_m_binary64",
+        "frame_id",
+        "vertical_datum_id",
+        "elevation_m_binary64",
+        "slope_deg_binary64",
+        "cell_class",
+        "known",
+        "confidence_ppm",
+        "physical_obstacle_cells_written",
+    }
+    if (
+        type(snapshot) is not dict
+        or set(snapshot) != {*core_keys, "snapshot_sha256"}
+        or snapshot.get("schema_version")
+        != R3_LOCAL_SNAPSHOT_SCHEMA_VERSION
+        or snapshot.get("width") != 20
+        or snapshot.get("height") != 20
+        or snapshot.get("physical_obstacle_cells_written") is not False
+        or type(snapshot.get("frame_id")) is not str
+        or not snapshot["frame_id"]
+        or type(snapshot.get("vertical_datum_id")) is not str
+        or not snapshot["vertical_datum_id"]
+    ):
+        _fail("r3_local_snapshot_schema")
+    core = {key: snapshot[key] for key in core_keys}
+    expected_hash = _domain_hash(
+        R3_LOCAL_SNAPSHOT_SCHEMA_VERSION,
+        _canonical_json_bytes(core),
+    )
+    if snapshot.get("snapshot_sha256") != expected_hash:
+        _fail("r3_local_snapshot_hash")
+    resolution = _decode_r3_binary64_word(
+        snapshot["resolution_m_binary64"],
+        "r3_local_snapshot_binary64",
+    )
+    origin_x = _decode_r3_binary64_word(
+        snapshot["origin_x_m_binary64"],
+        "r3_local_snapshot_binary64",
+    )
+    origin_y = _decode_r3_binary64_word(
+        snapshot["origin_y_m_binary64"],
+        "r3_local_snapshot_binary64",
+    )
+    if resolution != 0.5:
+        _fail("r3_local_snapshot_resolution")
+    count = 400
+    word_fields = ("elevation_m_binary64", "slope_deg_binary64")
+    for field in word_fields:
+        values = snapshot.get(field)
+        if type(values) is not list or len(values) != count:
+            _fail("r3_local_snapshot_shape")
+    elevation = np.asarray(
+        [
+            _decode_r3_binary64_word(
+                value,
+                "r3_local_snapshot_binary64",
+            )
+            for value in snapshot["elevation_m_binary64"]
+        ],
+        dtype="<f8",
+    ).reshape((20, 20))
+    slope = np.asarray(
+        [
+            _decode_r3_binary64_word(
+                value,
+                "r3_local_snapshot_binary64",
+            )
+            for value in snapshot["slope_deg_binary64"]
+        ],
+        dtype="<f8",
+    ).reshape((20, 20))
+    cell_class = snapshot.get("cell_class")
+    known = snapshot.get("known")
+    confidence = snapshot.get("confidence_ppm")
+    if (
+        type(cell_class) is not list
+        or len(cell_class) != count
+        or any(type(value) is not int or value not in {0, 2} for value in cell_class)
+        or type(known) is not list
+        or len(known) != count
+        or any(type(value) is not int or value not in {0, 1} for value in known)
+        or type(confidence) is not list
+        or len(confidence) != count
+        or any(
+            type(value) is not int or not 0 <= value <= 1_000_000
+            for value in confidence
+        )
+    ):
+        _fail("r3_local_snapshot_arrays")
+    return {
+        "shape": (20, 20),
+        "resolution_m": resolution,
+        "origin_m": (origin_x, origin_y),
+        "frame_id": snapshot["frame_id"],
+        "vertical_datum_id": snapshot["vertical_datum_id"],
+        "elevation_m": elevation,
+        "slope_deg": slope,
+        "cell_class": np.asarray(cell_class, dtype="u1").reshape((20, 20)),
+        "known": np.asarray(known, dtype="u1").reshape((20, 20)),
+        "confidence_ppm": np.asarray(
+            confidence,
+            dtype="<u4",
+        ).reshape((20, 20)),
+        "source_snapshot_sha256": expected_hash,
+        "projection_sha256": _domain_hash(
+            "xunce-mid-dual-g2-local-snapshot-projection/v1",
+            expected_hash.encode("ascii"),
+        ),
+    }
+
+
+def _validate_r3_exact_hopper_parameter_record(
+    parameter_record: object,
+) -> dict[str, object]:
+    required = {
+        "arc_clearance_margin_m",
+        "body_envelope_radius_m",
+        "energy_model",
+        "evidence_class",
+        "formal_evidence_eligible",
+        "landing_footprint_radius_m",
+        "launch_reference_height_m",
+        "parameter_set_id",
+        "physical_capability_claimed",
+        "schema_version",
+        "simulation_proxy",
+        "status",
+        "stop_condition",
+    }
+    if type(parameter_record) is not dict or set(parameter_record) != required:
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_INVALID",
+            "g2_hopper_parameter_record_mismatch",
+        )
+    energy = parameter_record.get("energy_model")
+    stop = parameter_record.get("stop_condition")
+    if (
+        parameter_record.get("schema_version") != "g2-hopper-candidate/v2"
+        or parameter_record.get("parameter_set_id")
+        != "hopper-generic-internal-proxy/v2"
+        or parameter_record.get("evidence_class")
+        != "candidate_engineering_proxy"
+        or parameter_record.get("formal_evidence_eligible") is not False
+        or parameter_record.get("physical_capability_claimed") is not False
+        or parameter_record.get("simulation_proxy") is not True
+        or parameter_record.get("status") != "pending_external_evidence"
+        or parameter_record.get("arc_clearance_margin_m") != "0.125"
+        or parameter_record.get("body_envelope_radius_m") != "0.375"
+        or parameter_record.get("landing_footprint_radius_m") != "0.625"
+        or parameter_record.get("launch_reference_height_m") != "0.750"
+        or type(energy) is not dict
+        or set(energy)
+        != {
+            "evaluator_relative_path",
+            "evaluator_source_sha256",
+            "max_energy_decimal",
+            "model_id",
+            "reference_speed_m_s",
+        }
+        or energy.get("evaluator_relative_path")
+        != "producer/hopper_energy_evaluator.py"
+        or energy.get("max_energy_decimal") != "1.000000"
+        or energy.get("model_id") != "quadratic-normalized-speed/v1"
+        or energy.get("reference_speed_m_s") != "2.500"
+        or type(stop) is not dict
+        or set(stop)
+        != {
+            "evaluator_relative_path",
+            "evaluator_source_sha256",
+            "max_touchdown_speed_m_s",
+            "model_id",
+        }
+        or stop.get("evaluator_relative_path")
+        != "producer/hopper_stop_evaluator.py"
+        or stop.get("max_touchdown_speed_m_s") != "2.500"
+        or stop.get("model_id") != "touchdown-speed-upper-bound/v1"
+    ):
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_INVALID",
+            "g2_hopper_parameter_record_mismatch",
+        )
+    _require_sha256(
+        energy.get("evaluator_source_sha256"),
+        "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_INVALID",
+    )
+    _require_sha256(
+        stop.get("evaluator_source_sha256"),
+        "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_INVALID",
+    )
+    _canonical_json_bytes(parameter_record)
+    return dict(parameter_record)
+
+
+def _validate_r3_exact_hopper_execution_binding(
+    parameter_record: Mapping[str, object],
+    execution_binding: Mapping[str, object],
+) -> dict[str, object]:
+    record = _validate_r3_exact_hopper_parameter_record(parameter_record)
+    required = {
+        "parameter_record_sha256",
+        "provider_local_snapshot_sha256",
+        "relief_preservation_sha256",
+        "support_plane",
+    }
+    if type(execution_binding) is not dict or set(execution_binding) != required:
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+            "g2_hopper_parameter_record_mismatch",
+        )
+    for field in (
+        "parameter_record_sha256",
+        "provider_local_snapshot_sha256",
+        "relief_preservation_sha256",
+    ):
+        _require_sha256(
+            execution_binding.get(field),
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+        )
+    record_sha256 = _sha256(_canonical_json_bytes(record))
+    support = execution_binding.get("support_plane")
+    support_keys = {
+        "H_ref_m_hex",
+        "H_ref_m_word_hex",
+        "H_ref_um",
+        "anchor_node_id",
+        "horizontal",
+        "normal",
+        "schema_version",
+        "snapshot_sha256",
+        "support_plane_sha256",
+    }
+    if (
+        execution_binding.get("parameter_record_sha256") != record_sha256
+        or type(support) is not dict
+        or set(support) != support_keys
+        or support.get("schema_version")
+        != "g2-horizontal-support-plane/v1"
+        or support.get("horizontal") is not True
+        or support.get("normal") != [0, 0, 1]
+        or type(support.get("anchor_node_id")) is not str
+        or not support["anchor_node_id"]
+        or support.get("snapshot_sha256")
+        != execution_binding["provider_local_snapshot_sha256"]
+    ):
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+            "g2_hopper_parameter_record_mismatch",
+        )
+    reference_height = _decode_r3_binary64_word(
+        support.get("H_ref_m_word_hex"),
+        "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+    )
+    if (
+        type(support.get("H_ref_m_hex")) is not str
+        or reference_height.hex() != support["H_ref_m_hex"]
+        or type(support.get("H_ref_um")) is not int
+        or round(reference_height * 1_000_000.0) != support["H_ref_um"]
+    ):
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+            "g2_hopper_parameter_record_mismatch",
+        )
+    support_core = {
+        key: value
+        for key, value in support.items()
+        if key != "support_plane_sha256"
+    }
+    if support.get("support_plane_sha256") != _domain_hash(
+        "g2-horizontal-support-plane/v1",
+        _canonical_json_bytes(support_core),
+    ):
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+            "g2_hopper_parameter_record_mismatch",
+        )
+    return dict(execution_binding)
+
+
+def validate_r3_hopper_execution_binding(
+    parameter_record: Mapping[str, object] | None,
+    execution_binding: Mapping[str, object],
+) -> dict[str, object]:
+    """Bind the provider-visible support datum to one exact Hopper record."""
+
+    if parameter_record is None:
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISSING",
+            "g2_hopper_parameter_record_missing",
+        )
+    if parameter_record.get("schema_version") == "g2-hopper-candidate/v2":
+        return _validate_r3_exact_hopper_execution_binding(
+            parameter_record,
+            execution_binding,
+        )
+    record_required = {
+        "schema_version",
+        "parameter_set_id",
+        "capability_revision",
+        "support_plane_model_id",
+        "support_height_tolerance_m_binary64",
+        "relief_preservation_required",
+        "record_sha256",
+    }
+    binding_required = {
+        "parameter_record_sha256",
+        "support_plane_model_id",
+        "support_reference_height_m_binary64",
+        "required_cells_sha256",
+        "relief_preservation_required",
+    }
+    if (
+        type(parameter_record) is not dict
+        or not record_required.issubset(parameter_record)
+        or type(execution_binding) is not dict
+        or set(execution_binding) != binding_required
+    ):
+        _fail("g2_hopper_parameter_record_mismatch")
+    record_core = {
+        key: value
+        for key, value in parameter_record.items()
+        if key != "record_sha256"
+    }
+    record_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-hopper-record-binding/v1",
+        _canonical_json_bytes(record_core),
+    )
+    _decode_r3_binary64_word(
+        parameter_record["support_height_tolerance_m_binary64"],
+        "g2_hopper_parameter_record_mismatch",
+    )
+    _decode_r3_binary64_word(
+        execution_binding["support_reference_height_m_binary64"],
+        "g2_hopper_parameter_record_mismatch",
+    )
+    if (
+        parameter_record.get("schema_version")
+        != "hopper-parameter-set-record/v1"
+        or parameter_record.get("capability_revision")
+        != R3_HOPPER_CAPABILITY_ID
+        or parameter_record.get("support_plane_model_id")
+        != R3_HOPPER_SUPPORT_PLANE_MODEL_ID
+        or parameter_record.get("support_height_tolerance_m_binary64")
+        != struct.pack(">d", 0.05).hex()
+        or parameter_record.get("relief_preservation_required") is not True
+        or parameter_record.get("record_sha256") != record_sha256
+        or execution_binding.get("parameter_record_sha256")
+        != record_sha256
+        or execution_binding.get("support_plane_model_id")
+        != parameter_record["support_plane_model_id"]
+        or execution_binding.get("relief_preservation_required") is not True
+        or not _is_sha256(execution_binding.get("required_cells_sha256"))
+    ):
+        _fail("g2_hopper_parameter_record_mismatch")
+    return dict(execution_binding)
+
+
+_R3_RESOURCE_POLICY_CORES: dict[str, dict[str, object]] = {
+    "wheel": {
+        "schema_version": R3_RESOURCE_POLICY_SCHEMA_VERSION,
+        "platform": "wheel",
+        "capability_id": "wheel_kinematic_corridor_sqp/v1",
+        "work_budget_basis": "wheel_explicit_corridor_sqp/v1",
+        "graph_hops": 1,
+        "provider_primitives_per_graph_hop": 1,
+        "max_expanded_states": 8192,
+        "max_route_states": 129,
+        "max_memory_bytes": 33_554_432,
+    },
+    "legged": {
+        "schema_version": R3_RESOURCE_POLICY_SCHEMA_VERSION,
+        "platform": "legged",
+        "capability_id": "simulation_proxy_static_crawl/v2",
+        "work_budget_basis": "legged_four_phase_static_crawl/v2",
+        "graph_hops": 1,
+        "provider_primitives_per_graph_hop": 4,
+        "max_expanded_states": 10_000,
+        "max_route_states": 5,
+        "max_memory_bytes": 0,
+    },
+    "hopper": {
+        "schema_version": R3_RESOURCE_POLICY_SCHEMA_VERSION,
+        "platform": "hopper",
+        "capability_id": R3_HOPPER_CAPABILITY_ID,
+        "work_budget_basis": "hopper_exact_goal_one_ballistic/v1",
+        "graph_hops": 1,
+        "provider_primitives_per_graph_hop": 1,
+        "max_expanded_states": 1,
+        "max_route_states": 2,
+        "max_memory_bytes": 536_870_912,
+    },
+}
+
+
+def r3_provider_resource_policy(platform: str) -> dict[str, object]:
+    core = _R3_RESOURCE_POLICY_CORES.get(platform)
+    if core is None:
+        _fail("g2_provider_resource_policy")
+    return {
+        **core,
+        "resource_policy_sha256": _domain_hash(
+            R3_RESOURCE_POLICY_SCHEMA_VERSION,
+            _canonical_json_bytes(core),
+        ),
+    }
+
+
+def validate_r3_provider_resource_policy(
+    policy: Mapping[str, object],
+) -> dict[str, object]:
+    if type(policy) is not dict:
+        _fail("g2_provider_resource_policy")
+    platform = policy.get("platform")
+    expected = (
+        r3_provider_resource_policy(platform)
+        if type(platform) is str and platform in G2_PLATFORMS
+        else None
+    )
+    if expected is None or dict(policy) != expected:
+        _fail("g2_provider_resource_policy")
+    return dict(policy)
+
+
+def build_r3_provider_execution_request(
+    provider_blind_request: Mapping[str, object],
+    *,
+    producer_binding: Mapping[str, object],
+) -> dict[str, object]:
+    """Bind one blind request to its immutable platform resource policy."""
+
+    binding = validate_r3_producer_binding(producer_binding)
+    request = _validate_r3_exact_provider_blind_request(
+        provider_blind_request,
+        binding,
+    )
+    policy = r3_provider_resource_policy(str(request["platform_kind"]))
+    core = {
+        "producer_binding_sha256": binding["binding_sha256"],
+        "provider_blind_request": request,
+        "provider_request_sha256": request["provider_request_sha256"],
+        "resource_policy": policy,
+        "resource_policy_sha256": policy["resource_policy_sha256"],
+        "schema_version": R3_PROVIDER_EXECUTION_REQUEST_SCHEMA_VERSION,
+    }
+    return {
+        **core,
+        "execution_request_sha256": _domain_hash(
+            R3_PROVIDER_EXECUTION_REQUEST_SCHEMA_VERSION,
+            _canonical_json_bytes(core),
+        ),
+    }
+
+
+def validate_r3_parent_static_hop_resource_join(
+    provider_blind_requests: Sequence[Mapping[str, object]],
+    truth_sidecars: Sequence[Mapping[str, object]],
+    *,
+    producer_binding: Mapping[str, object],
+) -> dict[str, object]:
+    """Join truth only in p01 parent memory and emit a truth-free crosswalk."""
+
+    binding = validate_r3_producer_binding(producer_binding)
+    if (
+        not isinstance(provider_blind_requests, Sequence)
+        or isinstance(provider_blind_requests, (str, bytes))
+        or not provider_blind_requests
+        or not isinstance(truth_sidecars, Sequence)
+        or isinstance(truth_sidecars, (str, bytes))
+        or len(truth_sidecars) != len(provider_blind_requests)
+    ):
+        _fail("g2_r3_parent_static_join")
+    requests = [
+        _validate_r3_exact_provider_blind_request(row, binding)
+        for row in provider_blind_requests
+    ]
+    requests_by_sha = {
+        str(row["provider_request_sha256"]): row for row in requests
+    }
+    if len(requests_by_sha) != len(requests):
+        _fail("g2_r3_parent_static_join")
+
+    exact_sidecar_keys = {
+        "provider_request_id",
+        "provider_request_sha256",
+        "schema_version",
+        "truth_request",
+    }
+    truth_required = {
+        "action_envelope_sha256",
+        "difficulty_class",
+        "goal",
+        "metric_problem_sha256",
+        "objective_sha256",
+        "oracle_reachable",
+        "platform_kind",
+        "producer_implementation_sha256",
+        "profile_or_parameter_record_sha256",
+        "provider_local_snapshot_payload_sha256",
+        "provider_local_snapshot_sha256",
+        "request_hop_count",
+        "request_id",
+        "resource_budget",
+        "scale",
+        "schema_version",
+        "start",
+        "terrain_geometry_sha256",
+        "terrain_sha256",
+        "truth_request_sha256",
+    }
+    join_fields = (
+        "action_envelope_sha256",
+        "goal",
+        "metric_problem_sha256",
+        "objective_sha256",
+        "platform_kind",
+        "producer_implementation_sha256",
+        "profile_or_parameter_record_sha256",
+        "provider_local_snapshot_payload_sha256",
+        "provider_local_snapshot_sha256",
+        "resource_budget",
+        "scale",
+        "start",
+        "terrain_geometry_sha256",
+        "terrain_sha256",
+    )
+    seen_request_sha256: set[str] = set()
+    crosswalk: list[dict[str, object]] = []
+    reachable_hop_counts: dict[str, list[int]] = {}
+    for sidecar in truth_sidecars:
+        if (
+            type(sidecar) is not dict
+            or set(sidecar) != exact_sidecar_keys
+            or sidecar.get("schema_version")
+            != "g2-truth-request-sidecar/v1"
+        ):
+            _fail("g2_r3_truth_sidecar_schema")
+        provider_sha256 = sidecar.get("provider_request_sha256")
+        _require_sha256(
+            provider_sha256,
+            "g2_r3_truth_sidecar_schema",
+        )
+        request = requests_by_sha.get(str(provider_sha256))
+        if (
+            request is None
+            or provider_sha256 in seen_request_sha256
+            or sidecar.get("provider_request_id")
+            != request["provider_request_id"]
+        ):
+            _fail("g2_r3_truth_sidecar_join")
+        truth = sidecar.get("truth_request")
+        if (
+            type(truth) is not dict
+            or not truth_required.issubset(truth)
+            or truth.get("schema_version") != "g2-truth-request/v4"
+            or any(truth.get(field) != request[field] for field in join_fields)
+        ):
+            _fail("g2_r3_truth_sidecar_join")
+        _require_sha256(
+            truth.get("truth_request_sha256"),
+            "g2_r3_truth_sidecar_join",
+        )
+        difficulty = truth.get("difficulty_class")
+        oracle_reachable = truth.get("oracle_reachable")
+        hop_count = truth.get("request_hop_count")
+        if (
+            difficulty
+            not in {"reachable", "hard_reachable", "unreachable"}
+            or type(oracle_reachable) is not bool
+            or type(hop_count) is not int
+            or hop_count < 0
+            or (
+                difficulty in {"reachable", "hard_reachable"}
+                and (oracle_reachable is not True or hop_count <= 0)
+            )
+            or (
+                difficulty == "unreachable"
+                and (oracle_reachable is not False or hop_count != 0)
+            )
+        ):
+            _fail("g2_r3_truth_sidecar_semantics")
+
+        execution_request = build_r3_provider_execution_request(
+            request,
+            producer_binding=binding,
+        )
+        policy = execution_request["resource_policy"]
+        platform = str(request["platform_kind"])
+        if difficulty in {"reachable", "hard_reachable"}:
+            reachable_hop_counts.setdefault(platform, []).append(hop_count)
+            if platform in {"legged", "hopper"}:
+                required_primitives = (
+                    hop_count
+                    * int(policy["provider_primitives_per_graph_hop"])
+                )
+                required_route_states = required_primitives + 1
+                if (
+                    hop_count != policy["graph_hops"]
+                    or required_primitives
+                    != policy["provider_primitives_per_graph_hop"]
+                    or required_route_states != policy["max_route_states"]
+                ):
+                    _fail(
+                        "g2_r3_hop_resource_mismatch",
+                        (
+                            f"platform={platform};hop_count={hop_count};"
+                            f"required_primitives={required_primitives};"
+                            "required_route_states="
+                            f"{required_route_states}"
+                        ),
+                    )
+        crosswalk.append(
+            {
+                "execution_request_sha256": execution_request[
+                    "execution_request_sha256"
+                ],
+                "platform_kind": platform,
+                "provider_request_id": request["provider_request_id"],
+                "provider_request_sha256": provider_sha256,
+                "resource_policy": policy,
+                "resource_policy_sha256": execution_request[
+                    "resource_policy_sha256"
+                ],
+                "scale": request["scale"],
+            }
+        )
+        seen_request_sha256.add(str(provider_sha256))
+    if seen_request_sha256 != set(requests_by_sha):
+        _fail("g2_r3_truth_sidecar_join")
+    if _r3_forbidden_provider_key_present(crosswalk):
+        _fail("g2_provider_truth_leak_v3")
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-parent-static-hop-resource-audit/v1"
+        ),
+        "status": "passed",
+        "producer_binding_sha256": binding["binding_sha256"],
+        "request_count": len(requests),
+        "reachable_hop_counts": {
+            platform: sorted(values)
+            for platform, values in sorted(reachable_hop_counts.items())
+        },
+        "execution_crosswalk": sorted(
+            crosswalk,
+            key=lambda row: str(row["provider_request_sha256"]),
+        ),
+    }
+
+
+_R3_FORMAL_INPUT_KEYS = {
+    "producer_candidate_bundle",
+    "producer_manifest_sha256",
+    "provider_blind_requests_sha256",
+    "truth_request_sidecar_sha256",
+    "hopper_parameter_record_sha256",
+    "execution_bundle",
+    "execution_manifest_sha256",
+    "artifact_bound_approval",
+    "artifact_bound_approval_sha256",
+}
+_R3_PRODUCER_BINDING_KEYS = {
+    "schema_version",
+    "bundle_root",
+    "producer_implementation_sha256",
+    "input_contract_sha256",
+    "hopper_parameter_record_sha256",
+    "provider_blind_schema_version",
+    "binding_sha256",
+}
+_R3_ACTIVATION_BINDING_KEYS = {
+    "candidate_id",
+    "input_set_id",
+    "manifest_core_sha256",
+    "producer_payload_root_sha256",
+    "producer_repeatability_audit_sha256",
+    "provider_runtime_source_closure_sha256",
+    "consumer_source_closure_sha256",
+    "consumer_activation_contract_sha256",
+    "resource_policy_root_sha256",
+    "execution_request_root_sha256",
+    "p03_probe_selection_sha256",
+    "formal_schedule_sha256",
+    "execution_data_root_sha256",
+    "approval_target_sha256",
+}
+_R3_FINAL_CANDIDATE_KEYS = {
+    "schema_version",
+    "fixture_only",
+    "formal_evidence_eligible",
+    "formal_ineligibility_reason",
+    "candidate_id",
+    "input_set_id",
+    "producer_binding_sha256",
+    "producer_manifest_file_sha256",
+    "manifest_core_sha256",
+    "producer_payload_root_sha256",
+    "provider_blind_requests_file_sha256",
+    "truth_request_sidecar_file_sha256",
+    "source_attestations_file_sha256",
+    "source_attestation_sha256",
+    "provider_local_snapshot_index_root_sha256",
+    "request_graph_archive_root_sha256",
+    "hopper_parameter_record_sha256",
+    "producer_repeatability_audit_sha256",
+    "producer_repeatability_passed",
+    "request_count",
+}
+_R3_APPROVAL_TARGET_KEYS = {
+    "schema_version",
+    "candidate_id",
+    "input_set_id",
+    "producer_binding_sha256",
+    "producer_manifest_file_sha256",
+    "manifest_core_sha256",
+    "producer_payload_root_sha256",
+    "producer_repeatability_audit_sha256",
+    "provider_blind_requests_file_sha256",
+    "truth_request_sidecar_file_sha256",
+    "hopper_parameter_record_sha256",
+    "provider_runtime_source_closure_sha256",
+    "consumer_source_closure_sha256",
+    "consumer_activation_contract_sha256",
+    "resource_policy_root_sha256",
+    "execution_request_root_sha256",
+    "p03_probe_selection_sha256",
+    "formal_schedule_sha256",
+    "execution_data_root_sha256",
+    "request_count",
+    "formal_call_count",
+}
+R3_CONSUMER_SOURCE_RELATIVE_PATHS = (
+    "scripts/run_xunce_mid_dual_g2_planning_time.py",
+    "scripts/xunce_artifact_io.py",
+    "scripts/xunce_artifact_paths.py",
+    "scripts/xunce_mid_dual_artifacts.py",
+    "scripts/xunce_mid_dual_contracts.py",
+    "scripts/xunce_mid_dual_g2_inputs.py",
+)
+
+
+def _r3_contains_placeholder(value: object) -> bool:
+    if type(value) is str:
+        return "${" in value
+    if isinstance(value, Mapping):
+        return any(
+            _r3_contains_placeholder(key)
+            or _r3_contains_placeholder(child)
+            for key, child in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_r3_contains_placeholder(child) for child in value)
+    return False
+
+
+def _r3_activation_contract_core(
+    config: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-r3-consumer-activation-contract/v1"
+        ),
+        "gate_id": config["gate_id"],
+        "scale_profile": config["scale_profile"],
+        "request_contract": config["request_contract"],
+        "phase_contract": config["phase_contract"],
+        "execution": {
+            key: value
+            for key, value in config["execution"].items()
+            if key != "formal_environment_gate"
+        },
+        "thresholds_ms": config["thresholds_ms"],
+        "platform_stacks": config["platform_stacks"],
+        "schemas": config["schemas"],
+    }
+
+
+def r3_consumer_activation_contract_sha256(
+    config: Mapping[str, object],
+) -> str:
+    return _domain_hash(
+        "xunce-mid-dual-g2-r3-consumer-activation-contract/v1",
+        _canonical_json_bytes(_r3_activation_contract_core(config)),
+    )
+
+
+def capture_r3_consumer_source_closure(
+    *,
+    source_reader: Callable[[Path], bytes] | None = None,
+) -> dict[str, object]:
+    """Hash the exact noncyclic Consumer runtime sources at activation time."""
+
+    reader = artifact_io.read_bytes if source_reader is None else source_reader
+    if not callable(reader):
+        _fail("g2_r3_source_closure")
+    rows: list[dict[str, object]] = []
+    for relative_path in R3_CONSUMER_SOURCE_RELATIVE_PATHS:
+        path = REPO_ROOT / relative_path
+        if not artifact_io.path_is_file(path):
+            _fail("g2_r3_source_closure")
+        payload = reader(path)
+        if type(payload) is not bytes:
+            _fail("g2_r3_source_closure")
+        rows.append(
+            {
+                "relative_path": relative_path,
+                "size_bytes": len(payload),
+                "sha256": _sha256(payload),
+            }
+        )
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-r3-consumer-source-closure/v1"
+        ),
+        "files": rows,
+        "consumer_source_closure_sha256": _domain_hash(
+            "xunce-mid-dual-g2-r3-consumer-source-closure/v1",
+            _canonical_json_bytes(rows),
+        ),
+    }
+
+
+def validate_r3_activation_config(
+    config: Mapping[str, object],
+    *,
+    require_resolved: bool,
+) -> dict[str, object]:
+    """Validate the v2 shape while keeping the checked-in template blocked."""
+
+    expected_top_keys = {
+        "schema_version",
+        "gate_id",
+        "runner_id",
+        "scale_profile",
+        "evaluation_mode",
+        "output_base",
+        "formal_inputs",
+        "producer_binding",
+        "activation_binding",
+        "request_contract",
+        "phase_contract",
+        "execution",
+        "thresholds_ms",
+        "platform_stacks",
+        "schemas",
+        "default_readiness",
+    }
+    if (
+        type(config) is not dict
+        or set(config) != expected_top_keys
+        or config.get("schema_version") != R3_CONFIG_SCHEMA_VERSION
+        or config.get("gate_id") != "g2"
+        or config.get("runner_id") != R3_RUNNER_ID
+        or config.get("scale_profile") != SCALE_PROFILE
+        or config.get("evaluation_mode") != "reduced"
+        or config.get("output_base") != "D:/xunce/out/mid_dual/g2"
+        or _r3_contains_placeholder(config)
+    ):
+        if _r3_contains_placeholder(config):
+            _fail("g2_r3_config_placeholder_unresolved")
+        _fail("g2_r3_config_invalid")
+
+    formal_inputs = config["formal_inputs"]
+    producer_binding = config["producer_binding"]
+    activation_binding = config["activation_binding"]
+    if (
+        type(formal_inputs) is not dict
+        or set(formal_inputs) != _R3_FORMAL_INPUT_KEYS
+        or type(producer_binding) is not dict
+        or set(producer_binding) != _R3_PRODUCER_BINDING_KEYS
+        or producer_binding.get("schema_version")
+        != R3_PRODUCER_BINDING_SCHEMA_VERSION
+        or producer_binding.get("provider_blind_schema_version")
+        != R3_PROVIDER_BLIND_SCHEMA_VERSION
+        or type(activation_binding) is not dict
+        or set(activation_binding) != _R3_ACTIVATION_BINDING_KEYS
+    ):
+        _fail("g2_r3_config_invalid")
+
+    expected_request_contract = {
+        "requests_per_platform": 43,
+        "standard": {
+            "reachable": 23,
+            "hard_reachable": 7,
+            "unreachable": 3,
+        },
+        "kilometer": {
+            "reachable": 6,
+            "hard_reachable": 2,
+            "unreachable": 2,
+        },
+        "repeat_count": 5,
+        "formal_call_count": 645,
+    }
+    expected_phase_contract = {
+        "p01": {
+            "name": "r3_parent_static_preflight",
+            "provider_call_count": 0,
+            "blind_request_count": 129,
+            "truth_sidecar_count": 129,
+        },
+        "p02": {
+            "name": "r3_cold_start_and_warmup",
+            "cold_start_count": 3,
+            "warmup_count": 30,
+            "formal_sample": False,
+        },
+        "p03": {
+            "name": "r3_worker_semantic_probe",
+            "worker_one_count": 12,
+            "worker_four_count": 12,
+            "formal_sample": False,
+            "requires": ["p01", "p02"],
+        },
+        "p04": {
+            "name": "r3_formal_worker_four",
+            "formal_call_count": 645,
+            "formal_sample": True,
+            "requires": ["p01", "p02", "p03"],
+        },
+    }
+    expected_thresholds = {
+        "midterm_mean": 2000.0,
+        "midterm_p95": 2000.0,
+        "absolute_max": 2000.0,
+        "final_mean": 1000.0,
+        "final_p95": 1000.0,
+        "final_proportion_at_or_below": 0.95,
+        "engineering_standard_p95": 250.0,
+        "engineering_kilometer_p95": 750.0,
+    }
+    expected_schemas = {
+        "provider_blind_request": R3_PROVIDER_BLIND_SCHEMA_VERSION,
+        "truth_sidecar": "g2-truth-request-sidecar/v1",
+        "provider_execution_request": (
+            R3_PROVIDER_EXECUTION_REQUEST_SCHEMA_VERSION
+        ),
+        "resource_policy": R3_RESOURCE_POLICY_SCHEMA_VERSION,
+        "execution_bundle": R3_EXECUTION_BUNDLE_SCHEMA_VERSION,
+        "artifact_bound_approval": R3_APPROVAL_SCHEMA_VERSION,
+        "formal_schedule": "xunce-mid-dual-g2-formal-schedule/v2",
+    }
+    execution = config["execution"]
+    platform_stacks = config["platform_stacks"]
+    if (
+        config["request_contract"] != expected_request_contract
+        or config["phase_contract"] != expected_phase_contract
+        or config["thresholds_ms"] != expected_thresholds
+        or config["schemas"] != expected_schemas
+        or type(execution) is not dict
+        or execution.get("formal_worker_count") != 4
+        or execution.get("diagnostic_worker_count") != 1
+        or execution.get("warmup_requests_per_platform") != 10
+        or execution.get("cold_start_calls_per_platform") != 1
+        or execution.get("formal_timing_contract")
+        != "five-phase-sequential-ns/v1"
+        or execution.get("formal_cache_contract")
+        != "immutable-terrain-static-validation-only/v1"
+        or execution.get("p03_selection_contract")
+        != R3_P03_SELECTION_CONTRACT
+        or type(execution.get("formal_environment_gate")) is not dict
+        or type(platform_stacks) is not dict
+        or set(platform_stacks) != set(G2_PLATFORMS)
+        or any(
+            type(platform_stacks[platform]) is not dict
+            or platform_stacks[platform].get(
+                "max_traversable_slope_deg"
+            )
+            != 30.0
+            for platform in G2_PLATFORMS
+        )
+    ):
+        _fail("g2_r3_config_invalid")
+
+    unresolved = (
+        any(value is None for value in formal_inputs.values())
+        or any(
+            value is None
+            for key, value in producer_binding.items()
+            if key
+            not in {"schema_version", "provider_blind_schema_version"}
+        )
+        or any(value is None for value in activation_binding.values())
+    )
+    blocked_readiness = {
+        "status": "blocked",
+        "formal_evidence_eligible": False,
+        "blockers": ["missing_final_g2_r3_activation_handoff"],
+    }
+    ready_readiness = {
+        "status": "ready",
+        "formal_evidence_eligible": True,
+        "blockers": [],
+    }
+    if unresolved:
+        if require_resolved:
+            _fail("g2_r3_config_unresolved")
+        if config["default_readiness"] != blocked_readiness:
+            _fail("g2_r3_config_invalid")
+    else:
+        validate_r3_producer_binding(producer_binding)
+        for key, value in formal_inputs.items():
+            if key.endswith("_sha256"):
+                _require_sha256(value, "g2_r3_config_invalid")
+            elif type(value) is not str or not value.startswith("D:/"):
+                _fail("g2_r3_config_invalid")
+        for key, value in activation_binding.items():
+            if key in {"candidate_id", "input_set_id"}:
+                _require_nonempty(value, "g2_r3_config_invalid")
+            else:
+                _require_sha256(value, "g2_r3_config_invalid")
+        if (
+            activation_binding["consumer_activation_contract_sha256"]
+            != r3_consumer_activation_contract_sha256(config)
+            or config["default_readiness"] != ready_readiness
+        ):
+            _fail("g2_r3_config_invalid")
+    return dict(config)
+
+
+def validate_r3_final_candidate_metadata(
+    candidate: Mapping[str, object],
+) -> dict[str, object]:
+    if (
+        type(candidate) is not dict
+        or set(candidate) != _R3_FINAL_CANDIDATE_KEYS
+        or candidate.get("schema_version")
+        != R3_FINAL_CANDIDATE_SCHEMA_VERSION
+        or candidate.get("fixture_only") is not False
+        or candidate.get("formal_evidence_eligible") is not False
+        or candidate.get("formal_ineligibility_reason")
+        != "awaiting_artifact_bound_approval"
+        or type(candidate.get("candidate_id")) is not str
+        or not candidate["candidate_id"]
+        or type(candidate.get("input_set_id")) is not str
+        or not candidate["input_set_id"]
+        or candidate.get("producer_repeatability_passed") is not True
+        or candidate.get("request_count") != 129
+    ):
+        _fail("g2_r3_final_candidate_ineligible")
+    for field in _R3_FINAL_CANDIDATE_KEYS:
+        if field.endswith("_sha256"):
+            _require_sha256(
+                candidate.get(field),
+                "g2_r3_final_candidate_ineligible",
+            )
+    return dict(candidate)
+
+
+def _r3_parse_canonical_jsonl_payload(
+    payload: bytes,
+    *,
+    code: str,
+) -> list[dict[str, object]]:
+    if type(payload) is not bytes or not payload or not payload.endswith(b"\n"):
+        _fail(code)
+    rows: list[dict[str, object]] = []
+    for raw_line in payload.splitlines(keepends=True):
+        if not raw_line.endswith(b"\n") or raw_line == b"\n":
+            _fail(code)
+        try:
+            value = json.loads(raw_line[:-1].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise G2InputContractError(code, type(exc).__name__) from exc
+        if type(value) is not dict or raw_line != _canonical_json_bytes(value) + b"\n":
+            _fail(code)
+        rows.append(value)
+    return rows
+
+
+def _r3_parse_canonical_json_payload(
+    payload: bytes,
+    *,
+    code: str,
+) -> dict[str, object]:
+    if type(payload) is not bytes or not payload:
+        _fail(code)
+    body = payload[:-1] if payload.endswith(b"\n") else payload
+    try:
+        value = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise G2InputContractError(code, type(exc).__name__) from exc
+    if type(value) is not dict or body != _canonical_json_bytes(value):
+        _fail(code)
+    return value
+
+
+def _r3_execution_signature(
+    request: Mapping[str, object],
+    snapshot: Mapping[str, object],
+    policy: Mapping[str, object],
+) -> str:
+    actions = request.get("action_envelope", {}).get("actions")
+    if not isinstance(actions, list) or not actions:
+        _fail("g2_r3_execution_signature")
+    action_shapes = sorted(
+        sorted(
+            key
+            for key in action
+            if not str(key).endswith("_id")
+        )
+        for action in actions
+        if type(action) is dict
+    )
+    translation = snapshot.get("vertical_translation")
+    core = {
+        "schema_version": "xunce-mid-dual-g2-r3-execution-signature/v1",
+        "platform": request["platform_kind"],
+        "scale": request["scale"],
+        "profile_or_parameter_record_sha256": request[
+            "profile_or_parameter_record_sha256"
+        ],
+        "action_envelope_schema_version": request[
+            "action_envelope"
+        ].get("schema_version"),
+        "action_count": len(actions),
+        "action_shapes": action_shapes,
+        "snapshot_schema_version": snapshot.get("schema_version"),
+        "snapshot_shape_height_width": snapshot.get(
+            "shape_height_width"
+        ),
+        "snapshot_resolution_mm": snapshot.get("resolution_mm"),
+        "snapshot_source_kind": snapshot.get("source_kind"),
+        "vertical_translation_semantic_kind": (
+            translation.get("semantic_kind")
+            if type(translation) is dict
+            else None
+        ),
+        "resource_policy_sha256": policy["resource_policy_sha256"],
+    }
+    return _domain_hash(
+        "xunce-mid-dual-g2-r3-execution-signature/v1",
+        _canonical_json_bytes(core),
+    )
+
+
+def _r3_payload_index(root: Path) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for relative in artifact_io.list_relative_files(root):
+        if relative == "manifest.json":
+            continue
+        payload = artifact_io.read_bytes(root / PurePosixPath(relative))
+        rows.append(
+            {
+                "relative_path": relative,
+                "byte_length": len(payload),
+                "sha256": _sha256(payload),
+            }
+        )
+    return rows
+
+
+def _r3_validate_source_closure_hash(
+    closure: Mapping[str, object],
+    *,
+    field: str,
+) -> str:
+    if type(closure) is not dict:
+        _fail("g2_r3_source_closure")
+    return _require_sha256(
+        closure.get(field),
+        "g2_r3_source_closure",
+    )
+
+
+def prepare_r3_execution_data(
+    *,
+    output_root: str | Path,
+    binding: Mapping[str, object],
+    candidate: Mapping[str, object],
+    blind_payload: bytes,
+    sidecar_payload: bytes,
+    snapshot_payloads: Mapping[str, bytes],
+    hopper_parameter_record_payload: bytes,
+    provider_source_closure: Mapping[str, object],
+    consumer_source_closure: Mapping[str, object],
+    requests: Sequence[Mapping[str, object]] | None = None,
+    sidecars: Sequence[Mapping[str, object]] | None = None,
+) -> dict[str, object]:
+    """Prepare immutable R3 execution data without approval or manifest."""
+
+    output = Path(output_root)
+    if artifact_io.path_exists(output):
+        _fail("g2_r3_execution_root_exists")
+    producer_binding = validate_r3_producer_binding(binding)
+    final_candidate = validate_r3_final_candidate_metadata(candidate)
+    if (
+        final_candidate["producer_binding_sha256"]
+        != producer_binding["binding_sha256"]
+        or final_candidate["hopper_parameter_record_sha256"]
+        != producer_binding["hopper_parameter_record_sha256"]
+        or _sha256(blind_payload)
+        != final_candidate["provider_blind_requests_file_sha256"]
+        or _sha256(sidecar_payload)
+        != final_candidate["truth_request_sidecar_file_sha256"]
+    ):
+        _fail("g2_r3_candidate_payload_drift")
+
+    blind_rows = _r3_parse_canonical_jsonl_payload(
+        blind_payload,
+        code="g2_r3_blind_payload",
+    )
+    truth_rows = _r3_parse_canonical_jsonl_payload(
+        sidecar_payload,
+        code="g2_r3_truth_sidecar_payload",
+    )
+    if (
+        len(blind_rows) != 129
+        or len(truth_rows) != 129
+        or (
+            requests is not None
+            and [dict(row) for row in requests] != blind_rows
+        )
+        or (
+            sidecars is not None
+            and [dict(row) for row in sidecars] != truth_rows
+        )
+    ):
+        _fail("g2_r3_candidate_payload_drift")
+    validated_requests = [
+        _validate_r3_exact_provider_blind_request(
+            row,
+            producer_binding,
+        )
+        for row in blind_rows
+    ]
+    parent_audit = validate_r3_parent_static_hop_resource_join(
+        validated_requests,
+        truth_rows,
+        producer_binding=producer_binding,
+    )
+
+    record = _r3_parse_canonical_json_payload(
+        hopper_parameter_record_payload,
+        code="g2_r3_hopper_parameter_record",
+    )
+    record_sha256 = _sha256(_canonical_json_bytes(record))
+    if record_sha256 != final_candidate["hopper_parameter_record_sha256"]:
+        _fail(
+            "G2I_BLOCKED_HOPPER_PARAMETER_RECORD_MISMATCH",
+            "g2_hopper_parameter_record_mismatch",
+        )
+
+    if type(snapshot_payloads) is not dict:
+        _fail("g2_r3_snapshot_payloads")
+    snapshots_by_sha: dict[str, dict[str, object]] = {}
+    for request in validated_requests:
+        snapshot_sha256 = str(
+            request["provider_local_snapshot_sha256"]
+        )
+        payload = snapshot_payloads.get(snapshot_sha256)
+        if type(payload) is not bytes:
+            _fail("g2_r3_snapshot_payloads")
+        if _sha256(payload) != request[
+            "provider_local_snapshot_payload_sha256"
+        ]:
+            _fail("g2_r3_snapshot_payload_drift")
+        snapshot = _r3_parse_canonical_json_payload(
+            payload,
+            code="g2_r3_snapshot_payloads",
+        )
+        projected = project_r3_local_snapshot(
+            snapshot,
+            scale=str(request["scale"]),
+        )
+        if (
+            snapshot.get("snapshot_sha256") != snapshot_sha256
+            or projected["source_snapshot_sha256"] != snapshot_sha256
+            or snapshot.get("platform_kind")
+            != request["platform_kind"]
+        ):
+            _fail("g2_r3_snapshot_payload_drift")
+        snapshots_by_sha[snapshot_sha256] = snapshot
+    if (
+        len(snapshots_by_sha) != 129
+        or set(snapshots_by_sha) != set(snapshot_payloads)
+    ):
+        _fail("g2_r3_snapshot_payloads")
+
+    execution_requests = [
+        build_r3_provider_execution_request(
+            request,
+            producer_binding=producer_binding,
+        )
+        for request in validated_requests
+    ]
+    policies = [
+        r3_provider_resource_policy(platform)
+        for platform in G2_PLATFORMS
+    ]
+    resource_policy_root_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-r3-resource-policy-root/v1",
+        _canonical_json_bytes(policies),
+    )
+    execution_request_root_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-r3-execution-request-root/v1",
+        _canonical_json_bytes(execution_requests),
+    )
+
+    sidecar_by_sha = {
+        str(row["provider_request_sha256"]): row for row in truth_rows
+    }
+    execution_by_sha = {
+        str(row["provider_request_sha256"]): row
+        for row in execution_requests
+    }
+    signatures: dict[
+        tuple[str, str, str],
+        dict[str, list[dict[str, object]]],
+    ] = {}
+    for request in validated_requests:
+        sidecar = sidecar_by_sha[str(request["provider_request_sha256"])]
+        truth = sidecar["truth_request"]
+        difficulty = str(truth["difficulty_class"])
+        if difficulty == "unreachable":
+            continue
+        probe_class = (
+            "normal_reachable"
+            if difficulty == "reachable"
+            else "hard_reachable"
+        )
+        execution_request = execution_by_sha[
+            str(request["provider_request_sha256"])
+        ]
+        signature = _r3_execution_signature(
+            request,
+            snapshots_by_sha[
+                str(request["provider_local_snapshot_sha256"])
+            ],
+            execution_request["resource_policy"],
+        )
+        key = (
+            str(request["platform_kind"]),
+            str(request["scale"]),
+            probe_class,
+        )
+        signatures.setdefault(key, {}).setdefault(signature, []).append(
+            request
+        )
+    expected_probe_keys = {
+        (platform, scale, probe_class)
+        for platform in G2_PLATFORMS
+        for scale in ("standard", "kilometer")
+        for probe_class in ("normal_reachable", "hard_reachable")
+    }
+    if set(signatures) != expected_probe_keys or any(
+        len(by_signature) != 1
+        for by_signature in signatures.values()
+    ):
+        _fail("g2_r3_p03_signature_uncovered")
+    probe_selection: list[dict[str, object]] = []
+    for platform, scale, probe_class in sorted(expected_probe_keys):
+        by_signature = signatures[(platform, scale, probe_class)]
+        signature, candidates = next(iter(by_signature.items()))
+        selected = min(
+            candidates,
+            key=lambda request: _domain_hash(
+                R3_P03_SELECTION_CONTRACT,
+                str(final_candidate["input_set_id"]).encode("utf-8"),
+                platform.encode("ascii"),
+                scale.encode("ascii"),
+                probe_class.encode("ascii"),
+                str(request["provider_request_sha256"]).encode("ascii"),
+            ),
+        )
+        probe_selection.append(
+            {
+                "request_id": selected["provider_request_id"],
+                "platform": platform,
+                "scale": scale,
+                "probe_class": probe_class,
+                "execution_signature_sha256": signature,
+            }
+        )
+    p03_probe_selection_sha256 = _domain_hash(
+        R3_P03_SELECTION_CONTRACT,
+        _canonical_json_bytes(probe_selection),
+    )
+
+    try:
+        import run_xunce_mid_dual_g2_planning_time as r3_runner
+    except ImportError as exc:
+        raise G2InputContractError(
+            "g2_r3_runner_import",
+            type(exc).__name__,
+        ) from exc
+    formal_schedule = r3_runner.build_r3_formal_schedule(
+        str(final_candidate["input_set_id"]),
+        validated_requests,
+        producer_schema_contract=producer_binding,
+    )
+    formal_schedule_sha256 = _require_sha256(
+        formal_schedule.get("schedule_sha256"),
+        "g2_r3_formal_schedule",
+    )
+
+    provider_closure_sha256 = _r3_validate_source_closure_hash(
+        provider_source_closure,
+        field="path_planner_runtime_source_closure_sha256",
+    )
+    consumer_closure_sha256 = _r3_validate_source_closure_hash(
+        consumer_source_closure,
+        field="consumer_source_closure_sha256",
+    )
+    activation_config = artifact_io.read_json(
+        REPO_ROOT / "configs" / "xunce_mid_dual_g2_planning_time_v2.json"
+    )
+    validate_r3_activation_config(
+        activation_config,
+        require_resolved=False,
+    )
+    consumer_activation_contract_sha256 = (
+        r3_consumer_activation_contract_sha256(activation_config)
+    )
+
+    artifact_io.write_bytes(
+        output / "producer-binding.json",
+        _canonical_json_bytes(producer_binding) + b"\n",
+    )
+    artifact_io.write_bytes(
+        output / "provider-blind-requests.jsonl",
+        blind_payload,
+    )
+    artifact_io.write_bytes(
+        output / "truth" / "request-sidecar.jsonl",
+        sidecar_payload,
+    )
+    artifact_io.write_bytes(
+        output / "provider-execution-requests.jsonl",
+        b"".join(
+            _canonical_json_bytes(row) + b"\n"
+            for row in execution_requests
+        ),
+    )
+    crosswalk = list(parent_audit["execution_crosswalk"])
+    artifact_io.write_bytes(
+        output / "truth-free-execution-crosswalk.jsonl",
+        b"".join(
+            _canonical_json_bytes(row) + b"\n" for row in crosswalk
+        ),
+    )
+    for snapshot_sha256, payload in snapshot_payloads.items():
+        artifact_io.write_bytes(
+            output
+            / "terrain"
+            / "provider-local"
+            / f"{snapshot_sha256}.json",
+            payload,
+        )
+    artifact_io.write_bytes(
+        output / "hopper-parameter-record.json",
+        _canonical_json_bytes(record) + b"\n",
+    )
+    artifact_io.write_bytes(
+        output / "p03-probe-selection.json",
+        _canonical_json_bytes(
+            {
+                "schema_version": R3_P03_SELECTION_CONTRACT,
+                "rows": probe_selection,
+                "selection_sha256": p03_probe_selection_sha256,
+            }
+        )
+        + b"\n",
+    )
+    artifact_io.write_bytes(
+        output / "parent-static-audit.json",
+        _canonical_json_bytes(parent_audit) + b"\n",
+    )
+    artifact_io.write_bytes(
+        output / "source" / "provider-runtime-source-closure.json",
+        _canonical_json_bytes(provider_source_closure) + b"\n",
+    )
+    artifact_io.write_bytes(
+        output / "source" / "consumer-source-closure.json",
+        _canonical_json_bytes(consumer_source_closure) + b"\n",
+    )
+    input_audit = {
+        "schema_version": "xunce-mid-dual-g2-r3-input-audit/v1",
+        "status": "awaiting_artifact_bound_approval",
+        "formal_evidence_eligible": False,
+        "provider_called": False,
+        "candidate_id": final_candidate["candidate_id"],
+        "input_set_id": final_candidate["input_set_id"],
+        "producer_binding_sha256": producer_binding["binding_sha256"],
+        "request_count": 129,
+        "truth_sidecar_count": 129,
+        "hopper_request_count": sum(
+            row["platform_kind"] == "hopper"
+            for row in validated_requests
+        ),
+        "resource_policy_root_sha256": resource_policy_root_sha256,
+        "execution_request_root_sha256": (
+            execution_request_root_sha256
+        ),
+        "p03_probe_selection_sha256": p03_probe_selection_sha256,
+        "formal_schedule_sha256": formal_schedule_sha256,
+    }
+    artifact_io.write_bytes(
+        output / "input-audit.json",
+        _canonical_json_bytes(input_audit) + b"\n",
+    )
+    payload_index = _r3_payload_index(output)
+    execution_data_root_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-r3-execution-data-root/v1",
+        _canonical_json_bytes(payload_index),
+    )
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-r3-prepared-execution-data/v1"
+        ),
+        "status": "awaiting_artifact_bound_approval",
+        "formal_evidence_eligible": False,
+        "provider_called": False,
+        "output_root": output.as_posix(),
+        **{
+            key: final_candidate[key]
+            for key in (
+                "candidate_id",
+                "input_set_id",
+                "producer_manifest_file_sha256",
+                "manifest_core_sha256",
+                "producer_payload_root_sha256",
+                "producer_repeatability_audit_sha256",
+                "provider_blind_requests_file_sha256",
+                "truth_request_sidecar_file_sha256",
+                "hopper_parameter_record_sha256",
+            )
+        },
+        "producer_binding_sha256": producer_binding["binding_sha256"],
+        "provider_runtime_source_closure_sha256": (
+            provider_closure_sha256
+        ),
+        "consumer_source_closure_sha256": consumer_closure_sha256,
+        "consumer_activation_contract_sha256": (
+            consumer_activation_contract_sha256
+        ),
+        "resource_policy_root_sha256": resource_policy_root_sha256,
+        "execution_request_root_sha256": execution_request_root_sha256,
+        "p03_probe_selection_sha256": p03_probe_selection_sha256,
+        "formal_schedule_sha256": formal_schedule_sha256,
+        "execution_data_root_sha256": execution_data_root_sha256,
+        "request_count": 129,
+        "truth_sidecar_count": 129,
+        "hopper_request_count": 43,
+        "resource_policy_count": 3,
+        "formal_call_count": 645,
+        "payload_index": payload_index,
+    }
+
+
+def build_r3_approval_target(
+    prepared: Mapping[str, object],
+) -> dict[str, object]:
+    if (
+        type(prepared) is not dict
+        or prepared.get("schema_version")
+        != "xunce-mid-dual-g2-r3-prepared-execution-data/v1"
+        or prepared.get("status") != "awaiting_artifact_bound_approval"
+        or prepared.get("provider_called") is not False
+        or prepared.get("request_count") != 129
+        or prepared.get("formal_call_count") != 645
+    ):
+        _fail("g2_r3_prepared_execution_data")
+    field_map = {
+        "candidate_id": "candidate_id",
+        "input_set_id": "input_set_id",
+        "producer_binding_sha256": "producer_binding_sha256",
+        "producer_manifest_file_sha256": (
+            "producer_manifest_file_sha256"
+        ),
+        "manifest_core_sha256": "manifest_core_sha256",
+        "producer_payload_root_sha256": "producer_payload_root_sha256",
+        "producer_repeatability_audit_sha256": (
+            "producer_repeatability_audit_sha256"
+        ),
+        "provider_blind_requests_file_sha256": (
+            "provider_blind_requests_file_sha256"
+        ),
+        "truth_request_sidecar_file_sha256": (
+            "truth_request_sidecar_file_sha256"
+        ),
+        "hopper_parameter_record_sha256": (
+            "hopper_parameter_record_sha256"
+        ),
+        "provider_runtime_source_closure_sha256": (
+            "provider_runtime_source_closure_sha256"
+        ),
+        "consumer_source_closure_sha256": (
+            "consumer_source_closure_sha256"
+        ),
+        "consumer_activation_contract_sha256": (
+            "consumer_activation_contract_sha256"
+        ),
+        "resource_policy_root_sha256": "resource_policy_root_sha256",
+        "execution_request_root_sha256": (
+            "execution_request_root_sha256"
+        ),
+        "p03_probe_selection_sha256": "p03_probe_selection_sha256",
+        "formal_schedule_sha256": "formal_schedule_sha256",
+        "execution_data_root_sha256": "execution_data_root_sha256",
+    }
+    core: dict[str, object] = {
+        "schema_version": R3_APPROVAL_TARGET_SCHEMA_VERSION,
+        **{
+            target_field: prepared[source_field]
+            for target_field, source_field in field_map.items()
+        },
+        "request_count": 129,
+        "formal_call_count": 645,
+    }
+    for field in _R3_APPROVAL_TARGET_KEYS:
+        if field.endswith("_sha256"):
+            _require_sha256(core.get(field), "g2_r3_approval_target")
+    return {
+        **core,
+        "approval_target_sha256": _domain_hash(
+            R3_APPROVAL_TARGET_SCHEMA_VERSION,
+            _canonical_json_bytes(core),
+        ),
+    }
+
+
+def validate_r3_artifact_bound_approval_v2(
+    approval: Mapping[str, object],
+    target: Mapping[str, object],
+) -> dict[str, object]:
+    if (
+        type(approval) is not dict
+        or approval.get("schema_version") != R3_APPROVAL_SCHEMA_VERSION
+    ):
+        _fail("g2_r3_legacy_approval_ineligible")
+    required = {
+        "schema_version",
+        "approval_id",
+        "decision",
+        "formal_evidence_eligible",
+        "blockers",
+        "approval_target",
+        "approval_target_sha256",
+    }
+    target_core = {
+        key: value
+        for key, value in target.items()
+        if key != "approval_target_sha256"
+    }
+    expected_target_sha256 = _domain_hash(
+        R3_APPROVAL_TARGET_SCHEMA_VERSION,
+        _canonical_json_bytes(target_core),
+    )
+    if (
+        set(approval) != required
+        or type(approval.get("approval_id")) is not str
+        or not approval["approval_id"]
+        or approval.get("decision") != "approved"
+        or approval.get("formal_evidence_eligible") is not True
+        or approval.get("blockers") != []
+        or set(target_core) != _R3_APPROVAL_TARGET_KEYS
+        or target.get("approval_target_sha256")
+        != expected_target_sha256
+        or approval.get("approval_target") != target_core
+        or approval.get("approval_target_sha256")
+        != expected_target_sha256
+    ):
+        _fail("g2_r3_approval_target_drift")
+    return dict(approval)
+
+
+def _r3_revalidate_prepared_payloads(
+    output: Path,
+    prepared: Mapping[str, object],
+) -> list[dict[str, object]]:
+    expected_index = prepared.get("payload_index")
+    if type(expected_index) is not list:
+        _fail("g2_r3_execution_payload_drift")
+    actual_index = _r3_payload_index(output)
+    if (
+        actual_index != expected_index
+        or prepared.get("execution_data_root_sha256")
+        != _domain_hash(
+            "xunce-mid-dual-g2-r3-execution-data-root/v1",
+            _canonical_json_bytes(actual_index),
+        )
+    ):
+        _fail("g2_r3_execution_payload_drift")
+    return actual_index
+
+
+def seal_r3_execution_bundle(
+    *,
+    output_root: str | Path,
+    prepared: Mapping[str, object],
+    approval_path: str | Path,
+) -> dict[str, object]:
+    output = Path(output_root)
+    if (
+        output.as_posix() != prepared.get("output_root")
+        or artifact_io.path_is_file(output / "manifest.json")
+        or not artifact_io.path_is_file(approval_path)
+    ):
+        _fail("g2_r3_execution_seal")
+    payload_index = _r3_revalidate_prepared_payloads(output, prepared)
+    approval_bytes = artifact_io.read_bytes(approval_path)
+    approval = _r3_parse_canonical_json_payload(
+        approval_bytes,
+        code="g2_r3_approval_artifact",
+    )
+    target = build_r3_approval_target(prepared)
+    validate_r3_artifact_bound_approval_v2(approval, target)
+    manifest = {
+        "schema_version": R3_EXECUTION_BUNDLE_SCHEMA_VERSION,
+        "publication_order": "data-first-manifest-last",
+        "formal_evidence_eligible": True,
+        "blockers": [],
+        **{
+            key: target[key]
+            for key in (
+                "candidate_id",
+                "input_set_id",
+                "producer_binding_sha256",
+                "producer_manifest_file_sha256",
+                "manifest_core_sha256",
+                "producer_payload_root_sha256",
+                "producer_repeatability_audit_sha256",
+                "provider_blind_requests_file_sha256",
+                "truth_request_sidecar_file_sha256",
+                "hopper_parameter_record_sha256",
+                "provider_runtime_source_closure_sha256",
+                "consumer_source_closure_sha256",
+                "consumer_activation_contract_sha256",
+                "resource_policy_root_sha256",
+                "execution_request_root_sha256",
+                "p03_probe_selection_sha256",
+                "formal_schedule_sha256",
+                "execution_data_root_sha256",
+            )
+        },
+        "approval_schema_version": R3_APPROVAL_SCHEMA_VERSION,
+        "approval_target_schema_version": (
+            R3_APPROVAL_TARGET_SCHEMA_VERSION
+        ),
+        "approval_artifact_path": Path(approval_path).as_posix(),
+        "approval_artifact_sha256": _sha256(approval_bytes),
+        "approval_target_sha256": target["approval_target_sha256"],
+        "provider_blind_payload_sha256": prepared[
+            "provider_blind_requests_file_sha256"
+        ],
+        "truth_sidecar_payload_sha256": prepared[
+            "truth_request_sidecar_file_sha256"
+        ],
+        "request_count": 129,
+        "crosswalk_count": 129,
+        "formal_call_count": 645,
+        "payload_index": payload_index,
+        "payload_root_sha256": prepared["execution_data_root_sha256"],
+    }
+    artifact_io.write_bytes(
+        output / "manifest.json",
+        _canonical_json_bytes(manifest) + b"\n",
+    )
+    return manifest
+
+
+def validate_r3_sealed_execution_bundle(
+    output_root: str | Path,
+    *,
+    approval_path: str | Path,
+) -> dict[str, object]:
+    output = Path(output_root)
+    manifest_path = output / "manifest.json"
+    if not artifact_io.path_is_file(manifest_path):
+        _fail("g2_r3_execution_manifest_missing")
+    manifest = _r3_parse_canonical_json_payload(
+        artifact_io.read_bytes(manifest_path),
+        code="g2_r3_execution_manifest",
+    )
+    if (
+        manifest.get("schema_version")
+        != R3_EXECUTION_BUNDLE_SCHEMA_VERSION
+        or manifest.get("publication_order")
+        != "data-first-manifest-last"
+        or manifest.get("formal_evidence_eligible") is not True
+        or manifest.get("blockers") != []
+        or manifest.get("request_count") != 129
+        or manifest.get("crosswalk_count") != 129
+        or manifest.get("formal_call_count") != 645
+        or manifest.get("approval_schema_version")
+        != R3_APPROVAL_SCHEMA_VERSION
+        or manifest.get("approval_target_schema_version")
+        != R3_APPROVAL_TARGET_SCHEMA_VERSION
+    ):
+        _fail("g2_r3_execution_manifest")
+    payload_index = _r3_payload_index(output)
+    expected_index = manifest.get("payload_index")
+    if (
+        type(expected_index) is not list
+        or payload_index != expected_index
+        or manifest.get("payload_root_sha256")
+        != _domain_hash(
+            "xunce-mid-dual-g2-r3-execution-data-root/v1",
+            _canonical_json_bytes(payload_index),
+        )
+    ):
+        _fail("g2_r3_execution_payload_drift")
+    if not artifact_io.path_is_file(approval_path):
+        _fail("g2_r3_approval_artifact")
+    approval_bytes = artifact_io.read_bytes(approval_path)
+    if (
+        Path(approval_path).as_posix()
+        != manifest.get("approval_artifact_path")
+        or _sha256(approval_bytes)
+        != manifest.get("approval_artifact_sha256")
+    ):
+        _fail("g2_r3_approval_artifact")
+    approval = _r3_parse_canonical_json_payload(
+        approval_bytes,
+        code="g2_r3_approval_artifact",
+    )
+    target_core = {
+        key: (
+            manifest["approval_target_schema_version"]
+            if key == "schema_version"
+            else manifest[key]
+        )
+        for key in _R3_APPROVAL_TARGET_KEYS
+    }
+    target = {
+        **target_core,
+        "approval_target_sha256": manifest["approval_target_sha256"],
+    }
+    validate_r3_artifact_bound_approval_v2(approval, target)
+    return {
+        "manifest": manifest,
+        "manifest_file_sha256": _sha256(
+            artifact_io.read_bytes(manifest_path)
+        ),
+        "approval": approval,
+        "payload_index": payload_index,
+    }
+
+
+def decode_r3_provider_execution_request(
+    execution_request: Mapping[str, object],
+    snapshot_payload: bytes,
+    *,
+    producer_binding: Mapping[str, object],
+) -> dict[str, object]:
+    """Decode one resource-bound R3 request without macro-grid resampling."""
+
+    binding = validate_r3_producer_binding(producer_binding)
+    if (
+        type(execution_request) is not dict
+        or set(execution_request)
+        != {
+            "schema_version",
+            "producer_binding_sha256",
+            "provider_blind_request",
+            "provider_request_sha256",
+            "resource_policy",
+            "resource_policy_sha256",
+            "execution_request_sha256",
+        }
+        or execution_request.get("schema_version")
+        != R3_PROVIDER_EXECUTION_REQUEST_SCHEMA_VERSION
+        or execution_request.get("producer_binding_sha256")
+        != binding["binding_sha256"]
+    ):
+        _fail("g2_r3_execution_request")
+    request = _validate_r3_exact_provider_blind_request(
+        execution_request["provider_blind_request"],
+        binding,
+    )
+    policy = validate_r3_provider_resource_policy(
+        execution_request["resource_policy"]
+    )
+    core = {
+        key: value
+        for key, value in execution_request.items()
+        if key != "execution_request_sha256"
+    }
+    if (
+        execution_request.get("provider_request_sha256")
+        != request["provider_request_sha256"]
+        or execution_request.get("resource_policy_sha256")
+        != policy["resource_policy_sha256"]
+        or execution_request.get("execution_request_sha256")
+        != _domain_hash(
+            R3_PROVIDER_EXECUTION_REQUEST_SCHEMA_VERSION,
+            _canonical_json_bytes(core),
+        )
+    ):
+        _fail("g2_r3_execution_request")
+    if (
+        type(snapshot_payload) is not bytes
+        or _sha256(snapshot_payload)
+        != request["provider_local_snapshot_payload_sha256"]
+    ):
+        _fail("g2_r3_snapshot_payload_drift")
+    snapshot = _r3_parse_canonical_json_payload(
+        snapshot_payload,
+        code="g2_r3_snapshot_payloads",
+    )
+    projected = project_r3_local_snapshot(
+        snapshot,
+        scale=str(request["scale"]),
+    )
+    if (
+        projected["source_snapshot_sha256"]
+        != request["provider_local_snapshot_sha256"]
+        or projected["platform_kind"] != request["platform_kind"]
+    ):
+        _fail("g2_r3_snapshot_payload_drift")
+    start = project_r3_canonical_pose(
+        request["start"]["pose_binary64_m_rad"]
+    )
+    goal = project_r3_canonical_pose(
+        request["goal"]["pose_binary64_m_rad"]
+    )
+
+    from path_planner.v2.contracts import (
+        AcceleratorPolicyV2,
+        ObjectiveProfileV2,
+        PlanningRequestV2,
+        PoseStateV2,
+        ResourceBudgetV2,
+    )
+    from path_planner.v2.terrain import (
+        FineGridGeometryV2,
+        TerrainProvenanceV2,
+        TerrainSnapshotV2,
+    )
+
+    terrain = TerrainSnapshotV2(
+        geometry=FineGridGeometryV2(
+            width=20,
+            height=20,
+            resolution_m=0.5,
+        ),
+        elevation_m=np.ascontiguousarray(
+            projected["elevation_m"],
+            dtype="<f8",
+        ),
+        slope_deg=np.ascontiguousarray(
+            projected["slope_deg"],
+            dtype="<f8",
+        ),
+        traversable_mask=np.ascontiguousarray(
+            projected["traversable"],
+            dtype=bool,
+        ),
+        hard_obstacle_mask=np.ascontiguousarray(
+            projected["hard_obstacle"],
+            dtype=bool,
+        ),
+        observed_mask=np.ascontiguousarray(
+            projected["known"],
+            dtype=bool,
+        ),
+        confidence=np.ascontiguousarray(
+            projected["confidence_ppm"].astype("<f8") / 1_000_000.0,
+            dtype="<f8",
+        ),
+        provenance=TerrainProvenanceV2(
+            source_kind=str(snapshot["source_kind"]),
+            source_id=(
+                "g2-r3-provider-local-"
+                f"{request['provider_local_snapshot_sha256'][:24]}"
+            ),
+            source_hash=str(
+                request["provider_local_snapshot_sha256"]
+            ),
+            physical_obstacle_cells_written=False,
+            details=(
+                ("frame_id", str(snapshot["frame_id"])),
+                ("resolution_mm", 500),
+            ),
+        ),
+    )
+    platform = str(request["platform_kind"])
+    planning_request = PlanningRequestV2(
+        request_id=str(request["provider_request_id"]),
+        platform_profile_id=str(PLATFORM_STACKS[platform]["profile_id"]),
+        start_state=PoseStateV2(**start["pose"]),
+        goal_state=PoseStateV2(**goal["pose"]),
+        terrain_snapshot=terrain,
+        objective_profile=ObjectiveProfileV2(
+            distance_weight=1.0,
+            energy_weight=0.0,
+            risk_weight=0.0,
+            time_weight=0.0,
+        ),
+        resource_budget=ResourceBudgetV2(
+            max_expanded_states=int(policy["max_expanded_states"]),
+            max_memory_bytes=int(policy["max_memory_bytes"]),
+            max_route_states=int(policy["max_route_states"]),
+        ),
+        timeout_s=2.0,
+        accelerator_policy=AcceleratorPolicyV2.DISABLED,
+        determinism_seed=(
+            int(str(request["provider_request_sha256"])[:16], 16)
+            % (2**31)
+        ),
+    )
+    return {
+        "planning_request": planning_request,
+        "platform": platform,
+        "scale": request["scale"],
+        "provider_request_id": request["provider_request_id"],
+        "provider_request_sha256": request["provider_request_sha256"],
+        "execution_request_sha256": execution_request[
+            "execution_request_sha256"
+        ],
+        "resource_policy": policy,
+        "resource_policy_sha256": policy["resource_policy_sha256"],
+        "projection_sha256": projected["projection_sha256"],
+        "provider_local_snapshot_sha256": request[
+            "provider_local_snapshot_sha256"
+        ],
+        "terrain_geometry_sha256": request["terrain_geometry_sha256"],
+        "start_pose": start,
+        "goal_pose": goal,
+        "execution_signature_sha256": _r3_execution_signature(
+            request,
+            snapshot,
+            policy,
+        ),
+    }
 
 
 def _provider_request_payload(
@@ -2822,6 +5830,7 @@ __all__ = [
     "G3_REPLAY_COHORT_SCHEMA_VERSION",
     "INPUT_AUDIT_SCHEMA_VERSION",
     "PLATFORM_STACKS",
+    "R3_PRODUCER_BINDING_SCHEMA_VERSION",
     "approval_artifact_path",
     "audit_ppo_targets",
     "audit_primitive_labels",
@@ -2831,9 +5840,16 @@ __all__ = [
     "audit_truth_bundle",
     "build_approved_platform_execution_stack",
     "build_execution_crosswalk",
+    "build_r3_provider_execution_request",
+    "capture_r3_consumer_source_closure",
     "decode_provider_execution_request",
     "materialize_execution_bundle",
     "preflight",
     "resolve_hopper_formal_eligibility",
+    "validate_r3_hopper_execution_binding",
+    "validate_r3_parent_static_hop_resource_join",
+    "validate_r3_producer_binding",
+    "validate_r3_provider_blind_request",
+    "validate_r3_provider_resource_policy",
     "validate_primitive_label_identity",
 ]

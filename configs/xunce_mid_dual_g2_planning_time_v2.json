@@ -1,0 +1,186 @@
+{
+  "schema_version": "xunce-mid-dual-g2-planning-time-config/v2",
+  "gate_id": "g2",
+  "runner_id": "run_xunce_mid_dual_g2_planning_time/v2",
+  "scale_profile": "midterm_reduced_w8x3_update80/v1",
+  "evaluation_mode": "reduced",
+  "output_base": "D:/xunce/out/mid_dual/g2",
+  "formal_inputs": {
+    "producer_candidate_bundle": "D:/xunce/inputs/mid_dual/g2-truth/g2-formal-20260728-r3b",
+    "producer_manifest_sha256": "a162a5fb8a13fb96fdbd56afed63f305811160388099a74c703c1390eb9d8bb6",
+    "provider_blind_requests_sha256": "d6e737da1a37e476931487333a8d5c0fe4e147fab3771bbd1b9f0ee8f4475bc1",
+    "truth_request_sidecar_sha256": "e85d4dcb5df30f0b49bb639e83c762c206555d800bbfc455cb9be504ecbd8926",
+    "hopper_parameter_record_sha256": "77a993e83302b1554e7ef42dd23b95d1feb1b24b10eabfbe697be954a4cac0f1",
+    "execution_bundle": "D:/xunce/inputs/mid_dual/g2-r3-execution/g2-formal-20260728-r3b-v3",
+    "execution_manifest_sha256": "fd2c008d46c8e15950b0b81c4d77a1079e3b8448890cfd6d3b8373bd92ddcfa4",
+    "artifact_bound_approval": "D:/xunce/inputs/mid_dual/g2-approvals/g2-formal-20260728-r3b-artifact-bound-o2-v3.json",
+    "artifact_bound_approval_sha256": "aeda4c4b822300ff31422aa9311f3c00d660c62a39b8aa3892f084d16a7a46b2"
+  },
+  "producer_binding": {
+    "schema_version": "xunce-mid-dual-g2-producer-binding/v1",
+    "bundle_root": "D:/xunce/inputs/mid_dual/g2-truth/g2-formal-20260728-r3b",
+    "producer_implementation_sha256": "f3c11e777df12538850c56f9dca32376f2ecfdab6b077d680f594c7389e14a78",
+    "input_contract_sha256": "0d7eee3803ff4aca5efe0f3e9e564a112e7609ff3927290e2d4b7209f5c17800",
+    "hopper_parameter_record_sha256": "77a993e83302b1554e7ef42dd23b95d1feb1b24b10eabfbe697be954a4cac0f1",
+    "provider_blind_schema_version": "g2-provider-blind-request/v1",
+    "binding_sha256": "2ff635c7d90a5396d7d7e3b5da354e12c218f5837aeb30af958c33273867604c"
+  },
+  "activation_binding": {
+    "candidate_id": "g2-formal-20260728-r3b",
+    "input_set_id": "g2t2-candidate-0d7eee3803ff4aca5efe0f3e",
+    "manifest_core_sha256": "766753f6c3217632265852224923aca550625e1e5de06a9bbc6e4b5db92196e0",
+    "producer_payload_root_sha256": "f14efdf42f5c17c56d465a7ede3a69c4d54b54dce5b4180c4da2aa37d6062a7d",
+    "producer_repeatability_audit_sha256": "dca0a261418889c9aaabc7c5f09205f2b166bac1b3d1d39627abcc7cd51b3eae",
+    "provider_runtime_source_closure_sha256": "78065f35ece08e38d23fbb2c0a7540ccb10854f66165e98b81200b5ae1500e32",
+    "consumer_source_closure_sha256": "6800fff41efa0d8e2f19e52662a9c0fa728611c8f0d2925d6400cf8aefc1143b",
+    "consumer_activation_contract_sha256": "89b3c19a084c1c40dac46f451b391dc3ee57eb4da48b39ae8853dd651c43406e",
+    "resource_policy_root_sha256": "d8808fb51efd0c2afe76ff851c9e22cce52a75ac324380e22eafc45663ee5d20",
+    "execution_request_root_sha256": "35d9d038f46589fb74c4336f1ecfa3c6bebfa0d708a796ded6ff62eee71ab2c2",
+    "p03_probe_selection_sha256": "e47d8f31b790b49d29b77607768e9feeaf0d07f9f9776e1b3aebcf8cdd7a6550",
+    "formal_schedule_sha256": "643e243557d9ff439e2e7998bfe98a9972f5f5bbbdc620017aab8439c5730b91",
+    "execution_data_root_sha256": "dbe4836f106ee199695c100cf787c9af293b5a41db8ebc3bf8a086a80c12daea",
+    "approval_target_sha256": "cc27566dda60a110ba8d41e1ff1a795ff2d383df75e7bd03a5adfd210d5d1d16"
+  },
+  "request_contract": {
+    "requests_per_platform": 43,
+    "standard": {
+      "reachable": 23,
+      "hard_reachable": 7,
+      "unreachable": 3
+    },
+    "kilometer": {
+      "reachable": 6,
+      "hard_reachable": 2,
+      "unreachable": 2
+    },
+    "repeat_count": 5,
+    "formal_call_count": 645
+  },
+  "phase_contract": {
+    "p01": {
+      "name": "r3_parent_static_preflight",
+      "provider_call_count": 0,
+      "blind_request_count": 129,
+      "truth_sidecar_count": 129
+    },
+    "p02": {
+      "name": "r3_cold_start_and_warmup",
+      "cold_start_count": 3,
+      "warmup_count": 30,
+      "formal_sample": false
+    },
+    "p03": {
+      "name": "r3_worker_semantic_probe",
+      "worker_one_count": 12,
+      "worker_four_count": 12,
+      "formal_sample": false,
+      "requires": [
+        "p01",
+        "p02"
+      ]
+    },
+    "p04": {
+      "name": "r3_formal_worker_four",
+      "formal_call_count": 645,
+      "formal_sample": true,
+      "requires": [
+        "p01",
+        "p02",
+        "p03"
+      ]
+    }
+  },
+  "execution": {
+    "formal_worker_count": 4,
+    "diagnostic_worker_count": 1,
+    "warmup_requests_per_platform": 10,
+    "cold_start_calls_per_platform": 1,
+    "formal_timing_contract": "five-phase-sequential-ns/v1",
+    "formal_cache_contract": "immutable-terrain-static-validation-only/v1",
+    "p03_selection_contract": "xunce-mid-dual-g2-r3-p03-input-side-sha256-rank/v1",
+    "formal_environment_gate": {
+      "schema_version": "xunce-mid-dual-g2-formal-environment-policy/v1",
+      "lease_path": "D:/xunce/out/mid_dual/g2/.formal-exclusive-lease.json",
+      "allowed_power_scheme_guids": [
+        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+      ],
+      "required_thread_variables": {
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1"
+      },
+      "sample_window_seconds": 2.0,
+      "limits": {
+        "cpu_percent_max": 20.0,
+        "memory_percent_max": 85.0,
+        "memory_available_bytes_min": 4294967296,
+        "disk_busy_percent_max": 20.0,
+        "disk_free_bytes_min": 10737418240
+      },
+      "competing_process_patterns": [
+        "run_xunce_mid_dual_g1_coverage.py",
+        "run_xunce_mid_dual_g2_planning_time.py",
+        "run_xunce_mid_dual_g3_closed_loop.py",
+        "run_ppo_stage6_standard.py",
+        "pytest",
+        "training",
+        "formal"
+      ],
+      "exclude_current_process_tree": true
+    }
+  },
+  "thresholds_ms": {
+    "midterm_mean": 2000.0,
+    "midterm_p95": 2000.0,
+    "absolute_max": 2000.0,
+    "final_mean": 1000.0,
+    "final_p95": 1000.0,
+    "final_proportion_at_or_below": 0.95,
+    "engineering_standard_p95": 250.0,
+    "engineering_kilometer_p95": 750.0
+  },
+  "platform_stacks": {
+    "wheel": {
+      "profile_id": "scout-mini-wheel-kinematic-sqp/v1",
+      "profile_api": "path_planner.v2.profiles.WheelKinematicSQPProfileV2",
+      "provider_api": "path_planner.v2.providers.WheelKinematicSQPProviderV2",
+      "l2_recheck_api": "path_planner.v2.validation.validate_route_l2",
+      "capability_id": "wheel_kinematic_corridor_sqp/v2",
+      "simulation_proxy": false,
+      "max_traversable_slope_deg": 30.0
+    },
+    "legged": {
+      "profile_id": "legged-static-crawl-simulation-proxy-midterm/v1",
+      "profile_api": "path_planner.v2.profiles.LeggedProfileV2",
+      "provider_api": "path_planner.v2.providers.LeggedPrimitiveProviderV2",
+      "l2_recheck_api": "path_planner.v2.validation.validate_legged_route_l2",
+      "capability_id": "legged_static_crawl_simulation_proxy/v2",
+      "simulation_proxy": true,
+      "max_traversable_slope_deg": 30.0
+    },
+    "hopper": {
+      "profile_id": "hopper-generic-internal-computational-simulation-proxy-midterm/v1",
+      "profile_api": "path_planner.v2.hopper_authority.hopper_generic_internal_simulation_proxy_midterm_v1",
+      "provider_api": "path_planner.v2.providers.HopperPrimitiveProviderV2",
+      "l2_recheck_api": "path_planner.v2.validation.validate_hopper_route_l2",
+      "capability_id": "simulation_proxy_generic_internal_lunar_ballistic/v3",
+      "simulation_proxy": true,
+      "max_traversable_slope_deg": 30.0
+    }
+  },
+  "schemas": {
+    "provider_blind_request": "g2-provider-blind-request/v1",
+    "truth_sidecar": "g2-truth-request-sidecar/v1",
+    "provider_execution_request": "xunce-mid-dual-g2-provider-execution-request/v3",
+    "resource_policy": "g2-provider-resource-policy/v2",
+    "execution_bundle": "xunce-mid-dual-g2-execution-bundle/v2",
+    "artifact_bound_approval": "xunce-mid-dual-g2-artifact-bound-approval/v2",
+    "formal_schedule": "xunce-mid-dual-g2-formal-schedule/v2"
+  },
+  "default_readiness": {
+    "status": "ready",
+    "formal_evidence_eligible": true,
+    "blockers": []
+  }
+}
