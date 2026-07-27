@@ -471,9 +471,9 @@ def _dual_gate_figure(
     grid = fig.add_gridspec(
         2,
         2,
-        width_ratios=(1.08, 1.0),
+        width_ratios=(1.02, 1.0),
         height_ratios=(1.13, 0.87),
-        wspace=0.34,
+        wspace=0.46,
         hspace=0.52,
     )
     ax_a = fig.add_subplot(grid[:, 0])
@@ -516,15 +516,15 @@ def _dual_gate_figure(
     test = g1["splits"]["test_q24"]
     unseen = g1["splits"]["unseen24"]
     ax_a.text(
-        0.03,
-        0.98,
+        0.54,
+        0.72,
         (
             f"Test mean {test['mean'] * 100:.2f}%  ({test['coverage_80_count']}/24 ≥80%)\n"
             f"Unseen mean {unseen['mean'] * 100:.2f}%  ({unseen['coverage_80_count']}/24 ≥80%)"
         ),
         transform=ax_a.transAxes,
         va="top",
-        ha="left",
+        ha="center",
         fontsize=6.7,
         bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "#BDBDBD"},
     )
@@ -572,14 +572,24 @@ def _dual_gate_figure(
         linestyle=(0, (1.5, 2.5)),
         linewidth=0.8,
     )
-    ax_b.text(5.43, FINAL_LATENCY_MS * 1.06, "1 s", ha="right", va="bottom", fontsize=6.0)
-    ax_b.text(5.43, MIDTERM_LATENCY_MS * 1.03, "2 s", ha="right", va="bottom", fontsize=6.0)
+    ax_b.text(5.25, FINAL_LATENCY_MS * 1.06, "1 s", ha="right", va="bottom", fontsize=6.0)
+    ax_b.text(5.25, MIDTERM_LATENCY_MS * 1.03, "2 s", ha="right", va="bottom", fontsize=6.0)
     ax_b.set_yscale("log")
-    ax_b.set_ylim(8, 2700)
+    ax_b.set_ylim(8, 3200)
     ax_b.set_ylabel("Latency (ms, log scale)")
     ax_b.set_xticks(x, ("W-S", "W-K", "L-S", "L-K", "H-S", "H-K"))
     ax_b.grid(axis="y", which="major", color=COLORS["grid"], linewidth=0.55, alpha=0.8)
-    ax_b.legend(loc="upper left", frameon=False, ncol=3, handlelength=1.2, columnspacing=0.8)
+    ax_b.legend(
+        loc="upper left",
+        frameon=True,
+        facecolor="white",
+        edgecolor="none",
+        framealpha=1.0,
+        borderpad=0.2,
+        ncol=3,
+        handlelength=1.2,
+        columnspacing=0.8,
+    )
     _panel_label(ax_b, "b")
 
     correctness = g2["correctness"]
@@ -601,10 +611,26 @@ def _dual_gate_figure(
         linewidth=0.55,
         hatch=("", "///"),
     )
-    for bar, numerator, denominator in zip(bars, numerators, denominators):
+    for bar, label, numerator, denominator in zip(
+        bars,
+        labels,
+        numerators,
+        denominators,
+    ):
+        center_y = bar.get_y() + bar.get_height() / 2
+        ax_c.text(
+            2.5,
+            center_y,
+            label,
+            ha="left",
+            va="center",
+            color="white",
+            fontweight="bold",
+            fontsize=6.8,
+        )
         ax_c.text(
             98.5,
-            bar.get_y() + bar.get_height() / 2,
+            center_y,
             f"{numerator}/{denominator}",
             ha="right",
             va="center",
@@ -612,7 +638,7 @@ def _dual_gate_figure(
             fontweight="bold",
             fontsize=7.0,
         )
-    ax_c.set_yticks([0, 1], labels)
+    ax_c.set_yticks([])
     ax_c.invert_yaxis()
     ax_c.set_xlim(0, 102)
     ax_c.set_xlabel("Correct decision rate (%)")
