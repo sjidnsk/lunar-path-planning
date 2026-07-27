@@ -458,29 +458,26 @@ def test_unreachable_frontier_is_internal_between_safe_endpoints(
                 for edge in graph["candidate_edges"]
             )
         elif platform == "legged":
-            direct = next(
-                edge
-                for edge in graph["candidate_edges"]
-                if edge["from_node"] == start and edge["to_node"] == goal
-            )
-            assert direct["reject_reason"] == (
-                "G2I_L_CYCLE_PHASE_FRONTIER_CUT"
-            )
             cut = next(
                 operation
                 for operation in operations
                 if operation["operation_kind"]
-                == "legged-cycle-phase-frontier-cut/v1"
+                == "legged-interior-frontier-cut-proxy/v1"
             )
-            assert cut["incoming_complete_cycle_phase"] == 0
-            assert cut["goal_cycle_phase"] == 1
-            assert graph["node_states"][goal]["cycle_phase"] == 1
-            assert not any(
-                cell
-                for row in raw["provider_local_snapshot"]["arrays"][
-                    "hard_obstacle"
-                ]
-                for cell in row
+            endpoint_cells = {
+                tuple(cell)
+                for endpoint_name in ("start", "goal")
+                for cell in raw["metric_problem"][endpoint_name][
+                    "endpoint_safety"
+                ]["cell_xy"]
+            }
+            assert (start, goal) == ("n:0:2", "n:8:2")
+            assert graph["node_states"][goal]["cycle_phase"] == 0
+            assert tuple(cut["cell_xy"]) not in endpoint_cells
+            assert any(
+                edge["reject_reason"]
+                in {"G2I_L_BODY_SWEEP", "G2I_L_FOOTHOLD_OBSTACLE"}
+                for edge in graph["candidate_edges"]
             )
         else:
             direct = next(
@@ -988,11 +985,6 @@ def test_reachable_and_hard_requests_use_one_graph_hop_with_resource_join(
     ("platform", "operation_kind", "reject_reason"),
     [
         (
-            "legged",
-            "legged-cycle-phase-frontier-cut/v1",
-            "G2I_L_CYCLE_PHASE_FRONTIER_CUT",
-        ),
-        (
             "hopper",
             "hopper-mid-arc-frontier-cut-proxy/v1",
             "G2I_H_ARC_CLEARANCE",
@@ -1027,22 +1019,59 @@ def test_single_hop_frontier_cut_is_internal_with_safe_endpoints(
         ]["operations"]
         if operation["operation_kind"] == operation_kind
     )
-    if platform == "hopper":
-        endpoint_cells = {
-            tuple(cell)
-            for endpoint_name in ("start", "goal")
-            for cell in raw["metric_problem"][endpoint_name][
-                "endpoint_safety"
-            ]["cell_xy"]
-        }
-        assert tuple(operation["cell_xy"]) not in endpoint_cells
-        assert operation["cell_xy"] in direct["oracle_input"][
-            "required_cells"
-        ]["arc"]
-    else:
-        assert operation["incoming_complete_cycle_phase"] == 0
-        assert operation["goal_cycle_phase"] == 1
-        assert graph["node_states"][goal]["cycle_phase"] == 1
+    endpoint_cells = {
+        tuple(cell)
+        for endpoint_name in ("start", "goal")
+        for cell in raw["metric_problem"][endpoint_name][
+            "endpoint_safety"
+        ]["cell_xy"]
+    }
+    assert tuple(operation["cell_xy"]) not in endpoint_cells
+    assert operation["cell_xy"] in direct["oracle_input"][
+        "required_cells"
+    ]["arc"]
+    assert (
+        audit_bundle.audit_archived_graph_snapshot(
+            graph,
+            snapshot=raw["provider_local_snapshot"],
+            hopper_parameter_record=_hopper_record(),
+        )
+        == []
+    )
+
+
+def test_legged_multihop_frontier_cut_is_geometric_and_audited(
+    raw_sources: list[dict[str, Any]],
+) -> None:
+    raw = _raw(raw_sources, platform="legged", base_index=8)
+    graph, start, goal = _graph(raw)
+    certificate = reachability_certificate(graph, start, goal)
+    operation = next(
+        operation
+        for operation in raw["provider_local_snapshot"][
+            "proxy_modification_witness"
+        ]["operations"]
+        if operation["operation_kind"]
+        == "legged-interior-frontier-cut-proxy/v1"
+    )
+    endpoint_cells = {
+        tuple(cell)
+        for endpoint_name in ("start", "goal")
+        for cell in raw["metric_problem"][endpoint_name][
+            "endpoint_safety"
+        ]["cell_xy"]
+    }
+
+    assert (start, goal) == ("n:0:2", "n:8:2")
+    assert certificate["oracle_reachable"] is False
+    assert certificate["open_set_exhausted"] is True
+    assert graph["node_states"][goal]["cycle_phase"] == 0
+    assert tuple(operation["cell_xy"]) not in endpoint_cells
+    assert any(
+        edge["reject_reason"]
+        in {"G2I_L_BODY_SWEEP", "G2I_L_FOOTHOLD_OBSTACLE"}
+        for edge in certificate["frontier_cut"]
+    )
     assert (
         audit_bundle.audit_archived_graph_snapshot(
             graph,

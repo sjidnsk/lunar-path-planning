@@ -66,15 +66,30 @@ def _graph_shape(platform: str) -> tuple[int, int]:
     raise ValueError(f"unknown request platform: {platform}")
 
 
-def _request_start_goal(platform: str) -> tuple[str, str]:
+def _request_start_goal(
+    platform: str,
+    *,
+    local_proxy_difficulty_mode: str | None = None,
+) -> tuple[str, str]:
     goal_x = {"wheel": 2, "legged": 1, "hopper": 1}.get(platform)
     if goal_x is None:
         raise ValueError(f"unknown request platform: {platform}")
+    if platform == "legged" and local_proxy_difficulty_mode == "frontier_cut":
+        goal_x = 8
     return "n:0:2", f"n:{goal_x}:2"
 
 
-def _frontier_cut_node(platform: str) -> str:
-    goal_x = int(_request_start_goal(platform)[1].split(":")[1])
+def _frontier_cut_node(
+    platform: str,
+    *,
+    local_proxy_difficulty_mode: str | None = None,
+) -> str:
+    goal_x = int(
+        _request_start_goal(
+            platform,
+            local_proxy_difficulty_mode=local_proxy_difficulty_mode,
+        )[1].split(":")[1]
+    )
     return f"n:{goal_x // 2}:2"
 
 
@@ -455,7 +470,10 @@ def _provider_local_snapshot(
         raise ValueError(f"unknown request scale: {scale}")
 
     mode = _local_proxy_difficulty_mode(base_index)
-    start_node, goal_node = _request_start_goal(platform)
+    start_node, goal_node = _request_start_goal(
+        platform,
+        local_proxy_difficulty_mode=mode,
+    )
     start_pose = node_metric_poses_mm_urad[start_node]
     goal_pose = node_metric_poses_mm_urad[goal_node]
     start_column = _snapshot_index(int(start_pose[0]))
@@ -564,7 +582,10 @@ def _provider_local_snapshot(
     hard_obstacle = [[0 for _ in range(shape[1])] for _ in range(shape[0])]
     if mode == "frontier_cut":
         if platform == "wheel":
-            cut_node = _frontier_cut_node(platform)
+            cut_node = _frontier_cut_node(
+                platform,
+                local_proxy_difficulty_mode=mode,
+            )
             cut_pose = node_metric_poses_mm_urad[cut_node]
             cut_column = _snapshot_index(int(cut_pose[0]))
             cut_row = _snapshot_index(int(cut_pose[1]))
@@ -654,13 +675,21 @@ def _provider_local_snapshot(
                 }
             )
         elif platform == "legged":
+            cut_node = _frontier_cut_node(
+                platform,
+                local_proxy_difficulty_mode=mode,
+            )
+            cut_pose = node_metric_poses_mm_urad[cut_node]
+            cut_column = _snapshot_index(int(cut_pose[0]))
+            cut_row = _snapshot_index(int(cut_pose[1]))
+            hard_obstacle[cut_row][cut_column] = 1
             proxy_operations.append(
                 {
-                    "goal_cycle_phase": 1,
+                    "cell_xy": [cut_column, cut_row],
+                    "cut_node_id": cut_node,
                     "goal_node_id": goal_node,
-                    "incoming_complete_cycle_phase": 0,
                     "operation_kind": (
-                        "legged-cycle-phase-frontier-cut/v1"
+                        "legged-interior-frontier-cut-proxy/v1"
                     ),
                     "start_node_id": start_node,
                 }
@@ -1375,15 +1404,6 @@ def _metric_problem(
         snapshot=provider_local_snapshot,
         legged_cycle=legged_cycle,
     )
-    if (
-        platform == "legged"
-        and _local_proxy_difficulty_mode(base_index) == "frontier_cut"
-    ):
-        _, goal_node = _request_start_goal(platform)
-        node_states[goal_node] = {
-            **node_states[goal_node],
-            "cycle_phase": 1,
-        }
     terrain_arrays_sha256 = domain_hash(
         "g2-request-terrain-arrays/v1",
         canonical_json_bytes(terrain_arrays),
@@ -1476,7 +1496,10 @@ def _metric_problem(
         "g2-provider-terrain-binding/v1",
         canonical_json_bytes(terrain_binding),
     )
-    start_node, goal_node = _request_start_goal(platform)
+    start_node, goal_node = _request_start_goal(
+        platform,
+        local_proxy_difficulty_mode=_local_proxy_difficulty_mode(base_index),
+    )
 
     def endpoint_binding(
         node_id: str, *, endpoint_name: str
@@ -1965,7 +1988,12 @@ def generate_raw_request_source_admission(
                 ],
             }
             for platform in _PLATFORMS:
-                start_node, goal_node = _request_start_goal(platform)
+                start_node, goal_node = _request_start_goal(
+                    platform,
+                    local_proxy_difficulty_mode=(
+                        _local_proxy_difficulty_mode(base_index)
+                    ),
+                )
                 start_x, start_y = (
                     int(value) for value in start_node.split(":")[1:]
                 )
@@ -3660,7 +3688,12 @@ def _graph_from_raw_source(
     validate_request_graph(graph)
     start = str(metric_problem["start"]["node_id"])
     goal = str(metric_problem["goal"]["node_id"])
-    expected_start, expected_goal = _request_start_goal(platform)
+    expected_start, expected_goal = _request_start_goal(
+        platform,
+        local_proxy_difficulty_mode=metric_problem[
+            "local_proxy_difficulty_mode"
+        ],
+    )
     if (
         (start, goal) != (expected_start, expected_goal)
         or raw_source.get("start_cell_xy")

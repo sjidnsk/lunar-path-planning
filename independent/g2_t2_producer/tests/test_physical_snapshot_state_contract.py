@@ -355,7 +355,7 @@ def test_frontier_cut_is_a_real_shared_snapshot_goal_failure(
         ]["operations"]
         operation_kind = {
             "wheel": "interior-frontier-cut-proxy/v1",
-            "legged": "legged-cycle-phase-frontier-cut/v1",
+            "legged": "legged-interior-frontier-cut-proxy/v1",
             "hopper": "hopper-mid-arc-frontier-cut-proxy/v1",
         }[platform]
         operation = next(
@@ -363,15 +363,10 @@ def test_frontier_cut_is_a_real_shared_snapshot_goal_failure(
             for candidate in operations
             if candidate["operation_kind"] == operation_kind
         )
-        if platform == "legged":
-            assert operation["incoming_complete_cycle_phase"] == 0
-            assert operation["goal_cycle_phase"] == 1
-            assert graph["node_states"][goal]["cycle_phase"] == 1
-        else:
-            column, row = operation["cell_xy"]
-            assert raw["provider_local_snapshot"]["arrays"]["hard_obstacle"][
-                row
-            ][column] == 1
+        column, row = operation["cell_xy"]
+        assert raw["provider_local_snapshot"]["arrays"]["hard_obstacle"][
+            row
+        ][column] == 1
         assert raw["metric_problem"]["start"]["endpoint_safety"]["safe"] is True
         assert raw["metric_problem"]["goal"]["endpoint_safety"]["safe"] is True
         assert reachability_certificate(graph, start, goal)[
@@ -385,18 +380,33 @@ def test_frontier_cut_is_a_real_shared_snapshot_goal_failure(
                 == "G2I_W_CLOSED_OBSTACLE_CONTACT"
             )
             if platform == "wheel"
-            else next(
-                edge
-                for edge in graph["candidate_edges"]
-                if edge["from_node"] == start and edge["to_node"] == goal
+            else (
+                next(
+                    edge
+                    for edge in graph["candidate_edges"]
+                    if edge["from_node"] == start
+                    and edge["to_node"] == goal
+                )
+                if platform == "hopper"
+                else next(
+                    edge
+                    for edge in graph["candidate_edges"]
+                    if edge["reject_reason"]
+                    in {"G2I_L_BODY_SWEEP", "G2I_L_FOOTHOLD_OBSTACLE"}
+                )
             )
         )
         assert selected["accepted"] is False
-        assert selected["reject_reason"] == {
-            "wheel": "G2I_W_CLOSED_OBSTACLE_CONTACT",
-            "legged": "G2I_L_CYCLE_PHASE_FRONTIER_CUT",
-            "hopper": "G2I_H_ARC_CLEARANCE",
-        }[platform]
+        if platform == "legged":
+            assert selected["reject_reason"] in {
+                "G2I_L_BODY_SWEEP",
+                "G2I_L_FOOTHOLD_OBSTACLE",
+            }
+        else:
+            assert selected["reject_reason"] == {
+                "wheel": "G2I_W_CLOSED_OBSTACLE_CONTACT",
+                "hopper": "G2I_H_ARC_CLEARANCE",
+            }[platform]
         assert selected["terrain_snapshot_sha256"] == (
             raw["provider_local_snapshot_sha256"]
         )
@@ -444,6 +454,54 @@ def test_selected_start_and_goal_use_distinct_fine_cells(
             metric["start"]["endpoint_safety"]["cell_xy"]
             != metric["goal"]["endpoint_safety"]["cell_xy"]
         ), platform
+
+
+@pytest.mark.parametrize("scale", ["standard", "kilometer"])
+def test_legged_frontier_cut_is_a_provider_visible_geometric_barrier(
+    raw_sources: list[dict[str, Any]],
+    scale: str,
+) -> None:
+    raw = _raw(
+        raw_sources,
+        platform="legged",
+        scale=scale,
+        base_index=8,
+    )
+    graph, start, goal = _graph(raw)
+    snapshot = raw["provider_local_snapshot"]
+    operations = snapshot["proxy_modification_witness"]["operations"]
+    obstacle_cells = [
+        [column, row]
+        for row, values in enumerate(snapshot["arrays"]["hard_obstacle"])
+        for column, blocked in enumerate(values)
+        if blocked
+    ]
+    endpoint_cells = {
+        tuple(cell)
+        for endpoint in ("start", "goal")
+        for cell in raw["metric_problem"][endpoint]["endpoint_safety"][
+            "cell_xy"
+        ]
+    }
+    certificate = reachability_certificate(graph, start, goal)
+
+    assert (start, goal) == ("n:0:2", "n:8:2")
+    assert graph["node_states"][start]["cycle_phase"] == 0
+    assert graph["node_states"][goal]["cycle_phase"] == 0
+    assert obstacle_cells
+    assert all(tuple(cell) not in endpoint_cells for cell in obstacle_cells)
+    assert any(
+        operation["operation_kind"]
+        == "legged-interior-frontier-cut-proxy/v1"
+        and operation["cell_xy"] in obstacle_cells
+        for operation in operations
+    )
+    assert certificate["oracle_reachable"] is False
+    assert any(
+        edge["reject_reason"]
+        in {"G2I_L_BODY_SWEEP", "G2I_L_FOOTHOLD_OBSTACLE"}
+        for edge in certificate["frontier_cut"]
+    )
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)
