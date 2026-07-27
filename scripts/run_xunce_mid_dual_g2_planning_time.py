@@ -11,7 +11,13 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    wait,
+)
 import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
@@ -3354,21 +3360,40 @@ def execute_r3_provider_timed_call(
     return builder(task, normalized_outcome, timed.timing.as_dict())
 
 
+def _execute_r3_provider_task(
+    task: Mapping[str, object],
+) -> dict[str, object]:
+    """Prepare and execute one picklable R3 task inside its worker process."""
+
+    prepared = _prepare_r3_provider_task(task)
+    row = execute_r3_provider_timed_call(prepared)
+    if type(row) is not dict:
+        raise G2Blocked("g2_r3_diagnostic_row")
+    return dict(row)
+
+
 def _default_r3_batch_executor(
     calls: Sequence[Mapping[str, object]],
     *,
     max_workers: int,
+    task_executor: Callable[
+        [Mapping[str, object]], Mapping[str, object]
+    ]
+    | None = None,
 ) -> list[dict[str, object]]:
     worker_calls = [
         {**dict(call), "_worker_count": max_workers}
         for call in calls
     ]
-    rows = execute_preloaded_batch(
-        worker_calls,
-        prepare_task=_prepare_r3_provider_task,
-        execute_task=execute_r3_provider_timed_call,
-        max_workers=max_workers,
+    execute_task = (
+        _execute_r3_provider_task
+        if task_executor is None
+        else task_executor
     )
+    if not callable(execute_task):
+        raise G2Blocked("g2_r3_diagnostic_row")
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        rows = list(executor.map(execute_task, worker_calls))
     if any(type(row) is not dict for row in rows):
         raise G2Blocked("g2_r3_diagnostic_row")
     return [dict(row) for row in rows]
@@ -4210,6 +4235,7 @@ def execute_recoverable_batch(
     state_path: str | Path,
     schedule_sha256: str,
     max_workers: int,
+    executor_factory: Callable[..., object] | None = None,
 ) -> list[dict[str, object]]:
     _require_sha256(schedule_sha256, "g2_schedule_hash")
     if type(max_workers) is not int or max_workers <= 0:
@@ -4235,10 +4261,18 @@ def execute_recoverable_batch(
         if str(call_id) in completed
     ]
 
-    executor = ThreadPoolExecutor(
-        max_workers=max_workers,
-        thread_name_prefix="g2-recoverable",
+    executor = (
+        ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="g2-recoverable",
+        )
+        if executor_factory is None
+        else executor_factory(max_workers=max_workers)
     )
+    if not callable(getattr(executor, "submit", None)) or not callable(
+        getattr(executor, "shutdown", None)
+    ):
+        raise G2Blocked("g2_worker_executor")
     pending: dict[Future[Mapping[str, object]], Mapping[str, object]] = {}
     next_index = 0
 
@@ -6273,6 +6307,7 @@ def run_g2_r3(
                         formal_schedule["schedule_sha256"]
                     ),
                     max_workers=4,
+                    executor_factory=ProcessPoolExecutor,
                 )
                 formal_rows = _validate_r3_formal_batch(
                     formal_rows,

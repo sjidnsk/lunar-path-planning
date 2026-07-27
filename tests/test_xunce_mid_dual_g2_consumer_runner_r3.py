@@ -11,6 +11,8 @@ from pathlib import Path
 import pickle
 import struct
 import sys
+import threading
+import time
 
 import pytest
 
@@ -50,6 +52,23 @@ def _inputs():
 
 def _runner():
     return _load(RUNNER_PATH, "run_xunce_mid_dual_g2_r3_tested")
+
+
+def _executor_identity_prepare(task):
+    return dict(task)
+
+
+def _executor_identity_task(task):
+    started_ns = time.perf_counter_ns()
+    time.sleep(0.2)
+    finished_ns = time.perf_counter_ns()
+    return {
+        "call_id": task["call_id"],
+        "pid": os.getpid(),
+        "thread_id": threading.get_ident(),
+        "started_ns": started_ns,
+        "finished_ns": finished_ns,
+    }
 
 
 def _canonical(value: object) -> bytes:
@@ -1103,6 +1122,37 @@ def test_r3_platform_specific_resource_policy_is_hash_bound() -> None:
         module.validate_r3_provider_resource_policy(changed)
 
 
+def test_r3_wheel_execution_request_covers_fixed_single_segment_sqp_reserve() -> None:
+    module = _inputs()
+    fixed_single_segment_encoded_state_bound = 969
+    route_states_before_attempt = 4
+    minimum_route_states = (
+        fixed_single_segment_encoded_state_bound
+        + route_states_before_attempt
+    )
+    memory_bytes_before_attempt = 253_985
+    fixed_single_segment_reserve_bytes = 42_052_416
+    minimum_memory_bytes = (
+        memory_bytes_before_attempt
+        + fixed_single_segment_reserve_bytes
+    )
+
+    policy = module.r3_provider_resource_policy("wheel")
+    assert policy["max_route_states"] >= minimum_route_states
+    assert policy["max_route_states"] == 1024
+    assert policy["max_memory_bytes"] >= minimum_memory_bytes
+    assert policy["max_memory_bytes"] == 67_108_864
+
+    binding = _exact_producer_binding()
+    execution_request = module.build_r3_provider_execution_request(
+        _exact_blind_request(platform="wheel", binding=binding),
+        producer_binding=binding,
+    )
+    formal_budget = execution_request["resource_policy"]
+    assert formal_budget["max_route_states"] == 1024
+    assert formal_budget["max_memory_bytes"] == 67_108_864
+
+
 def test_r3_legged_graph_hop_maps_to_four_provider_primitives() -> None:
     module = _inputs()
     legged = module.r3_provider_resource_policy("legged")
@@ -2087,6 +2137,8 @@ def test_r3_formal_mode_executes_recoverable_exact_645_and_finalizes(
     )
     diagnostic_worker_counts: list[int] = []
     formal_tasks: list[dict[str, object]] = []
+    formal_executor_factories: list[object] = []
+    original_execute_recoverable_batch = runner.execute_recoverable_batch
 
     def fake_diagnostic_batch(calls, *, max_workers):
         materialized = list(calls)
@@ -2133,6 +2185,30 @@ def test_r3_formal_mode_executes_recoverable_exact_645_and_finalizes(
         fake_formal_task,
         raising=False,
     )
+
+    def execute_recoverable_with_test_worker(
+        calls,
+        *,
+        execute_task,
+        state_path,
+        schedule_sha256,
+        max_workers,
+        executor_factory=None,
+    ):
+        formal_executor_factories.append(executor_factory)
+        return original_execute_recoverable_batch(
+            calls,
+            execute_task=execute_task,
+            state_path=state_path,
+            schedule_sha256=schedule_sha256,
+            max_workers=max_workers,
+        )
+
+    monkeypatch.setattr(
+        runner,
+        "execute_recoverable_batch",
+        execute_recoverable_with_test_worker,
+    )
     result = runner.run_g2_r3(
         config_path=sealed["config_path"],
         input_bundle=sealed["output_root"],
@@ -2148,6 +2224,7 @@ def test_r3_formal_mode_executes_recoverable_exact_645_and_finalizes(
     assert result["formal_environment_gate_status"] == "passed"
     assert result["accepted_phase_ids"] == ["p01", "p02", "p03", "p04"]
     assert diagnostic_worker_counts == [1, 4, 1, 4]
+    assert formal_executor_factories == [runner.ProcessPoolExecutor]
     assert len(formal_tasks) == 645
     assert all(task["formal_sample"] is True for task in formal_tasks)
     assert len(
@@ -2224,10 +2301,11 @@ def test_r3_worker_prepare_and_execute_never_receive_probe_or_truth(
 
     monkeypatch.setattr(runner, "_prepare_r3_provider_task", prepare)
     monkeypatch.setattr(runner, "execute_r3_provider_timed_call", execute)
-    raw_rows = runner._default_r3_batch_executor(
-        hydrated,
-        max_workers=1,
-    )
+    raw_rows = [
+        runner._execute_r3_provider_task(
+            {**hydrated[0], "_worker_count": 1}
+        )
+    ]
     assert observed == ["prepare", "execute"]
     assert "probe_class" not in raw_rows[0]
 
@@ -2240,6 +2318,50 @@ def test_r3_worker_prepare_and_execute_never_receive_probe_or_truth(
         },
     )
     assert filled[0]["probe_class"] == parent_call["probe_class"]
+
+
+def test_r3_uses_process_pools_while_legacy_helpers_default_to_threads(
+    tmp_path: Path,
+) -> None:
+    runner = _runner()
+    tasks = [{"call_id": f"executor-probe-{index}"} for index in range(4)]
+
+    legacy_rows = runner.execute_preloaded_batch(
+        tasks,
+        prepare_task=_executor_identity_prepare,
+        execute_task=_executor_identity_task,
+        max_workers=4,
+    )
+    assert {row["pid"] for row in legacy_rows} == {os.getpid()}
+    assert len({row["thread_id"] for row in legacy_rows}) >= 2
+
+    diagnostic_rows = runner._default_r3_batch_executor(
+        tasks,
+        max_workers=4,
+        task_executor=_executor_identity_task,
+    )
+    diagnostic_pids = {row["pid"] for row in diagnostic_rows}
+    assert os.getpid() not in diagnostic_pids
+    assert len(diagnostic_pids) >= 2
+    assert any(
+        left["pid"] != right["pid"]
+        and left["started_ns"] < right["finished_ns"]
+        and right["started_ns"] < left["finished_ns"]
+        for left in diagnostic_rows
+        for right in diagnostic_rows
+    )
+
+    formal_rows = runner.execute_recoverable_batch(
+        tasks,
+        execute_task=_executor_identity_task,
+        state_path=tmp_path / "process-job-state.jsonl",
+        schedule_sha256=SHA_A,
+        max_workers=4,
+        executor_factory=runner.ProcessPoolExecutor,
+    )
+    formal_pids = {row["pid"] for row in formal_rows}
+    assert os.getpid() not in formal_pids
+    assert len(formal_pids) >= 2
 
 
 def test_r3_loader_recomputes_bundle_approval_source_and_schedule_identities(

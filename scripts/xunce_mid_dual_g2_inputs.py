@@ -2483,8 +2483,8 @@ _R3_RESOURCE_POLICY_CORES: dict[str, dict[str, object]] = {
         "graph_hops": 1,
         "provider_primitives_per_graph_hop": 1,
         "max_expanded_states": 8192,
-        "max_route_states": 129,
-        "max_memory_bytes": 33_554_432,
+        "max_route_states": 1024,
+        "max_memory_bytes": 67_108_864,
     },
     "legged": {
         "schema_version": R3_RESOURCE_POLICY_SCHEMA_VERSION,
