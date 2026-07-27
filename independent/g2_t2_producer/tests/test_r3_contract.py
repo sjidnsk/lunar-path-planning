@@ -135,6 +135,28 @@ def _official_lola_roi3_record() -> dict[str, Any]:
     }
 
 
+def _official_lola_roi67_record() -> dict[str, Any]:
+    return {
+        "height_mm": [
+            [-787000, -784500, -774500, -768000, -764500],
+            [-775500, -770000, -762000, -756000, -753000],
+            [-769000, -759500, -754000, -748000, -741000],
+            [-760500, -748000, -742500, -737500, -727500],
+            [-754500, -741500, -737000, -729000, -720000],
+        ],
+        "raw_sample_sha256": (
+            "93cec17b8800a98187c1dabce2f871568"
+            "f68409c8f861c49e0151c48a0ae6b5b"
+        ),
+        "roi_geometry_sha256": (
+            "28bd3e347c55b70a5d7eb8dbd69529e"
+            "a9d88ac7ce6eb6129cf2969d88d89c95e"
+        ),
+        "roi_index": 67,
+        "window_col_row_width_height": [4400, 4400, 5, 5],
+    }
+
+
 @pytest.fixture(scope="module")
 def raw_sources() -> list[dict[str, Any]]:
     return generate_requests.generate_raw_request_sources(
@@ -214,6 +236,82 @@ def test_official_lola_roi0_never_emits_endpoint_unsafe_truth_raw() -> None:
     tampered["frame_admission_witnesses"][0]["goal_safe"] = True
     with pytest.raises(ValueError, match="contains a safe frame"):
         models.validate_raw_source_reject(tampered)
+
+
+def test_official_roi67_legged_local_25_degree_slope_is_audited() -> None:
+    specification = copy.deepcopy(_specification())
+    specification["request_pool"] = {
+        "kilometer_base_terrains": 8,
+        "standard_base_terrains": 0,
+    }
+    provenance = _official_lola_roi0_witness()
+    provenance["roi_records"] = [_official_lola_roi67_record()]
+    rows, rejects = generate_requests.generate_raw_request_source_admission(
+        specification,
+        lola_provenance=provenance,
+        hopper_parameter_record=_hopper_record(),
+    )
+    assert (len(rows), len(rejects)) == (16, 8)
+    raw = next(
+        row
+        for row in rows
+        if row["platform_kind"] == "legged"
+        and row["scale"] == "kilometer"
+        and row["base_index"] == 7
+    )
+    assert raw["provider_local_snapshot_sha256"] == (
+        "a98d39011a29ab3dc8a29bf8a7fb26c"
+        "3c175c8f6606e7377861076efdf295a1e"
+    )
+    graph, _, _ = _graph(raw)
+    assert domain_hash(
+        "g2-request-graph-template/v4",
+        canonical_json_bytes(graph),
+    ) == (
+        "62c2b71a70e88811a1c3b018c0d5fb26"
+        "ff022df3a0f717e52672f3f47d016bbf"
+    )
+    slope_rejects = [
+        edge
+        for edge in graph["candidate_edges"]
+        if edge["reject_reason"] == "G2I_L_FOOTHOLD_SLOPE"
+    ]
+    assert [edge["edge_id"] for edge in slope_rejects] == [
+        "legged-0-0-0",
+        "legged-0-1-0",
+        "legged-2-0-0",
+        "legged-2-1-0",
+        "legged-3-0-0",
+        "legged-3-1-0",
+    ]
+    first = slope_rejects[0]
+    phase = first["oracle_input"]["crawl_cycle"][1]
+    plane = phase["terrain"]["foothold_plane"]
+    independently_recomputed_slope_cdeg = round(
+        math.degrees(
+            math.atan(
+                math.hypot(
+                    int(plane["gradient_x_ppm"]),
+                    int(plane["gradient_y_ppm"]),
+                )
+                / 1_000_000.0
+            )
+        )
+        * 100.0
+    )
+    assert independently_recomputed_slope_cdeg == 2533
+    assert max(
+        generate_requests._snapshot_cell_record(
+            raw["provider_local_snapshot"],
+            cell_xy,
+        )["slope_cdeg"]
+        for cell_xy in phase["snapshot_query_witness"]["foothold_cell_xy"]
+    ) == 2533
+    assert audit_bundle.audit_archived_graph_snapshot(
+        graph,
+        snapshot=raw["provider_local_snapshot"],
+        hopper_parameter_record=_hopper_record(),
+    ) == []
 
 
 def _raw(

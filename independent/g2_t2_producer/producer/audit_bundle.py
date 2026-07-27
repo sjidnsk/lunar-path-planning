@@ -1062,15 +1062,30 @@ def _independent_edge_acceptance(
                     "slope": "G2I_L_FOOTHOLD_SLOPE",
                 }
                 return False, reason_by_category[str(foothold_category)]
+            foothold_plane = step["terrain"]["foothold_plane"]
+            foothold_slope_cdeg = round(
+                math.degrees(
+                    math.atan(
+                        math.hypot(
+                            int(foothold_plane["gradient_x_ppm"]),
+                            int(foothold_plane["gradient_y_ppm"]),
+                        )
+                        / 1_000_000.0
+                    )
+                )
+                * 100.0
+            )
+            if foothold_slope_cdeg > 2500:
+                return False, "G2I_L_FOOTHOLD_SLOPE"
+            if int(
+                step["stance_transition"]["minimum_support_margin_um"]
+            ) < 50_000:
+                return False, "G2I_L_SUPPORT_MARGIN"
             body_safe, _ = _audit_cells_safe(
                 snapshot, query["body_sweep_cell_xy"]
             )
             if not body_safe:
                 return False, "G2I_L_BODY_SWEEP"
-            if int(
-                step["stance_transition"]["minimum_support_margin_um"]
-            ) < 50_000:
-                return False, "G2I_L_SUPPORT_MARGIN"
         actual_terminal_state = oracle_input["actual_terminal_state"]
         if actual_terminal_state != edge["target_state"]:
             if _audit_legged_cycle_phase_frontier_cut(
