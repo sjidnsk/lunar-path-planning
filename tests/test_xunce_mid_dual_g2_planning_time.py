@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+import copy
 import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -24,6 +26,7 @@ PLATFORMS = ("wheel", "legged", "hopper")
 SHA_A = hashlib.sha256(b"a").hexdigest()
 SHA_B = hashlib.sha256(b"b").hexdigest()
 SHA_C = hashlib.sha256(b"c").hexdigest()
+HIGH_PERFORMANCE_GUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
 
 
 def _load(path: Path, name: str):
@@ -62,6 +65,74 @@ def _domain_hash(domain: str, *parts: bytes) -> str:
         payload.extend(struct.pack(">Q", len(part)))
         payload.extend(part)
     return hashlib.sha256(payload).hexdigest()
+
+
+def _formal_environment_policy(lease_path: Path) -> dict[str, object]:
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-formal-environment-policy/v1"
+        ),
+        "lease_path": lease_path.as_posix(),
+        "allowed_power_scheme_guids": [HIGH_PERFORMANCE_GUID],
+        "required_thread_variables": {
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
+        },
+        "sample_window_seconds": 2.0,
+        "limits": {
+            "cpu_percent_max": 20.0,
+            "memory_percent_max": 85.0,
+            "memory_available_bytes_min": 4_294_967_296,
+            "disk_busy_percent_max": 20.0,
+            "disk_free_bytes_min": 10_737_418_240,
+        },
+        "competing_process_patterns": [
+            "run_xunce_mid_dual_g1_coverage.py",
+            "run_xunce_mid_dual_g2_planning_time.py",
+            "run_xunce_mid_dual_g3_closed_loop.py",
+            "run_ppo_stage6_standard.py",
+            "pytest",
+            "training",
+            "formal",
+        ],
+        "exclude_current_process_tree": True,
+    }
+
+
+def _formal_environment_snapshot(
+    *,
+    phase: str,
+    pid: int,
+) -> dict[str, object]:
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-formal-environment-observation/v1"
+        ),
+        "phase": phase,
+        "captured_utc": "2026-07-27T08:00:00.000000Z",
+        "host": "fixture-host",
+        "pid": pid,
+        "power_scheme_guid": HIGH_PERFORMANCE_GUID,
+        "power_probe_sha256": SHA_A,
+        "thread_variables": {
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
+        },
+        "sample_window_seconds": 2.0,
+        "cpu_percent": 10.0,
+        "memory_percent": 50.0,
+        "memory_available_bytes": 8_589_934_592,
+        "disk_busy_percent": 10.0,
+        "disk_free_bytes": 21_474_836_480,
+        "disk_root": "D:/",
+        "competing_processes": [],
+        "excluded_process_ids": [pid],
+        "process_inventory_sha256": SHA_B,
+    }
 
 
 def _request_rows() -> list[dict[str, object]]:
@@ -772,6 +843,12 @@ def test_code_identity_and_effective_config_bind_runtime_source_and_30deg() -> N
         runtime_source_closure_sha256=closure[
             "path_planner_runtime_source_closure_sha256"
         ],
+        formal_environment_gate=_formal_environment_policy(
+            Path(
+                "D:/xunce/out/mid_dual/g2/"
+                ".formal-exclusive-lease.json"
+            )
+        ),
     )
 
     assert effective["active_platforms"] == ["wheel", "legged", "hopper"]
@@ -788,6 +865,12 @@ def test_code_identity_and_effective_config_bind_runtime_source_and_30deg() -> N
     assert effective["evidence_binding"][
         "platform_invariants_audit_path"
     ] == "g2_platform_invariants_audit.json"
+    assert effective["formal_environment_gate"][
+        "allowed_power_scheme_guids"
+    ] == [HIGH_PERFORMANCE_GUID]
+    assert effective["evidence_binding"][
+        "formal_environment_audit_path"
+    ] == "g2_formal_environment_audit.json"
     changed_sources = [
         dict(row) for row in closure["required_sources"]
     ]
@@ -870,6 +953,7 @@ def test_missing_input_cli_is_blocked_with_zero_rows_and_never_calls_provider(
     assert payload["execution_status"] == "complete"
     assert payload["gate_status"] == "blocked"
     assert payload["formal_row_count"] == 0
+    assert payload["formal_environment_gate_status"] == "not_run"
 
     source = SCRIPT_PATH.read_text(encoding="utf-8")
     for forbidden_text in (
@@ -884,3 +968,951 @@ def test_missing_input_cli_is_blocked_with_zero_rows_and_never_calls_provider(
         "time.sleep",
     ):
         assert forbidden_text not in source
+
+
+def test_formal_environment_policy_is_frozen_and_effective() -> None:
+    module = _module()
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+
+    policy = module.validate_formal_environment_policy(
+        config["execution"]["formal_environment_gate"]
+    )
+
+    assert policy == _formal_environment_policy(
+        Path(
+            "D:/xunce/out/mid_dual/g2/"
+            ".formal-exclusive-lease.json"
+        )
+    )
+
+
+@pytest.mark.parametrize("mutation", ("power", "thread_missing"))
+def test_load_config_rejects_formal_environment_policy_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    module = _module()
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    policy = config["execution"]["formal_environment_gate"]
+    if mutation == "power":
+        policy["allowed_power_scheme_guids"] = [
+            "381b4222-f694-41f0-9685-ff5bb260df2e"
+        ]
+    else:
+        del policy["required_thread_variables"]["OMP_NUM_THREADS"]
+    drifted_path = tmp_path / "g2-config-drift.json"
+    module.artifact_io.write_json(drifted_path, config)
+    monkeypatch.setattr(module, "CANONICAL_CONFIG_PATH", drifted_path)
+
+    with pytest.raises(module.G2Blocked, match="g2_config_invalid"):
+        module._load_config(drifted_path)  # noqa: SLF001
+
+
+def test_windows_formal_environment_capture_uses_mocked_system_probes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    policy = _formal_environment_policy(
+        tmp_path / "formal-exclusive-lease.json"
+    )
+    calls: list[object] = []
+    for name, value in policy["required_thread_variables"].items():
+        monkeypatch.setenv(name, value)
+
+    def power_probe():
+        calls.append("power")
+        return HIGH_PERFORMANCE_GUID, SHA_A
+
+    def process_probe(patterns, current_pid):
+        calls.append(("process", list(patterns), current_pid))
+        return [], [current_pid], SHA_B
+
+    def load_probe(window):
+        calls.append(("load", window))
+        return 12.5, 3.5
+
+    def memory_probe():
+        calls.append("memory")
+        return 40.0, 8_589_934_592
+
+    def disk_probe():
+        calls.append("disk")
+        return "D:/", 21_474_836_480
+
+    monkeypatch.setattr(module, "_probe_active_power_scheme", power_probe)
+    monkeypatch.setattr(module, "_probe_process_inventory", process_probe)
+    monkeypatch.setattr(module, "_sample_cpu_and_disk_busy", load_probe)
+    monkeypatch.setattr(module, "_probe_memory_status", memory_probe)
+    monkeypatch.setattr(module, "_probe_disk_free", disk_probe)
+
+    observed = module.capture_windows_formal_environment(
+        "start",
+        policy,
+        platform_name="nt",
+    )
+
+    assert module.validate_g2_formal_environment(observed, policy) == observed
+    assert observed["power_scheme_guid"] == HIGH_PERFORMANCE_GUID
+    assert observed["cpu_percent"] == 12.5
+    assert observed["disk_busy_percent"] == 3.5
+    assert observed["memory_percent"] == 40.0
+    assert observed["memory_available_bytes"] == 8_589_934_592
+    assert observed["disk_free_bytes"] == 21_474_836_480
+    assert calls == [
+        "power",
+        ("process", policy["competing_process_patterns"], os.getpid()),
+        ("load", 2.0),
+        "memory",
+        "disk",
+    ]
+
+
+def test_non_windows_formal_environment_capture_is_blocked(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    policy = _formal_environment_policy(
+        tmp_path / "formal-exclusive-lease.json"
+    )
+
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_formal_windows_required",
+    ):
+        module.capture_windows_formal_environment(
+            "start",
+            policy,
+            platform_name="posix",
+        )
+
+
+def test_power_scheme_parser_requires_one_actual_guid() -> None:
+    module = _module()
+    output = (
+        b"Power Scheme GUID: "
+        + HIGH_PERFORMANCE_GUID.encode("ascii")
+        + b"  (High performance)\r\n"
+    )
+
+    assert module._parse_active_power_scheme(output) == (  # noqa: SLF001
+        HIGH_PERFORMANCE_GUID
+    )
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_formal_power_probe_failed",
+    ):
+        module._parse_active_power_scheme(b"not-recorded")  # noqa: SLF001
+
+
+def test_process_inventory_excludes_only_current_lineage_and_descendants() -> None:
+    module = _module()
+    records = [
+        {
+            "pid": 0,
+            "parent_pid": 0,
+            "name": "System Idle Process",
+            "command_line": "",
+        },
+        {
+            "pid": 10,
+            "parent_pid": 0,
+            "name": "powershell.exe",
+            "command_line": "launcher --mode formal",
+        },
+        {
+            "pid": 20,
+            "parent_pid": 10,
+            "name": "python.exe",
+            "command_line": "run_xunce_mid_dual_g2_planning_time.py",
+        },
+        {
+            "pid": 30,
+            "parent_pid": 20,
+            "name": "powershell.exe",
+            "command_line": "read-only process probe formal",
+        },
+        {
+            "pid": 40,
+            "parent_pid": 10,
+            "name": "python.exe",
+            "command_line": "python -m pytest tests",
+        },
+        {
+            "pid": 50,
+            "parent_pid": 1,
+            "name": "python.exe",
+            "command_line": "training worker",
+        },
+    ]
+    patterns = ["formal", "pytest", "training"]
+
+    competing, excluded = module._classify_process_inventory(  # noqa: SLF001
+        records,
+        patterns=patterns,
+        current_pid=20,
+    )
+
+    assert excluded == [10, 20, 30]
+    assert [row["pid"] for row in competing] == [40, 50]
+    assert [row["matched_pattern"] for row in competing] == [
+        "pytest",
+        "training",
+    ]
+    assert all(len(row["command_sha256"]) == 64 for row in competing)
+
+
+def test_formal_lease_is_atomic_and_never_deletes_foreign_owner(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    lease_path = tmp_path / "formal-exclusive-lease.json"
+    first = module.G2FormalLease(
+        lease_path=lease_path,
+        run_id="g2-lease-first",
+        run_root=tmp_path / "run-first",
+    )
+    second = module.G2FormalLease(
+        lease_path=lease_path,
+        run_id="g2-lease-second",
+        run_root=tmp_path / "run-second",
+    )
+
+    first_payload = first.acquire()
+    with pytest.raises(module.G2Blocked, match="g2_formal_lease_contended"):
+        second.acquire()
+    assert module.artifact_io.read_json(lease_path) == first_payload
+
+    foreign = {
+        **first_payload,
+        "run_id": "foreign-owner",
+        "nonce": "f" * 32,
+        "lease_sha256": SHA_A,
+    }
+    module.artifact_io.write_json(lease_path, foreign)
+    assert first.release() is False
+    assert module.artifact_io.read_json(lease_path) == foreign
+    lease_path.unlink()
+
+
+def test_stale_formal_lease_is_not_implicitly_recovered(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    lease_path = tmp_path / "formal-exclusive-lease.json"
+    stale = {
+        "schema_version": "xunce-mid-dual-g2-formal-lease/v1",
+        "host": "old-host",
+        "pid": 999_999,
+        "process_start_utc": "2026-01-01T00:00:00.000000Z",
+        "run_id": "old-run",
+        "run_root": "D:/xunce/out/mid_dual/g2/old-run",
+        "nonce": "a" * 32,
+        "acquired_utc": "2026-01-01T00:00:01.000000Z",
+        "lease_sha256": SHA_A,
+    }
+    module.artifact_io.write_json(lease_path, stale)
+    before = module.artifact_io.read_bytes(lease_path)
+    lease = module.G2FormalLease(
+        lease_path=lease_path,
+        run_id="new-run",
+        run_root=tmp_path / "new-run",
+    )
+
+    with pytest.raises(module.G2Blocked, match="g2_formal_lease_contended"):
+        lease.acquire()
+
+    assert module.artifact_io.read_bytes(lease_path) == before
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    (
+        ("not_recorded", "g2_formal_environment_not_recorded"),
+        ("power", "g2_formal_power_scheme_not_allowed"),
+        ("thread", "g2_formal_thread_settings_invalid"),
+        ("process", "g2_formal_competing_process"),
+        ("cpu", "g2_formal_cpu_load_exceeded"),
+        ("memory_percent", "g2_formal_memory_load_exceeded"),
+        ("memory_available", "g2_formal_memory_available_below_min"),
+        ("disk_busy", "g2_formal_disk_busy_exceeded"),
+        ("disk_free", "g2_formal_disk_free_below_min"),
+    ),
+)
+def test_formal_environment_validation_fails_closed(
+    tmp_path: Path,
+    mutation: str,
+    reason: str,
+) -> None:
+    module = _module()
+    policy = _formal_environment_policy(
+        tmp_path / "formal-exclusive-lease.json"
+    )
+    snapshot = _formal_environment_snapshot(
+        phase="start",
+        pid=os.getpid(),
+    )
+    if mutation == "not_recorded":
+        snapshot["power_scheme_guid"] = "not-recorded"
+    elif mutation == "power":
+        snapshot["power_scheme_guid"] = (
+            "381b4222-f694-41f0-9685-ff5bb260df2e"
+        )
+    elif mutation == "thread":
+        snapshot["thread_variables"]["OMP_NUM_THREADS"] = "2"
+    elif mutation == "process":
+        snapshot["competing_processes"] = [
+            {
+                "pid": 4321,
+                "parent_pid": 1,
+                "name": "python.exe",
+                "matched_pattern": "pytest",
+                "command_sha256": SHA_C,
+            }
+        ]
+    elif mutation == "cpu":
+        snapshot["cpu_percent"] = 20.1
+    elif mutation == "memory_percent":
+        snapshot["memory_percent"] = 85.1
+    elif mutation == "memory_available":
+        snapshot["memory_available_bytes"] = 4_294_967_295
+    elif mutation == "disk_busy":
+        snapshot["disk_busy_percent"] = 20.1
+    else:
+        snapshot["disk_free_bytes"] = 10_737_418_239
+
+    with pytest.raises(module.G2Blocked, match=reason):
+        module.validate_g2_formal_environment(snapshot, policy)
+
+
+def test_formal_guard_blocks_before_provider_and_releases_lease(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    lease_path = tmp_path / "formal-exclusive-lease.json"
+    policy = _formal_environment_policy(lease_path)
+    lease = module.G2FormalLease(
+        lease_path=lease_path,
+        run_id="g2-start-blocked",
+        run_root=tmp_path / "g2-start-blocked",
+    )
+    phases: list[str] = []
+    provider_calls: list[str] = []
+
+    def capture(phase: str, _policy: Mapping[str, object]):
+        phases.append(phase)
+        snapshot = _formal_environment_snapshot(
+            phase=phase,
+            pid=os.getpid(),
+        )
+        snapshot["host"] = lease.payload["host"]
+        if phase == "start":
+            snapshot["power_scheme_guid"] = "not-recorded"
+        return snapshot
+
+    guard = module.G2FormalEnvironmentGuard(
+        run_id="g2-start-blocked",
+        policy=policy,
+        lease=lease,
+        capture_environment=capture,
+    )
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_formal_environment_not_recorded",
+    ):
+        with guard:
+            provider_calls.append("provider-called")
+
+    assert provider_calls == []
+    assert phases == ["start", "end"]
+    assert not module.artifact_io.path_exists(lease_path)
+    assert guard.audit["status"] == "blocked"
+    assert guard.audit["formal_evidence_eligible"] is False
+    assert guard.audit["lease_released"] is True
+    assert guard.audit["start_observation"]["power_scheme_guid"] == (
+        "not-recorded"
+    )
+
+
+def test_formal_guard_end_failure_and_body_exception_release(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    policy = _formal_environment_policy(
+        tmp_path / "formal-exclusive-lease.json"
+    )
+
+    def run(*, fail_end: bool, fail_body: bool):
+        lease = module.G2FormalLease(
+            lease_path=Path(policy["lease_path"]),
+            run_id=f"g2-end-{fail_end}-{fail_body}",
+            run_root=tmp_path / f"run-{fail_end}-{fail_body}",
+        )
+
+        def capture(phase: str, _policy: Mapping[str, object]):
+            snapshot = _formal_environment_snapshot(
+                phase=phase,
+                pid=os.getpid(),
+            )
+            snapshot["host"] = lease.payload["host"]
+            if phase == "end" and fail_end:
+                snapshot["disk_busy_percent"] = 20.1
+            return snapshot
+
+        guard = module.G2FormalEnvironmentGuard(
+            run_id=f"g2-end-{fail_end}-{fail_body}",
+            policy=policy,
+            lease=lease,
+            capture_environment=capture,
+        )
+        if fail_body:
+            with pytest.raises(RuntimeError, match="body failed"):
+                with guard:
+                    raise RuntimeError("body failed")
+        else:
+            with pytest.raises(
+                module.G2Blocked,
+                match="g2_formal_disk_busy_exceeded",
+            ):
+                with guard:
+                    guard.set_formal_row_count(645)
+        assert not module.artifact_io.path_exists(policy["lease_path"])
+        assert guard.audit["lease_released"] is True
+        assert guard.audit["end_observation"]["phase"] == "end"
+        return guard.audit
+
+    end_failed = run(fail_end=True, fail_body=False)
+    body_failed = run(fail_end=False, fail_body=True)
+    assert end_failed["formal_evidence_eligible"] is False
+    assert body_failed["formal_evidence_eligible"] is False
+
+
+def test_formal_guard_requires_exactly_645_rows_for_pass(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    policy = _formal_environment_policy(
+        tmp_path / "formal-exclusive-lease.json"
+    )
+    lease = module.G2FormalLease(
+        lease_path=Path(policy["lease_path"]),
+        run_id="g2-row-count",
+        run_root=tmp_path / "g2-row-count",
+    )
+
+    def capture(phase: str, _policy):
+        snapshot = _formal_environment_snapshot(
+            phase=phase,
+            pid=os.getpid(),
+        )
+        snapshot["host"] = lease.payload["host"]
+        return snapshot
+
+    guard = module.G2FormalEnvironmentGuard(
+        run_id="g2-row-count",
+        policy=policy,
+        lease=lease,
+        capture_environment=capture,
+    )
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_formal_row_count_invalid",
+    ):
+        with guard:
+            guard.set_formal_row_count(644)
+
+    assert not module.artifact_io.path_exists(policy["lease_path"])
+    assert guard.audit["status"] == "blocked"
+    assert guard.audit["formal_row_count"] == 0
+    assert guard.audit["formal_evidence_eligible"] is False
+
+
+def test_formal_guard_supports_serial_resume_and_binds_audit(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    lease_path = tmp_path / "formal-exclusive-lease.json"
+    policy = _formal_environment_policy(lease_path)
+    audits: list[dict[str, object]] = []
+    for resume_index in range(2):
+        lease = module.G2FormalLease(
+            lease_path=lease_path,
+            run_id="g2-resume",
+            run_root=tmp_path / "g2-resume",
+        )
+
+        def capture(phase: str, _policy: Mapping[str, object]):
+            snapshot = _formal_environment_snapshot(
+                phase=phase,
+                pid=os.getpid(),
+            )
+            snapshot["host"] = lease.payload["host"]
+            snapshot["captured_utc"] = (
+                f"2026-07-27T08:00:0{resume_index}.000000Z"
+            )
+            return snapshot
+
+        guard = module.G2FormalEnvironmentGuard(
+            run_id="g2-resume",
+            policy=policy,
+            lease=lease,
+            capture_environment=capture,
+        )
+        with guard:
+            guard.set_formal_row_count(645)
+        audits.append(guard.audit)
+        assert not module.artifact_io.path_exists(lease_path)
+
+    assert audits[0]["lease_sha256"] != audits[1]["lease_sha256"]
+    for audit in audits:
+        binding = module.formal_environment_audit_binding(audit)
+        assert binding == {
+            "formal_environment_audit_schema_version": (
+                "xunce-mid-dual-g2-formal-environment-audit/v1"
+            ),
+            "formal_environment_audit_sha256": hashlib.sha256(
+                _canonical(audit)
+            ).hexdigest(),
+            "formal_lease_sha256": audit["lease_sha256"],
+        }
+
+
+def test_p04_crash_window_preserves_embedded_environment_audit_on_resume(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    lease_path = tmp_path / "formal-exclusive-lease.json"
+    policy = _formal_environment_policy(lease_path)
+
+    def run_guard(captured_second: int):
+        lease = module.G2FormalLease(
+            lease_path=lease_path,
+            run_id="g2-crash-window",
+            run_root=tmp_path / "g2-crash-window",
+        )
+
+        def capture(phase: str, _policy):
+            snapshot = _formal_environment_snapshot(
+                phase=phase,
+                pid=os.getpid(),
+            )
+            snapshot["host"] = lease.payload["host"]
+            snapshot["captured_utc"] = (
+                f"2026-07-27T08:00:{captured_second:02d}.000000Z"
+            )
+            return snapshot
+
+        guard = module.G2FormalEnvironmentGuard(
+            run_id="g2-crash-window",
+            policy=policy,
+            lease=lease,
+            capture_environment=capture,
+        )
+        with guard:
+            guard.set_formal_row_count(645)
+        return guard.audit
+
+    original_audit = run_guard(1)
+    p04_audit = {
+        "schema_version": "xunce-mid-dual-g2-phase-audit/v1",
+        "phase_id": "p04",
+        **module.formal_environment_phase_audit_fields(original_audit),
+    }
+    frozen_p04_bytes = _canonical(p04_audit)
+
+    resumed_audit = run_guard(2)
+    verified_original = module.validate_formal_environment_phase_audit(
+        p04_audit
+    )
+
+    assert verified_original == original_audit
+    assert _canonical(p04_audit) == frozen_p04_bytes
+    assert original_audit["lease_sha256"] != resumed_audit["lease_sha256"]
+    assert p04_audit["formal_environment_audit_sha256"] != (
+        module.formal_environment_audit_binding(resumed_audit)[
+            "formal_environment_audit_sha256"
+        ]
+    )
+    tampered = copy.deepcopy(p04_audit)
+    tampered["formal_environment_audit"][
+        "start_observation"
+    ]["cpu_percent"] = 10.5
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_formal_environment_audit_invalid",
+    ):
+        module.validate_formal_environment_phase_audit(tampered)
+
+
+def test_formal_report_records_actual_power_and_required_threads(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    lease_path = tmp_path / "formal-exclusive-lease.json"
+    policy = _formal_environment_policy(lease_path)
+    lease = module.G2FormalLease(
+        lease_path=lease_path,
+        run_id="g2-report-environment",
+        run_root=tmp_path / "g2-report-environment",
+    )
+
+    def capture(phase: str, _policy):
+        snapshot = _formal_environment_snapshot(
+            phase=phase,
+            pid=os.getpid(),
+        )
+        snapshot["host"] = lease.payload["host"]
+        return snapshot
+
+    guard = module.G2FormalEnvironmentGuard(
+        run_id="g2-report-environment",
+        policy=policy,
+        lease=lease,
+        capture_environment=capture,
+    )
+    with guard:
+        guard.set_formal_row_count(645)
+
+    report = module._render_report(  # noqa: SLF001
+        {
+            "run_id": "g2-report-environment",
+            "status": "passed",
+            "recomputed": {
+                "formal_call_count": 645,
+                "g2_all_platforms_2s_passed": True,
+                "g2_all_platforms_1s_passed": True,
+                "correctness_passed": True,
+            },
+        },
+        formal_environment_audit=guard.audit,
+    )
+
+    assert HIGH_PERFORMANCE_GUID in report
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        assert f"{name}=1" in report
+    assert "起始 CPU：12.500%" not in report
+    assert "起始 CPU：10.000%" in report
+    assert "结束磁盘忙碌率：10.000%" in report
+
+
+@pytest.mark.parametrize("resume_from_p04", (False, True))
+def test_run_g2_formal_path_guards_all_provider_work_and_final_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resume_from_p04: bool,
+) -> None:
+    module = _module()
+    inputs = __import__("xunce_mid_dual_g2_inputs")
+    run_id = "g2-r7-resume" if resume_from_p04 else "g2-r7-new"
+    run_root = tmp_path / "g2" / run_id
+    lease_path = tmp_path / "g2" / "formal-exclusive-lease.json"
+    config = copy.deepcopy(
+        json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    )
+    config["execution"]["formal_environment_gate"] = (
+        _formal_environment_policy(lease_path)
+    )
+    events: list[str] = []
+    phase_rows: dict[str, list[dict[str, object]]] = {}
+    diagnostic_row = {
+        "request_id": "diagnostic-request",
+        "request_sha256": SHA_A,
+        "semantic_digest": SHA_B,
+        "provider_success": True,
+        "route_l2_valid": True,
+    }
+    formal_rows = [{"formal_row": index} for index in range(645)]
+    seeded_audits: dict[str, dict[str, object]] = {
+        "p03": {
+            "worker_one_results": [diagnostic_row],
+        },
+        "p04": {
+            "phase_id": "p04",
+            "status": "complete",
+            "formal_sample": True,
+        },
+    }
+    prior_p04_environment_audit: dict[str, object] | None = None
+    if resume_from_p04:
+        prior_lease = module.G2FormalLease(
+            lease_path=lease_path,
+            run_id=run_id,
+            run_root=run_root,
+        )
+
+        def capture_prior(phase: str, _policy):
+            snapshot = _formal_environment_snapshot(
+                phase=phase,
+                pid=os.getpid(),
+            )
+            snapshot["host"] = prior_lease.payload["host"]
+            snapshot["captured_utc"] = (
+                "2026-07-27T07:59:59.000000Z"
+            )
+            return snapshot
+
+        prior_guard = module.G2FormalEnvironmentGuard(
+            run_id=run_id,
+            policy=config["execution"]["formal_environment_gate"],
+            lease=prior_lease,
+            capture_environment=capture_prior,
+        )
+        with prior_guard:
+            prior_guard.set_formal_row_count(645)
+        prior_p04_environment_audit = prior_guard.audit
+        seeded_audits["p04"].update(
+            module.formal_environment_phase_audit_fields(
+                prior_p04_environment_audit
+            )
+        )
+
+    class FakeStore:
+        def __init__(self) -> None:
+            self.run_root = run_root
+            self.config_sha256 = SHA_C
+            self.accepted_phase_ids = (
+                ["p01", "p02", "p03", "p04"]
+                if resume_from_p04
+                else []
+            )
+            self.finalized: dict[str, object] | None = None
+
+        def finalize(
+            self,
+            summary,
+            routing,
+            report,
+            extra_audits,
+        ) -> None:
+            events.append("finalize")
+            self.finalized = {
+                "summary": summary,
+                "routing": routing,
+                "report": report,
+                "extra_audits": extra_audits,
+            }
+
+    store = FakeStore()
+
+    monkeypatch.setattr(
+        module,
+        "_load_config",
+        lambda _path: (config, SHA_A),
+    )
+    monkeypatch.setattr(module, "G2_OUTPUT_BASE", str(tmp_path / "g2"))
+    monkeypatch.setattr(
+        inputs,
+        "capture_path_planner_runtime_source_closure",
+        lambda: {
+            "path_planner_runtime_source_closure_sha256": SHA_A,
+        },
+    )
+    monkeypatch.setattr(module, "_code_lineage_sha256", lambda _value: SHA_B)
+    monkeypatch.setattr(
+        module,
+        "_read_execution_bundle",
+        lambda *_args, **_kwargs: {
+            "input_audit": {"status": "ready"},
+            "input_sha256": SHA_A,
+            "manifest_sha256": SHA_B,
+            "manifest": {"input_set_id": "g2-r7-input"},
+            "requests": [{"request_id": "fixture"}],
+            "terrain_payloads": {},
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_open_store",
+        lambda _root, _effective: (store, not resume_from_p04),
+    )
+
+    def capture_preflight(fake_store, **_kwargs):
+        if "p01" not in fake_store.accepted_phase_ids:
+            fake_store.accepted_phase_ids.append("p01")
+
+    monkeypatch.setattr(module, "_capture_preflight", capture_preflight)
+    monkeypatch.setattr(
+        module,
+        "build_nonformal_schedules",
+        lambda _requests: {
+            "cold_start": [{"kind": "cold"}],
+            "warmup": [{"kind": "warmup"}],
+            "worker_one": [{"kind": "worker-one"}],
+            "worker_four": [{"kind": "worker-four"}],
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_hydrate_calls",
+        lambda calls, **_kwargs: list(calls),
+    )
+
+    def execute_preloaded(calls, **_kwargs):
+        assert module.artifact_io.path_is_file(lease_path)
+        events.append(f"provider:{calls[0]['kind']}")
+        return [diagnostic_row]
+
+    monkeypatch.setattr(
+        module,
+        "execute_preloaded_batch",
+        execute_preloaded,
+    )
+    monkeypatch.setattr(
+        module,
+        "compare_diagnostic_worker_semantics",
+        lambda *_args: {"status": "passed"},
+    )
+    monkeypatch.setattr(
+        module,
+        "execute_read_only_static_cache_audit",
+        lambda _payloads: {"status": "passed"},
+    )
+
+    def accept_phase(fake_store, *, phase_id, rows, audit):
+        events.append(f"accept:{phase_id}")
+        phase_rows[phase_id] = [dict(row) for row in rows]
+        seeded_audits[phase_id] = {
+            "phase_id": phase_id,
+            **dict(audit),
+        }
+        fake_store.accepted_phase_ids.append(phase_id)
+
+    monkeypatch.setattr(module, "_accept_phase", accept_phase)
+    monkeypatch.setattr(
+        module,
+        "_accepted_phase_audit",
+        lambda _store, phase_id: seeded_audits[phase_id],
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_preformal_diagnostic_evidence",
+        lambda audit, _payloads: audit,
+    )
+    monkeypatch.setattr(
+        module,
+        "build_formal_schedule",
+        lambda *_args: {
+            "schema_version": "g2-formal-schedule/v1",
+            "input_set_id": "g2-r7-input",
+            "repeat_count": 5,
+            "formal_worker_count": 4,
+            "calls": [{"kind": "formal"}] * 645,
+            "schedule_sha256": SHA_C,
+        },
+    )
+
+    def execute_formal(*_args, **_kwargs):
+        assert module.artifact_io.path_is_file(lease_path)
+        events.append("provider:formal")
+        return formal_rows
+
+    monkeypatch.setattr(
+        module,
+        "execute_recoverable_batch",
+        execute_formal,
+    )
+    monkeypatch.setattr(
+        module,
+        "_accepted_phase_rows",
+        lambda _store, phase_id: (
+            formal_rows if phase_id == "p04" else phase_rows[phase_id]
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "recompute_g2_summary",
+        lambda rows: {
+            "status": "passed",
+            "formal_call_count": len(rows),
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "compare_worker_semantics",
+        lambda *_args: {"status": "passed"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_render_report",
+        lambda _summary, **_kwargs: "report",
+    )
+    monkeypatch.setattr(
+        module,
+        "_source_report_audit",
+        lambda **_kwargs: {"status": "passed"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_routing",
+        lambda _summary: {"status": "passed"},
+    )
+    monkeypatch.setattr(
+        module.MidDualRunStore,
+        "verify_manifest",
+        staticmethod(lambda _root: True),
+    )
+
+    def capture_environment(phase, _policy):
+        events.append(f"environment:{phase}")
+        snapshot = _formal_environment_snapshot(
+            phase=phase,
+            pid=os.getpid(),
+        )
+        snapshot["host"] = module.host_platform.node() or "unknown-host"
+        return snapshot
+
+    monkeypatch.setattr(
+        module,
+        "capture_windows_formal_environment",
+        capture_environment,
+    )
+
+    result = module.run_g2(
+        config_path=CONFIG_PATH,
+        input_bundle=tmp_path / "input",
+        run_id=run_id,
+        mode="formal",
+    )
+
+    assert result["formal_row_count"] == 645
+    assert result["formal_environment_gate_status"] == "passed"
+    assert not module.artifact_io.path_exists(lease_path)
+    assert store.finalized is not None
+    environment_audit = store.finalized["extra_audits"][
+        "g2_formal_environment"
+    ]
+    assert environment_audit["status"] == "passed"
+    assert environment_audit["formal_row_count"] == 645
+    assert environment_audit["lease_released"] is True
+    assert events.count("environment:start") == 1
+    assert events.count("environment:end") == 1
+    assert events.index("environment:start") < min(
+        index
+        for index, event in enumerate(events)
+        if event.startswith("provider:")
+    ) if not resume_from_p04 else events.index(
+        "environment:start"
+    ) < events.index(
+        "environment:end"
+    )
+    assert events.index("environment:end") < events.index("finalize")
+    if resume_from_p04:
+        assert not any(event.startswith("provider:") for event in events)
+        assert prior_p04_environment_audit is not None
+        assert module.validate_formal_environment_phase_audit(
+            seeded_audits["p04"]
+        ) == prior_p04_environment_audit
+        assert environment_audit["lease_sha256"] != (
+            prior_p04_environment_audit["lease_sha256"]
+        )
+    else:
+        assert events.index("environment:end") < events.index("accept:p04")
+        assert module.validate_formal_environment_phase_audit(
+            seeded_audits["p04"]
+        ) == environment_audit

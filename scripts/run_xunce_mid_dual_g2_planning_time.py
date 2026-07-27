@@ -13,6 +13,8 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import ctypes
+from ctypes import wintypes
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -21,10 +23,13 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import platform as host_platform
 import random
 import re
+import secrets
+import shutil
 import statistics
 import struct
 import subprocess
 import sys
+import threading
 from typing import Any
 
 import xunce_artifact_io as artifact_io
@@ -55,6 +60,53 @@ G2_PHASE_NAMES = {
 G2_MODES = ("preflight", "diagnostic", "formal")
 TIMING_CONTRACT_ID = "five-phase-sequential-ns/v1"
 STATIC_CACHE_CONTRACT_ID = "immutable-terrain-static-validation-only/v1"
+FORMAL_ENVIRONMENT_POLICY_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-formal-environment-policy/v1"
+)
+FORMAL_ENVIRONMENT_OBSERVATION_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-formal-environment-observation/v1"
+)
+FORMAL_ENVIRONMENT_AUDIT_SCHEMA_VERSION = (
+    "xunce-mid-dual-g2-formal-environment-audit/v1"
+)
+FORMAL_LEASE_SCHEMA_VERSION = "xunce-mid-dual-g2-formal-lease/v1"
+FORMAL_LEASE_PATH = (
+    "D:/xunce/out/mid_dual/g2/.formal-exclusive-lease.json"
+)
+HIGH_PERFORMANCE_POWER_SCHEME_GUID = (
+    "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+)
+FORMAL_ENVIRONMENT_POLICY = {
+    "schema_version": FORMAL_ENVIRONMENT_POLICY_SCHEMA_VERSION,
+    "lease_path": FORMAL_LEASE_PATH,
+    "allowed_power_scheme_guids": [
+        HIGH_PERFORMANCE_POWER_SCHEME_GUID
+    ],
+    "required_thread_variables": {
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+    },
+    "sample_window_seconds": 2.0,
+    "limits": {
+        "cpu_percent_max": 20.0,
+        "memory_percent_max": 85.0,
+        "memory_available_bytes_min": 4_294_967_296,
+        "disk_busy_percent_max": 20.0,
+        "disk_free_bytes_min": 10_737_418_240,
+    },
+    "competing_process_patterns": [
+        "run_xunce_mid_dual_g1_coverage.py",
+        "run_xunce_mid_dual_g2_planning_time.py",
+        "run_xunce_mid_dual_g3_closed_loop.py",
+        "run_ppo_stage6_standard.py",
+        "pytest",
+        "training",
+        "formal",
+    ],
+    "exclude_current_process_tree": True,
+}
 TIMING_FIELDS = (
     "input_validation_ns",
     "platform_instantiation_ns",
@@ -178,6 +230,1185 @@ class G2Interrupted(RuntimeError):
     def __init__(self, reason: str = "g2_execution_interrupted") -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+def _utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+class _FileTime(ctypes.Structure):
+    _fields_ = (
+        ("low", wintypes.DWORD),
+        ("high", wintypes.DWORD),
+    )
+
+
+def _windows_kernel32():
+    try:
+        return ctypes.WinDLL("kernel32", use_last_error=True)
+    except (AttributeError, OSError) as exc:
+        raise G2Blocked("g2_formal_windows_probe_unavailable") from exc
+
+
+def _file_time_ticks(value: _FileTime) -> int:
+    return (int(value.high) << 32) | int(value.low)
+
+
+def _current_process_start_utc() -> str:
+    if os.name != "nt":
+        return _utc_now()
+
+    kernel32 = _windows_kernel32()
+    get_current_process = kernel32.GetCurrentProcess
+    get_current_process.argtypes = []
+    get_current_process.restype = ctypes.c_void_p
+    get_process_times = kernel32.GetProcessTimes
+    get_process_times.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_FileTime),
+        ctypes.POINTER(_FileTime),
+        ctypes.POINTER(_FileTime),
+        ctypes.POINTER(_FileTime),
+    ]
+    get_process_times.restype = wintypes.BOOL
+    creation = _FileTime()
+    exit_time = _FileTime()
+    kernel = _FileTime()
+    user = _FileTime()
+    handle = get_current_process()
+    ok = get_process_times(
+        handle,
+        ctypes.byref(creation),
+        ctypes.byref(exit_time),
+        ctypes.byref(kernel),
+        ctypes.byref(user),
+    )
+    if not ok:
+        raise G2Blocked("g2_formal_process_start_probe_failed")
+    ticks = _file_time_ticks(creation)
+    unix_seconds = ticks / 10_000_000.0 - 11_644_473_600.0
+    return (
+        datetime.fromtimestamp(unix_seconds, timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _run_read_only_windows_probe(
+    arguments: Sequence[str],
+    *,
+    reason: str,
+    timeout_seconds: float = 30.0,
+) -> tuple[bytes, str]:
+    try:
+        completed = subprocess.run(
+            tuple(arguments),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout_seconds,
+            creationflags=int(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            ),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise G2Blocked(reason) from exc
+    probe_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-read-only-windows-probe/v1",
+        _canonical_bytes(list(arguments)),
+        str(completed.returncode).encode("ascii"),
+        completed.stdout,
+        completed.stderr,
+    )
+    if completed.returncode != 0:
+        raise G2Blocked(reason)
+    return completed.stdout, probe_sha256
+
+
+def _parse_active_power_scheme(payload: bytes) -> str:
+    if type(payload) is not bytes:
+        raise G2Blocked("g2_formal_power_probe_failed")
+    matches = {
+        item.casefold()
+        for item in re.findall(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{12}\b",
+            payload.decode("ascii", errors="ignore"),
+        )
+    }
+    if len(matches) != 1:
+        raise G2Blocked("g2_formal_power_probe_failed")
+    return next(iter(matches))
+
+
+def _probe_active_power_scheme() -> tuple[str, str]:
+    payload, probe_sha256 = _run_read_only_windows_probe(
+        ("powercfg.exe", "/getactivescheme"),
+        reason="g2_formal_power_probe_failed",
+    )
+    return _parse_active_power_scheme(payload), probe_sha256
+
+
+def _powershell_executable() -> str:
+    executable = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+    if not executable:
+        raise G2Blocked("g2_formal_powershell_probe_unavailable")
+    return executable
+
+
+def _powershell_json_probe(
+    script: str,
+    *,
+    reason: str,
+) -> tuple[object, str]:
+    payload, probe_sha256 = _run_read_only_windows_probe(
+        (
+            _powershell_executable(),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            (
+                "$ErrorActionPreference='Stop';"
+                "$OutputEncoding=[Console]::OutputEncoding="
+                "[Text.UTF8Encoding]::new($false);"
+                + script
+            ),
+        ),
+        reason=reason,
+    )
+    try:
+        parsed = json.loads(payload.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise G2Blocked(reason) from exc
+    return parsed, probe_sha256
+
+
+def _classify_process_inventory(
+    records: Sequence[Mapping[str, object]],
+    *,
+    patterns: Sequence[str],
+    current_pid: int,
+) -> tuple[list[dict[str, object]], list[int]]:
+    if (
+        type(current_pid) is not int
+        or current_pid <= 0
+        or not patterns
+        or any(type(item) is not str or not item for item in patterns)
+    ):
+        raise G2Blocked("g2_formal_process_inventory_invalid")
+    by_pid: dict[int, dict[str, object]] = {}
+    for source in records:
+        if not isinstance(source, Mapping):
+            raise G2Blocked("g2_formal_process_inventory_invalid")
+        pid = source.get("pid")
+        parent_pid = source.get("parent_pid")
+        name = source.get("name")
+        command_line = source.get("command_line")
+        if type(pid) is int and pid == 0:
+            continue
+        if (
+            type(pid) is not int
+            or pid < 0
+            or type(parent_pid) is not int
+            or parent_pid < 0
+            or type(name) is not str
+            or not name
+            or type(command_line) is not str
+            or pid in by_pid
+        ):
+            raise G2Blocked("g2_formal_process_inventory_invalid")
+        by_pid[pid] = {
+            "pid": pid,
+            "parent_pid": parent_pid,
+            "name": name,
+            "command_line": command_line,
+        }
+    if current_pid not in by_pid:
+        raise G2Blocked("g2_formal_current_process_missing")
+
+    ancestors = {current_pid}
+    cursor = current_pid
+    while True:
+        parent_pid = int(by_pid[cursor]["parent_pid"])
+        if parent_pid <= 0 or parent_pid not in by_pid:
+            break
+        if parent_pid in ancestors:
+            raise G2Blocked("g2_formal_process_inventory_cycle")
+        ancestors.add(parent_pid)
+        cursor = parent_pid
+
+    descendants = {current_pid}
+    changed = True
+    while changed:
+        changed = False
+        for pid, row in by_pid.items():
+            if pid not in descendants and row["parent_pid"] in descendants:
+                descendants.add(pid)
+                changed = True
+    excluded = ancestors | descendants
+
+    normalized_patterns = [
+        (pattern, pattern.casefold()) for pattern in patterns
+    ]
+    competing: list[dict[str, object]] = []
+    for pid in sorted(by_pid):
+        if pid in excluded:
+            continue
+        row = by_pid[pid]
+        searchable = (
+            f"{row['name']}\n{row['command_line']}".casefold()
+        )
+        matched = next(
+            (
+                original
+                for original, normalized in normalized_patterns
+                if normalized in searchable
+            ),
+            None,
+        )
+        if matched is None:
+            continue
+        competing.append(
+            {
+                "pid": pid,
+                "parent_pid": row["parent_pid"],
+                "name": row["name"],
+                "matched_pattern": matched,
+                "command_sha256": _domain_hash(
+                    "xunce-mid-dual-g2-process-command/v1",
+                    str(row["command_line"]).encode(
+                        "utf-8",
+                        errors="strict",
+                    ),
+                ),
+            }
+        )
+    return competing, sorted(excluded)
+
+
+def _probe_process_inventory(
+    patterns: Sequence[str],
+    current_pid: int,
+) -> tuple[list[dict[str, object]], list[int], str]:
+    parsed, inventory_sha256 = _powershell_json_probe(
+        (
+            "$rows=@(Get-CimInstance -ClassName Win32_Process |"
+            "Select-Object ProcessId,ParentProcessId,Name,CommandLine |"
+            "Sort-Object ProcessId);"
+            "ConvertTo-Json -InputObject $rows -Compress"
+        ),
+        reason="g2_formal_process_probe_failed",
+    )
+    if type(parsed) is not list:
+        raise G2Blocked("g2_formal_process_probe_failed")
+    records: list[dict[str, object]] = []
+    for row in parsed:
+        if not isinstance(row, Mapping):
+            raise G2Blocked("g2_formal_process_probe_failed")
+        try:
+            pid = int(row["ProcessId"])
+            parent_pid = int(row["ParentProcessId"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise G2Blocked("g2_formal_process_probe_failed") from exc
+        name = row.get("Name")
+        command_line = row.get("CommandLine")
+        records.append(
+            {
+                "pid": pid,
+                "parent_pid": parent_pid,
+                "name": name if type(name) is str else "",
+                "command_line": (
+                    command_line
+                    if type(command_line) is str
+                    else ""
+                ),
+            }
+        )
+    competing, excluded = _classify_process_inventory(
+        records,
+        patterns=patterns,
+        current_pid=current_pid,
+    )
+    return competing, excluded, inventory_sha256
+
+
+def _read_system_times() -> tuple[int, int, int]:
+    kernel32 = _windows_kernel32()
+    get_system_times = kernel32.GetSystemTimes
+    get_system_times.argtypes = [
+        ctypes.POINTER(_FileTime),
+        ctypes.POINTER(_FileTime),
+        ctypes.POINTER(_FileTime),
+    ]
+    get_system_times.restype = wintypes.BOOL
+    idle = _FileTime()
+    kernel = _FileTime()
+    user = _FileTime()
+    if not get_system_times(
+        ctypes.byref(idle),
+        ctypes.byref(kernel),
+        ctypes.byref(user),
+    ):
+        raise G2Blocked("g2_formal_cpu_probe_failed")
+    return (
+        _file_time_ticks(idle),
+        _file_time_ticks(kernel),
+        _file_time_ticks(user),
+    )
+
+
+def _read_disk_busy_counter() -> tuple[int, int]:
+    parsed, _probe_sha256 = _powershell_json_probe(
+        (
+            "$row=Get-CimInstance -ClassName "
+            "Win32_PerfRawData_PerfDisk_LogicalDisk "
+            "-Filter \"Name='D:'\" |"
+            "Select-Object -First 1 PercentDiskTime,Timestamp_Sys100NS;"
+            "if($null -eq $row){throw 'D disk counter missing'};"
+            "ConvertTo-Json -InputObject $row -Compress"
+        ),
+        reason="g2_formal_disk_busy_probe_failed",
+    )
+    if not isinstance(parsed, Mapping):
+        raise G2Blocked("g2_formal_disk_busy_probe_failed")
+    try:
+        busy_ticks = int(parsed["PercentDiskTime"])
+        timestamp_ticks = int(parsed["Timestamp_Sys100NS"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise G2Blocked("g2_formal_disk_busy_probe_failed") from exc
+    if busy_ticks < 0 or timestamp_ticks <= 0:
+        raise G2Blocked("g2_formal_disk_busy_probe_failed")
+    return busy_ticks, timestamp_ticks
+
+
+def _sample_cpu_and_disk_busy(
+    sample_window_seconds: float,
+) -> tuple[float, float]:
+    if sample_window_seconds != 2.0:
+        raise G2Blocked("g2_formal_sample_window_invalid")
+    idle_before, kernel_before, user_before = _read_system_times()
+    disk_busy_before, disk_time_before = _read_disk_busy_counter()
+    threading.Event().wait(sample_window_seconds)
+    idle_after, kernel_after, user_after = _read_system_times()
+    disk_busy_after, disk_time_after = _read_disk_busy_counter()
+
+    idle_delta = idle_after - idle_before
+    total_delta = (
+        kernel_after - kernel_before + user_after - user_before
+    )
+    disk_time_delta = disk_time_after - disk_time_before
+    disk_busy_delta = disk_busy_after - disk_busy_before
+    if (
+        idle_delta < 0
+        or total_delta <= 0
+        or idle_delta > total_delta
+        or disk_time_delta <= 0
+        or disk_busy_delta < 0
+    ):
+        raise G2Blocked("g2_formal_load_probe_failed")
+    cpu_percent = 100.0 * (total_delta - idle_delta) / total_delta
+    disk_busy_percent = 100.0 * disk_busy_delta / disk_time_delta
+    if (
+        not math.isfinite(cpu_percent)
+        or not math.isfinite(disk_busy_percent)
+        or cpu_percent < 0.0
+        or disk_busy_percent < 0.0
+    ):
+        raise G2Blocked("g2_formal_load_probe_failed")
+    return cpu_percent, disk_busy_percent
+
+
+def _probe_memory_status() -> tuple[float, int]:
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = (
+            ("length", wintypes.DWORD),
+            ("memory_load", wintypes.DWORD),
+            ("total_physical", ctypes.c_ulonglong),
+            ("available_physical", ctypes.c_ulonglong),
+            ("total_page_file", ctypes.c_ulonglong),
+            ("available_page_file", ctypes.c_ulonglong),
+            ("total_virtual", ctypes.c_ulonglong),
+            ("available_virtual", ctypes.c_ulonglong),
+            ("available_extended_virtual", ctypes.c_ulonglong),
+        )
+
+    kernel32 = _windows_kernel32()
+    global_memory_status = kernel32.GlobalMemoryStatusEx
+    global_memory_status.argtypes = [ctypes.POINTER(MemoryStatus)]
+    global_memory_status.restype = wintypes.BOOL
+    memory = MemoryStatus()
+    memory.length = ctypes.sizeof(MemoryStatus)
+    if not global_memory_status(ctypes.byref(memory)):
+        raise G2Blocked("g2_formal_memory_probe_failed")
+    return float(memory.memory_load), int(memory.available_physical)
+
+
+def _probe_disk_free() -> tuple[str, int]:
+    try:
+        free_bytes = int(shutil.disk_usage("D:/").free)
+    except OSError as exc:
+        raise G2Blocked("g2_formal_disk_free_probe_failed") from exc
+    if free_bytes < 0:
+        raise G2Blocked("g2_formal_disk_free_probe_failed")
+    return "D:/", free_bytes
+
+
+def capture_windows_formal_environment(
+    phase: str,
+    policy: Mapping[str, object],
+    *,
+    platform_name: str | None = None,
+) -> dict[str, object]:
+    validated_policy = validate_formal_environment_policy(policy)
+    if phase not in {"start", "end"}:
+        raise G2Blocked("g2_formal_environment_phase_invalid")
+    actual_platform = os.name if platform_name is None else platform_name
+    if actual_platform != "nt":
+        raise G2Blocked("g2_formal_windows_required")
+
+    power_scheme_guid, power_probe_sha256 = (
+        _probe_active_power_scheme()
+    )
+    competing, excluded, process_inventory_sha256 = (
+        _probe_process_inventory(
+            validated_policy["competing_process_patterns"],
+            os.getpid(),
+        )
+    )
+    cpu_percent, disk_busy_percent = _sample_cpu_and_disk_busy(
+        float(validated_policy["sample_window_seconds"])
+    )
+    memory_percent, memory_available_bytes = _probe_memory_status()
+    disk_root, disk_free_bytes = _probe_disk_free()
+    thread_names = tuple(
+        validated_policy["required_thread_variables"]
+    )
+    return {
+        "schema_version": (
+            FORMAL_ENVIRONMENT_OBSERVATION_SCHEMA_VERSION
+        ),
+        "phase": phase,
+        "captured_utc": _utc_now(),
+        "host": host_platform.node() or "unknown-host",
+        "pid": os.getpid(),
+        "power_scheme_guid": power_scheme_guid,
+        "power_probe_sha256": power_probe_sha256,
+        "thread_variables": {
+            name: os.environ.get(name, "not-recorded")
+            for name in thread_names
+        },
+        "sample_window_seconds": validated_policy[
+            "sample_window_seconds"
+        ],
+        "cpu_percent": cpu_percent,
+        "memory_percent": memory_percent,
+        "memory_available_bytes": memory_available_bytes,
+        "disk_busy_percent": disk_busy_percent,
+        "disk_free_bytes": disk_free_bytes,
+        "disk_root": disk_root,
+        "competing_processes": competing,
+        "excluded_process_ids": excluded,
+        "process_inventory_sha256": process_inventory_sha256,
+    }
+
+
+def validate_formal_environment_policy(
+    value: object,
+) -> dict[str, object]:
+    required = {
+        "schema_version",
+        "lease_path",
+        "allowed_power_scheme_guids",
+        "required_thread_variables",
+        "sample_window_seconds",
+        "limits",
+        "competing_process_patterns",
+        "exclude_current_process_tree",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise G2Blocked("g2_formal_environment_policy_invalid")
+    policy = dict(value)
+    lease_path = policy["lease_path"]
+    if (
+        policy["schema_version"]
+        != FORMAL_ENVIRONMENT_POLICY_SCHEMA_VERSION
+        or type(lease_path) is not str
+        or not lease_path
+        or not PureWindowsPath(lease_path).is_absolute()
+        or PureWindowsPath(lease_path).drive.upper() != "D:"
+    ):
+        raise G2Blocked("g2_formal_environment_policy_invalid")
+    allowed = policy["allowed_power_scheme_guids"]
+    if (
+        type(allowed) is not list
+        or not allowed
+        or len(allowed) != len(set(allowed))
+        or any(
+            type(item) is not str
+            or re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                r"[0-9a-f]{4}-[0-9a-f]{12}",
+                item,
+            )
+            is None
+            for item in allowed
+        )
+    ):
+        raise G2Blocked("g2_formal_environment_policy_invalid")
+    required_threads = {
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    }
+    thread_variables = policy["required_thread_variables"]
+    if (
+        not isinstance(thread_variables, Mapping)
+        or set(thread_variables) != required_threads
+        or any(
+            type(thread_variables[name]) is not str
+            or not thread_variables[name]
+            for name in required_threads
+        )
+    ):
+        raise G2Blocked("g2_formal_environment_policy_invalid")
+    limits = policy["limits"]
+    limit_names = {
+        "cpu_percent_max",
+        "memory_percent_max",
+        "memory_available_bytes_min",
+        "disk_busy_percent_max",
+        "disk_free_bytes_min",
+    }
+    if (
+        not isinstance(limits, Mapping)
+        or set(limits) != limit_names
+        or any(
+            isinstance(limits[name], bool)
+            or not isinstance(limits[name], (int, float))
+            or not math.isfinite(float(limits[name]))
+            or float(limits[name]) < 0.0
+            for name in limit_names
+        )
+        or float(limits["cpu_percent_max"]) > 100.0
+        or float(limits["memory_percent_max"]) > 100.0
+        or float(limits["disk_busy_percent_max"]) > 100.0
+    ):
+        raise G2Blocked("g2_formal_environment_policy_invalid")
+    patterns = policy["competing_process_patterns"]
+    if (
+        type(patterns) is not list
+        or not patterns
+        or len(patterns) != len(set(patterns))
+        or any(type(item) is not str or not item for item in patterns)
+        or policy["sample_window_seconds"] != 2.0
+        or policy["exclude_current_process_tree"] is not True
+    ):
+        raise G2Blocked("g2_formal_environment_policy_invalid")
+    return {
+        "schema_version": FORMAL_ENVIRONMENT_POLICY_SCHEMA_VERSION,
+        "lease_path": str(lease_path).replace("\\", "/"),
+        "allowed_power_scheme_guids": list(allowed),
+        "required_thread_variables": {
+            name: str(thread_variables[name])
+            for name in (
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS",
+            )
+        },
+        "sample_window_seconds": 2.0,
+        "limits": {
+            name: limits[name]
+            for name in (
+                "cpu_percent_max",
+                "memory_percent_max",
+                "memory_available_bytes_min",
+                "disk_busy_percent_max",
+                "disk_free_bytes_min",
+            )
+        },
+        "competing_process_patterns": list(patterns),
+        "exclude_current_process_tree": True,
+    }
+
+
+class G2FormalLease:
+    """One exact atomic file owned by one process and one nonce."""
+
+    def __init__(
+        self,
+        *,
+        lease_path: str | Path,
+        run_id: str,
+        run_root: str | Path,
+    ) -> None:
+        self.lease_path = Path(lease_path)
+        self.run_id = _validated_run_id(run_id)
+        self.run_root = str(Path(run_root)).replace("\\", "/")
+        self._payload: dict[str, object] | None = None
+
+    @property
+    def payload(self) -> dict[str, object]:
+        if self._payload is None:
+            raise G2Blocked("g2_formal_lease_not_acquired")
+        return dict(self._payload)
+
+    def acquire(self) -> dict[str, object]:
+        if self._payload is not None:
+            raise G2Blocked("g2_formal_lease_already_acquired")
+        core = {
+            "schema_version": FORMAL_LEASE_SCHEMA_VERSION,
+            "host": host_platform.node() or "unknown-host",
+            "pid": os.getpid(),
+            "process_start_utc": _current_process_start_utc(),
+            "run_id": self.run_id,
+            "run_root": self.run_root,
+            "nonce": secrets.token_hex(16),
+            "acquired_utc": _utc_now(),
+        }
+        payload = {
+            **core,
+            "lease_sha256": _domain_hash(
+                FORMAL_LEASE_SCHEMA_VERSION,
+                _canonical_bytes(core),
+            ),
+        }
+        artifact_io.ensure_parent(self.lease_path)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= int(getattr(os, "O_BINARY", 0))
+        open_descriptor = getattr(os, "open")
+        try:
+            descriptor = open_descriptor(
+                artifact_io.windows_safe_path(self.lease_path),
+                flags,
+                0o600,
+            )
+        except FileExistsError as exc:
+            raise G2Blocked("g2_formal_lease_contended") from exc
+        try:
+            os.write(
+                descriptor,
+                (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                ).encode("utf-8"),
+            )
+            os.fsync(descriptor)
+        except BaseException:
+            os.close(descriptor)
+            self._payload = payload
+            self.release()
+            raise
+        else:
+            os.close(descriptor)
+        self._payload = payload
+        return dict(payload)
+
+    def release(self) -> bool:
+        if self._payload is None or not artifact_io.path_is_file(
+            self.lease_path
+        ):
+            return False
+        try:
+            stored = artifact_io.read_json(self.lease_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        if stored != self._payload:
+            return False
+        try:
+            getattr(os, "unlink")(
+                artifact_io.windows_safe_path(self.lease_path)
+            )
+        except OSError:
+            return False
+        self._payload = None
+        return True
+
+
+def validate_g2_formal_environment(
+    observation: object,
+    policy: object,
+) -> dict[str, object]:
+    validated_policy = validate_formal_environment_policy(policy)
+    required = {
+        "schema_version",
+        "phase",
+        "captured_utc",
+        "host",
+        "pid",
+        "power_scheme_guid",
+        "power_probe_sha256",
+        "thread_variables",
+        "sample_window_seconds",
+        "cpu_percent",
+        "memory_percent",
+        "memory_available_bytes",
+        "disk_busy_percent",
+        "disk_free_bytes",
+        "disk_root",
+        "competing_processes",
+        "excluded_process_ids",
+        "process_inventory_sha256",
+    }
+    if not isinstance(observation, Mapping) or set(observation) != required:
+        raise G2Blocked("g2_formal_environment_observation_invalid")
+    result = dict(observation)
+    if (
+        result["schema_version"]
+        != FORMAL_ENVIRONMENT_OBSERVATION_SCHEMA_VERSION
+        or result["phase"] not in {"start", "end"}
+        or type(result["captured_utc"]) is not str
+        or not result["captured_utc"]
+        or type(result["host"]) is not str
+        or not result["host"]
+        or type(result["pid"]) is not int
+        or result["pid"] <= 0
+        or not _is_sha256(result["power_probe_sha256"])
+        or not _is_sha256(result["process_inventory_sha256"])
+        or type(result["disk_root"]) is not str
+        or not result["disk_root"]
+        or result["sample_window_seconds"]
+        != validated_policy["sample_window_seconds"]
+    ):
+        raise G2Blocked("g2_formal_environment_observation_invalid")
+    power = result["power_scheme_guid"]
+    if power == "not-recorded":
+        raise G2Blocked("g2_formal_environment_not_recorded")
+    if (
+        type(power) is not str
+        or power.casefold()
+        not in {
+            str(item).casefold()
+            for item in validated_policy[
+                "allowed_power_scheme_guids"
+            ]
+        }
+    ):
+        raise G2Blocked("g2_formal_power_scheme_not_allowed")
+    if result["thread_variables"] != validated_policy[
+        "required_thread_variables"
+    ]:
+        raise G2Blocked("g2_formal_thread_settings_invalid")
+    competing = result["competing_processes"]
+    if type(competing) is not list:
+        raise G2Blocked("g2_formal_environment_observation_invalid")
+    for row in competing:
+        if (
+            not isinstance(row, Mapping)
+            or set(row)
+            != {
+                "pid",
+                "parent_pid",
+                "name",
+                "matched_pattern",
+                "command_sha256",
+            }
+            or type(row["pid"]) is not int
+            or type(row["parent_pid"]) is not int
+            or type(row["name"]) is not str
+            or type(row["matched_pattern"]) is not str
+            or not _is_sha256(row["command_sha256"])
+        ):
+            raise G2Blocked("g2_formal_environment_observation_invalid")
+    if competing:
+        raise G2Blocked("g2_formal_competing_process")
+    excluded = result["excluded_process_ids"]
+    if (
+        type(excluded) is not list
+        or not excluded
+        or any(type(item) is not int or item <= 0 for item in excluded)
+    ):
+        raise G2Blocked("g2_formal_environment_observation_invalid")
+    numeric_fields = (
+        "cpu_percent",
+        "memory_percent",
+        "memory_available_bytes",
+        "disk_busy_percent",
+        "disk_free_bytes",
+    )
+    for name in numeric_fields:
+        value = result[name]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < 0.0
+        ):
+            raise G2Blocked("g2_formal_environment_observation_invalid")
+    limits = validated_policy["limits"]
+    if float(result["cpu_percent"]) > float(limits["cpu_percent_max"]):
+        raise G2Blocked("g2_formal_cpu_load_exceeded")
+    if float(result["memory_percent"]) > float(
+        limits["memory_percent_max"]
+    ):
+        raise G2Blocked("g2_formal_memory_load_exceeded")
+    if int(result["memory_available_bytes"]) < int(
+        limits["memory_available_bytes_min"]
+    ):
+        raise G2Blocked("g2_formal_memory_available_below_min")
+    if float(result["disk_busy_percent"]) > float(
+        limits["disk_busy_percent_max"]
+    ):
+        raise G2Blocked("g2_formal_disk_busy_exceeded")
+    if int(result["disk_free_bytes"]) < int(
+        limits["disk_free_bytes_min"]
+    ):
+        raise G2Blocked("g2_formal_disk_free_below_min")
+    return result
+
+
+class G2FormalEnvironmentGuard:
+    """Acquire, validate start/end observations, then release exactly once."""
+
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        policy: Mapping[str, object],
+        lease: G2FormalLease,
+        capture_environment: Callable[
+            [str, Mapping[str, object]],
+            Mapping[str, object],
+        ],
+    ) -> None:
+        self.run_id = _validated_run_id(run_id)
+        self.policy = validate_formal_environment_policy(policy)
+        self.lease = lease
+        if (
+            str(self.lease.lease_path).replace("\\", "/").casefold()
+            != str(self.policy["lease_path"]).casefold()
+        ):
+            raise G2Blocked("g2_formal_lease_policy_mismatch")
+        self.capture_environment = capture_environment
+        self.formal_row_count = 0
+        self.audit: dict[str, object] = {}
+        self._lease_payload: dict[str, object] | None = None
+        self._start: dict[str, object] | None = None
+        self._end: dict[str, object] | None = None
+        self._blockers: list[str] = []
+        self._closed = False
+
+    def set_formal_row_count(self, value: int) -> None:
+        self.formal_row_count = _exact_nonnegative_int(
+            value,
+            "g2_formal_environment_row_count",
+        )
+
+    @staticmethod
+    def _reason(exc: BaseException) -> str:
+        if isinstance(exc, G2Blocked):
+            return exc.reason
+        if isinstance(exc, G2Interrupted):
+            return exc.reason
+        return f"g2_formal_body_exception:{type(exc).__name__}"
+
+    def _capture(self, phase: str) -> dict[str, object]:
+        try:
+            raw = self.capture_environment(phase, self.policy)
+        except BaseException as exc:
+            failure = {
+                "schema_version": (
+                    "xunce-mid-dual-g2-formal-environment-probe-error/v1"
+                ),
+                "phase": phase,
+                "captured_utc": _utc_now(),
+                "reason": self._reason(exc),
+            }
+            if phase == "start":
+                self._start = failure
+            else:
+                self._end = failure
+            raise
+        captured = (
+            dict(raw)
+            if isinstance(raw, Mapping)
+            else {
+                "schema_version": (
+                    "xunce-mid-dual-g2-formal-environment-probe-error/v1"
+                ),
+                "phase": phase,
+                "captured_utc": _utc_now(),
+                "reason": "g2_formal_environment_observation_invalid",
+            }
+        )
+        if phase == "start":
+            self._start = captured
+        else:
+            self._end = captured
+        validated = validate_g2_formal_environment(raw, self.policy)
+        if self._lease_payload is None:
+            raise G2Blocked("g2_formal_lease_not_acquired")
+        if (
+            validated["host"] != self._lease_payload["host"]
+            or validated["pid"] != self._lease_payload["pid"]
+            or validated["pid"] not in validated["excluded_process_ids"]
+        ):
+            raise G2Blocked("g2_formal_environment_process_mismatch")
+        if phase == "start":
+            self._start = validated
+        else:
+            self._end = validated
+        return validated
+
+    def _build_audit(self, *, lease_released: bool) -> None:
+        if self._lease_payload is None:
+            return
+        start = self._start or {
+            "schema_version": (
+                "xunce-mid-dual-g2-formal-environment-probe-error/v1"
+            ),
+            "phase": "start",
+            "captured_utc": _utc_now(),
+            "reason": "g2_formal_environment_not_recorded",
+        }
+        end = self._end or {
+            "schema_version": (
+                "xunce-mid-dual-g2-formal-environment-probe-error/v1"
+            ),
+            "phase": "end",
+            "captured_utc": _utc_now(),
+            "reason": "g2_formal_environment_not_recorded",
+        }
+        passed = not self._blockers and lease_released
+        self.audit = {
+            "schema_version": FORMAL_ENVIRONMENT_AUDIT_SCHEMA_VERSION,
+            "gate_id": G2_GATE_ID,
+            "scale_profile": SCALE_PROFILE,
+            "run_id": self.run_id,
+            "status": "passed" if passed else "blocked",
+            "formal_evidence_eligible": passed,
+            "formal_environment_policy": dict(self.policy),
+            "formal_environment_policy_sha256": _canonical_sha256(
+                self.policy
+            ),
+            "lease": dict(self._lease_payload),
+            "lease_sha256": self._lease_payload["lease_sha256"],
+            "start_observation": start,
+            "start_observation_sha256": _canonical_sha256(start),
+            "end_observation": end,
+            "end_observation_sha256": _canonical_sha256(end),
+            "same_process": (
+                start.get("pid") == self._lease_payload["pid"]
+                and end.get("pid") == self._lease_payload["pid"]
+            ),
+            "formal_row_count": self.formal_row_count if passed else 0,
+            "lease_released": lease_released,
+            "blockers": list(dict.fromkeys(self._blockers)),
+        }
+
+    def _finish(self, original: BaseException | None) -> None:
+        if self._closed:
+            return
+        deferred: BaseException | None = None
+        try:
+            self._capture("end")
+        except BaseException as exc:
+            self._blockers.append(self._reason(exc))
+            deferred = exc
+        if original is not None:
+            self._blockers.append(self._reason(original))
+        elif self.formal_row_count != G2_FORMAL_CALLS:
+            row_count_error = G2Blocked(
+                "g2_formal_row_count_invalid"
+            )
+            self._blockers.append(row_count_error.reason)
+            if deferred is None:
+                deferred = row_count_error
+        released = self.lease.release()
+        if not released:
+            self._blockers.append("g2_formal_lease_release_failed")
+            if deferred is None:
+                deferred = G2Blocked("g2_formal_lease_release_failed")
+        self._closed = True
+        self._build_audit(lease_released=released)
+        if original is None and deferred is not None:
+            raise deferred
+
+    def __enter__(self) -> "G2FormalEnvironmentGuard":
+        self._lease_payload = self.lease.acquire()
+        try:
+            self._capture("start")
+        except BaseException as exc:
+            self._blockers.append(self._reason(exc))
+            self._finish(exc)
+            raise
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> bool:
+        del exc_type, traceback
+        self._finish(exc)
+        return False
+
+
+def formal_environment_audit_binding(
+    audit: object,
+) -> dict[str, object]:
+    if (
+        not isinstance(audit, Mapping)
+        or audit.get("schema_version")
+        != FORMAL_ENVIRONMENT_AUDIT_SCHEMA_VERSION
+        or not _is_sha256(audit.get("lease_sha256"))
+    ):
+        raise G2Blocked("g2_formal_environment_audit_invalid")
+    return {
+        "formal_environment_audit_schema_version": (
+            FORMAL_ENVIRONMENT_AUDIT_SCHEMA_VERSION
+        ),
+        "formal_environment_audit_sha256": _canonical_sha256(audit),
+        "formal_lease_sha256": audit["lease_sha256"],
+    }
+
+
+def _validate_complete_formal_environment_audit(
+    audit: object,
+) -> dict[str, object]:
+    required = {
+        "schema_version",
+        "gate_id",
+        "scale_profile",
+        "run_id",
+        "status",
+        "formal_evidence_eligible",
+        "formal_environment_policy",
+        "formal_environment_policy_sha256",
+        "lease",
+        "lease_sha256",
+        "start_observation",
+        "start_observation_sha256",
+        "end_observation",
+        "end_observation_sha256",
+        "same_process",
+        "formal_row_count",
+        "lease_released",
+        "blockers",
+    }
+    if not isinstance(audit, Mapping) or set(audit) != required:
+        raise G2Blocked("g2_formal_environment_audit_invalid")
+    result = dict(audit)
+    policy = validate_formal_environment_policy(
+        result["formal_environment_policy"]
+    )
+    lease = result["lease"]
+    lease_keys = {
+        "schema_version",
+        "host",
+        "pid",
+        "process_start_utc",
+        "run_id",
+        "run_root",
+        "nonce",
+        "acquired_utc",
+        "lease_sha256",
+    }
+    if not isinstance(lease, Mapping) or set(lease) != lease_keys:
+        raise G2Blocked("g2_formal_environment_audit_invalid")
+    lease_core = {
+        key: lease[key]
+        for key in (
+            "schema_version",
+            "host",
+            "pid",
+            "process_start_utc",
+            "run_id",
+            "run_root",
+            "nonce",
+            "acquired_utc",
+        )
+    }
+    expected_lease_sha256 = _domain_hash(
+        FORMAL_LEASE_SCHEMA_VERSION,
+        _canonical_bytes(lease_core),
+    )
+    start = validate_g2_formal_environment(
+        result["start_observation"],
+        policy,
+    )
+    end = validate_g2_formal_environment(
+        result["end_observation"],
+        policy,
+    )
+    if (
+        result["schema_version"]
+        != FORMAL_ENVIRONMENT_AUDIT_SCHEMA_VERSION
+        or result["gate_id"] != G2_GATE_ID
+        or result["scale_profile"] != SCALE_PROFILE
+        or result["status"] != "passed"
+        or result["formal_evidence_eligible"] is not True
+        or result["formal_environment_policy_sha256"]
+        != _canonical_sha256(policy)
+        or lease["schema_version"] != FORMAL_LEASE_SCHEMA_VERSION
+        or lease["lease_sha256"] != expected_lease_sha256
+        or result["lease_sha256"] != expected_lease_sha256
+        or result["run_id"] != lease["run_id"]
+        or start["phase"] != "start"
+        or end["phase"] != "end"
+        or start["host"] != lease["host"]
+        or end["host"] != lease["host"]
+        or start["pid"] != lease["pid"]
+        or end["pid"] != lease["pid"]
+        or start["pid"] not in start["excluded_process_ids"]
+        or end["pid"] not in end["excluded_process_ids"]
+        or result["start_observation_sha256"]
+        != _canonical_sha256(start)
+        or result["end_observation_sha256"]
+        != _canonical_sha256(end)
+        or result["same_process"] is not True
+        or result["formal_row_count"] != G2_FORMAL_CALLS
+        or result["lease_released"] is not True
+        or result["blockers"] != []
+    ):
+        raise G2Blocked("g2_formal_environment_audit_invalid")
+    return result
+
+
+def formal_environment_phase_audit_fields(
+    audit: object,
+) -> dict[str, object]:
+    validated = _validate_complete_formal_environment_audit(audit)
+    return {
+        "formal_environment_audit": validated,
+        **formal_environment_audit_binding(validated),
+    }
+
+
+def validate_formal_environment_phase_audit(
+    phase_audit: object,
+) -> dict[str, object]:
+    if (
+        not isinstance(phase_audit, Mapping)
+        or phase_audit.get("phase_id") != "p04"
+        or not isinstance(
+            phase_audit.get("formal_environment_audit"),
+            Mapping,
+        )
+    ):
+        raise G2Blocked("g2_formal_environment_phase_binding_invalid")
+    embedded = _validate_complete_formal_environment_audit(
+        phase_audit["formal_environment_audit"]
+    )
+    binding = formal_environment_audit_binding(embedded)
+    if any(phase_audit.get(key) != value for key, value in binding.items()):
+        raise G2Blocked("g2_formal_environment_phase_binding_invalid")
+    return embedded
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -1936,10 +3167,7 @@ def _environment_probe() -> dict[str, object]:
             name: os.environ.get(name, "not-set") for name in thread_names
         },
         "worker_start_method": "thread-pool-fixed-four/v1",
-        "power_mode": os.environ.get(
-            "XUNCE_POWER_MODE",
-            "not-recorded",
-        ),
+        "power_mode": "formal-live-gate-separate/v1",
     }
 
 
@@ -1959,6 +3187,18 @@ def _load_config(path: str | Path) -> tuple[dict[str, object], str]:
         if type(config) is dict
         else None
     )
+    try:
+        formal_environment_gate = validate_formal_environment_policy(
+            (
+                config.get("execution", {}).get(
+                    "formal_environment_gate"
+                )
+                if type(config) is dict
+                else None
+            )
+        )
+    except G2Blocked as exc:
+        raise G2Blocked("g2_config_invalid") from exc
     if (
         type(config) is not dict
         or config.get("schema_version") != G2_CONFIG_SCHEMA_VERSION
@@ -1972,6 +3212,7 @@ def _load_config(path: str | Path) -> tuple[dict[str, object], str]:
         != TIMING_CONTRACT_ID
         or config.get("execution", {}).get("formal_cache_contract")
         != STATIC_CACHE_CONTRACT_ID
+        or formal_environment_gate != FORMAL_ENVIRONMENT_POLICY
         or config.get("request_contract", {}).get("formal_call_count")
         != G2_FORMAL_CALLS
         or config.get("request_contract", {}).get("repeat_count")
@@ -2014,10 +3255,14 @@ def _effective_config(
     input_sha256: str,
     code_sha256: str,
     runtime_source_closure_sha256: str,
+    formal_environment_gate: Mapping[str, object],
 ) -> dict[str, object]:
     _require_sha256(
         runtime_source_closure_sha256,
         "g2_runtime_source_closure_sha256",
+    )
+    validated_formal_environment_gate = (
+        validate_formal_environment_policy(formal_environment_gate)
     )
     return {
         "schema_version": G2_CONFIG_SCHEMA_VERSION,
@@ -2033,6 +3278,7 @@ def _effective_config(
         "path_planner_runtime_source_closure_sha256": (
             runtime_source_closure_sha256
         ),
+        "formal_environment_gate": validated_formal_environment_gate,
         "required_phase_ids": list(G2_REQUIRED_PHASE_IDS),
         "source_contract_sha256": _canonical_sha256(G2_SOURCE_CONTRACT),
         "evidence_binding": {
@@ -2045,6 +3291,9 @@ def _effective_config(
             ),
             "platform_invariants_audit_path": (
                 "g2_platform_invariants_audit.json"
+            ),
+            "formal_environment_audit_path": (
+                "g2_formal_environment_audit.json"
             ),
         },
     }
@@ -2240,7 +3489,11 @@ def _routing(summary: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _render_report(summary: Mapping[str, object]) -> str:
+def _render_report(
+    summary: Mapping[str, object],
+    *,
+    formal_environment_audit: Mapping[str, object] | None = None,
+) -> str:
     recomputed = summary.get("recomputed")
     projection = recomputed if isinstance(recomputed, Mapping) else summary
     lines = [
@@ -2256,6 +3509,59 @@ def _render_report(summary: Mapping[str, object]) -> str:
         "正式计时采用 `five-phase-sequential-ns/v1`，每条原始记录保留"
         "五段整数纳秒与精确总和；毫秒值仅由原始整数唯一换算。",
     ]
+    if formal_environment_audit is not None:
+        lines.extend(("", "## 正式环境核验", ""))
+        if formal_environment_audit.get("status") == "passed":
+            validated_environment = (
+                _validate_complete_formal_environment_audit(
+                    formal_environment_audit
+                )
+            )
+            start = validated_environment["start_observation"]
+            end = validated_environment["end_observation"]
+            thread_order = (
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS",
+            )
+            start_threads = "，".join(
+                f"{name}={start['thread_variables'][name]}"
+                for name in thread_order
+            )
+            end_threads = "，".join(
+                f"{name}={end['thread_variables'][name]}"
+                for name in thread_order
+            )
+            lines.extend(
+                (
+                    "- 环境门状态：`passed`",
+                    "- 电源方案（起始/结束）："
+                    f"`{start['power_scheme_guid']}` / "
+                    f"`{end['power_scheme_guid']}`",
+                    f"- 线程变量（起始）：{start_threads}",
+                    f"- 线程变量（结束）：{end_threads}",
+                    f"- 起始 CPU：{float(start['cpu_percent']):.3f}%",
+                    "- 起始内存："
+                    f"{float(start['memory_percent']):.3f}%，"
+                    f"可用 {int(start['memory_available_bytes'])} B",
+                    "- 起始磁盘忙碌率："
+                    f"{float(start['disk_busy_percent']):.3f}%，"
+                    f"可用 {int(start['disk_free_bytes'])} B",
+                    f"- 结束 CPU：{float(end['cpu_percent']):.3f}%",
+                    "- 结束内存："
+                    f"{float(end['memory_percent']):.3f}%，"
+                    f"可用 {int(end['memory_available_bytes'])} B",
+                    "- 结束磁盘忙碌率："
+                    f"{float(end['disk_busy_percent']):.3f}%，"
+                    f"可用 {int(end['disk_free_bytes'])} B",
+                )
+            )
+        else:
+            lines.append(
+                "- 环境门状态："
+                f"`{formal_environment_audit.get('status', 'blocked')}`"
+            )
     blockers = summary.get("blockers")
     if isinstance(blockers, list) and blockers:
         lines.extend(("", "## 阻塞原因", ""))
@@ -2340,6 +3646,8 @@ def _finalize_blocked(
     code_sha256: str,
     runtime_source_closure: Mapping[str, object],
     reason: str,
+    formal_environment_audit: Mapping[str, object] | None = None,
+    formal_environment_gate_attempted: bool = False,
 ) -> dict[str, object]:
     runtime_source_closure_sha256 = str(
         runtime_source_closure[
@@ -2357,30 +3665,49 @@ def _finalize_blocked(
         ),
         reason=reason,
     )
+    extra_audits: dict[str, Mapping[str, object]] = {
+        "g2_input": input_audit,
+        "g2_runtime_source_closure": runtime_source_closure,
+        "g2_platform_invariants": _platform_invariants_audit(
+            run_id=run_id,
+            config_sha256=store.config_sha256,
+            input_sha256=_json_artifact_sha256(input_audit),
+            code_sha256=code_sha256,
+            runtime_source_closure_sha256=(
+                runtime_source_closure_sha256
+            ),
+            status="blocked",
+            formal_evidence_eligible=False,
+        ),
+    }
+    if formal_environment_audit is not None:
+        extra_audits["g2_formal_environment"] = dict(
+            formal_environment_audit
+        )
     store.finalize(
         summary,
         _routing(summary),
-        _render_report(summary),
-        {
-            "g2_input": input_audit,
-            "g2_runtime_source_closure": runtime_source_closure,
-            "g2_platform_invariants": _platform_invariants_audit(
-                run_id=run_id,
-                config_sha256=store.config_sha256,
-                input_sha256=_json_artifact_sha256(input_audit),
-                code_sha256=code_sha256,
-                runtime_source_closure_sha256=(
-                    runtime_source_closure_sha256
-                ),
-                status="blocked",
-                formal_evidence_eligible=False,
-            ),
-        },
+        _render_report(
+            summary,
+            formal_environment_audit=formal_environment_audit,
+        ),
+        extra_audits,
     )
     return {
         "execution_status": "complete",
         "gate_status": "blocked",
         "formal_row_count": 0,
+        "formal_environment_gate_status": (
+            (
+                "blocked"
+                if formal_environment_gate_attempted
+                else "not_run"
+            )
+            if formal_environment_audit is None
+            else str(
+                formal_environment_audit.get("status", "blocked")
+            )
+        ),
         "blocking_reason": reason,
         "run_root": str(store.run_root).replace("\\", "/"),
         "summary": summary,
@@ -2430,7 +3757,10 @@ def run_g2(
     run_id = _validated_run_id(run_id)
     if mode not in G2_MODES:
         raise G2Blocked("g2_mode_invalid")
-    _base_config, _base_config_sha256 = _load_config(config_path)
+    base_config, _base_config_sha256 = _load_config(config_path)
+    formal_environment_gate = validate_formal_environment_policy(
+        base_config["execution"]["formal_environment_gate"]
+    )
     import xunce_mid_dual_g2_inputs as inputs
 
     runtime_source_closure = (
@@ -2457,6 +3787,7 @@ def run_g2(
             runtime_source_closure_sha256=(
                 runtime_source_closure_sha256
             ),
+            formal_environment_gate=formal_environment_gate,
         )
         store, created = _open_store(run_root, effective)
         _capture_preflight(
@@ -2487,8 +3818,11 @@ def run_g2(
         input_sha256=str(bundle["input_sha256"]),
         code_sha256=code_sha256,
         runtime_source_closure_sha256=runtime_source_closure_sha256,
+        formal_environment_gate=formal_environment_gate,
     )
     store: MidDualRunStore | None = None
+    formal_guard: G2FormalEnvironmentGuard | None = None
+    formal_guard_entered = False
     try:
         store, created = _open_store(run_root, effective)
         _capture_preflight(
@@ -2508,9 +3842,27 @@ def run_g2(
                 "execution_status": "incomplete",
                 "gate_status": "preflight_complete",
                 "formal_row_count": 0,
+                "formal_environment_gate_status": "not_run",
                 "run_root": str(run_root).replace("\\", "/"),
                 "accepted_phase_ids": list(store.accepted_phase_ids),
             }
+
+        if mode == "formal":
+            formal_lease = G2FormalLease(
+                lease_path=str(formal_environment_gate["lease_path"]),
+                run_id=run_id,
+                run_root=run_root,
+            )
+            formal_guard = G2FormalEnvironmentGuard(
+                run_id=run_id,
+                policy=formal_environment_gate,
+                lease=formal_lease,
+                capture_environment=(
+                    capture_windows_formal_environment
+                ),
+            )
+            formal_guard.__enter__()
+            formal_guard_entered = True
 
         nonformal = build_nonformal_schedules(bundle["requests"])
         if "p02" not in store.accepted_phase_ids:
@@ -2648,6 +4000,7 @@ def run_g2(
                 "execution_status": "incomplete",
                 "gate_status": "diagnostic_complete",
                 "formal_row_count": 0,
+                "formal_environment_gate_status": "not_run",
                 "run_root": str(run_root).replace("\\", "/"),
                 "accepted_phase_ids": list(store.accepted_phase_ids),
             }
@@ -2656,6 +4009,10 @@ def run_g2(
             str(bundle["manifest"]["input_set_id"]),
             bundle["requests"],
         )
+        pending_p04: tuple[
+            list[dict[str, object]],
+            dict[str, object],
+        ] | None = None
         if "p04" not in store.accepted_phase_ids:
             formal_calls = _hydrate_calls(
                 schedule["calls"],
@@ -2676,11 +4033,9 @@ def run_g2(
                 formal_rows,
                 worker_one_rows,
             )
-            _accept_phase(
-                store,
-                phase_id="p04",
-                rows=formal_rows,
-                audit={
+            pending_p04 = (
+                list(formal_rows),
+                {
                     "status": "complete",
                     "formal_sample": True,
                     **_runtime_binding(
@@ -2697,11 +4052,33 @@ def run_g2(
                 },
             )
         else:
+            validate_formal_environment_phase_audit(
+                _accepted_phase_audit(store, "p04")
+            )
             formal_rows = _accepted_phase_rows(store, "p04")
             recomputed = recompute_g2_summary(formal_rows)
             worker_audit = compare_worker_semantics(
                 formal_rows,
                 worker_one_rows,
+            )
+        if formal_guard is None or not formal_guard_entered:
+            raise G2Blocked("g2_formal_environment_guard_not_active")
+        formal_guard.set_formal_row_count(len(formal_rows))
+        formal_guard.__exit__(None, None, None)
+        formal_guard_entered = False
+        formal_environment_audit = dict(formal_guard.audit)
+        if pending_p04 is not None:
+            pending_rows, pending_audit = pending_p04
+            _accept_phase(
+                store,
+                phase_id="p04",
+                rows=pending_rows,
+                audit={
+                    **pending_audit,
+                    **formal_environment_phase_audit_fields(
+                        formal_environment_audit
+                    ),
+                },
             )
         summary = {
             "schema_version": G2_SUMMARY_SCHEMA_VERSION,
@@ -2713,7 +4090,10 @@ def run_g2(
             **_runtime_binding(runtime_source_closure_sha256),
             "recomputed": recomputed,
         }
-        report = _render_report(summary)
+        report = _render_report(
+            summary,
+            formal_environment_audit=formal_environment_audit,
+        )
         report_audit = _source_report_audit(
             summary=summary,
             report=report,
@@ -2725,6 +4105,7 @@ def run_g2(
             {
                 "g2_input": input_audit,
                 "g2_runtime_source_closure": runtime_source_closure,
+                "g2_formal_environment": formal_environment_audit,
                 "g2_platform_invariants": _platform_invariants_audit(
                     run_id=run_id,
                     config_sha256=store.config_sha256,
@@ -2755,20 +4136,40 @@ def run_g2(
             "execution_status": "complete",
             "gate_status": summary["status"],
             "formal_row_count": len(formal_rows),
+            "formal_environment_gate_status": "passed",
             "run_root": str(run_root).replace("\\", "/"),
             "summary": summary,
         }
-    except G2Interrupted:
+    except G2Interrupted as exc:
+        if formal_guard is not None and formal_guard_entered:
+            formal_guard.__exit__(
+                G2Interrupted,
+                exc,
+                exc.__traceback__,
+            )
+            formal_guard_entered = False
         return {
             "execution_status": "interrupted",
             "gate_status": "incomplete",
             "formal_row_count": 0,
+            "formal_environment_gate_status": (
+                "not_run"
+                if formal_guard is None or not formal_guard.audit
+                else str(formal_guard.audit.get("status", "blocked"))
+            ),
             "run_root": str(run_root).replace("\\", "/"),
             "accepted_phase_ids": (
                 [] if store is None else list(store.accepted_phase_ids)
             ),
         }
     except G2Blocked as exc:
+        if formal_guard is not None and formal_guard_entered:
+            formal_guard.__exit__(
+                G2Blocked,
+                exc,
+                exc.__traceback__,
+            )
+            formal_guard_entered = False
         if store is None:
             raise
         return _finalize_blocked(
@@ -2779,8 +4180,21 @@ def run_g2(
             code_sha256=code_sha256,
             runtime_source_closure=runtime_source_closure,
             reason=exc.reason,
+            formal_environment_audit=(
+                None
+                if formal_guard is None or not formal_guard.audit
+                else formal_guard.audit
+            ),
+            formal_environment_gate_attempted=formal_guard is not None,
         )
     except Exception as exc:
+        if formal_guard is not None and formal_guard_entered:
+            formal_guard.__exit__(
+                type(exc),
+                exc,
+                exc.__traceback__,
+            )
+            formal_guard_entered = False
         if store is None:
             raise G2Blocked(
                 f"g2_runner_exception:{type(exc).__name__}"
@@ -2793,6 +4207,12 @@ def run_g2(
             code_sha256=code_sha256,
             runtime_source_closure=runtime_source_closure,
             reason=f"g2_runner_exception:{type(exc).__name__}",
+            formal_environment_audit=(
+                None
+                if formal_guard is None or not formal_guard.audit
+                else formal_guard.audit
+            ),
+            formal_environment_gate_attempted=formal_guard is not None,
         )
 
 
@@ -2821,6 +4241,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "execution_status": "not_started",
             "gate_status": "blocked",
             "formal_row_count": 0,
+            "formal_environment_gate_status": "not_run",
             "blocking_reason": exc.reason,
         }
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))

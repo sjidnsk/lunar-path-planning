@@ -49,7 +49,38 @@
     "warmup_requests_per_platform": 10,
     "cold_start_calls_per_platform": 1,
     "formal_timing_contract": "five-phase-sequential-ns/v1",
-    "formal_cache_contract": "immutable-terrain-static-validation-only/v1"
+    "formal_cache_contract": "immutable-terrain-static-validation-only/v1",
+    "formal_environment_gate": {
+      "schema_version": "xunce-mid-dual-g2-formal-environment-policy/v1",
+      "lease_path": "D:/xunce/out/mid_dual/g2/.formal-exclusive-lease.json",
+      "allowed_power_scheme_guids": [
+        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+      ],
+      "required_thread_variables": {
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1"
+      },
+      "sample_window_seconds": 2.0,
+      "limits": {
+        "cpu_percent_max": 20.0,
+        "memory_percent_max": 85.0,
+        "memory_available_bytes_min": 4294967296,
+        "disk_busy_percent_max": 20.0,
+        "disk_free_bytes_min": 10737418240
+      },
+      "competing_process_patterns": [
+        "run_xunce_mid_dual_g1_coverage.py",
+        "run_xunce_mid_dual_g2_planning_time.py",
+        "run_xunce_mid_dual_g3_closed_loop.py",
+        "run_ppo_stage6_standard.py",
+        "pytest",
+        "training",
+        "formal"
+      ],
+      "exclude_current_process_tree": true
+    }
   },
   "thresholds_ms": {
     "midterm_mean": 2000.0,
