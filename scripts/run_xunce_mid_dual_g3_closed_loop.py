@@ -54,6 +54,8 @@ PLATFORM_INVARIANTS = {
     }
     for platform in ACTIVE_PLATFORMS
 }
+G1_NATIVE_EVIDENCE_KIND = "native_completed_run_v1"
+G1_ASSESSMENT_EVIDENCE_KIND = "existing_run_assessment_v1"
 G3_OUTPUT_BASE = "D:/xunce/out/mid_dual/g3"
 G3_FROZEN_BASE = "D:/xunce/inputs/mid_dual/scenarios"
 G1_OUTPUT_BASE = "D:/xunce/out/mid_dual/g1"
@@ -88,6 +90,7 @@ G3_REQUIRED_SOURCE_RELATIVE_PATHS = (
     "scripts/run_xunce_mid_dual_g3_closed_loop.py",
     "scripts/freeze_xunce_mid_dual_scenarios.py",
     "scripts/run_xunce_mid_dual_g1_coverage.py",
+    "scripts/xunce_mid_dual_g1_existing_run_assessment.py",
     "scripts/run_xunce_mid_dual_g2_planning_time.py",
     "scripts/xunce_mid_dual_g2_inputs.py",
     "scripts/xunce_mid_dual_contracts.py",
@@ -764,6 +767,72 @@ def compute_g3_code_lineage() -> dict[str, object]:
     }
 
 
+def _validate_g1_evidence_binding(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise G3Blocked("g3_g1_evidence_binding_invalid")
+    copied = dict(value)
+    kind = copied.get("g1_evidence_kind")
+    if kind == G1_NATIVE_EVIDENCE_KIND:
+        if set(copied) != {
+            "g1_evidence_kind",
+            "g1_source_manifest_sha256",
+        }:
+            raise G3Blocked("g3_g1_evidence_binding_invalid")
+        _require_sha256(
+            copied["g1_source_manifest_sha256"],
+            "g3_g1_evidence_binding_invalid",
+        )
+        return copied
+    if kind != G1_ASSESSMENT_EVIDENCE_KIND:
+        raise G3Blocked("g3_g1_evidence_binding_invalid")
+    required_hashes = {
+        "g1_source_manifest_sha256",
+        "assessment_envelope_sha256",
+        "assessment_manifest_sha256",
+        "phase_snapshot_sha256",
+        "stop_evidence_sha256",
+        "review_manifest_sha256",
+        "review_result_sha256",
+    }
+    expected = {
+        "g1_evidence_kind",
+        *required_hashes,
+        "assessment_use_status",
+        "strict_prestart_lineage_status",
+        "lineage_limitation_acknowledged",
+        "numerical_gate_status",
+        "numerical_result_status",
+    }
+    if set(copied) != expected:
+        raise G3Blocked("g3_g1_evidence_binding_invalid")
+    for field in required_hashes:
+        _require_sha256(copied[field], "g3_g1_evidence_binding_invalid")
+    if (
+        copied["g1_source_manifest_sha256"]
+        != copied["assessment_manifest_sha256"]
+        or copied["assessment_use_status"] != "authorized_existing_run"
+        or copied["strict_prestart_lineage_status"] != "not_satisfied"
+        or copied["lineage_limitation_acknowledged"] is not True
+        or copied["numerical_gate_status"] != "recomputed_from_raw_rows"
+        or copied["numerical_result_status"] not in {"passed", "failed"}
+    ):
+        raise G3Blocked("g3_g1_evidence_binding_invalid")
+    return copied
+
+
+def _g1_source_evidence_binding(
+    source: Mapping[str, object],
+) -> dict[str, object]:
+    binding = _validate_g1_evidence_binding(source.get("assessment_binding"))
+    if (
+        binding["g1_source_manifest_sha256"]
+        != source.get("manifest_sha256")
+        or binding["g1_evidence_kind"] != source.get("g1_evidence_kind")
+    ):
+        raise G3Blocked("g3_g1_evidence_binding_invalid")
+    return binding
+
+
 def _validate_upstream_binding(value: object) -> dict[str, object]:
     required_hashes = {
         "g1_source_manifest_sha256",
@@ -786,6 +855,7 @@ def _validate_upstream_binding(value: object) -> dict[str, object]:
         "g2_input_set_id",
         "active_platforms",
         "platform_invariants",
+        "g1_evidence_binding",
     }
     if not isinstance(value, Mapping) or set(value) != expected:
         raise G3Blocked("g3_upstream_binding_invalid")
@@ -795,12 +865,17 @@ def _validate_upstream_binding(value: object) -> dict[str, object]:
         copied["platform_invariants"],
     )
     copied.update(invariant_projection)
+    copied["g1_evidence_binding"] = _validate_g1_evidence_binding(
+        copied["g1_evidence_binding"]
+    )
     for field in required_hashes:
         _require_sha256(copied[field], "g3_upstream_binding_invalid")
     _require_nonempty(copied["g2_input_set_id"], "g3_upstream_binding_invalid")
     if (
         copied["g2_provider_identity_sha256"]
         == copied["g2_oracle_identity_sha256"]
+        or copied["g1_evidence_binding"]["g1_source_manifest_sha256"]
+        != copied["g1_source_manifest_sha256"]
     ):
         raise G3Blocked("g3_provider_oracle_identity_not_separated")
     return copied
@@ -826,6 +901,10 @@ def build_g3_effective_config(
         or input_audit.get("gate_id") != "g3"
         or input_audit.get("run_id") != validated_run_id
         or input_audit.get("formal_evidence_eligible") is not True
+        or _validate_g1_evidence_binding(
+            input_audit.get("g1_evidence_binding")
+        )
+        != upstream["g1_evidence_binding"]
         or code_lineage.get("schema_version") != "xunce-mid-dual-code/v1"
         or not _is_sha256(code_lineage.get("code_sha256"))
     ):
@@ -851,6 +930,7 @@ def build_g3_effective_config(
                 "platform_invariants_audit.json"
             ),
         },
+        "g1_evidence_binding": dict(upstream["g1_evidence_binding"]),
         "upstream_binding": upstream,
     }
 
@@ -1491,14 +1571,23 @@ def load_verified_g1_root(
         or snapshot["report.md"].decode("utf-8") != g1.render_g1_report(recomputed)
     ):
         raise G3Blocked("g3_g1_native_summary_report_invalid")
+    assessment_binding = _validate_g1_evidence_binding(
+        {
+            "g1_evidence_kind": G1_NATIVE_EVIDENCE_KIND,
+            "g1_source_manifest_sha256": manifest_sha256,
+        }
+    )
     return {
         "root": root,
+        "evidence_root": root,
         "manifest_sha256": manifest_sha256,
         "config": config,
         "input_audit": input_audit,
         "coverage_rows": coverage_rows,
         "native_summary": recomputed,
         "trace_row_count": len(trace_ids),
+        "g1_evidence_kind": G1_NATIVE_EVIDENCE_KIND,
+        "assessment_binding": assessment_binding,
         "platform_invariants": g1_platform_projection[
             "platform_invariants"
         ],
@@ -1506,6 +1595,301 @@ def load_verified_g1_root(
             stage6_config_bytes
         ),
     }
+
+
+def _assessment_split_projection(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    values = [
+        _finite_number(
+            row.get("coverage"),
+            "g3_g1_existing_run_assessment_invalid",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        for row in rows
+    ]
+    return {
+        "sample_count": len(rows),
+        "mean": sum(values) / len(values),
+        "coverage_80_count": sum(
+            value >= MID_COVERAGE_THRESHOLD for value in values
+        ),
+        "coverage_99_count": sum(
+            value >= FINAL_COVERAGE_THRESHOLD for value in values
+        ),
+        "safety_violation_count": sum(
+            _require_exact_int(
+                row.get("safety_violation_count"),
+                "g3_g1_existing_run_assessment_invalid",
+            )
+            for row in rows
+        ),
+        "masked_action_count": sum(
+            _require_exact_int(
+                row.get("masked_action_count"),
+                "g3_g1_existing_run_assessment_invalid",
+            )
+            for row in rows
+        ),
+    }
+
+
+def load_verified_existing_g1_assessment_source(
+    *,
+    root: Path,
+    frozen_bundle: Mapping[str, object],
+    envelope_root: Path,
+    assessment_module: object | None = None,
+) -> dict[str, object]:
+    assessment = assessment_module or _import_local_script(
+        "xunce_mid_dual_g1_existing_run_assessment"
+    )
+    try:
+        verified = assessment.verify_existing_run_assessment(
+            envelope_root=envelope_root,
+            expected_source_root=root,
+        )
+    except Exception as exc:
+        raise G3Blocked("g3_g1_existing_run_assessment_invalid") from exc
+
+    required_hash_fields = (
+        "phase_snapshot_sha256",
+        "stop_evidence_sha256",
+        "review_manifest_sha256",
+        "review_result_sha256",
+        "envelope_sha256",
+        "envelope_manifest_sha256",
+        "verifier_source_sha256",
+    )
+    if (
+        getattr(verified, "source_root", None) != root
+        or getattr(verified, "envelope_root", None) != envelope_root
+        or getattr(verified, "assessment_use_status", None)
+        != "authorized_existing_run"
+        or getattr(verified, "strict_prestart_lineage_status", None)
+        != "not_satisfied"
+        or getattr(verified, "lineage_limitation_acknowledged", None)
+        is not True
+        or getattr(verified, "numerical_gate_status", None)
+        != "recomputed_from_raw_rows"
+        or getattr(verified, "numerical_result_status", None)
+        not in {"passed", "failed"}
+        or any(
+            not _is_sha256(getattr(verified, field, None))
+            for field in required_hash_fields
+        )
+    ):
+        raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+
+    snapshot = getattr(verified, "snapshot", None)
+    review_metrics = getattr(verified, "review_metrics", None)
+    if not isinstance(snapshot, Mapping) or not isinstance(
+        review_metrics,
+        Mapping,
+    ):
+        raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+    config_bytes = snapshot.get("config.json")
+    if not isinstance(config_bytes, bytes):
+        raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+    config = _parse_json_bytes(
+        config_bytes,
+        "g3_g1_existing_run_assessment_invalid",
+    )
+    checkpoint = config.get("checkpoint")
+    scenario = config.get("scenario_manifest")
+    if (
+        config.get("schema_version")
+        != "xunce-mid-dual-g1-effective-config/v1"
+        or config.get("gate_id") != "g1"
+        or config.get("runner_id")
+        != "run_xunce_mid_dual_g1_coverage/v1"
+        or config.get("scale_profile") != SCALE_PROFILE
+        or config.get("run_id") != "g1-formal-20260727-0650-cst"
+        or config.get("mode") != "formal"
+        or config.get("output_root")
+        != str(root).replace("\\", "/")
+        or not isinstance(checkpoint, Mapping)
+        or checkpoint.get("update") != 80
+        or checkpoint.get("sha256") != UPDATE80_CHECKPOINT_SHA256
+        or checkpoint.get("policy_state_sha256")
+        != UPDATE80_POLICY_STATE_SHA256
+        or not isinstance(scenario, Mapping)
+        or scenario.get("sha256") != frozen_bundle.get("manifest_sha256")
+        or any(
+            not _is_sha256(config.get(field))
+            for field in ("config_sha256", "input_sha256", "code_sha256")
+        )
+    ):
+        raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+
+    all_rows: list[dict[str, object]] = []
+    coverage_rows: list[dict[str, object]] = []
+    for phase_id, split in (("p03", "test_q24"), ("p04", "unseen24")):
+        payload = snapshot.get(f"phases/{phase_id}/a01/results.jsonl")
+        if not isinstance(payload, bytes):
+            raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+        phase_rows = _parse_jsonl_bytes(
+            payload,
+            "g3_g1_existing_run_assessment_invalid",
+        )
+        selected = [
+            dict(row)
+            for row in phase_rows
+            if row.get("row_kind") == "coverage_episode"
+        ]
+        if len(selected) != 24 or any(
+            row.get("phase_id") != phase_id or row.get("split") != split
+            for row in selected
+        ):
+            raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+        all_rows.extend(dict(row) for row in phase_rows)
+        coverage_rows.extend(selected)
+
+    _g1_index(coverage_rows)
+    for row in coverage_rows:
+        if (
+            row.get("run_id") != config["run_id"]
+            or row.get("config_sha256") != config["config_sha256"]
+            or row.get("input_sha256") != config["input_sha256"]
+            or row.get("code_sha256") != config["code_sha256"]
+            or row.get("scenario_manifest_sha256")
+            != frozen_bundle.get("manifest_sha256")
+        ):
+            raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+
+    metrics_splits = review_metrics.get("splits")
+    if (
+        review_metrics.get("schema_version")
+        != "xunce-mid-dual-g1-existing-run-independent-recompute/v1"
+        or review_metrics.get("formal_episode_count") != 48
+        or review_metrics.get("split_order") != ["test_q24", "unseen24"]
+        or not isinstance(metrics_splits, Mapping)
+        or set(metrics_splits) != {"test_q24", "unseen24"}
+        or not _is_sha256(review_metrics.get("phase_state_sha256"))
+        or review_metrics.get("input_audit_canonical_sha256")
+        != config["input_sha256"]
+        or review_metrics.get("scenario_manifest_sha256")
+        != frozen_bundle.get("manifest_sha256")
+        or type(review_metrics.get("max_traversable_slope_deg")) is not float
+        or review_metrics.get("max_traversable_slope_deg")
+        != MAX_TRAVERSABLE_SLOPE_DEG
+        or review_metrics.get("safety_clean") is not True
+        or review_metrics.get("masked_action_clean") is not True
+        or review_metrics.get("review_result_status")
+        != getattr(verified, "numerical_result_status")
+        or review_metrics.get("replay_required") is not False
+        or review_metrics.get("replay_status") != "not_run_by_ruling"
+    ):
+        raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+    for split in ("test_q24", "unseen24"):
+        split_rows = [
+            row for row in coverage_rows if row.get("split") == split
+        ]
+        recomputed = _assessment_split_projection(split_rows)
+        stored_split = metrics_splits.get(split)
+        if not isinstance(stored_split, Mapping):
+            raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+        for field in (
+            "sample_count",
+            "coverage_80_count",
+            "coverage_99_count",
+            "safety_violation_count",
+            "masked_action_count",
+        ):
+            if stored_split.get(field) != recomputed[field]:
+                raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+        if (
+            not math.isclose(
+                _finite_number(
+                    stored_split.get("mean"),
+                    "g3_g1_existing_run_assessment_invalid",
+                ),
+                float(recomputed["mean"]),
+                rel_tol=0.0,
+                abs_tol=1.0e-15,
+            )
+            or stored_split.get("integer_denominator_check") != "passed"
+            or stored_split.get("phase_audit_equality") is not True
+        ):
+            raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+
+    binding = _validate_g1_evidence_binding(
+        {
+            "g1_evidence_kind": G1_ASSESSMENT_EVIDENCE_KIND,
+            "g1_source_manifest_sha256": (
+                verified.envelope_manifest_sha256
+            ),
+            "assessment_envelope_sha256": verified.envelope_sha256,
+            "assessment_manifest_sha256": (
+                verified.envelope_manifest_sha256
+            ),
+            "phase_snapshot_sha256": verified.phase_snapshot_sha256,
+            "stop_evidence_sha256": verified.stop_evidence_sha256,
+            "review_manifest_sha256": verified.review_manifest_sha256,
+            "review_result_sha256": verified.review_result_sha256,
+            "assessment_use_status": verified.assessment_use_status,
+            "strict_prestart_lineage_status": (
+                verified.strict_prestart_lineage_status
+            ),
+            "lineage_limitation_acknowledged": (
+                verified.lineage_limitation_acknowledged
+            ),
+            "numerical_gate_status": verified.numerical_gate_status,
+            "numerical_result_status": verified.numerical_result_status,
+        }
+    )
+    return {
+        "root": root,
+        "evidence_root": envelope_root,
+        "manifest_sha256": verified.envelope_manifest_sha256,
+        "config": config,
+        "coverage_rows": coverage_rows,
+        "review_metrics": dict(review_metrics),
+        "trace_row_count": len(all_rows) - len(coverage_rows),
+        "g1_evidence_kind": G1_ASSESSMENT_EVIDENCE_KIND,
+        "assessment_binding": binding,
+        "platform_invariants": {
+            "wheel": {
+                "max_traversable_slope_deg": MAX_TRAVERSABLE_SLOPE_DEG,
+            }
+        },
+        "platform_invariants_source_sha256": (
+            verified.verifier_source_sha256
+        ),
+    }
+
+
+def load_verified_g1_source(
+    *,
+    root: Path,
+    frozen_bundle: Mapping[str, object],
+    g1_assessment_envelope: Path | None,
+) -> dict[str, object]:
+    assessment = _import_local_script(
+        "xunce_mid_dual_g1_existing_run_assessment"
+    )
+    authorized_root = Path(str(assessment.AUTHORIZED_SOURCE_ROOT))
+    _, normalized_root = _normalized_windows_path(
+        root,
+        "g3_g1_existing_run_assessment_scope_mismatch",
+    )
+    _, normalized_authorized = _normalized_windows_path(
+        authorized_root,
+        "g3_g1_existing_run_assessment_scope_mismatch",
+    )
+    if normalized_root == normalized_authorized:
+        if g1_assessment_envelope is None:
+            raise G3Blocked("g3_g1_existing_run_assessment_required")
+        return load_verified_existing_g1_assessment_source(
+            root=root,
+            frozen_bundle=frozen_bundle,
+            envelope_root=g1_assessment_envelope,
+            assessment_module=assessment,
+        )
+    if g1_assessment_envelope is not None:
+        raise G3Blocked("g3_g1_existing_run_assessment_scope_mismatch")
+    return load_verified_g1_root(root, frozen_bundle=frozen_bundle)
 
 
 def _resolve_g2_execution_bundle(
@@ -1535,6 +1919,295 @@ def _resolve_g2_execution_bundle(
     return matches[0]
 
 
+def _validate_g2_runtime_source_closure_audit(
+    value: object,
+) -> dict[str, object]:
+    schema = "xunce-mid-dual-path-planner-runtime-source-closure/v1"
+    if not isinstance(value, Mapping) or set(value) != {
+        "schema_version",
+        "submodule_commit",
+        "dirty_inventory",
+        "required_sources",
+        "active_platforms",
+        "platform_invariants",
+        "path_planner_runtime_source_closure_sha256",
+    }:
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    commit = value.get("submodule_commit")
+    dirty_inventory = value.get("dirty_inventory")
+    required_sources = value.get("required_sources")
+    if (
+        value.get("schema_version") != schema
+        or not isinstance(commit, str)
+        or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+        or not isinstance(dirty_inventory, list)
+        or not isinstance(required_sources, list)
+    ):
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    validated_inventory: list[dict[str, str]] = []
+    inventory_paths: set[str] = set()
+    for row in dirty_inventory:
+        if (
+            not isinstance(row, Mapping)
+            or set(row) != {"path", "status"}
+            or not isinstance(row.get("path"), str)
+            or "\\" in str(row.get("path"))
+            or not isinstance(row.get("status"), str)
+            or len(str(row["status"])) != 2
+            or row["path"] in inventory_paths
+            or PurePosixPath(str(row["path"])).is_absolute()
+            or any(
+                part in {"", ".", ".."}
+                for part in PurePosixPath(str(row["path"])).parts
+            )
+        ):
+            raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+        inventory_paths.add(str(row["path"]))
+        validated_inventory.append(
+            {"path": str(row["path"]), "status": str(row["status"])}
+        )
+    if validated_inventory != sorted(
+        validated_inventory,
+        key=lambda row: row["path"],
+    ):
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+
+    validated_sources: list[dict[str, object]] = []
+    source_paths: set[str] = set()
+    for row in required_sources:
+        if not isinstance(row, Mapping) or set(row) != {
+            "logical_path",
+            "size_bytes",
+            "sha256",
+        }:
+            raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+        logical_path = row.get("logical_path")
+        size_bytes = row.get("size_bytes")
+        if (
+            not isinstance(logical_path, str)
+            or "\\" in str(logical_path)
+            or not logical_path.startswith("src/path_planner/v2/")
+            or not logical_path.endswith(".py")
+            or PurePosixPath(logical_path).is_absolute()
+            or any(
+                part in {"", ".", ".."}
+                for part in PurePosixPath(logical_path).parts
+            )
+            or type(size_bytes) is not int
+            or size_bytes < 0
+            or logical_path in source_paths
+        ):
+            raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+        source_paths.add(logical_path)
+        validated_sources.append(
+            {
+                "logical_path": logical_path,
+                "size_bytes": size_bytes,
+                "sha256": _require_sha256(
+                    row.get("sha256"),
+                    "g3_g2_runtime_source_closure_invalid",
+                ),
+            }
+        )
+    if not validated_sources or validated_sources != sorted(
+        validated_sources,
+        key=lambda row: str(row["logical_path"]),
+    ):
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    required_layers = {
+        "src/path_planner/v2/api.py",
+        "src/path_planner/v2/formal_request_codec.py",
+        "src/path_planner/v2/profiles.py",
+        "src/path_planner/v2/terrain.py",
+        "src/path_planner/v2/hopper_authority.py",
+        "src/path_planner/v2/hopper_api.py",
+        "src/path_planner/v2/validation.py",
+        "src/path_planner/v2/hopper_route_validation.py",
+    }
+    if not required_layers.issubset(source_paths) or not any(
+        path.startswith("src/path_planner/v2/providers/")
+        for path in source_paths
+    ):
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    invariant_projection = validate_platform_invariants(
+        value.get("active_platforms"),
+        value.get("platform_invariants"),
+    )
+    core = {
+        "schema_version": schema,
+        "submodule_commit": commit,
+        "dirty_inventory": validated_inventory,
+        "required_sources": validated_sources,
+        **invariant_projection,
+    }
+    rebuilt = {
+        **core,
+        "path_planner_runtime_source_closure_sha256": _domain_hash(
+            schema,
+            _canonical_bytes(core),
+        ),
+    }
+    if dict(value) != rebuilt:
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    return rebuilt
+
+
+def validate_g2_r6_runtime_evidence(
+    *,
+    config: Mapping[str, object],
+    input_audit: Mapping[str, object],
+    approval: Mapping[str, object],
+    hopper_resolution: Mapping[str, object],
+    phase_audits: Mapping[str, Mapping[str, object]],
+    summary: Mapping[str, object],
+    runtime_closure_audit: Mapping[str, object],
+    platform_invariants_audit: Mapping[str, object],
+    local_source_sha256: object,
+) -> dict[str, object]:
+    expected_evidence_binding = {
+        "schema_version": "xunce-mid-dual-g2-evidence-binding/v1",
+        "input_audit_path": "g2_input_audit.json",
+        "lineage_audit_path": "lineage_audit.json",
+        "report_audit_path": "g2_report_audit.json",
+        "runtime_source_closure_audit_path": (
+            "g2_runtime_source_closure_audit.json"
+        ),
+        "platform_invariants_audit_path": (
+            "g2_platform_invariants_audit.json"
+        ),
+    }
+    if config.get("evidence_binding") != expected_evidence_binding:
+        raise G3Blocked("g3_g2_config_invalid")
+    validate_platform_invariants(
+        config.get("active_platforms"),
+        config.get("platform_invariants"),
+    )
+    runtime_sha256 = _require_sha256(
+        config.get("path_planner_runtime_source_closure_sha256"),
+        "g3_g2_runtime_source_closure_invalid",
+    )
+    validated_closure = _validate_g2_runtime_source_closure_audit(
+        runtime_closure_audit
+    )
+    if (
+        validated_closure.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_sha256
+        or input_audit.get("path_planner_runtime_source_closure")
+        != validated_closure
+        or input_audit.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_sha256
+        or approval.get("path_planner_runtime_source_closure")
+        != validated_closure
+        or approval.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_sha256
+        or hopper_resolution.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_sha256
+        or set(phase_audits) != {"p01", "p02", "p03", "p04"}
+    ):
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    for phase_id in ("p01", "p02", "p03", "p04"):
+        phase_audit = phase_audits[phase_id]
+        validate_platform_invariants(
+            phase_audit.get("active_platforms"),
+            phase_audit.get("platform_invariants"),
+        )
+        if (
+            phase_audit.get(
+                "path_planner_runtime_source_closure_sha256"
+            )
+            != runtime_sha256
+        ):
+            raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+    validate_platform_invariants(
+        input_audit.get("active_platforms"),
+        input_audit.get("platform_invariants"),
+    )
+    validate_platform_invariants(
+        summary.get("active_platforms"),
+        summary.get("platform_invariants"),
+    )
+    if (
+        summary.get("path_planner_runtime_source_closure_sha256")
+        != runtime_sha256
+    ):
+        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
+
+    local_sha256 = _require_sha256(
+        local_source_sha256,
+        "g3_g2_lineage_invalid",
+    )
+    expected_code_sha256 = _domain_hash(
+        "xunce-mid-dual-g2-code-with-runtime-source/v1",
+        _canonical_bytes(
+            {
+                "local_source_sha256": local_sha256,
+                "path_planner_runtime_source_closure_sha256": (
+                    runtime_sha256
+                ),
+            }
+        ),
+    )
+    if config.get("code_sha256") != expected_code_sha256:
+        raise G3Blocked("g3_g2_summary_lineage_invalid")
+
+    expected_platform_audit_keys = {
+        "schema_version",
+        "gate_id",
+        "scale_profile",
+        "run_id",
+        "status",
+        "formal_evidence_eligible",
+        "active_platforms",
+        "platform_invariants",
+        "config_sha256",
+        "input_sha256",
+        "code_sha256",
+        "path_planner_runtime_source_closure_sha256",
+    }
+    if set(platform_invariants_audit) != expected_platform_audit_keys:
+        raise G3Blocked("g3_g2_platform_invariants_audit_invalid")
+    validate_platform_invariants(
+        platform_invariants_audit.get("active_platforms"),
+        platform_invariants_audit.get("platform_invariants"),
+    )
+    if (
+        platform_invariants_audit.get("schema_version")
+        != "xunce-mid-dual-g2-platform-invariants-audit/v1"
+        or platform_invariants_audit.get("gate_id") != "g2"
+        or platform_invariants_audit.get("scale_profile") != SCALE_PROFILE
+        or platform_invariants_audit.get("run_id") != config.get("run_id")
+        or platform_invariants_audit.get("status") != "passed"
+        or platform_invariants_audit.get("formal_evidence_eligible")
+        is not True
+        or platform_invariants_audit.get("config_sha256")
+        != config.get("config_sha256")
+        or platform_invariants_audit.get("input_sha256")
+        != config.get("input_sha256")
+        or platform_invariants_audit.get("code_sha256")
+        != config.get("code_sha256")
+        or platform_invariants_audit.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_sha256
+    ):
+        raise G3Blocked("g3_g2_platform_invariants_audit_invalid")
+    return {
+        "runtime_source_closure": dict(validated_closure),
+        "path_planner_runtime_source_closure_sha256": runtime_sha256,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "expected_code_sha256": expected_code_sha256,
+    }
+
+
 def load_verified_g2_root(root: Path) -> dict[str, object]:
     g2 = _import_local_script("run_xunce_mid_dual_g2_planning_time")
 
@@ -1559,6 +2232,7 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         "evidence_binding",
         "active_platforms",
         "platform_invariants",
+        "path_planner_runtime_source_closure_sha256",
         "config_sha256",
     }
     if (
@@ -1581,13 +2255,6 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         or config.get("source_contract_sha256")
         != _canonical_sha256(g2.G2_SOURCE_CONTRACT)
         or config.get("config_sha256") != manifest.get("config_sha256")
-        or config.get("evidence_binding")
-        != {
-            "schema_version": "xunce-mid-dual-g2-evidence-binding/v1",
-            "input_audit_path": "g2_input_audit.json",
-            "lineage_audit_path": "lineage_audit.json",
-            "report_audit_path": "g2_report_audit.json",
-        }
     ):
         raise G3Blocked("g3_g2_config_invalid")
     phases = _accepted_phase_snapshot(
@@ -1675,6 +2342,9 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
             "formal_evidence_eligible": True,
             "active_platforms": list(ACTIVE_PLATFORMS),
             "platform_invariants": PLATFORM_INVARIANTS,
+            "path_planner_runtime_source_closure_sha256": (
+                config.get("path_planner_runtime_source_closure_sha256")
+            ),
             "recomputed": recomputed,
         }
         or report != g2._render_report(stored)  # noqa: SLF001
@@ -1683,14 +2353,13 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
             summary=stored,
             report=report,
         )
-        or _common_lineage_code_sha256(
-            snapshot=snapshot,
-            expected_sources=g2.G2_REQUIRED_SOURCE_RELATIVE_PATHS,
-            reason="g3_g2_lineage_invalid",
-        )
-        != config.get("code_sha256")
     ):
         raise G3Blocked("g3_g2_summary_lineage_invalid")
+    local_source_sha256 = _common_lineage_code_sha256(
+        snapshot=snapshot,
+        expected_sources=g2.G2_REQUIRED_SOURCE_RELATIVE_PATHS,
+        reason="g3_g2_lineage_invalid",
+    )
     input_audit = _parse_json_bytes(
         snapshot.get("g2_input_audit.json", b""),
         "g3_g2_input_audit_invalid",
@@ -1766,22 +2435,14 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         )
     ):
         raise G3Blocked("g3_g2_o2_cohort_identity_invalid")
-    runtime_closure_sha256 = _require_sha256(
-        input_audit.get("path_planner_runtime_source_closure_sha256"),
+    runtime_closure_bytes = snapshot.get(
+        "g2_runtime_source_closure_audit.json",
+        b"",
+    )
+    runtime_closure_audit = _parse_json_bytes(
+        runtime_closure_bytes,
         "g3_g2_runtime_source_closure_invalid",
     )
-    if (
-        approval.get("path_planner_runtime_source_closure_sha256")
-        != runtime_closure_sha256
-        or any(
-            phases[phase_id]["audit"].get(
-                "path_planner_runtime_source_closure_sha256"
-            )
-            != runtime_closure_sha256
-            for phase_id in g2.G2_REQUIRED_PHASE_IDS
-        )
-    ):
-        raise G3Blocked("g3_g2_runtime_source_closure_invalid")
     platform_audit_bytes = snapshot.get(
         "g2_platform_invariants_audit.json",
         b"",
@@ -1790,41 +2451,19 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         platform_audit_bytes,
         "g3_g2_platform_invariants_audit_invalid",
     )
-    if (
-        set(platform_audit)
-        != {
-            "schema_version",
-            "gate_id",
-            "scale_profile",
-            "run_id",
-            "status",
-            "formal_evidence_eligible",
-            "active_platforms",
-            "platform_invariants",
-            "config_sha256",
-            "input_sha256",
-            "code_sha256",
-            "path_planner_runtime_source_closure_sha256",
-        }
-        or platform_audit.get("schema_version")
-        != "xunce-mid-dual-g2-platform-invariants-audit/v1"
-        or platform_audit.get("gate_id") != "g2"
-        or platform_audit.get("scale_profile") != SCALE_PROFILE
-        or platform_audit.get("run_id") != config.get("run_id")
-        or platform_audit.get("status") != "passed"
-        or platform_audit.get("formal_evidence_eligible") is not True
-        or platform_audit.get("config_sha256") != config.get("config_sha256")
-        or platform_audit.get("input_sha256") != config.get("input_sha256")
-        or platform_audit.get("code_sha256") != config.get("code_sha256")
-        or platform_audit.get(
-            "path_planner_runtime_source_closure_sha256"
-        )
-        != runtime_closure_sha256
-    ):
-        raise G3Blocked("g3_g2_platform_invariants_audit_invalid")
-    validate_platform_invariants(
-        platform_audit.get("active_platforms"),
-        platform_audit.get("platform_invariants"),
+    runtime_evidence = validate_g2_r6_runtime_evidence(
+        config=config,
+        input_audit=input_audit,
+        approval=approval,
+        hopper_resolution=hopper,
+        phase_audits={
+            phase_id: phases[phase_id]["audit"]
+            for phase_id in g2.G2_REQUIRED_PHASE_IDS
+        },
+        summary=stored,
+        runtime_closure_audit=runtime_closure_audit,
+        platform_invariants_audit=platform_audit,
+        local_source_sha256=local_source_sha256,
     )
     calls_by_request: dict[tuple[str, str, str], list[dict[str, object]]] = {}
     for row in p04_rows:
@@ -1868,6 +2507,15 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         "platform_invariants": PLATFORM_INVARIANTS,
         "platform_invariants_audit_sha256": _bytes_sha256(
             platform_audit_bytes
+        ),
+        "runtime_source_closure": runtime_evidence[
+            "runtime_source_closure"
+        ],
+        "path_planner_runtime_source_closure_sha256": runtime_evidence[
+            "path_planner_runtime_source_closure_sha256"
+        ],
+        "runtime_source_closure_audit_sha256": _bytes_sha256(
+            runtime_closure_bytes
         ),
         "provider_source": provider,
         "oracle_source": oracle,
@@ -3703,6 +4351,7 @@ def _build_g3_input_audit(
     cohort_calls = g2_source.get("cohort_calls")
     g1_invariants = g1_source.get("platform_invariants")
     g2_invariants = g2_source.get("platform_invariants")
+    g1_evidence_binding = _g1_source_evidence_binding(g1_source)
     if (
         not isinstance(selected, Mapping)
         or not isinstance(g1_rows, list)
@@ -3811,6 +4460,7 @@ def _build_g3_input_audit(
         "platform_invariants": PLATFORM_INVARIANTS,
         "g1_source_manifest_sha256": g1_source["manifest_sha256"],
         "g2_source_manifest_sha256": g2_source["manifest_sha256"],
+        "g1_evidence_binding": g1_evidence_binding,
         "wheel_selections": wheel_selections,
         "interface_selections": interface_selections,
     }
@@ -3860,6 +4510,7 @@ def _build_upstream_binding(
             ),
             "active_platforms": list(ACTIVE_PLATFORMS),
             "platform_invariants": PLATFORM_INVARIANTS,
+            "g1_evidence_binding": _g1_source_evidence_binding(g1_source),
         }
     )
 
@@ -3871,6 +4522,37 @@ def _build_upstream_lineage_audit(
     g1_source: Mapping[str, object],
     g2_source: Mapping[str, object],
 ) -> dict[str, object]:
+    g1_binding = _g1_source_evidence_binding(g1_source)
+    g1_projection = {
+        "root": str(g1_source["root"]).replace("\\", "/"),
+        "evidence_root": str(
+            g1_source.get("evidence_root", g1_source["root"])
+        ).replace("\\", "/"),
+        "manifest_sha256": g1_source["manifest_sha256"],
+        "config_sha256": g1_source["config"]["config_sha256"],
+        "input_sha256": g1_source["config"]["input_sha256"],
+        "code_sha256": g1_source["config"]["code_sha256"],
+        "coverage_row_count": len(g1_source["coverage_rows"]),
+        "trace_row_count": g1_source["trace_row_count"],
+        "g1_evidence_binding": g1_binding,
+        "platform_invariants": dict(
+            g1_source["platform_invariants"]
+        ),
+        "platform_invariants_source_sha256": g1_source[
+            "platform_invariants_source_sha256"
+        ],
+    }
+    if g1_binding["g1_evidence_kind"] == G1_NATIVE_EVIDENCE_KIND:
+        g1_projection["native_summary_sha256"] = _canonical_sha256(
+            g1_source["native_summary"]
+        )
+    else:
+        review_metrics = g1_source.get("review_metrics")
+        if not isinstance(review_metrics, Mapping):
+            raise G3Blocked("g3_g1_existing_run_assessment_invalid")
+        g1_projection["review_metrics_sha256"] = _canonical_sha256(
+            review_metrics
+        )
     return {
         "schema_version": "xunce-mid-dual-g3-upstream-lineage/v1",
         "gate_id": "g3",
@@ -3886,24 +4568,7 @@ def _build_upstream_lineage_audit(
                 for name, values in frozen["selected"].items()
             },
         },
-        "g1": {
-            "root": str(g1_source["root"]).replace("\\", "/"),
-            "manifest_sha256": g1_source["manifest_sha256"],
-            "config_sha256": g1_source["config"]["config_sha256"],
-            "input_sha256": g1_source["config"]["input_sha256"],
-            "code_sha256": g1_source["config"]["code_sha256"],
-            "coverage_row_count": len(g1_source["coverage_rows"]),
-            "trace_row_count": g1_source["trace_row_count"],
-            "native_summary_sha256": _canonical_sha256(
-                g1_source["native_summary"]
-            ),
-            "platform_invariants": dict(
-                g1_source["platform_invariants"]
-            ),
-            "platform_invariants_source_sha256": g1_source[
-                "platform_invariants_source_sha256"
-            ],
-        },
+        "g1": g1_projection,
         "g2": {
             "root": str(g2_source["root"]).replace("\\", "/"),
             "execution_root": str(
@@ -3925,6 +4590,12 @@ def _build_upstream_lineage_audit(
             ),
             "platform_invariants_audit_sha256": g2_source[
                 "platform_invariants_audit_sha256"
+            ],
+            "path_planner_runtime_source_closure_sha256": g2_source[
+                "path_planner_runtime_source_closure_sha256"
+            ],
+            "runtime_source_closure_audit_sha256": g2_source[
+                "runtime_source_closure_audit_sha256"
             ],
         },
     }
@@ -4021,7 +4692,11 @@ def _revalidate_g3_accepted_prefix(
     *,
     upstream_lineage_sha256: str,
     platform_invariants_audit_sha256: str,
+    g1_evidence_binding: Mapping[str, object],
 ) -> None:
+    expected_g1_binding = _validate_g1_evidence_binding(
+        g1_evidence_binding
+    )
     previous: list[str] = []
     for phase_id in store.accepted_phase_ids:
         rows = _accepted_g3_phase_rows(store, phase_id)
@@ -4054,6 +4729,10 @@ def _revalidate_g3_accepted_prefix(
             != upstream_lineage_sha256
             or audit.get("platform_invariants_audit_sha256")
             != platform_invariants_audit_sha256
+            or _validate_g1_evidence_binding(
+                audit.get("g1_evidence_binding")
+            )
+            != expected_g1_binding
             or audit.get("phase_projection") != expected_projection
             or any(
                 audit.get(field) != first.get(field)
@@ -4556,7 +5235,7 @@ def _render_g3_report(summary: Mapping[str, object]) -> str:
         "不构成全尺度验收。",
         f"- 缩减规模结论：{conclusion}",
         "",
-        "所有正式样本仅来自已验证的 Task3 freeze、G1 原生正式根和 "
+        "所有正式样本仅来自已验证的 Task3 freeze、G1 独立复算数值证据和 "
         "Task8 G2 正式根；p01 为十个 wheel episode 的逐步闭环记录，"
         "p02 为 3 条 legged 与 3 条 Hopper 生产接口回放。",
     ]
@@ -4864,6 +5543,7 @@ def run_g3(
     g2_root: str | Path,
     run_id: str,
     mode: str,
+    g1_assessment_envelope: str | Path | None = None,
 ) -> dict[str, object]:
     """创建或恢复唯一的 G3 正式执行链。"""
 
@@ -4888,9 +5568,14 @@ def run_g3(
     code_lineage = compute_g3_code_lineage()
     try:
         frozen = load_verified_frozen_bundle(roots["frozen_bundle_root"])
-        g1_source = load_verified_g1_root(
-            roots["g1_root"],
+        g1_source = load_verified_g1_source(
+            root=roots["g1_root"],
             frozen_bundle=frozen,
+            g1_assessment_envelope=(
+                None
+                if g1_assessment_envelope is None
+                else Path(g1_assessment_envelope)
+            ),
         )
         g2_source = load_verified_g2_root(roots["g2_root"])
     except G3Blocked as exc:
@@ -4927,6 +5612,7 @@ def run_g3(
         g2_source=g2_source,
     )
     upstream_lineage_sha256 = _json_artifact_sha256(upstream_lineage)
+    g1_evidence_binding = _g1_source_evidence_binding(g1_source)
     effective_config = build_g3_effective_config(
         base_config=base_config,
         run_id=validated_run_id,
@@ -4947,6 +5633,7 @@ def run_g3(
                 "freeze_manifest_sha256": frozen["manifest_sha256"],
                 "g1_source_manifest_sha256": g1_source["manifest_sha256"],
                 "g2_source_manifest_sha256": g2_source["manifest_sha256"],
+                "g1_evidence_binding": g1_evidence_binding,
             },
         }
     store, newly_created = _open_g3_store(
@@ -4990,6 +5677,7 @@ def run_g3(
         platform_invariants_audit_sha256=(
             platform_invariants_audit_sha256
         ),
+        g1_evidence_binding=g1_evidence_binding,
     )
     if "p01" not in store.accepted_phase_ids:
         g1 = _import_local_script("run_xunce_mid_dual_g1_coverage")
@@ -5075,6 +5763,7 @@ def run_g3(
                 "frozen_manifest_sha256": frozen["manifest_sha256"],
                 "g1_source_manifest_sha256": g1_source["manifest_sha256"],
                 "g2_source_manifest_sha256": g2_source["manifest_sha256"],
+                "g1_evidence_binding": g1_evidence_binding,
                 "platform_invariants_audit_sha256": (
                     platform_invariants_audit_sha256
                 ),
@@ -5151,6 +5840,7 @@ def run_g3(
                 "g2_hopper_resolution_sha256": upstream_binding[
                     "g2_hopper_resolution_sha256"
                 ],
+                "g1_evidence_binding": g1_evidence_binding,
                 "platform_invariants_audit_sha256": (
                     platform_invariants_audit_sha256
                 ),
@@ -5168,6 +5858,7 @@ def run_g3(
         platform_invariants_audit_sha256=(
             platform_invariants_audit_sha256
         ),
+        g1_evidence_binding=g1_evidence_binding,
     )
     _validate_formal_row_lineage(
         wheel_rows=wheel_rows,
@@ -5250,6 +5941,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--frozen-bundle-root")
     parser.add_argument("--g1-root")
+    parser.add_argument("--g1-assessment-envelope")
     parser.add_argument("--g2-root")
     parser.add_argument("--run-id", required=True)
     parser.add_argument(
@@ -5288,6 +5980,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
             g2_root=args.g2_root,
             run_id=args.run_id,
             mode=args.mode,
+            g1_assessment_envelope=args.g1_assessment_envelope,
         )
     except G3Blocked as exc:
         result = {

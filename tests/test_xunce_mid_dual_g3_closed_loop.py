@@ -10,8 +10,9 @@ import inspect
 import io
 import json
 from pathlib import Path
+import struct
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -26,6 +27,14 @@ PLATFORM_INVARIANTS = {
     platform: {"max_traversable_slope_deg": 30.0}
     for platform in ACTIVE_PLATFORMS
 }
+AUTHORIZED_G1_ROOT = (
+    "D:/xunce/out/mid_dual/g1/g1-formal-20260727-0650-cst"
+)
+AUTHORIZED_G1_ENVELOPE = (
+    "D:/xunce/out/mid_dual/g1-assessment-use/"
+    "g1-existing-run-assessment-v1-"
+    "1e8a98015839b9190c86efc531134b7cbde1be393250cf40479b19a98c5b0fe8"
+)
 UPDATE80_CHECKPOINT_SHA256 = (
     "35e04c86f9f973af028fb08f0175d42ab45378d09e1f2b96ee6aad6e4c12b5b5"
 )
@@ -50,6 +59,176 @@ def _module() -> ModuleType:
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _jsonl_bytes(rows: list[dict[str, object]]) -> bytes:
+    return b"".join(
+        json.dumps(
+            row,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        + b"\n"
+        for row in rows
+    )
+
+
+def _framed_domain_sha256(domain: str, *parts: bytes) -> str:
+    payload = bytearray()
+    for part in (domain.encode("utf-8"), *parts):
+        payload.extend(struct.pack(">Q", len(part)))
+        payload.extend(part)
+    return hashlib.sha256(bytes(payload)).hexdigest()
+
+
+def _canonical_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _native_g1_evidence_binding(manifest_sha256: str) -> dict[str, object]:
+    return {
+        "g1_evidence_kind": "native_completed_run_v1",
+        "g1_source_manifest_sha256": manifest_sha256,
+    }
+
+
+def _g2_r6_runtime_fixture() -> dict[str, object]:
+    closure_schema = "xunce-mid-dual-path-planner-runtime-source-closure/v1"
+    source_paths = sorted(
+        (
+            "src/path_planner/v2/api.py",
+            "src/path_planner/v2/formal_request_codec.py",
+            "src/path_planner/v2/hopper_api.py",
+            "src/path_planner/v2/hopper_authority.py",
+            "src/path_planner/v2/hopper_route_validation.py",
+            "src/path_planner/v2/profiles.py",
+            "src/path_planner/v2/providers/fixture.py",
+            "src/path_planner/v2/terrain.py",
+            "src/path_planner/v2/validation.py",
+        )
+    )
+    closure_core = {
+        "schema_version": closure_schema,
+        "submodule_commit": "1" * 40,
+        "dirty_inventory": [],
+        "required_sources": [
+            {
+                "logical_path": path,
+                "size_bytes": index + 1,
+                "sha256": _sha(f"path-planner:{path}"),
+            }
+            for index, path in enumerate(source_paths)
+        ],
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": copy.deepcopy(PLATFORM_INVARIANTS),
+    }
+    closure = {
+        **closure_core,
+        "path_planner_runtime_source_closure_sha256": (
+            _framed_domain_sha256(
+                closure_schema,
+                _canonical_bytes(closure_core),
+            )
+        ),
+    }
+    closure_sha256 = str(
+        closure["path_planner_runtime_source_closure_sha256"]
+    )
+    local_source_sha256 = _sha("g2-local-source")
+    code_sha256 = _framed_domain_sha256(
+        "xunce-mid-dual-g2-code-with-runtime-source/v1",
+        _canonical_bytes(
+            {
+                "local_source_sha256": local_source_sha256,
+                "path_planner_runtime_source_closure_sha256": closure_sha256,
+            }
+        ),
+    )
+    config_sha256 = _sha("g2-config")
+    input_sha256 = _sha("g2-input")
+    config = {
+        "run_id": "g2-formal",
+        "config_sha256": config_sha256,
+        "input_sha256": input_sha256,
+        "code_sha256": code_sha256,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": copy.deepcopy(PLATFORM_INVARIANTS),
+        "path_planner_runtime_source_closure_sha256": closure_sha256,
+        "evidence_binding": {
+            "schema_version": "xunce-mid-dual-g2-evidence-binding/v1",
+            "input_audit_path": "g2_input_audit.json",
+            "lineage_audit_path": "lineage_audit.json",
+            "report_audit_path": "g2_report_audit.json",
+            "runtime_source_closure_audit_path": (
+                "g2_runtime_source_closure_audit.json"
+            ),
+            "platform_invariants_audit_path": (
+                "g2_platform_invariants_audit.json"
+            ),
+        },
+    }
+    input_audit = {
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": copy.deepcopy(PLATFORM_INVARIANTS),
+        "path_planner_runtime_source_closure": closure,
+        "path_planner_runtime_source_closure_sha256": closure_sha256,
+    }
+    approval = {
+        "path_planner_runtime_source_closure": closure,
+        "path_planner_runtime_source_closure_sha256": closure_sha256,
+    }
+    hopper_resolution = {
+        "path_planner_runtime_source_closure_sha256": closure_sha256,
+    }
+    phase_audits = {
+        phase_id: {
+            "active_platforms": list(ACTIVE_PLATFORMS),
+            "platform_invariants": copy.deepcopy(PLATFORM_INVARIANTS),
+            "path_planner_runtime_source_closure_sha256": closure_sha256,
+        }
+        for phase_id in ("p01", "p02", "p03", "p04")
+    }
+    summary = {
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": copy.deepcopy(PLATFORM_INVARIANTS),
+        "path_planner_runtime_source_closure_sha256": closure_sha256,
+    }
+    platform_audit = {
+        "schema_version": (
+            "xunce-mid-dual-g2-platform-invariants-audit/v1"
+        ),
+        "gate_id": "g2",
+        "scale_profile": SCALE_PROFILE,
+        "run_id": "g2-formal",
+        "status": "passed",
+        "formal_evidence_eligible": True,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": copy.deepcopy(PLATFORM_INVARIANTS),
+        "path_planner_runtime_source_closure_sha256": closure_sha256,
+        "config_sha256": config_sha256,
+        "input_sha256": input_sha256,
+        "code_sha256": code_sha256,
+    }
+    return {
+        "closure": closure,
+        "closure_sha256": closure_sha256,
+        "local_source_sha256": local_source_sha256,
+        "config": config,
+        "input_audit": input_audit,
+        "approval": approval,
+        "hopper_resolution": hopper_resolution,
+        "phase_audits": phase_audits,
+        "summary": summary,
+        "platform_audit": platform_audit,
+    }
 
 
 def _scenario_id(split: str, index: int) -> str:
@@ -125,6 +304,130 @@ def _g1_rows(*, coverage: float = 0.99) -> list[dict[str, object]]:
                 }
             )
     return rows
+
+
+def _existing_run_assessment_fixture(
+    *,
+    numerical_result_status: str = "failed",
+) -> tuple[SimpleNamespace, dict[str, object], list[dict[str, object]]]:
+    manifest_sha256 = _sha("frozen-scenario-manifest")
+    rows = _g1_rows(coverage=0.99)
+    if numerical_result_status == "failed":
+        for row in rows:
+            if (
+                row["split"] == "unseen24"
+                and int(row["episode_index"]) in {3, 10, 23}
+            ):
+                row["final_covered_cell_count"] = 200
+                row["coverage"] = 0.02
+                row["termination_reason"] = "no_candidate_done"
+    for row in rows:
+        row["run_id"] = "g1-formal-20260727-0650-cst"
+        row["scenario_manifest_sha256"] = manifest_sha256
+
+    config = {
+        "schema_version": "xunce-mid-dual-g1-effective-config/v1",
+        "gate_id": "g1",
+        "runner_id": "run_xunce_mid_dual_g1_coverage/v1",
+        "scale_profile": SCALE_PROFILE,
+        "run_id": "g1-formal-20260727-0650-cst",
+        "mode": "formal",
+        "output_root": AUTHORIZED_G1_ROOT,
+        "required_phase_ids": [
+            "p01",
+            "p02",
+            "p03",
+            "p04",
+            "p05",
+            "p06",
+            "p07",
+        ],
+        "checkpoint": {
+            "update": 80,
+            "sha256": UPDATE80_CHECKPOINT_SHA256,
+            "policy_state_sha256": UPDATE80_POLICY_STATE_SHA256,
+        },
+        "scenario_manifest": {
+            "sha256": manifest_sha256,
+        },
+        "config_sha256": _sha("g1-config"),
+        "input_sha256": _sha("g1-input"),
+        "code_sha256": _sha("g1-code"),
+    }
+    split_metrics: dict[str, dict[str, object]] = {}
+    for split in ("test_q24", "unseen24"):
+        values = [
+            float(row["coverage"]) for row in rows if row["split"] == split
+        ]
+        split_metrics[split] = {
+            "sample_count": 24,
+            "mean": sum(values) / 24,
+            "coverage_80_count": sum(value >= 0.80 for value in values),
+            "coverage_99_count": sum(value >= 0.99 for value in values),
+            "safety_violation_count": 0,
+            "masked_action_count": 0,
+            "integer_denominator_check": "passed",
+            "phase_audit_equality": True,
+        }
+    review_metrics = {
+        "schema_version": (
+            "xunce-mid-dual-g1-existing-run-independent-recompute/v1"
+        ),
+        "formal_episode_count": 48,
+        "split_order": ["test_q24", "unseen24"],
+        "splits": split_metrics,
+        "phase_state_sha256": _sha("phase-state"),
+        "input_audit_canonical_sha256": _sha("g1-input"),
+        "scenario_manifest_sha256": manifest_sha256,
+        "max_traversable_slope_deg": 30.0,
+        "safety_clean": True,
+        "masked_action_clean": True,
+        "review_result_status": numerical_result_status,
+        "replay_required": False,
+        "replay_status": "not_run_by_ruling",
+    }
+    snapshot = {
+        "config.json": (
+            json.dumps(config, ensure_ascii=False, sort_keys=True) + "\n"
+        ).encode("utf-8"),
+        "phase-state.jsonl": b"phase-state-fixture\n",
+        "phase-attempts.jsonl": b"phase-attempts-fixture\n",
+        "phases/p01/a01/audit.json": b"{}\n",
+        "phases/p01/a01/results.jsonl": b"",
+        "phases/p02/a01/audit.json": b"{}\n",
+        "phases/p02/a01/results.jsonl": b"",
+        "phases/p03/a01/audit.json": b"{}\n",
+        "phases/p03/a01/results.jsonl": _jsonl_bytes(
+            [row for row in rows if row["split"] == "test_q24"]
+        ),
+        "phases/p04/a01/audit.json": b"{}\n",
+        "phases/p04/a01/results.jsonl": _jsonl_bytes(
+            [row for row in rows if row["split"] == "unseen24"]
+        ),
+        "external/scenario-manifest.json": b"{}\n",
+    }
+    verified = SimpleNamespace(
+        source_root=Path(AUTHORIZED_G1_ROOT),
+        review_root=Path("D:/xunce/out/mid_dual/g1-review/review"),
+        envelope_root=Path(AUTHORIZED_G1_ENVELOPE),
+        phase_snapshot_sha256=_sha("phase-snapshot"),
+        stop_evidence_sha256=_sha("stop-evidence"),
+        review_manifest_sha256=_sha("review-manifest"),
+        review_result_sha256=_sha("review-result"),
+        envelope_sha256=_sha("assessment-envelope"),
+        envelope_manifest_sha256=_sha("assessment-manifest"),
+        verifier_source_sha256=_sha("assessment-verifier"),
+        assessment_use_status="authorized_existing_run",
+        strict_prestart_lineage_status="not_satisfied",
+        lineage_limitation_acknowledged=True,
+        numerical_gate_status="recomputed_from_raw_rows",
+        numerical_result_status=numerical_result_status,
+        review_metrics=review_metrics,
+        snapshot=snapshot,
+    )
+    return verified, {
+        "manifest_sha256": manifest_sha256,
+    }, rows
 
 
 def _timing_ns(total_ns: int = 100_000_000) -> dict[str, int]:
@@ -663,6 +966,19 @@ def test_g3_report_is_explicitly_reduced_scale_for_passed_and_failed(
     assert "3 条 legged + 3 条 Hopper" in report
     assert "不构成全尺度验收" in report
     assert "- 缩减规模结论：" in report
+    assert "G1 独立复算数值证据" in report
+    for forbidden in (
+        "G1 原生正式根",
+        "strict_prestart_lineage",
+        "Python",
+        "Pydantic",
+        "Rasterio",
+        "DLL",
+        "CUDA",
+        "worker 启动",
+        "pre-start audit passed",
+    ):
+        assert forbidden not in report
     assert summary["scale_profile"] == SCALE_PROFILE
     assert summary["full_scale_acceptance"] is False
     assert summary["active_platforms"] == ACTIVE_PLATFORMS
@@ -737,6 +1053,308 @@ def test_g3_runner_uses_artifact_io_and_missing_preflight_never_completes() -> N
         "g3_g1_root_missing",
         "g3_g2_root_missing",
     }
+
+
+def test_authorized_stopped_g1_root_uses_only_verified_assessment_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    verified, frozen, expected_rows = _existing_run_assessment_fixture(
+        numerical_result_status="failed"
+    )
+    calls: list[tuple[Path, Path]] = []
+
+    class _AssessmentBlocked(RuntimeError):
+        def __init__(self, reason: str) -> None:
+            self.reason = reason
+            super().__init__(reason)
+
+    def _verify(*, envelope_root: Path, expected_source_root: Path):
+        calls.append((envelope_root, expected_source_root))
+        return verified
+
+    assessment_module = SimpleNamespace(
+        AUTHORIZED_SOURCE_ROOT=AUTHORIZED_G1_ROOT,
+        ExistingRunAssessmentBlocked=_AssessmentBlocked,
+        verify_existing_run_assessment=_verify,
+    )
+    monkeypatch.setattr(
+        module,
+        "_import_local_script",
+        lambda name: (
+            assessment_module
+            if name == "xunce_mid_dual_g1_existing_run_assessment"
+            else pytest.fail(f"unexpected import: {name}")
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "load_verified_g1_root",
+        lambda *args, **kwargs: pytest.fail("native fallback is forbidden"),
+    )
+
+    source = module.load_verified_g1_source(
+        root=Path(AUTHORIZED_G1_ROOT),
+        frozen_bundle=frozen,
+        g1_assessment_envelope=Path(AUTHORIZED_G1_ENVELOPE),
+    )
+
+    assert calls == [
+        (Path(AUTHORIZED_G1_ENVELOPE), Path(AUTHORIZED_G1_ROOT))
+    ]
+    assert source["g1_evidence_kind"] == "existing_run_assessment_v1"
+    assert source["manifest_sha256"] == verified.envelope_manifest_sha256
+    assert source["coverage_rows"] == expected_rows
+    assert source["assessment_binding"] == {
+        "g1_evidence_kind": "existing_run_assessment_v1",
+        "g1_source_manifest_sha256": verified.envelope_manifest_sha256,
+        "assessment_envelope_sha256": verified.envelope_sha256,
+        "assessment_manifest_sha256": verified.envelope_manifest_sha256,
+        "phase_snapshot_sha256": verified.phase_snapshot_sha256,
+        "stop_evidence_sha256": verified.stop_evidence_sha256,
+        "review_manifest_sha256": verified.review_manifest_sha256,
+        "review_result_sha256": verified.review_result_sha256,
+        "assessment_use_status": "authorized_existing_run",
+        "strict_prestart_lineage_status": "not_satisfied",
+        "lineage_limitation_acknowledged": True,
+        "numerical_gate_status": "recomputed_from_raw_rows",
+        "numerical_result_status": "failed",
+    }
+    assert "native_summary" not in source
+
+
+def test_g1_assessment_scope_dispatch_never_falls_back_to_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    verified, frozen, _ = _existing_run_assessment_fixture()
+    verifier_calls = 0
+    native_calls = 0
+
+    def _verify(**kwargs):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        return verified
+
+    assessment_module = SimpleNamespace(
+        AUTHORIZED_SOURCE_ROOT=AUTHORIZED_G1_ROOT,
+        verify_existing_run_assessment=_verify,
+    )
+    monkeypatch.setattr(
+        module,
+        "_import_local_script",
+        lambda name: assessment_module,
+    )
+
+    def _native(*args, **kwargs):
+        nonlocal native_calls
+        native_calls += 1
+        return {"route": "native"}
+
+    monkeypatch.setattr(module, "load_verified_g1_root", _native)
+
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_g1_existing_run_assessment_required",
+    ):
+        module.load_verified_g1_source(
+            root=Path(AUTHORIZED_G1_ROOT),
+            frozen_bundle=frozen,
+            g1_assessment_envelope=None,
+        )
+    assert verifier_calls == 0
+    assert native_calls == 0
+
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_g1_existing_run_assessment_scope_mismatch",
+    ):
+        module.load_verified_g1_source(
+            root=Path("D:/xunce/out/mid_dual/g1/future-formal-run"),
+            frozen_bundle=frozen,
+            g1_assessment_envelope=Path(AUTHORIZED_G1_ENVELOPE),
+        )
+    assert verifier_calls == 0
+    assert native_calls == 0
+
+    assert module.load_verified_g1_source(
+        root=Path("D:/xunce/out/mid_dual/g1/future-formal-run"),
+        frozen_bundle=frozen,
+        g1_assessment_envelope=None,
+    ) == {"route": "native"}
+    assert native_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("assessment_use_status", "unauthorized"),
+        ("strict_prestart_lineage_status", "satisfied"),
+        ("lineage_limitation_acknowledged", False),
+        ("numerical_gate_status", "trusted_stored_summary"),
+        ("phase_snapshot_sha256", "not-a-sha"),
+        ("review_manifest_sha256", "not-a-sha"),
+    ),
+)
+def test_g1_assessment_status_or_hash_drift_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    module = _module()
+    verified, frozen, _ = _existing_run_assessment_fixture()
+    setattr(verified, field, value)
+    assessment_module = SimpleNamespace(
+        AUTHORIZED_SOURCE_ROOT=AUTHORIZED_G1_ROOT,
+        verify_existing_run_assessment=lambda **kwargs: verified,
+    )
+    monkeypatch.setattr(
+        module,
+        "_import_local_script",
+        lambda name: assessment_module,
+    )
+
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_g1_existing_run_assessment_invalid",
+    ):
+        module.load_verified_g1_source(
+            root=Path(AUTHORIZED_G1_ROOT),
+            frozen_bundle=frozen,
+            g1_assessment_envelope=Path(AUTHORIZED_G1_ENVELOPE),
+        )
+
+
+def test_g3_cli_passes_explicit_g1_assessment_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    captured: dict[str, object] = {}
+
+    def _run_g3(**kwargs):
+        captured.update(kwargs)
+        return {
+            "execution_status": "not_started",
+            "gate_status": "preflight_passed",
+            "formal_evidence_eligible": False,
+            "blockers": [],
+        }
+
+    monkeypatch.setattr(module, "run_g3", _run_g3)
+    stream = io.StringIO()
+    with redirect_stdout(stream):
+        return_code = module._main(
+            [
+                "--config",
+                str(CONFIG),
+                "--frozen-bundle-root",
+                "D:/xunce/inputs/mid_dual/scenarios/freeze",
+                "--g1-root",
+                AUTHORIZED_G1_ROOT,
+                "--g1-assessment-envelope",
+                AUTHORIZED_G1_ENVELOPE,
+                "--g2-root",
+                "D:/xunce/out/mid_dual/g2/g2-formal",
+                "--run-id",
+                "g3-assessment-preflight",
+                "--mode",
+                "preflight",
+            ]
+        )
+    assert return_code == 0
+    assert captured["g1_assessment_envelope"] == AUTHORIZED_G1_ENVELOPE
+
+
+def test_g2_r6_runtime_source_closure_and_platform_audits_are_exact() -> None:
+    module = _module()
+    fixture = _g2_r6_runtime_fixture()
+
+    validated = module.validate_g2_r6_runtime_evidence(
+        config=fixture["config"],
+        input_audit=fixture["input_audit"],
+        approval=fixture["approval"],
+        hopper_resolution=fixture["hopper_resolution"],
+        phase_audits=fixture["phase_audits"],
+        summary=fixture["summary"],
+        runtime_closure_audit=fixture["closure"],
+        platform_invariants_audit=fixture["platform_audit"],
+        local_source_sha256=fixture["local_source_sha256"],
+    )
+
+    assert validated["runtime_source_closure"] == fixture["closure"]
+    assert (
+        validated["path_planner_runtime_source_closure_sha256"]
+        == fixture["closure_sha256"]
+    )
+    assert validated["platform_invariants"] == PLATFORM_INVARIANTS
+
+
+@pytest.mark.parametrize(
+    ("target", "mutation", "reason"),
+    (
+        (
+            "config",
+            lambda payload: payload["evidence_binding"].__setitem__(
+                "runtime_source_closure_audit_path",
+                "wrong.json",
+            ),
+            "g3_g2_config_invalid",
+        ),
+        (
+            "input_audit",
+            lambda payload: payload.__setitem__(
+                "path_planner_runtime_source_closure_sha256",
+                _sha("drifted-closure"),
+            ),
+            "g3_g2_runtime_source_closure_invalid",
+        ),
+        (
+            "approval",
+            lambda payload: payload.__setitem__(
+                "path_planner_runtime_source_closure",
+                {},
+            ),
+            "g3_g2_runtime_source_closure_invalid",
+        ),
+        (
+            "hopper_resolution",
+            lambda payload: payload.__setitem__(
+                "path_planner_runtime_source_closure_sha256",
+                _sha("drifted-hopper-closure"),
+            ),
+            "g3_g2_runtime_source_closure_invalid",
+        ),
+        (
+            "platform_audit",
+            lambda payload: payload["platform_invariants"]["hopper"].__setitem__(
+                "max_traversable_slope_deg",
+                30.1,
+            ),
+            "g3_platform_slope_invariant",
+        ),
+    ),
+)
+def test_g2_r6_runtime_source_evidence_drift_blocks(
+    target: str,
+    mutation,
+    reason: str,
+) -> None:
+    module = _module()
+    fixture = _g2_r6_runtime_fixture()
+    mutation(fixture[target])
+
+    with pytest.raises(module.G3Blocked, match=reason):
+        module.validate_g2_r6_runtime_evidence(
+            config=fixture["config"],
+            input_audit=fixture["input_audit"],
+            approval=fixture["approval"],
+            hopper_resolution=fixture["hopper_resolution"],
+            phase_audits=fixture["phase_audits"],
+            summary=fixture["summary"],
+            runtime_closure_audit=fixture["closure"],
+            platform_invariants_audit=fixture["platform_audit"],
+            local_source_sha256=fixture["local_source_sha256"],
+        )
 
 
 def test_timing_diagnostics_have_five_nonoverlapping_ns_fields(
@@ -1191,6 +1809,7 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
     base = json.loads(CONFIG.read_text(encoding="utf-8"))
     g1_manifest = _sha("g1-manifest")
     g2_manifest = _sha("g2-manifest")
+    g1_evidence_binding = _native_g1_evidence_binding(g1_manifest)
     input_audit = {
         "schema_version": "xunce-mid-dual-g3-input-audit/v1",
         "gate_id": "g3",
@@ -1201,6 +1820,7 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
         "platform_invariants": PLATFORM_INVARIANTS,
         "g1_source_manifest_sha256": g1_manifest,
         "g2_source_manifest_sha256": g2_manifest,
+        "g1_evidence_binding": g1_evidence_binding,
         "wheel_selections": [],
         "interface_selections": [],
     }
@@ -1227,6 +1847,7 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
         "g2_hopper_resolution_sha256": _sha("hopper-resolution"),
         "active_platforms": ACTIVE_PLATFORMS,
         "platform_invariants": PLATFORM_INVARIANTS,
+        "g1_evidence_binding": g1_evidence_binding,
     }
     effective = module.build_g3_effective_config(
         base_config=base,
@@ -1250,6 +1871,7 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
         "upstream_binding",
         "active_platforms",
         "platform_invariants",
+        "g1_evidence_binding",
     }
     assert effective["evidence_binding"] == {
         "schema_version": "xunce-mid-dual-g3-evidence-binding/v1",
@@ -1261,6 +1883,7 @@ def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() ->
         ),
     }
     assert effective["upstream_binding"] == upstream
+    assert effective["g1_evidence_binding"] == g1_evidence_binding
     assert effective["active_platforms"] == ACTIVE_PLATFORMS
     assert effective["platform_invariants"] == PLATFORM_INVARIANTS
 
