@@ -35,6 +35,9 @@ AUTHORIZED_G1_ENVELOPE = (
     "g1-existing-run-assessment-v1-"
     "1e8a98015839b9190c86efc531134b7cbde1be393250cf40479b19a98c5b0fe8"
 )
+COMPLETED_G2_ROOT = Path(
+    "D:/xunce/out/mid_dual/g2/g2-formal-20260727-1534-cst"
+)
 UPDATE80_CHECKPOINT_SHA256 = (
     "35e04c86f9f973af028fb08f0175d42ab45378d09e1f2b96ee6aad6e4c12b5b5"
 )
@@ -172,6 +175,9 @@ def _g2_r6_runtime_fixture() -> dict[str, object]:
             ),
             "platform_invariants_audit_path": (
                 "g2_platform_invariants_audit.json"
+            ),
+            "formal_environment_audit_path": (
+                "g2_formal_environment_audit.json"
             ),
         },
     }
@@ -1355,6 +1361,240 @@ def test_g2_r6_runtime_source_evidence_drift_blocks(
             platform_invariants_audit=fixture["platform_audit"],
             local_source_sha256=fixture["local_source_sha256"],
         )
+
+
+def _g2_environment_evidence_fixture(
+    module: ModuleType,
+) -> tuple[ModuleType, dict[str, bytes], dict[str, object]]:
+    g2 = module._import_local_script(  # noqa: SLF001
+        "run_xunce_mid_dual_g2_planning_time"
+    )
+    run_id = "g2-hermetic-environment"
+    policy = g2.validate_formal_environment_policy(
+        {
+            "schema_version": g2.FORMAL_ENVIRONMENT_POLICY_SCHEMA_VERSION,
+            "lease_path": "D:/xunce/out/mid_dual/g2/.fixture-lease.json",
+            "allowed_power_scheme_guids": [
+                "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+            ],
+            "required_thread_variables": {
+                "OMP_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "NUMEXPR_NUM_THREADS": "1",
+            },
+            "sample_window_seconds": 2.0,
+            "limits": {
+                "cpu_percent_max": 20.0,
+                "memory_percent_max": 85.0,
+                "memory_available_bytes_min": 4_294_967_296,
+                "disk_busy_percent_max": 20.0,
+                "disk_free_bytes_min": 10_737_418_240,
+            },
+            "competing_process_patterns": ["pytest"],
+            "exclude_current_process_tree": True,
+        }
+    )
+    lease_core = {
+        "schema_version": g2.FORMAL_LEASE_SCHEMA_VERSION,
+        "host": "fixture-host",
+        "pid": 4321,
+        "process_start_utc": "2026-07-27T00:00:00Z",
+        "run_id": run_id,
+        "run_root": "D:/xunce/out/mid_dual/g2/fixture",
+        "nonce": "fixture-nonce",
+        "acquired_utc": "2026-07-27T00:00:01Z",
+    }
+    lease_sha256 = g2._domain_hash(  # noqa: SLF001
+        g2.FORMAL_LEASE_SCHEMA_VERSION,
+        g2._canonical_bytes(lease_core),  # noqa: SLF001
+    )
+    lease = {**lease_core, "lease_sha256": lease_sha256}
+
+    def _observation(phase: str) -> dict[str, object]:
+        return {
+            "schema_version": g2.FORMAL_ENVIRONMENT_OBSERVATION_SCHEMA_VERSION,
+            "phase": phase,
+            "captured_utc": "2026-07-27T00:00:02Z",
+            "host": "fixture-host",
+            "pid": 4321,
+            "power_scheme_guid": policy["allowed_power_scheme_guids"][0],
+            "power_probe_sha256": _sha(f"power:{phase}"),
+            "thread_variables": policy["required_thread_variables"],
+            "sample_window_seconds": 2.0,
+            "cpu_percent": 1.0,
+            "memory_percent": 1.0,
+            "memory_available_bytes": 8_589_934_592,
+            "disk_busy_percent": 1.0,
+            "disk_free_bytes": 21_474_836_480,
+            "disk_root": "D:/",
+            "competing_processes": [],
+            "excluded_process_ids": [4321],
+            "process_inventory_sha256": _sha(f"processes:{phase}"),
+        }
+
+    start = _observation("start")
+    end = _observation("end")
+    audit = {
+        "schema_version": g2.FORMAL_ENVIRONMENT_AUDIT_SCHEMA_VERSION,
+        "gate_id": g2.G2_GATE_ID,
+        "scale_profile": SCALE_PROFILE,
+        "run_id": run_id,
+        "status": "passed",
+        "formal_evidence_eligible": True,
+        "formal_environment_policy": policy,
+        "formal_environment_policy_sha256": g2._canonical_sha256(policy),  # noqa: SLF001
+        "lease": lease,
+        "lease_sha256": lease_sha256,
+        "start_observation": start,
+        "start_observation_sha256": g2._canonical_sha256(start),  # noqa: SLF001
+        "end_observation": end,
+        "end_observation_sha256": g2._canonical_sha256(end),  # noqa: SLF001
+        "same_process": True,
+        "formal_row_count": g2.G2_FORMAL_CALLS,
+        "lease_released": True,
+        "blockers": [],
+    }
+    return (
+        g2,
+        {
+            "g2_formal_environment_audit.json": (
+                json.dumps(audit, ensure_ascii=False, sort_keys=True) + "\n"
+            ).encode("utf-8")
+        },
+        {
+            "phase_id": "p04",
+            "formal_environment_audit": audit,
+            **g2.formal_environment_audit_binding(audit),
+        },
+    )
+
+
+def test_g3_rejects_missing_or_tampered_g2_final_environment_sidecar() -> None:
+    module = _module()
+    g2, snapshot, p04 = _g2_environment_evidence_fixture(module)
+
+    missing = dict(snapshot)
+    missing.pop("g2_formal_environment_audit.json")
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_g2_formal_environment_final_invalid",
+    ):
+        module.validate_g2_formal_environment_evidence(
+            g2=g2,
+            snapshot=missing,
+            p04_audit=p04,
+        )
+
+    tampered = dict(snapshot)
+    final_audit = json.loads(
+        tampered["g2_formal_environment_audit.json"].decode("utf-8")
+    )
+    final_audit["formal_row_count"] = 644
+    tampered["g2_formal_environment_audit.json"] = (
+        json.dumps(final_audit, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_g2_formal_environment_final_invalid",
+    ):
+        module.validate_g2_formal_environment_evidence(
+            g2=g2,
+            snapshot=tampered,
+            p04_audit=p04,
+        )
+
+
+def test_g3_rejects_missing_or_tampered_g2_p04_environment_binding() -> None:
+    module = _module()
+    g2, snapshot, p04 = _g2_environment_evidence_fixture(module)
+
+    missing = copy.deepcopy(p04)
+    missing.pop("formal_environment_audit")
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_g2_formal_environment_p04_invalid",
+    ):
+        module.validate_g2_formal_environment_evidence(
+            g2=g2,
+            snapshot=snapshot,
+            p04_audit=missing,
+        )
+
+    tampered = copy.deepcopy(p04)
+    tampered["formal_environment_audit_sha256"] = _sha("tampered")
+    with pytest.raises(
+        module.G3Blocked,
+        match="g3_g2_formal_environment_p04_invalid",
+    ):
+        module.validate_g2_formal_environment_evidence(
+            g2=g2,
+            snapshot=snapshot,
+            p04_audit=tampered,
+        )
+
+
+def test_g3_uses_validated_final_environment_audit_for_g2_report() -> None:
+    module = _module()
+    g2, snapshot, p04 = _g2_environment_evidence_fixture(module)
+    environment_audit = module.validate_g2_formal_environment_evidence(
+        g2=g2,
+        snapshot=snapshot,
+        p04_audit=p04,
+    )
+    summary = {"recomputed": {}}
+    report = g2._render_report(  # noqa: SLF001
+        summary,
+        formal_environment_audit=environment_audit,
+    )
+    report_audit = g2._source_report_audit(  # noqa: SLF001
+        summary=summary,
+        report=report,
+    )
+
+    module.validate_g2_summary_report(
+        g2=g2,
+        summary=summary,
+        report=report,
+        report_audit=report_audit,
+        formal_environment_audit=environment_audit,
+    )
+
+
+def test_g3_accepts_completed_eligible_failed_g2_status() -> None:
+    module = _module()
+
+    assert module.validate_g2_completed_result_status("failed") == "failed"
+
+
+@pytest.mark.parametrize("status", ("blocked", "incomplete"))
+def test_g3_rejects_blocked_or_incomplete_g2_status(status: str) -> None:
+    module = _module()
+
+    with pytest.raises(module.G3Blocked, match="g3_g2_summary_status_invalid"):
+        module.validate_g2_completed_result_status(status)
+
+
+def test_g3_rejects_conflicting_p03_worker_count_fields() -> None:
+    module = _module()
+
+    with pytest.raises(module.G3Blocked, match="g3_g2_nonformal_phase_invalid"):
+        module.validate_g2_p03_worker_count(
+            {"worker_count": 99, "worker_one_count": 1}
+        )
+
+
+@pytest.mark.skipif(
+    not COMPLETED_G2_ROOT.is_dir(),
+    reason="completed G2 R7 root is unavailable",
+)
+def test_g3_completed_g2_r7_root_integration_smoke() -> None:
+    module = _module()
+
+    source = module.load_verified_g2_root(COMPLETED_G2_ROOT)
+
+    assert source["formal_environment_audit"]["status"] == "passed"
+    assert source["native_summary"]["status"] == "failed"
 
 
 def test_timing_diagnostics_have_five_nonoverlapping_ns_fields(

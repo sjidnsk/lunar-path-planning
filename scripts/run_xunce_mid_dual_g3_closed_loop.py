@@ -1035,6 +1035,10 @@ def _parse_jsonl_bytes(payload: bytes, reason: str) -> list[dict[str, object]]:
     return rows
 
 
+def _canonical_report_text(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _safe_manifest_relative_path(value: object, reason: str) -> str:
     if not isinstance(value, str) or not value or "\\" in value:
         raise G3Blocked(reason)
@@ -2075,6 +2079,9 @@ def validate_g2_r6_runtime_evidence(
         "platform_invariants_audit_path": (
             "g2_platform_invariants_audit.json"
         ),
+        "formal_environment_audit_path": (
+            "g2_formal_environment_audit.json"
+        ),
     }
     if config.get("evidence_binding") != expected_evidence_binding:
         raise G3Blocked("g3_g2_config_invalid")
@@ -2208,6 +2215,79 @@ def validate_g2_r6_runtime_evidence(
     }
 
 
+def validate_g2_completed_result_status(status: object) -> str:
+    if status not in {"passed", "failed"}:
+        raise G3Blocked("g3_g2_summary_status_invalid")
+    return str(status)
+
+
+def validate_g2_p03_worker_count(audit: Mapping[str, object]) -> None:
+    present = [
+        field
+        for field in ("worker_count", "worker_one_count")
+        if field in audit
+    ]
+    if not present:
+        raise G3Blocked("g3_g2_nonformal_phase_invalid")
+    for field in present:
+        if _require_exact_int(
+            audit[field],
+            "g3_g2_nonformal_phase_invalid",
+        ) != 1:
+            raise G3Blocked("g3_g2_nonformal_phase_invalid")
+
+
+def validate_g2_formal_environment_evidence(
+    *,
+    g2: object,
+    snapshot: Mapping[str, bytes],
+    p04_audit: Mapping[str, object],
+) -> dict[str, object]:
+    try:
+        embedded = g2.validate_formal_environment_phase_audit(p04_audit)
+    except Exception as exc:
+        raise G3Blocked("g3_g2_formal_environment_p04_invalid") from exc
+    final_bytes = snapshot.get("g2_formal_environment_audit.json")
+    if not isinstance(final_bytes, bytes):
+        raise G3Blocked("g3_g2_formal_environment_final_invalid")
+    final_audit = _parse_json_bytes(
+        final_bytes,
+        "g3_g2_formal_environment_final_invalid",
+    )
+    try:
+        validated_final = g2._validate_complete_formal_environment_audit(  # noqa: SLF001
+            final_audit
+        )
+    except Exception as exc:
+        raise G3Blocked("g3_g2_formal_environment_final_invalid") from exc
+    if embedded != validated_final:
+        raise G3Blocked("g3_g2_formal_environment_audit_mismatch")
+    return dict(validated_final)
+
+
+def validate_g2_summary_report(
+    *,
+    g2: object,
+    summary: Mapping[str, object],
+    report: str,
+    report_audit: Mapping[str, object],
+    formal_environment_audit: Mapping[str, object],
+) -> None:
+    if (
+        report
+        != g2._render_report(  # noqa: SLF001
+            summary,
+            formal_environment_audit=formal_environment_audit,
+        )
+        or report_audit
+        != g2._source_report_audit(  # noqa: SLF001
+            summary=summary,
+            report=report,
+        )
+    ):
+        raise G3Blocked("g3_g2_summary_lineage_invalid")
+
+
 def load_verified_g2_root(root: Path) -> dict[str, object]:
     g2 = _import_local_script("run_xunce_mid_dual_g2_planning_time")
 
@@ -2233,6 +2313,7 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         "active_platforms",
         "platform_invariants",
         "path_planner_runtime_source_closure_sha256",
+        "formal_environment_gate",
         "config_sha256",
     }
     if (
@@ -2257,6 +2338,12 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         or config.get("config_sha256") != manifest.get("config_sha256")
     ):
         raise G3Blocked("g3_g2_config_invalid")
+    try:
+        formal_environment_policy = g2.validate_formal_environment_policy(
+            config.get("formal_environment_gate")
+        )
+    except Exception as exc:
+        raise G3Blocked("g3_g2_config_invalid") from exc
     phases = _accepted_phase_snapshot(
         snapshot,
         g2.G2_REQUIRED_PHASE_IDS,
@@ -2273,6 +2360,7 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
             phase_audit.get("active_platforms"),
             phase_audit.get("platform_invariants"),
         )
+    validate_g2_p03_worker_count(p03)
     if (
         p01.get("schema_version") != "xunce-mid-dual-g2-phase-audit/v1"
         or p01.get("phase_name") != "preflight"
@@ -2302,7 +2390,6 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         or p03.get("phase_name") != "worker_one_semantic_diagnostic"
         or p03.get("status") != "complete"
         or p03.get("formal_sample") is not False
-        or p03.get("worker_count") != 1
         or not isinstance(p03.get("worker_one_results"), list)
         or p03.get("request_count") != len(p03["worker_one_results"])
     ):
@@ -2322,11 +2409,21 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         or len(p04_rows) != 645
     ):
         raise G3Blocked("g3_g2_p04_invalid")
+    formal_environment_audit = validate_g2_formal_environment_evidence(
+        g2=g2,
+        snapshot=snapshot,
+        p04_audit=p04,
+    )
+    if formal_environment_audit.get("formal_environment_policy") != (
+        formal_environment_policy
+    ):
+        raise G3Blocked("g3_g2_formal_environment_policy_invalid")
     recomputed = g2.recompute_g2_summary(p04_rows)
     if recomputed.get("formal_call_count") != 645:
         raise G3Blocked("g3_g2_p04_invalid")
     stored = _parse_json_bytes(snapshot["summary.json"], "g3_g2_summary_invalid")
-    report = snapshot["report.md"].decode("utf-8")
+    validate_g2_completed_result_status(stored.get("status"))
+    report = _canonical_report_text(snapshot["report.md"].decode("utf-8"))
     report_audit = _parse_json_bytes(
         snapshot.get("g2_report_audit.json", b""),
         "g3_g2_report_audit_invalid",
@@ -2347,14 +2444,15 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
             ),
             "recomputed": recomputed,
         }
-        or report != g2._render_report(stored)  # noqa: SLF001
-        or report_audit
-        != g2._source_report_audit(  # noqa: SLF001
-            summary=stored,
-            report=report,
-        )
     ):
         raise G3Blocked("g3_g2_summary_lineage_invalid")
+    validate_g2_summary_report(
+        g2=g2,
+        summary=stored,
+        report=report,
+        report_audit=report_audit,
+        formal_environment_audit=formal_environment_audit,
+    )
     local_source_sha256 = _common_lineage_code_sha256(
         snapshot=snapshot,
         expected_sources=g2.G2_REQUIRED_SOURCE_RELATIVE_PATHS,
@@ -2388,10 +2486,24 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         execution_manifest_sha256=execution_manifest_sha256,
         input_set_id=input_set_id,
     )
+    runtime_closure_audit = _parse_json_bytes(
+        snapshot.get("g2_runtime_source_closure_audit.json", b""),
+        "g3_g2_runtime_source_closure_invalid",
+    )
+    scripts_path = str(Path(__file__).resolve().parent)
+    added_scripts_path = scripts_path not in sys.path
+    if added_scripts_path:
+        sys.path.insert(0, scripts_path)
     try:
-        execution = g2._read_execution_bundle(execution_root)  # noqa: SLF001
+        execution = g2._read_execution_bundle(  # noqa: SLF001
+            execution_root,
+            runtime_source_closure=runtime_closure_audit,
+        )
     except Exception as exc:
         raise G3Blocked("g3_g2_execution_reaudit_invalid") from exc
+    finally:
+        if added_scripts_path:
+            sys.path.remove(scripts_path)
     if (
         execution.get("input_audit") != input_audit
         or execution.get("manifest_sha256") != execution_manifest_sha256
@@ -2438,10 +2550,6 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
     runtime_closure_bytes = snapshot.get(
         "g2_runtime_source_closure_audit.json",
         b"",
-    )
-    runtime_closure_audit = _parse_json_bytes(
-        runtime_closure_bytes,
-        "g3_g2_runtime_source_closure_invalid",
     )
     platform_audit_bytes = snapshot.get(
         "g2_platform_invariants_audit.json",
@@ -2498,6 +2606,13 @@ def load_verified_g2_root(root: Path) -> dict[str, object]:
         "input_audit": input_audit,
         "formal_rows": p04_rows,
         "native_summary": stored,
+        "formal_environment_audit": formal_environment_audit,
+        "formal_environment_audit_sha256": g2.formal_environment_audit_binding(
+            formal_environment_audit
+        )["formal_environment_audit_sha256"],
+        "formal_environment_audit_file_sha256": _bytes_sha256(
+            snapshot["g2_formal_environment_audit.json"]
+        ),
         "execution_bundle": execution,
         "execution_root": execution_root,
         "cohort": cohort,
