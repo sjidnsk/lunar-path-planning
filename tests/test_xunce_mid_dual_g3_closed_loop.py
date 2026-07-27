@@ -508,6 +508,26 @@ def test_g3_config_freezes_exact_scale_counts_thresholds_and_two_phases() -> Non
     }
     assert payload["checkpoint_sha256"] == UPDATE80_CHECKPOINT_SHA256
     assert payload["policy_state_sha256"] == UPDATE80_POLICY_STATE_SHA256
+    assert payload["phase_contract"] == {
+        "p01": {
+            "name": "wheel_closed_loop",
+            "row_kind": "g3_wheel_step",
+            "episodes": 10,
+            "formal_only": True,
+        },
+        "p02": {
+            "name": "interface_replay",
+            "row_kind": "g3_interface_replay",
+            "platform_counts": {"legged": 3, "hopper": 3},
+            "formal_only": True,
+            "requires": "p01",
+        },
+    }
+    assert payload["wheel_identity"] == {
+        "platform": "wheel",
+        "profile": "ppo-standard-wheel-grid/v1",
+        "capability_revision": "ppo-path-planner-adapter/v1",
+    }
 
 
 def test_g3_production_uses_exact_ten_without_standard_schedule_padding() -> None:
@@ -520,7 +540,7 @@ def test_g3_production_uses_exact_ten_without_standard_schedule_padding() -> Non
     assert "g1 = _g1_index" in source
 
 
-def test_g3_runner_uses_artifact_io_and_missing_preflight_stays_blocked() -> None:
+def test_g3_runner_uses_artifact_io_and_missing_preflight_never_completes() -> None:
     module = _module()
     source = SCRIPT.read_text(encoding="utf-8")
     for forbidden in (
@@ -548,12 +568,12 @@ def test_g3_runner_uses_artifact_io_and_missing_preflight_stays_blocked() -> Non
             ]
         )
     result = json.loads(stream.getvalue())
-    assert return_code == 0
-    assert result["execution_status"] == "complete"
+    assert return_code == 1
+    assert result["execution_status"] == "not_started"
     assert result["gate_status"] == "blocked"
     assert result["formal_evidence_eligible"] is False
     assert set(result["blockers"]) == {
-        "g3_frozen_manifest_missing",
+        "g3_frozen_bundle_root_missing",
         "g3_g1_root_missing",
         "g3_g2_root_missing",
     }
@@ -567,7 +587,7 @@ def test_timing_diagnostics_have_five_nonoverlapping_ns_fields(
     )
     from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry
 
-    ticks = iter((0, 2, 2, 5, 5, 10, 10, 17, 17, 28))
+    ticks = iter((0, 2, 5, 10, 17, 28))
     monkeypatch.setattr(adapter_module, "perf_counter_ns", lambda: next(ticks))
 
     result = adapter_module.PathPlannerAdapter(
@@ -594,7 +614,14 @@ def test_timing_diagnostics_have_five_nonoverlapping_ns_fields(
         "complete_route_validation_ns": 7,
         "result_assembly_ns": 11,
     }
-    assert result.diagnostics["total_ns"] == 28
+    assert result.diagnostics["run_start_ns"] == 0
+    assert result.diagnostics["final_end_ns"] == 28
+    assert (
+        result.diagnostics["total_ns"]
+        == result.diagnostics["final_end_ns"]
+        - result.diagnostics["run_start_ns"]
+        == 28
+    )
 
 
 def test_timing_diagnostics_sum_to_total_ns() -> None:
@@ -621,6 +648,10 @@ def test_timing_diagnostics_sum_to_total_ns() -> None:
     )
     assert all(type(value) is int and value >= 0 for value in values)
     assert result.diagnostics["total_ns"] == sum(values)
+    assert result.diagnostics["total_ns"] == (
+        result.diagnostics["final_end_ns"]
+        - result.diagnostics["run_start_ns"]
+    )
 
 
 def test_timing_does_not_change_route_cells_length_theta_or_failure_reason(
@@ -634,7 +665,7 @@ def test_timing_does_not_change_route_cells_length_theta_or_failure_reason(
     adapter = adapter_module.PathPlannerAdapter(GridGeometry(3, 3, 0.5))
     mask = np.ones((3, 3), dtype=bool)
     baseline = adapter.validate(mask, CellXY(0, 0), CellXY(2, 2), 0.5)
-    ticks = iter((100, 103, 103, 108, 108, 115, 115, 126, 126, 139))
+    ticks = iter((100, 103, 108, 115, 126, 139))
     monkeypatch.setattr(adapter_module, "perf_counter_ns", lambda: next(ticks))
 
     timed = adapter.validate(mask, CellXY(0, 0), CellXY(2, 2), 0.5)
@@ -655,6 +686,14 @@ def test_timing_does_not_change_route_cells_length_theta_or_failure_reason(
         baseline.target_theta,
         baseline.path_length_m,
     )
+    assert timed.diagnostics["run_start_ns"] == 100
+    assert timed.diagnostics["final_end_ns"] == 139
+    assert (
+        timed.diagnostics["total_ns"]
+        == timed.diagnostics["final_end_ns"]
+        - timed.diagnostics["run_start_ns"]
+        == 39
+    )
 
 
 def test_early_failure_records_zero_for_unentered_phases(
@@ -665,7 +704,7 @@ def test_early_failure_records_zero_for_unentered_phases(
     )
     from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry
 
-    ticks = iter((0, 5, 5, 12))
+    ticks = iter((0, 5, 12))
     monkeypatch.setattr(adapter_module, "perf_counter_ns", lambda: next(ticks))
 
     result = adapter_module.PathPlannerAdapter(
@@ -683,4 +722,470 @@ def test_early_failure_records_zero_for_unentered_phases(
     assert result.diagnostics["search_ns"] == 0
     assert result.diagnostics["complete_route_validation_ns"] == 0
     assert result.diagnostics["result_assembly_ns"] == 7
-    assert result.diagnostics["total_ns"] == 12
+    assert result.diagnostics["run_start_ns"] == 0
+    assert result.diagnostics["final_end_ns"] == 12
+    assert (
+        result.diagnostics["total_ns"]
+        == result.diagnostics["final_end_ns"]
+        - result.diagnostics["run_start_ns"]
+        == 12
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_reason"),
+    (
+        ("invalid_theta", "invalid_theta"),
+        ("invalid_observed_safe_mask", "invalid_safe_mask"),
+        ("invalid_planning_safe_mask", "invalid_safe_mask"),
+        ("start_out_of_bounds", "start_out_of_bounds"),
+        ("target_out_of_bounds", "target_out_of_bounds"),
+        ("start_physical_unsafe", "start_physical_unsafe"),
+        ("start_unknown_buffer_unsafe", "start_unknown_buffer_unsafe"),
+        ("endpoint_physical_unsafe", "endpoint_physical_unsafe"),
+        ("endpoint_unknown_buffer_unsafe", "endpoint_unknown_buffer_unsafe"),
+        ("planner_no_path", "planner_no_path"),
+    ),
+)
+def test_every_input_failure_uses_one_continuous_interval_and_preserves_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    expected_reason: str,
+) -> None:
+    from lunar_exploration_ppo.integrations import (
+        path_planner_adapter as adapter_module,
+    )
+    from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry
+
+    geometry = GridGeometry(3, 3, 0.5)
+    observed_safe = np.ones(geometry.shape, dtype=bool)
+    planning_safe = observed_safe.copy()
+    start = CellXY(0, 1)
+    target = CellXY(2, 1)
+    theta = 0.5
+    if case == "invalid_theta":
+        theta = float("nan")
+    elif case == "invalid_observed_safe_mask":
+        observed_safe = np.ones((2, 2), dtype=bool)
+    elif case == "invalid_planning_safe_mask":
+        planning_safe = np.ones((2, 2), dtype=bool)
+    elif case == "start_out_of_bounds":
+        start = CellXY(9, 1)
+    elif case == "target_out_of_bounds":
+        target = CellXY(9, 1)
+    elif case == "start_physical_unsafe":
+        observed_safe[start.y, start.x] = False
+    elif case == "start_unknown_buffer_unsafe":
+        planning_safe[start.y, start.x] = False
+    elif case == "endpoint_physical_unsafe":
+        observed_safe[target.y, target.x] = False
+    elif case == "endpoint_unknown_buffer_unsafe":
+        planning_safe[target.y, target.x] = False
+    elif case == "planner_no_path":
+        planning_safe[:, 1] = False
+    else:  # pragma: no cover - the parameter table is exhaustive
+        raise AssertionError(case)
+
+    adapter = adapter_module.PathPlannerAdapter(geometry)
+    baseline = adapter.validate(
+        observed_safe,
+        planning_safe,
+        start,
+        target,
+        theta,
+    )
+    ticks = iter((0, 5, 12))
+    monkeypatch.setattr(adapter_module, "perf_counter_ns", lambda: next(ticks))
+    timed = adapter.validate(
+        observed_safe,
+        planning_safe,
+        start,
+        target,
+        theta,
+    )
+
+    assert timed.failure_reason == expected_reason
+    assert (
+        timed.valid,
+        timed.failure_reason,
+        timed.failure_classification,
+        timed.path_cells,
+        timed.path_world,
+        timed.target_theta,
+        timed.path_length_m,
+    ) == (
+        baseline.valid,
+        baseline.failure_reason,
+        baseline.failure_classification,
+        baseline.path_cells,
+        baseline.path_world,
+        baseline.target_theta,
+        baseline.path_length_m,
+    )
+    assert timed.diagnostics["input_validation_ns"] == 5
+    assert timed.diagnostics["platform_instantiation_ns"] == 0
+    assert timed.diagnostics["search_ns"] == 0
+    assert timed.diagnostics["complete_route_validation_ns"] == 0
+    assert timed.diagnostics["result_assembly_ns"] == 7
+    assert timed.diagnostics["run_start_ns"] == 0
+    assert timed.diagnostics["final_end_ns"] == 12
+    assert (
+        timed.diagnostics["input_validation_ns"]
+        + timed.diagnostics["result_assembly_ns"]
+        == timed.diagnostics["final_end_ns"]
+        - timed.diagnostics["run_start_ns"]
+        == timed.diagnostics["total_ns"]
+        == 12
+    )
+
+
+def test_planner_no_path_failure_keeps_route_zero_and_continuous_assembly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lunar_exploration_ppo.integrations import (
+        path_planner_adapter as adapter_module,
+    )
+    from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry
+
+    class _NoPathResult:
+        success = False
+        failure_reason = None
+        expanded_count = 4
+        path_cells = ()
+
+    class _NoPathPlanner:
+        def plan(self, grid, request):
+            del grid, request
+            return _NoPathResult()
+
+    monkeypatch.setattr(adapter_module, "AStarPlanner", _NoPathPlanner)
+    geometry = GridGeometry(3, 3, 0.5)
+    observed_safe = np.ones(geometry.shape, dtype=bool)
+    planning_safe = observed_safe.copy()
+    adapter = adapter_module.PathPlannerAdapter(geometry)
+    baseline = adapter.validate(
+        observed_safe,
+        planning_safe,
+        CellXY(0, 1),
+        CellXY(2, 1),
+        0.5,
+    )
+    ticks = iter((0, 2, 5, 10, 17))
+    monkeypatch.setattr(adapter_module, "perf_counter_ns", lambda: next(ticks))
+    timed = adapter.validate(
+        observed_safe,
+        planning_safe,
+        CellXY(0, 1),
+        CellXY(2, 1),
+        0.5,
+    )
+
+    assert timed.failure_reason == baseline.failure_reason == "planner_no_path"
+    assert timed.diagnostics["complete_route_validation_ns"] == 0
+    assert timed.diagnostics["result_assembly_ns"] == 7
+    assert timed.diagnostics["run_start_ns"] == 0
+    assert timed.diagnostics["final_end_ns"] == 17
+    assert timed.diagnostics["total_ns"] == 17
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_reason"),
+    (
+        ("physical", "path_physical_unsafe"),
+        ("unknown_buffer", "path_unknown_buffer_unsafe"),
+        ("out_of_bounds", "path_out_of_bounds"),
+    ),
+)
+def test_route_failure_keeps_reason_and_assembly_adjacent_to_route_end(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    expected_reason: str,
+) -> None:
+    from lunar_exploration_ppo.integrations import (
+        path_planner_adapter as adapter_module,
+    )
+    from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry
+
+    middle = adapter_module.Cell(1, 1)
+    if case == "out_of_bounds":
+        middle = adapter_module.Cell(9, 9)
+
+    class _UnsafePathResult:
+        success = True
+        failure_reason = None
+        expanded_count = 3
+        path_cells = (
+            adapter_module.Cell(0, 1),
+            middle,
+            adapter_module.Cell(2, 1),
+        )
+
+    class _UnsafePathPlanner:
+        def plan(self, grid, request):
+            del grid, request
+            return _UnsafePathResult()
+
+    monkeypatch.setattr(adapter_module, "AStarPlanner", _UnsafePathPlanner)
+    geometry = GridGeometry(3, 3, 0.5)
+    observed_safe = np.ones(geometry.shape, dtype=bool)
+    planning_safe = observed_safe.copy()
+    if case == "physical":
+        observed_safe[1, 1] = False
+    elif case == "unknown_buffer":
+        planning_safe[1, 1] = False
+    adapter = adapter_module.PathPlannerAdapter(geometry)
+    baseline = adapter.validate(
+        observed_safe,
+        planning_safe,
+        CellXY(0, 1),
+        CellXY(2, 1),
+        0.5,
+    )
+    ticks = iter((0, 2, 5, 10, 17, 28))
+    monkeypatch.setattr(adapter_module, "perf_counter_ns", lambda: next(ticks))
+    timed = adapter.validate(
+        observed_safe,
+        planning_safe,
+        CellXY(0, 1),
+        CellXY(2, 1),
+        0.5,
+    )
+
+    assert timed.failure_reason == baseline.failure_reason == expected_reason
+    assert timed.diagnostics["complete_route_validation_ns"] == 7
+    assert timed.diagnostics["result_assembly_ns"] == 11
+    assert timed.diagnostics["run_start_ns"] == 0
+    assert timed.diagnostics["final_end_ns"] == 28
+    assert timed.diagnostics["total_ns"] == 28
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    (
+        "",
+        ".",
+        "..",
+        "../escape",
+        r"..\escape",
+        "CON",
+        "g3-run.",
+        "g3-run ",
+        "nested/run",
+    ),
+)
+def test_g3_rejects_unsafe_run_id_before_creating_output(
+    run_id: str,
+) -> None:
+    module = _module()
+    with pytest.raises(module.G3Blocked, match="g3_run_id_invalid"):
+        module.validate_g3_run_id(run_id)
+
+
+def test_g3_strict_root_contract_requires_single_child_absolute_d_roots() -> None:
+    module = _module()
+    validated = module.validate_g3_root_contract(
+        frozen_bundle_root=(
+            "D:/xunce/inputs/mid_dual/scenarios/freeze-0123456789abcdef"
+        ),
+        g1_root="D:/xunce/out/mid_dual/g1/g1-formal",
+        g2_root="D:/xunce/out/mid_dual/g2/g2-formal",
+        run_id="g3-formal",
+        require_existing=False,
+    )
+    assert validated["output_root"].as_posix().casefold() == (
+        "d:/xunce/out/mid_dual/g3/g3-formal"
+    )
+
+    invalid = (
+        {
+            "frozen_bundle_root": "relative/freeze",
+            "g1_root": "D:/xunce/out/mid_dual/g1/nested/g1",
+            "g2_root": "D:/xunce/out/mid_dual/g2/g2-formal",
+        },
+        {
+            "frozen_bundle_root": (
+                "D:/xunce/inputs/mid_dual/scenarios/freeze"
+            ),
+            "g1_root": "C:/unsafe/g1",
+            "g2_root": "D:/xunce/out/mid_dual/g2/g2-formal",
+        },
+        {
+            "frozen_bundle_root": (
+                "D:/xunce/inputs/mid_dual/scenarios/freeze"
+            ),
+            "g1_root": "D:/xunce/out/mid_dual/g1/g1-formal",
+            "g2_root": "D:/xunce/out/mid_dual/g1/g1-formal",
+        },
+    )
+    for roots in invalid:
+        with pytest.raises(module.G3Blocked):
+            module.validate_g3_root_contract(
+                **roots,
+                run_id="g3-formal",
+                require_existing=False,
+            )
+
+
+def test_g3_effective_config_has_task10_wrapper_and_strong_upstream_binding() -> None:
+    module = _module()
+    base = json.loads(CONFIG.read_text(encoding="utf-8"))
+    g1_manifest = _sha("g1-manifest")
+    g2_manifest = _sha("g2-manifest")
+    input_audit = {
+        "schema_version": "xunce-mid-dual-g3-input-audit/v1",
+        "gate_id": "g3",
+        "run_id": "g3-formal",
+        "scale_profile": SCALE_PROFILE,
+        "formal_evidence_eligible": True,
+        "g1_source_manifest_sha256": g1_manifest,
+        "g2_source_manifest_sha256": g2_manifest,
+        "wheel_selections": [],
+        "interface_selections": [],
+    }
+    lineage = {
+        "schema_version": "xunce-mid-dual-code/v1",
+        "required_sources": [],
+        "code_sha256": _sha("g3-code"),
+    }
+    upstream = {
+        "g1_source_manifest_sha256": g1_manifest,
+        "g2_source_manifest_sha256": g2_manifest,
+        "freeze_manifest_sha256": _sha("freeze-manifest"),
+        "g1_config_sha256": _sha("g1-config"),
+        "g1_input_sha256": _sha("g1-input"),
+        "g1_code_sha256": _sha("g1-code"),
+        "g2_config_sha256": _sha("g2-config"),
+        "g2_input_sha256": _sha("g2-input"),
+        "g2_code_sha256": _sha("g2-code"),
+        "g2_input_set_id": "g2-input-set",
+        "g2_approval_sha256": _sha("g2-approval"),
+        "g2_cohort_sha256": _sha("g2-cohort"),
+        "g2_provider_identity_sha256": _sha("provider-identity"),
+        "g2_oracle_identity_sha256": _sha("oracle-identity"),
+        "g2_hopper_resolution_sha256": _sha("hopper-resolution"),
+    }
+    effective = module.build_g3_effective_config(
+        base_config=base,
+        run_id="g3-formal",
+        input_audit=input_audit,
+        code_lineage=lineage,
+        upstream_binding=upstream,
+    )
+    assert set(effective) == {
+        "schema_version",
+        "gate_id",
+        "runner_id",
+        "run_id",
+        "output_root",
+        "scale_profile",
+        "input_sha256",
+        "code_sha256",
+        "required_phase_ids",
+        "source_contract_sha256",
+        "evidence_binding",
+        "upstream_binding",
+    }
+    assert effective["evidence_binding"] == {
+        "schema_version": "xunce-mid-dual-g3-evidence-binding/v1",
+        "input_audit_path": "g3_input_audit.json",
+        "lineage_audit_path": "lineage_audit.json",
+        "report_audit_path": "g3_report_audit.json",
+    }
+    assert effective["upstream_binding"] == upstream
+
+
+def test_g1_native_effective_config_does_not_require_generic_evidence_wrapper() -> None:
+    module = _module()
+    native = {
+        "schema_version": "xunce-mid-dual-g1-effective-config/v1",
+        "gate_id": "g1",
+        "runner_id": "run_xunce_mid_dual_g1_coverage/v1",
+        "scale_profile": SCALE_PROFILE,
+        "run_id": "g1-formal",
+        "mode": "formal",
+        "output_root": "D:/xunce/out/mid_dual/g1/g1-formal",
+        "required_phase_ids": [
+            "p01",
+            "p02",
+            "p03",
+            "p04",
+            "p05",
+            "p06",
+            "p07",
+        ],
+        "required_phases": [
+            "preflight",
+            "validation_dry_run",
+            "test_q24",
+            "unseen24",
+            "replay3",
+            "recompute",
+            "finalize",
+        ],
+        "input_audit": {
+            "path": "g1_input_audit.json",
+            "schema_version": "xunce-mid-dual-g1-input-audit/v1",
+            "sha256": _sha("g1-input"),
+        },
+        "input_sha256": _sha("g1-input"),
+        "code_sha256": _sha("g1-code"),
+        "checkpoint": {
+            "update": 80,
+            "sha256": UPDATE80_CHECKPOINT_SHA256,
+            "policy_state_sha256": UPDATE80_POLICY_STATE_SHA256,
+        },
+        "scenario_manifest": {
+            "path": "D:/xunce/inputs/mid_dual/scenarios/freeze/manifest.json",
+            "schema_version": "mid-dual-scenario-freeze/v1",
+            "sha256": _sha("freeze-manifest"),
+        },
+        "denominator": {},
+        "execution": {},
+        "bootstrap": {},
+        "schemas": {},
+        "base_config_sha256": _sha("g1-base-config"),
+        "source_lineage": {},
+        "repair_lineage": None,
+        "config_sha256": _sha("g1-effective-config"),
+    }
+    validated = module.validate_g1_native_effective_config_projection(
+        native,
+        expected_root=Path(
+            "D:/xunce/out/mid_dual/g1/g1-formal"
+        ),
+    )
+    assert "evidence_binding" not in validated
+    assert validated["required_phase_ids"][-1] == "p07"
+
+
+def test_g3_phase_semantics_reject_fixture_wrong_kind_and_p02_before_p01() -> None:
+    module = _module()
+    wheel = _wheel_rows(module)
+    for row in wheel:
+        row["execution_class"] = "formal"
+        row["formal_sample"] = True
+        row["timing_contract_id"] = "five-phase-sequential-ns/v1"
+    with pytest.raises(module.G3Blocked, match="g3_phase_requires_p01"):
+        module.validate_g3_phase_rows(
+            phase_id="p02",
+            rows=_interface_rows(),
+            accepted_phase_ids=(),
+        )
+
+    fixture = copy.deepcopy(wheel)
+    fixture[0]["execution_class"] = "failure_fixture"
+    with pytest.raises(module.G3Blocked, match="g3_formal_fixture_partition"):
+        module.validate_g3_phase_rows(
+            phase_id="p01",
+            rows=fixture,
+            accepted_phase_ids=(),
+        )
+
+    wrong_kind = copy.deepcopy(wheel)
+    wrong_kind[0]["row_kind"] = "g3_interface_replay"
+    with pytest.raises(module.G3Blocked, match="g3_phase_row_kind"):
+        module.validate_g3_phase_rows(
+            phase_id="p01",
+            rows=wrong_kind,
+            accepted_phase_ids=(),
+        )

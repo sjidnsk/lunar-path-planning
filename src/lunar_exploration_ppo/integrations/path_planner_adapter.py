@@ -49,25 +49,28 @@ class PathPlannerAdapter:
         theta: float,
     ) -> PlannerResult:
         timings = {name: 0 for name in _TIMING_FIELDS}
-        phase_started_ns = perf_counter_ns()
+        run_start_ns = perf_counter_ns()
+        phase_started_ns = run_start_ns
 
-        def finish_phase(name: str) -> None:
+        def finish_phase(name: str) -> int:
             nonlocal phase_started_ns
             ended_ns = perf_counter_ns()
             duration_ns = ended_ns - phase_started_ns
             if duration_ns < 0:
                 raise RuntimeError("perf_counter_ns moved backwards")
             timings[name] = duration_ns
+            phase_started_ns = ended_ns
+            return ended_ns
 
         def assemble_failure(reason: str) -> PlannerResult:
-            assembly_started_ns = perf_counter_ns()
             failure = self._failure(reason)
-            assembly_ended_ns = perf_counter_ns()
-            assembly_duration_ns = assembly_ended_ns - assembly_started_ns
-            if assembly_duration_ns < 0:
-                raise RuntimeError("perf_counter_ns moved backwards")
-            timings["result_assembly_ns"] = assembly_duration_ns
-            return self._with_timing(failure, timings)
+            finish_phase("result_assembly_ns")
+            return self._with_timing(
+                failure,
+                timings,
+                run_start_ns=run_start_ns,
+                final_end_ns=phase_started_ns,
+            )
 
         def fail(reason: str, phase_name: str) -> PlannerResult:
             finish_phase(phase_name)
@@ -93,7 +96,6 @@ class PathPlannerAdapter:
             return fail("target_unreachable", "input_validation_ns")
         finish_phase("input_validation_ns")
 
-        phase_started_ns = perf_counter_ns()
         spec = GridSpec(
             width=self.geometry.width,
             height=self.geometry.height,
@@ -108,7 +110,6 @@ class PathPlannerAdapter:
         )
         finish_phase("platform_instantiation_ns")
 
-        phase_started_ns = perf_counter_ns()
         result = AStarPlanner().plan(
             grid,
             PlanRequest(
@@ -127,7 +128,6 @@ class PathPlannerAdapter:
             )
             return assemble_failure(f"planner_{reason}")
 
-        phase_started_ns = perf_counter_ns()
         path_cells = tuple(CellXY(cell.x, cell.y) for cell in result.path_cells)
         for cell in path_cells:
             if not self.geometry.in_bounds(cell):
@@ -139,7 +139,6 @@ class PathPlannerAdapter:
                 return fail("path_unsafe", "complete_route_validation_ns")
         finish_phase("complete_route_validation_ns")
 
-        phase_started_ns = perf_counter_ns()
         path_centers = tuple(
             self.geometry.cell_to_world_center(cell) for cell in path_cells
         )
@@ -171,22 +170,36 @@ class PathPlannerAdapter:
             diagnostics=diagnostics,
         )
         finish_phase("result_assembly_ns")
-        return self._with_timing(assembled, timings)
+        return self._with_timing(
+            assembled,
+            timings,
+            run_start_ns=run_start_ns,
+            final_end_ns=phase_started_ns,
+        )
 
     @staticmethod
     def _with_timing(
         result: PlannerResult,
         timings: Mapping[str, int],
+        *,
+        run_start_ns: int,
+        final_end_ns: int,
     ) -> PlannerResult:
         timing_values = {
             name: int(timings[name]) for name in _TIMING_FIELDS
         }
+        component_total_ns = sum(timing_values.values())
+        total_ns = final_end_ns - run_start_ns
+        if total_ns < 0 or total_ns != component_total_ns:
+            raise RuntimeError("five-phase sequential timing invariant violated")
         return replace(
             result,
             diagnostics={
                 **result.diagnostics,
+                "run_start_ns": run_start_ns,
+                "final_end_ns": final_end_ns,
                 **timing_values,
-                "total_ns": sum(timing_values.values()),
+                "total_ns": total_ns,
             },
         )
 

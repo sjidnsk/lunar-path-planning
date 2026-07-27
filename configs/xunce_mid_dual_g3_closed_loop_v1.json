@@ -12,6 +12,24 @@
     "wheel_closed_loop",
     "interface_replay"
   ],
+  "phase_contract": {
+    "p01": {
+      "name": "wheel_closed_loop",
+      "row_kind": "g3_wheel_step",
+      "episodes": 10,
+      "formal_only": true
+    },
+    "p02": {
+      "name": "interface_replay",
+      "row_kind": "g3_interface_replay",
+      "platform_counts": {
+        "legged": 3,
+        "hopper": 3
+      },
+      "formal_only": true,
+      "requires": "p01"
+    }
+  },
   "formal_counts": {
     "wheel_episodes": 10,
     "test_q24": 5,
@@ -29,5 +47,10 @@
   },
   "checkpoint_sha256": "35e04c86f9f973af028fb08f0175d42ab45378d09e1f2b96ee6aad6e4c12b5b5",
   "policy_state_sha256": "3123e6adde99be41e3bd5cc2f3843068e5416892395926d759c2c6a243ffd381",
-  "timing_contract_id": "five-phase-sequential-ns/v1"
+  "timing_contract_id": "five-phase-sequential-ns/v1",
+  "wheel_identity": {
+    "platform": "wheel",
+    "profile": "ppo-standard-wheel-grid/v1",
+    "capability_revision": "ppo-path-planner-adapter/v1"
+  }
 }
