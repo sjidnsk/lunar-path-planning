@@ -38,6 +38,70 @@
       3000
     ]
   },
+  "hopper_request_ballistics": {
+    "calculation_order": [
+      "horizontal_speed=speed*cos(elevation)",
+      "vertical_speed=speed*sin(elevation)",
+      "flight_time=2*(vertical_speed/gravity)",
+      "horizontal_delta=(horizontal_speed*direction)*flight_time",
+      "endpoint=start+horizontal_delta"
+    ],
+    "endpoint_encoding": "ieee754-binary64-hex-and-word/v1",
+    "gravity_m_s2": "1.62",
+    "launch_reference_height_semantics": "same-support-body-reference-height/v1",
+    "schema_version": "g2-independent-symmetric-ballistic-contract/v1"
+  },
+  "legged_crawl_cycle": {
+    "body_pose_rule": "support-safe-staging-then-nominal-terminal/v1",
+    "cycle_body_delta_xy_mm": [250, 0],
+    "foot_storage_order": [
+      "front_left",
+      "front_right",
+      "rear_left",
+      "rear_right"
+    ],
+    "lift_body_pose_rule": "three-support-foot-arithmetic-mean/v1",
+    "maximum_step_length_mm": 500,
+    "minimum_support_margin_mm": 50,
+    "nominal_stance_offsets_mm": [
+      [350, 250],
+      [350, -250],
+      [-350, 250],
+      [-350, -250]
+    ],
+    "phase_steps": [
+      {
+        "forward_lateral_delta_mm": [250, 0],
+        "moving_leg": "rear_right",
+        "moving_leg_id": 3,
+        "phase": 0
+      },
+      {
+        "forward_lateral_delta_mm": [250, 0],
+        "moving_leg": "front_right",
+        "moving_leg_id": 1,
+        "phase": 1
+      },
+      {
+        "forward_lateral_delta_mm": [250, 0],
+        "moving_leg": "rear_left",
+        "moving_leg_id": 2,
+        "phase": 2
+      },
+      {
+        "forward_lateral_delta_mm": [250, 0],
+        "moving_leg": "front_left",
+        "moving_leg_id": 0,
+        "phase": 3
+      }
+    ],
+    "provider_phase_rotation": {
+      "producer_phase_zero_maps_to_provider_phase": 1,
+      "schema_version": "g2-leg-phase-rotation/v1"
+    },
+    "schema_version": "g2-independent-static-crawl-cycle/v2",
+    "vertical_body_delta_rule": "four-foot-height-plane-mean/v1"
+  },
   "lola_contract": {
     "dataset_id": "LRO-L-LOLA-4-GDR-V1.0",
     "height": 7584,
@@ -65,16 +129,32 @@
   },
   "request_action_envelopes": {
     "hopper": {
-      "azimuth_indices": [0, 8, 4, 12],
+      "action_count": 1,
+      "azimuth_indices": [0],
+      "direction_set": ["+x"],
       "elevation_mdeg": 45000,
       "speed_mm_s": 1500
     },
     "legged": {
-      "cardinal_step_mm": 400
+      "action_count": 1,
+      "direction_set": ["+x"],
+      "graph_body_hop_mm": 250,
+      "provider_primitive_count": 4
     },
     "wheel": {
+      "action_count": 1,
+      "direction_set": ["+x"],
       "cardinal_translation_mm": 500
     }
+  },
+  "request_objective": {
+    "completion_norm": "L2",
+    "distance_unit": "m",
+    "distance_weight_milli": 1000,
+    "kind": "distance-only-complete-L2/v1",
+    "provider_goal_semantics": "direct-canonical-goal/v1",
+    "resource_term_role": "reporting-only",
+    "resource_weight_milli": 0
   },
   "small_map_envelopes": {
     "hopper": {
@@ -181,7 +261,7 @@
     "standard_base_terrains": 256
   },
   "root_seed": 20260727,
-  "schema_version": "g2-t2-producer-spec/v1",
+  "schema_version": "g2-t2-producer-spec/v3",
   "source_kinds": {
     "kilometer_macro": "derived_lola_20m_macro_interpolation",
     "kilometer_micro": "synthetic_terrain_obstacle_proxy/v1",

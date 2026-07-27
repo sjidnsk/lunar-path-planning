@@ -10,10 +10,8 @@ import pytest
 
 from producer.audit_bundle import compare_bundle_bytes
 from producer.canonical import canonical_json_bytes, domain_hash, sha256_bytes
-from producer.package_bundle import (
-    build_fixture_bundle,
-    verify_contiguous_shard_prefix,
-)
+from producer import package_bundle
+from producer.package_bundle import build_fixture_bundle, verify_contiguous_shard_prefix
 from producer.oracle_hopper import build_hopper_parameter_record
 from run_producer import main, phase_names
 
@@ -77,10 +75,14 @@ def _fixture_inputs() -> tuple[dict[str, bytes], dict[str, object]]:
     }
 
 
-def test_two_fresh_fixture_roots_are_byte_identical(tmp_path: Path) -> None:
+def test_two_fresh_fixture_roots_are_byte_identical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(package_bundle, "_FIXTURE_PARENT", tmp_path)
     raw, provenance = _fixture_inputs()
-    first = tmp_path / "fresh-a"
-    second = tmp_path / "fresh-b"
+    first = tmp_path / "g2-producer-fresh-a"
+    second = tmp_path / "g2-producer-fresh-b"
     freeze_a = build_fixture_bundle(
         first,
         source_root=ROOT,

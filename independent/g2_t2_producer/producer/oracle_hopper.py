@@ -186,15 +186,9 @@ def ballistic_witness(
     )
     ground_z_mm = plane_height_mm(plane, int(launch[0]), int(launch[1]))
     launch_z_m = (ground_z_mm + round(reference_height_m * 1000)) / 1000.0
-    target_ground_m = plane_height_mm(
-        plane, int(launch[0]), int(launch[1])
-    ) / 1000.0
     vertical = speed_m_s * math.sin(elevation_rad)
     horizontal = speed_m_s * math.cos(elevation_rad)
-    discriminant = vertical * vertical + 2.0 * gravity_m_s2 * (
-        launch_z_m - target_ground_m
-    )
-    flight_time_s = (vertical + math.sqrt(max(0.0, discriminant))) / gravity_m_s2
+    flight_time_s = 2.0 * (vertical / gravity_m_s2)
     range_m = horizontal * flight_time_s
     landing_x = int(launch[0]) + round(
         range_m * 1000.0 * math.cos(azimuth_rad)
@@ -374,10 +368,16 @@ def evaluate_hopper(
     )
     landing_plane = terrain.get("landing_surface_plane", terrain["height_plane"])
     slope = plane_slope_cdeg(landing_plane)
+    landing_reference_height_mm = round(
+        Decimal(str(parameter_record["launch_reference_height_m"])) * 1000
+    )
     landing_height_error = abs(
         trajectory[-1][2]
-        - plane_height_mm(
-            landing_plane, landing_xy[0], landing_xy[1]
+        - (
+            plane_height_mm(
+                landing_plane, landing_xy[0], landing_xy[1]
+            )
+            + landing_reference_height_mm
         )
     )
     stop = evaluate_stop(

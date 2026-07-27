@@ -304,6 +304,7 @@ def test_truth_rows_reject_provider_fields_but_allow_independent_oracle_fields()
         "oracle_safe": True,
         "oracle_reason_code": "G2I_W_SAFE",
         "numeric_witness": {"clearance_mm": 20},
+        "schema_version": "g2-primitive-oracle-decision/v1",
     }
     validate_truth_row(row)
     with pytest.raises(ValueError, match="provider_safe"):

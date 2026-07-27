@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import copy
 import json
+import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from producer.canonical import canonical_json_bytes, sha256_bytes
+import producer.audit_bundle as audit_bundle_module
+from producer.canonical import (
+    canonical_json_bytes,
+    canonical_jsonl_bytes,
+    sha256_bytes,
+)
 from producer.audit_bundle import audit_bundle, audit_source_tree
 from producer.finite_graph import (
     build_all_optima,
@@ -17,8 +24,12 @@ from producer.finite_graph import (
     verify_optimum_record,
 )
 from producer.generate_requests import generate_request_pool, select_requests
+from producer.models import validate_truth_row
 from producer.oracle_hopper import build_hopper_parameter_record
-from producer.package_bundle import build_fixture_bundle
+from producer.package_bundle import (
+    build_fixture_bundle,
+    producer_implementation_sha256,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,10 +152,11 @@ def test_three_small_map_optima_are_complete_and_reconstructable() -> None:
 
 def test_request_pool_and_hash_ranked_selection_have_exact_provider_blind_mix() -> None:
     spec = json.loads((ROOT / "SPECIFICATION.json").read_text(encoding="utf-8"))
+    hopper_record = _hopper_record()
     profiles = {
         "wheel": "a" * 64,
         "legged": "b" * 64,
-        "hopper": "c" * 64,
+        "hopper": sha256_bytes(canonical_json_bytes(hopper_record)),
     }
     lola = {
         "fixture_only": True,
@@ -158,9 +170,18 @@ def test_request_pool_and_hash_ranked_selection_have_exact_provider_blind_mix() 
         spec,
         profile_record_sha256=profiles,
         lola_provenance=lola,
+        hopper_parameter_record=hopper_record,
+        producer_implementation_sha256=producer_implementation_sha256(ROOT),
     )
     assert len(pool) == 3 * (256 + 96)
     assert len({row["truth_request_sha256"] for row in pool}) == len(pool)
+    assert {
+        row["producer_implementation_sha256"] for row in pool
+    } == {producer_implementation_sha256(ROOT)}
+    tampered = copy.deepcopy(pool[0])
+    tampered["producer_implementation_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="truth request identity mismatch"):
+        validate_truth_row(tampered)
     forbidden = {
         "provider_success",
         "provider_safe",
@@ -196,6 +217,20 @@ def test_request_pool_and_hash_ranked_selection_have_exact_provider_blind_mix() 
                 ("kilometer", "unreachable"): 2,
             }
         )
+        if platform in {"legged", "hopper"}:
+            expected_primitives = 4 if platform == "legged" else 1
+            reachable_rows = [
+                row
+                for row in rows
+                if row["difficulty_class"]
+                in {"reachable", "hard_reachable"}
+            ]
+            assert {
+                row["request_hop_count"] for row in reachable_rows
+            } == {1}
+            assert {
+                row["platform_primitive_count"] for row in reachable_rows
+            } == {expected_primitives}
         assert all("provider_request_sha256" not in row for row in rows)
 
     kilometer = [row for row in selected if row["scale"] == "kilometer"]
@@ -239,11 +274,15 @@ def _fixture_inputs() -> tuple[dict[str, bytes], dict[str, Any]]:
     return raw, provenance
 
 
-def test_full_fixture_bundle_is_hash_bound_formally_ineligible_and_auditable(
-    tmp_path: Path,
-) -> None:
+@pytest.fixture(scope="module")
+def full_fixture_baseline(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     raw, provenance = _fixture_inputs()
-    bundle_root = tmp_path / "fixture-bundle"
+    bundle_root = (
+        tmp_path_factory.mktemp("g2-full-baseline")
+        / "fixture-bundle"
+    )
     freeze = build_fixture_bundle(
         bundle_root,
         source_root=ROOT,
@@ -251,6 +290,14 @@ def test_full_fixture_bundle_is_hash_bound_formally_ineligible_and_auditable(
         raw_sources=raw,
         lola_provenance=provenance,
     )
+    audit = audit_bundle(bundle_root)
+    return bundle_root, freeze, audit
+
+
+def test_full_fixture_bundle_is_hash_bound_formally_ineligible_and_auditable(
+    full_fixture_baseline: tuple[Path, dict[str, Any], dict[str, Any]],
+) -> None:
+    bundle_root, freeze, audit = full_fixture_baseline
     assert freeze["counts"] == {
         "primitive_labels": 10002,
         "raw_request_pool": 1056,
@@ -268,13 +315,14 @@ def test_full_fixture_bundle_is_hash_bound_formally_ineligible_and_auditable(
         if path.is_file() and path.name != "truth-freeze.json"
     ) <= (bundle_root / "truth-freeze.json").stat().st_mtime_ns
 
-    audit = audit_bundle(bundle_root)
     assert audit["passed"] is True, audit["reasons"]
     assert audit["counts"] == freeze["counts"]
 
 
 def test_bundle_audit_blocks_formal_injection_and_missing_raw_input(
     tmp_path: Path,
+    full_fixture_baseline: tuple[Path, dict[str, Any], dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw, provenance = _fixture_inputs()
     with pytest.raises(ValueError, match="lola/LDEM_FIXTURE.LBL"):
@@ -288,24 +336,47 @@ def test_bundle_audit_blocks_formal_injection_and_missing_raw_input(
                 if key != "lola/LDEM_FIXTURE.LBL"
             },
             lola_provenance=provenance,
-        )
+    )
     assert not (tmp_path / "missing-raw" / "truth-freeze.json").exists()
 
+    baseline_root, _, _ = full_fixture_baseline
     bundle_root = tmp_path / "formal-injection"
-    build_fixture_bundle(
-        bundle_root,
-        source_root=ROOT,
-        hopper_parameter_record=_hopper_record(),
-        raw_sources=raw,
-        lola_provenance=provenance,
-    )
+    shutil.copytree(baseline_root, bundle_root)
     attestation_path = bundle_root / "source-attestations.json"
     attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
     attestation["formal_evidence_eligible"] = True
     attestation_path.write_bytes(canonical_json_bytes(attestation) + b"\n")
+    requests_path = bundle_root / "requests.jsonl"
+    request_rows = [
+        json.loads(line)
+        for line in requests_path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    request_rows[0]["producer_implementation_sha256"] = "0" * 64
+    requests_path.write_bytes(canonical_jsonl_bytes(request_rows))
+
+    def unexpected_positive_regeneration(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(
+            "tampered bundle reached positive 1056-row regeneration"
+        )
+
+    monkeypatch.setattr(
+        audit_bundle_module,
+        "generate_all_cases",
+        unexpected_positive_regeneration,
+    )
     audit = audit_bundle(bundle_root)
     assert audit["passed"] is False
     assert any("formal_evidence_eligible" in reason for reason in audit["reasons"])
+    assert any(
+        "payload index mismatch"
+        in reason
+        for reason in audit["reasons"]
+    )
+    assert any(
+        "payload root mismatch" in reason
+        for reason in audit["reasons"]
+    )
 
 
 def test_static_source_audit_rejects_forbidden_import(tmp_path: Path) -> None:

@@ -49,6 +49,17 @@ def phase_names() -> tuple[str, ...]:
     )
 
 
+def validate_provider_execution_rows(
+    rows: Iterable[dict[str, object]],
+) -> list[dict[str, object]]:
+    from producer.models import validate_provider_blind_request
+
+    materialized = list(rows)
+    for row in materialized:
+        validate_provider_blind_request(row)
+    return materialized
+
+
 def collect_isolation_evidence(
     *,
     project_root: Path,
@@ -555,19 +566,24 @@ def main(argv: list[str] | None = None) -> int:
         emit({"phase": "cases", "row_count": len(rows)})
         return 0
     profile_hashes = {
-        "wheel": domain_hash("g2-independent-profile/v1", b"wheel"),
-        "legged": domain_hash("g2-independent-profile/v1", b"legged"),
+        "wheel": domain_hash("g2-independent-profile/v2", b"wheel"),
+        "legged": domain_hash("g2-independent-profile/v2", b"legged"),
         "hopper": sha256_bytes(canonical_json_bytes(hopper_record)),
     }
+    implementation_sha = None
+    if args.phase in {"labels", "requests"}:
+        from producer.package_bundle import producer_implementation_sha256
+
+        implementation_sha = producer_implementation_sha256(source_root)
     if args.phase == "labels":
-        from producer.package_bundle import _primitive_labels, producer_implementation_sha256
+        from producer.package_bundle import _primitive_labels
 
         labels = _primitive_labels(
             cases,
             specification_sha256=sha256_bytes(
                 (source_root / "SPECIFICATION.json").read_bytes()
             ),
-            implementation_sha256=producer_implementation_sha256(source_root),
+            implementation_sha256=implementation_sha,
             profile_hashes=profile_hashes,
             hopper_parameter_record=hopper_record,
         )
@@ -591,21 +607,78 @@ def main(argv: list[str] | None = None) -> int:
     if args.phase == "requests":
         if not args.lola_provenance:
             parser.error("requests requires --lola-provenance")
-        from producer.generate_requests import generate_request_pool, select_requests
+        from producer.generate_requests import (
+            generate_raw_request_sources,
+            provider_blind_request,
+            request_graph_from_cache,
+            select_requests,
+            solve_raw_request_sources,
+        )
 
         lola = json.loads(Path(args.lola_provenance).read_text(encoding="utf-8"))
-        pool = generate_request_pool(
+        raw_request_sources = generate_raw_request_sources(
             specification,
-            profile_record_sha256=profile_hashes,
             lola_provenance=lola,
             hopper_parameter_record=hopper_record,
         )
+        pool = solve_raw_request_sources(
+            raw_request_sources,
+            specification=specification,
+            profile_record_sha256=profile_hashes,
+            producer_implementation_sha256=implementation_sha,
+            hopper_parameter_record=hopper_record,
+        )
         selected = select_requests(pool, specification)
+        raw_by_sha = {
+            row["raw_source_sha256"]: row
+            for row in raw_request_sources
+        }
+        graph_cache: dict[
+            str, tuple[dict[str, object], str, str]
+        ] = {}
+        provider_rows: list[dict[str, object]] = []
+        sidecar_rows: list[dict[str, object]] = []
+        for request in selected:
+            raw = raw_by_sha[request["raw_source_sha256"]]
+            graph, _, _ = request_graph_from_cache(
+                raw,
+                profile_record_sha256=profile_hashes[
+                    request["platform_kind"]
+                ],
+                hopper_parameter_record=hopper_record,
+                graph_cache=graph_cache,
+            )
+            blind = provider_blind_request(
+                request,
+                graph=graph,
+                hopper_parameter_record=hopper_record,
+            )
+            provider_rows.append(blind)
+            sidecar_rows.append(
+                {
+                    "provider_request_id": blind["provider_request_id"],
+                    "provider_request_sha256": blind[
+                        "provider_request_sha256"
+                    ],
+                    "schema_version": "g2-truth-request-sidecar/v1",
+                    "truth_request": {
+                        key: value
+                        for key, value in request.items()
+                        if key
+                        not in {"truth_certificate", "terrain_arrays"}
+                    },
+                }
+            )
         (output_root / "request-pool.jsonl").write_bytes(
             canonical_jsonl_bytes(pool)
         )
         (output_root / "requests.jsonl").write_bytes(
-            canonical_jsonl_bytes(selected)
+            canonical_jsonl_bytes(provider_rows)
+        )
+        truth_root = output_root / "truth"
+        truth_root.mkdir()
+        (truth_root / "request-sidecar.jsonl").write_bytes(
+            canonical_jsonl_bytes(sidecar_rows)
         )
         emit({"phase": "requests", "pool_count": len(pool), "selected_count": len(selected)})
         return 0

@@ -211,6 +211,7 @@ def reachability_certificate(
         key=lambda edge: edge["edge_id"],
     )
     certificate = {
+        "certificate_kind": "exhaustive-finite-graph-reachability/v2",
         "cost_milli": solved["cost_milli"],
         "distance_labels_sha256": sha256_bytes(
             canonical_json_bytes(solved["distance_labels_milli"])
@@ -224,6 +225,7 @@ def reachability_certificate(
         "reachable_set_sha256": domain_hash(
             "g2-reachable-set/v1", canonical_json_bytes(reachable_nodes)
         ),
+        "schema_version": "g2-request-reachability-certificate/v2",
         "settled_order": solved["settled_order"],
     }
     return certificate
