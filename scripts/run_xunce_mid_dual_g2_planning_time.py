@@ -31,6 +31,7 @@ import xunce_artifact_io as artifact_io
 from xunce_artifact_io import read_bytes as artifact_read_bytes
 from xunce_artifact_paths import MID_DUAL_MANIFEST, MID_DUAL_PHASE_STATE, artifact_path
 from xunce_mid_dual_artifacts import MidDualRunStore
+from xunce_mid_dual_contracts import PlanningCallRow, evaluate_formal_g2
 
 
 SCALE_PROFILE = "midterm_reduced_w8x3_update80/v1"
@@ -79,6 +80,11 @@ EXPECTED_CLASS_COUNTS = {
         "hard_reachable": 2,
         "unreachable": 2,
     },
+}
+ACTIVE_PLATFORMS = ("wheel", "legged", "hopper")
+PLATFORM_INVARIANTS = {
+    platform: {"max_traversable_slope_deg": 30.0}
+    for platform in ACTIVE_PLATFORMS
 }
 G2_REQUIRED_SOURCE_RELATIVE_PATHS = (
     "configs/xunce_mid_dual_g2_planning_time_v1.json",
@@ -464,6 +470,7 @@ def build_nonformal_schedules(
     cold: list[dict[str, object]] = []
     warmup: list[dict[str, object]] = []
     worker_one: list[dict[str, object]] = []
+    worker_four: list[dict[str, object]] = []
     for platform in G2_PLATFORMS:
         selected = sorted(
             (row for row in normalized if row["platform"] == platform),
@@ -499,10 +506,20 @@ def build_nonformal_schedules(
             )
             for row in selected
         )
+        worker_four.extend(
+            _scheduled_call(
+                row,
+                repeat_index=-1,
+                formal_sample=False,
+                schedule_kind="worker-four",
+            )
+            for row in selected
+        )
     return {
         "cold_start": cold,
         "warmup": warmup,
         "worker_one": worker_one,
+        "worker_four": worker_four,
     }
 
 
@@ -781,121 +798,77 @@ def recompute_g2_summary(
             != 1
         ):
             raise G2Blocked("g2_repeat_matrix")
-    for platform in G2_PLATFORMS:
-        for scale in G2_SCALES:
-            request_rows = [
-                rows_for_request[0]
-                for key, rows_for_request in grouped.items()
-                if key[0] == platform
-                and rows_for_request[0]["scale"] == scale
-            ]
-            counts = Counter(
-                str(row["request_class"]) for row in request_rows
-            )
-            if dict(counts) != EXPECTED_CLASS_COUNTS[scale]:
-                raise G2Blocked("g2_request_matrix")
-
-    successful_reachable: dict[str, int] = {}
-    for platform in G2_PLATFORMS:
-        successful_reachable[platform] = sum(
-            rows_for_request[0]["outcome_kind"] == "reachable"
-            and all(
-                row["provider_success"] is True
-                and row["route_l2_valid"] is True
-                for row in rows_for_request
-            )
-            for key, rows_for_request in grouped.items()
-            if key[0] == platform
+    canonical_rows = [
+        PlanningCallRow(
+            schema_version=str(row["schema_version"]),
+            scale_profile=str(row["scale_profile"]),
+            run_id=str(row["run_id"]),
+            episode_id=str(row["episode_id"]),
+            request_id=str(row["request_id"]),
+            call_id=str(row["call_id"]),
+            platform=str(row["platform"]),
+            scale=str(row["scale"]),
+            request_class=str(row["request_class"]),
+            outcome_kind=str(row["outcome_kind"]),
+            source_sha256=str(row["source_sha256"]),
+            config_sha256=str(row["config_sha256"]),
+            request_sha256=str(row["request_sha256"]),
+            provider_sha256=str(row["provider_sha256"]),
+            oracle_sha256=str(row["oracle_sha256"]),
+            elapsed_ms=float(row["elapsed_ms"]),
+            input_validation_ms=float(row["input_validation_ms"]),
+            platform_instantiation_ms=float(
+                row["platform_instantiation_ms"]
+            ),
+            search_ms=float(row["search_ms"]),
+            complete_route_validation_ms=float(
+                row["complete_route_validation_ms"]
+            ),
+            result_assembly_ms=float(row["result_assembly_ms"]),
+            provider_success=bool(row["provider_success"]),
+            route_l2_valid=bool(row["route_l2_valid"]),
+            semantic_digest=str(row["semantic_digest"]),
         )
-    unreachable_correct = all(
-        row["provider_success"] is False
-        and row["route_l2_valid"] is False
         for row in materialized
-        if row["outcome_kind"] == "unreachable"
-    )
-    correctness = (
-        successful_reachable == {platform: 38 for platform in G2_PLATFORMS}
-        and unreachable_correct
-    )
-    semantic_consensus = all(
-        len({str(row["semantic_digest"]) for row in request_rows}) == 1
-        for request_rows in grouped.values()
-    )
-    correctness = correctness and semantic_consensus
-
-    by_platform_scale: dict[str, dict[str, object]] = {}
-    by_outcome: dict[str, dict[str, object]] = {}
-    by_class: dict[str, dict[str, object]] = {}
-    class_counts: dict[str, dict[str, int]] = {}
-    for platform in G2_PLATFORMS:
-        for scale in G2_SCALES:
-            selected = [
-                row
-                for row in materialized
-                if row["platform"] == platform and row["scale"] == scale
-            ]
-            expected_count = 165 if scale == "standard" else 50
-            if len(selected) != expected_count:
-                raise G2Blocked("g2_request_matrix")
-            class_counts[f"{platform}/{scale}"] = dict(
-                EXPECTED_CLASS_COUNTS[scale]
-            )
-            by_platform_scale[f"{platform}/{scale}"] = _timing_statistics(
-                selected
-            )
-            for outcome in ("reachable", "unreachable"):
-                subset = [
-                    row
-                    for row in selected
-                    if row["outcome_kind"] == outcome
-                ]
-                by_outcome[
-                    f"{platform}/{scale}/{outcome}"
-                ] = _timing_statistics(subset)
-            for request_class in (
-                "normal_reachable",
-                "hard_reachable",
-                "unreachable",
-            ):
-                subset = [
-                    row
-                    for row in selected
-                    if row["request_class"] == request_class
-                ]
-                by_class[
-                    f"{platform}/{scale}/{request_class}"
-                ] = _timing_statistics(subset)
-    partitions = (
-        *by_platform_scale.values(),
-        *by_outcome.values(),
-        *by_class.values(),
-    )
-    midterm = correctness and all(
-        partition["midterm_reduced_passed"] is True
-        for partition in partitions
-    )
-    final = correctness and all(
-        partition["final_threshold_reduced_passed"] is True
-        for partition in partitions
-    )
+    ]
+    canonical = evaluate_formal_g2(canonical_rows)
+    if canonical.get("status") == "blocked":
+        raise G2Blocked(
+            str(canonical.get("blocking_reason", "g2_canonical_evaluator"))
+        )
+    correctness = canonical["reachable_correctness"]
     return {
-        "status": "passed" if midterm else "failed",
-        "formal_call_count": len(materialized),
-        "unique_request_count": len(grouped),
-        "g2_all_platforms_2s_passed": midterm,
-        "g2_all_platforms_1s_passed": final,
-        "correctness_passed": correctness,
-        "request_class_counts_by_platform_scale": class_counts,
-        "timing_by_platform_scale": by_platform_scale,
-        "timing_by_platform_scale_outcome": by_outcome,
-        "timing_by_platform_scale_class": by_class,
+        "status": canonical["status"],
+        "formal_call_count": canonical["formal_call_count"],
+        "unique_request_count": canonical["unique_request_count"],
+        "active_platforms": canonical["active_platforms"],
+        "platform_invariants": canonical["platform_invariants"],
+        "g2_all_platforms_2s_passed": canonical[
+            "g2_all_platforms_2s_passed"
+        ],
+        "g2_all_platforms_1s_passed": canonical[
+            "g2_all_platforms_1s_passed"
+        ],
+        "correctness_passed": canonical["correctness_passed"],
+        "request_class_counts_by_platform_scale": canonical[
+            "request_class_counts_by_platform_scale"
+        ],
+        "timing_by_platform_scale": canonical["timing_by_platform_scale"],
+        "timing_by_platform_scale_outcome": canonical[
+            "timing_by_platform_scale_outcome"
+        ],
+        "timing_by_platform_scale_class": canonical[
+            "timing_by_platform_scale_class"
+        ],
         "reachable_correctness": {
-            "reachable_unique_request_count_by_platform": {
-                platform: 38 for platform in G2_PLATFORMS
-            },
-            "reachable_unique_success_count_by_platform": successful_reachable,
-            "unreachable_correct": unreachable_correct,
-            "semantic_consensus": semantic_consensus,
+            "reachable_unique_request_count_by_platform": correctness[
+                "reachable_unique_request_count_by_platform"
+            ],
+            "reachable_unique_success_count_by_platform": correctness[
+                "reachable_unique_success_count_by_platform"
+            ],
+            "unreachable_correct": correctness["unreachable_correct"],
+            "semantic_consensus": correctness["semantic_consensus"],
             "truth_provider_crosswalk_valid": True,
         },
     }
@@ -951,6 +924,70 @@ def compare_worker_semantics(
     }
 
 
+def compare_diagnostic_worker_semantics(
+    worker_one_rows: Sequence[Mapping[str, object]],
+    worker_four_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Require exact 129-request semantic equality before formal timing."""
+
+    def indexed(
+        rows: Sequence[Mapping[str, object]],
+    ) -> dict[str, tuple[object, ...]]:
+        if len(rows) != 129:
+            raise G2Blocked("g2_preformal_worker_semantic_drift")
+        result: dict[str, tuple[object, ...]] = {}
+        for row in rows:
+            request_id = row.get("request_id")
+            if (
+                type(row) is not dict
+                or type(request_id) is not str
+                or not request_id
+                or request_id in result
+                or row.get("formal_sample") is not False
+            ):
+                raise G2Blocked(
+                    "g2_preformal_worker_semantic_drift"
+                )
+            request_sha256 = row.get("request_sha256")
+            semantic_digest = row.get("semantic_digest")
+            if (
+                not _is_sha256(request_sha256)
+                or not _is_sha256(semantic_digest)
+                or type(row.get("provider_success")) is not bool
+                or type(row.get("route_l2_valid")) is not bool
+            ):
+                raise G2Blocked(
+                    "g2_preformal_worker_semantic_drift"
+                )
+            result[request_id] = (
+                request_sha256,
+                semantic_digest,
+                row["provider_success"],
+                row["route_l2_valid"],
+            )
+        return result
+
+    worker_one = indexed(worker_one_rows)
+    worker_four = indexed(worker_four_rows)
+    if worker_one != worker_four:
+        raise G2Blocked("g2_preformal_worker_semantic_drift")
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-preformal-worker-equivalence/v1"
+        ),
+        "matched": True,
+        "request_count": 129,
+        "worker_one_count": 1,
+        "worker_four_count": 4,
+        "worker_one_results_sha256": _canonical_sha256(
+            worker_one_rows
+        ),
+        "worker_four_results_sha256": _canonical_sha256(
+            worker_four_rows
+        ),
+    }
+
+
 def validate_static_cache_payload(
     payload: Mapping[str, object],
 ) -> dict[str, object]:
@@ -968,6 +1005,135 @@ def validate_static_cache_payload(
     ):
         raise G2Blocked("g2_static_cache_contract")
     return dict(payload)
+
+
+def execute_read_only_static_cache_audit(
+    terrain_payloads: Mapping[str, bytes],
+) -> dict[str, object]:
+    """Execute canonical terrain validation without caching route answers."""
+    import xunce_mid_dual_g2_inputs as inputs
+
+    if type(terrain_payloads) is not dict or not terrain_payloads:
+        raise G2Blocked("g2_static_cache_payload_missing")
+    entries: list[dict[str, object]] = []
+    for terrain_sha256, payload in sorted(terrain_payloads.items()):
+        if (
+            not _is_sha256(terrain_sha256)
+            or type(payload) is not bytes
+            or _sha256(payload) != terrain_sha256
+        ):
+            raise G2Blocked("g2_static_cache_payload_hash")
+        before = _sha256(payload)
+        try:
+            arrays, metadata, geometry_sha256 = (
+                inputs._decode_truth_terrain(payload)  # noqa: SLF001
+            )
+        except inputs.G2InputContractError as exc:
+            raise G2Blocked(
+                f"g2_static_cache_payload_invalid:{exc.code}"
+            ) from exc
+        static_projection = {
+            "terrain_sha256": terrain_sha256,
+            "geometry_sha256": geometry_sha256,
+            "metadata_sha256": _canonical_sha256(metadata),
+            "arrays": {
+                name: {
+                    "shape": list(array.shape),
+                    "dtype": str(array.dtype),
+                    "sha256": _sha256(array.tobytes(order="C")),
+                }
+                for name, array in sorted(arrays.items())
+            },
+        }
+        cache_payload = validate_static_cache_payload(
+            {
+                "cache_contract": STATIC_CACHE_CONTRACT_ID,
+                "terrain_sha256": terrain_sha256,
+                "static_validation_sha256": _domain_hash(
+                    "xunce-mid-dual-g2-static-validation/v1",
+                    _canonical_bytes(static_projection),
+                ),
+            }
+        )
+        after = _sha256(payload)
+        if after != before:
+            raise G2Blocked("g2_static_cache_payload_mutated")
+        entries.append(
+            {
+                **cache_payload,
+                "payload_sha256_before": before,
+                "payload_sha256_after": after,
+            }
+        )
+    return {
+        "schema_version": "xunce-mid-dual-g2-static-cache-audit/v1",
+        "status": "passed",
+        "formal_evidence_eligible": True,
+        "cache_contract": STATIC_CACHE_CONTRACT_ID,
+        "read_only": True,
+        "terrain_count": len(entries),
+        "entries": entries,
+        "entries_sha256": _canonical_sha256(entries),
+    }
+
+
+def validate_preformal_diagnostic_evidence(
+    audit: Mapping[str, object],
+    terrain_payloads: Mapping[str, bytes],
+) -> dict[str, object]:
+    """Recompute all four preformal artifacts before every formal attempt."""
+    required = {
+        "worker_one_results",
+        "worker_one_results_sha256",
+        "worker_four_results",
+        "worker_four_results_sha256",
+        "worker_equivalence",
+        "worker_equivalence_sha256",
+        "static_cache_audit",
+        "static_cache_audit_sha256",
+    }
+    if (
+        not isinstance(audit, Mapping)
+        or audit.get("status") != "complete"
+        or audit.get("formal_sample") is not False
+        or audit.get("worker_one_count") != 1
+        or audit.get("worker_four_count") != 4
+        or audit.get("request_count") != 129
+        or not required.issubset(audit)
+    ):
+        raise G2Blocked("g2_preformal_diagnostic_evidence")
+    worker_one = audit["worker_one_results"]
+    worker_four = audit["worker_four_results"]
+    equivalence = audit["worker_equivalence"]
+    cache_audit = audit["static_cache_audit"]
+    if (
+        not isinstance(worker_one, list)
+        or not isinstance(worker_four, list)
+        or not isinstance(equivalence, Mapping)
+        or not isinstance(cache_audit, Mapping)
+        or audit["worker_one_results_sha256"]
+        != _canonical_sha256(worker_one)
+        or audit["worker_four_results_sha256"]
+        != _canonical_sha256(worker_four)
+        or audit["worker_equivalence_sha256"]
+        != _canonical_sha256(equivalence)
+        or audit["static_cache_audit_sha256"]
+        != _canonical_sha256(cache_audit)
+    ):
+        raise G2Blocked("g2_preformal_diagnostic_evidence")
+    fresh_equivalence = compare_diagnostic_worker_semantics(
+        worker_one,
+        worker_four,
+    )
+    fresh_cache_audit = execute_read_only_static_cache_audit(
+        terrain_payloads
+    )
+    if (
+        dict(equivalence) != fresh_equivalence
+        or dict(cache_audit) != fresh_cache_audit
+    ):
+        raise G2Blocked("g2_preformal_diagnostic_evidence")
+    return dict(audit)
 
 
 def _journal_row(
@@ -1385,6 +1551,8 @@ def execute_provider_timed_call(
 
 def _read_execution_bundle(
     root: str | Path,
+    *,
+    runtime_source_closure: Mapping[str, object],
 ) -> dict[str, object]:
     import xunce_mid_dual_g2_inputs as inputs
 
@@ -1542,6 +1710,8 @@ def _read_execution_bundle(
         or fresh_audit.get("blockers") != []
         or fresh_audit.get("provider_requests") != provider_requests
         or stored_audit_without_provider_rows != input_audit
+        or fresh_audit.get("path_planner_runtime_source_closure")
+        != runtime_source_closure
     ):
         raise G2Blocked("g2_truth_reaudit_drift")
     terrain_payloads: dict[str, bytes] = {}
@@ -1650,7 +1820,45 @@ def _git_output(*args: str, cwd: Path = REPO_ROOT) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def _code_lineage_sha256() -> str:
+def validate_platform_invariants(
+    active_platforms: object,
+    platform_invariants: object,
+) -> dict[str, object]:
+    if (
+        active_platforms != list(ACTIVE_PLATFORMS)
+        or platform_invariants != PLATFORM_INVARIANTS
+    ):
+        raise G2Blocked("g2_platform_invariant_drift")
+    return {
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+    }
+
+
+def _runtime_binding(
+    runtime_source_closure_sha256: str,
+) -> dict[str, object]:
+    return {
+        **validate_platform_invariants(
+            list(ACTIVE_PLATFORMS),
+            PLATFORM_INVARIANTS,
+        ),
+        "path_planner_runtime_source_closure_sha256": _require_sha256(
+            runtime_source_closure_sha256,
+            "g2_runtime_source_closure_sha256",
+        ),
+    }
+
+
+def _code_lineage_sha256(
+    runtime_source_closure: Mapping[str, object],
+) -> str:
+    import xunce_mid_dual_g2_inputs as inputs
+
+    closure = inputs.validate_path_planner_runtime_source_closure(
+        runtime_source_closure,
+        runtime_source_closure,
+    )
     rows: list[dict[str, object]] = []
     for relative in G2_REQUIRED_SOURCE_RELATIVE_PATHS:
         path = REPO_ROOT / relative
@@ -1664,8 +1872,19 @@ def _code_lineage_sha256() -> str:
                 "sha256": _sha256(payload),
             }
         )
-    return _sha256(
+    local_source_sha256 = _sha256(
         b"xunce-mid-dual-code/v1\0" + _canonical_bytes(rows)
+    )
+    return _domain_hash(
+        "xunce-mid-dual-g2-code-with-runtime-source/v1",
+        _canonical_bytes(
+            {
+                "local_source_sha256": local_source_sha256,
+                "path_planner_runtime_source_closure_sha256": closure[
+                    "path_planner_runtime_source_closure_sha256"
+                ],
+            }
+        ),
     )
 
 
@@ -1735,6 +1954,11 @@ def _load_config(path: str | Path) -> tuple[dict[str, object], str]:
         config = json.loads(payload_bytes.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise G2Blocked("g2_config_invalid") from exc
+    platform_stacks = (
+        config.get("platform_stacks")
+        if type(config) is dict
+        else None
+    )
     if (
         type(config) is not dict
         or config.get("schema_version") != G2_CONFIG_SCHEMA_VERSION
@@ -1769,6 +1993,16 @@ def _load_config(path: str | Path) -> tuple[dict[str, object], str]:
             "engineering_standard_p95": 250.0,
             "engineering_kilometer_p95": 750.0,
         }
+        or type(platform_stacks) is not dict
+        or list(platform_stacks) != list(ACTIVE_PLATFORMS)
+        or any(
+            type(platform_stacks.get(platform)) is not dict
+            or platform_stacks[platform].get(
+                "max_traversable_slope_deg"
+            )
+            != 30.0
+            for platform in ACTIVE_PLATFORMS
+        )
     ):
         raise G2Blocked("g2_config_invalid")
     return config, _sha256(payload_bytes)
@@ -1779,7 +2013,12 @@ def _effective_config(
     run_id: str,
     input_sha256: str,
     code_sha256: str,
+    runtime_source_closure_sha256: str,
 ) -> dict[str, object]:
+    _require_sha256(
+        runtime_source_closure_sha256,
+        "g2_runtime_source_closure_sha256",
+    )
     return {
         "schema_version": G2_CONFIG_SCHEMA_VERSION,
         "gate_id": G2_GATE_ID,
@@ -1789,6 +2028,11 @@ def _effective_config(
         "scale_profile": SCALE_PROFILE,
         "input_sha256": input_sha256,
         "code_sha256": code_sha256,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "path_planner_runtime_source_closure_sha256": (
+            runtime_source_closure_sha256
+        ),
         "required_phase_ids": list(G2_REQUIRED_PHASE_IDS),
         "source_contract_sha256": _canonical_sha256(G2_SOURCE_CONTRACT),
         "evidence_binding": {
@@ -1796,6 +2040,12 @@ def _effective_config(
             "input_audit_path": "g2_input_audit.json",
             "lineage_audit_path": "lineage_audit.json",
             "report_audit_path": "g2_report_audit.json",
+            "runtime_source_closure_audit_path": (
+                "g2_runtime_source_closure_audit.json"
+            ),
+            "platform_invariants_audit_path": (
+                "g2_platform_invariants_audit.json"
+            ),
         },
     }
 
@@ -1897,6 +2147,7 @@ def _capture_preflight(
     input_manifest_sha256: str | None,
     input_sha256: str,
     code_sha256: str,
+    runtime_source_closure_sha256: str,
 ) -> None:
     if "p01" in store.accepted_phase_ids:
         return
@@ -1923,6 +2174,7 @@ def _capture_preflight(
             "input_manifest_sha256": input_manifest_sha256,
             "input_sha256": input_sha256,
             "code_sha256": code_sha256,
+            **_runtime_binding(runtime_source_closure_sha256),
             "provider_called": False,
             "formal_row_count": 0,
         },
@@ -1936,6 +2188,7 @@ def _blocked_summary(
     config_sha256: str,
     input_sha256: str,
     code_sha256: str,
+    runtime_source_closure_sha256: str,
     reason: str,
 ) -> dict[str, object]:
     return {
@@ -1948,6 +2201,7 @@ def _blocked_summary(
         "config_sha256": config_sha256,
         "input_sha256": input_sha256,
         "code_sha256": code_sha256,
+        **_runtime_binding(runtime_source_closure_sha256),
         "status": "blocked",
         "formal_evidence_eligible": False,
         "formal_call_count": 0,
@@ -2038,6 +2292,45 @@ def _source_report_audit(
     }
 
 
+def _platform_invariants_audit(
+    *,
+    run_id: str,
+    config_sha256: str,
+    input_sha256: str,
+    code_sha256: str,
+    runtime_source_closure_sha256: str,
+    status: str,
+    formal_evidence_eligible: bool,
+) -> dict[str, object]:
+    if status not in {"passed", "blocked"}:
+        raise G2Blocked("g2_platform_invariant_audit_status")
+    if type(formal_evidence_eligible) is not bool:
+        raise G2Blocked("g2_platform_invariant_audit_status")
+    return {
+        "schema_version": (
+            "xunce-mid-dual-g2-platform-invariants-audit/v1"
+        ),
+        "gate_id": G2_GATE_ID,
+        "scale_profile": SCALE_PROFILE,
+        "run_id": run_id,
+        "status": status,
+        "formal_evidence_eligible": formal_evidence_eligible,
+        **_runtime_binding(runtime_source_closure_sha256),
+        "config_sha256": _require_sha256(
+            config_sha256,
+            "g2_platform_invariant_config_sha256",
+        ),
+        "input_sha256": _require_sha256(
+            input_sha256,
+            "g2_platform_invariant_input_sha256",
+        ),
+        "code_sha256": _require_sha256(
+            code_sha256,
+            "g2_platform_invariant_code_sha256",
+        ),
+    }
+
+
 def _finalize_blocked(
     *,
     store: MidDualRunStore,
@@ -2045,21 +2338,44 @@ def _finalize_blocked(
     mode: str,
     input_audit: Mapping[str, object],
     code_sha256: str,
+    runtime_source_closure: Mapping[str, object],
     reason: str,
 ) -> dict[str, object]:
+    runtime_source_closure_sha256 = str(
+        runtime_source_closure[
+            "path_planner_runtime_source_closure_sha256"
+        ]
+    )
     summary = _blocked_summary(
         run_id=run_id,
         mode=mode,
         config_sha256=store.config_sha256,
         input_sha256=_json_artifact_sha256(input_audit),
         code_sha256=code_sha256,
+        runtime_source_closure_sha256=(
+            runtime_source_closure_sha256
+        ),
         reason=reason,
     )
     store.finalize(
         summary,
         _routing(summary),
         _render_report(summary),
-        {"g2_input": input_audit},
+        {
+            "g2_input": input_audit,
+            "g2_runtime_source_closure": runtime_source_closure,
+            "g2_platform_invariants": _platform_invariants_audit(
+                run_id=run_id,
+                config_sha256=store.config_sha256,
+                input_sha256=_json_artifact_sha256(input_audit),
+                code_sha256=code_sha256,
+                runtime_source_closure_sha256=(
+                    runtime_source_closure_sha256
+                ),
+                status="blocked",
+                formal_evidence_eligible=False,
+            ),
+        },
     )
     return {
         "execution_status": "complete",
@@ -2115,16 +2431,32 @@ def run_g2(
     if mode not in G2_MODES:
         raise G2Blocked("g2_mode_invalid")
     _base_config, _base_config_sha256 = _load_config(config_path)
-    code_sha256 = _code_lineage_sha256()
+    import xunce_mid_dual_g2_inputs as inputs
+
+    runtime_source_closure = (
+        inputs.capture_path_planner_runtime_source_closure()
+    )
+    runtime_source_closure_sha256 = str(
+        runtime_source_closure[
+            "path_planner_runtime_source_closure_sha256"
+        ]
+    )
+    code_sha256 = _code_lineage_sha256(runtime_source_closure)
     run_root = Path(G2_OUTPUT_BASE) / run_id
     try:
-        bundle = _read_execution_bundle(input_bundle)
+        bundle = _read_execution_bundle(
+            input_bundle,
+            runtime_source_closure=runtime_source_closure,
+        )
     except G2Blocked as exc:
         input_audit = _missing_input_audit(input_bundle, exc.reason)
         effective = _effective_config(
             run_id=run_id,
             input_sha256=_json_artifact_sha256(input_audit),
             code_sha256=code_sha256,
+            runtime_source_closure_sha256=(
+                runtime_source_closure_sha256
+            ),
         )
         store, created = _open_store(run_root, effective)
         _capture_preflight(
@@ -2135,6 +2467,9 @@ def run_g2(
             input_manifest_sha256=None,
             input_sha256=_json_artifact_sha256(input_audit),
             code_sha256=code_sha256,
+            runtime_source_closure_sha256=(
+                runtime_source_closure_sha256
+            ),
         )
         return _finalize_blocked(
             store=store,
@@ -2142,6 +2477,7 @@ def run_g2(
             mode=mode,
             input_audit=input_audit,
             code_sha256=code_sha256,
+            runtime_source_closure=runtime_source_closure,
             reason=exc.reason,
         )
 
@@ -2150,6 +2486,7 @@ def run_g2(
         run_id=run_id,
         input_sha256=str(bundle["input_sha256"]),
         code_sha256=code_sha256,
+        runtime_source_closure_sha256=runtime_source_closure_sha256,
     )
     store: MidDualRunStore | None = None
     try:
@@ -2162,6 +2499,9 @@ def run_g2(
             input_manifest_sha256=str(bundle["manifest_sha256"]),
             input_sha256=str(bundle["input_sha256"]),
             code_sha256=code_sha256,
+            runtime_source_closure_sha256=(
+                runtime_source_closure_sha256
+            ),
         )
         if mode == "preflight":
             return {
@@ -2207,6 +2547,9 @@ def run_g2(
                 audit={
                     "status": "complete",
                     "formal_sample": False,
+                    **_runtime_binding(
+                        runtime_source_closure_sha256
+                    ),
                     "cold_start_count": len(cold_rows),
                     "warmup_count": len(warmup_rows),
                     "cold_start_results_sha256": _canonical_sha256(
@@ -2231,7 +2574,28 @@ def run_g2(
                 execute_task=execute_provider_timed_call,
                 max_workers=1,
             )
+            worker_four_calls = _hydrate_calls(
+                nonformal["worker_four"],
+                bundle=bundle,
+                run_id=run_id,
+                config_sha256=store.config_sha256,
+                code_sha256=code_sha256,
+            )
+            worker_four_full = execute_preloaded_batch(
+                worker_four_calls,
+                prepare_task=lambda task: task,
+                execute_task=execute_provider_timed_call,
+                max_workers=4,
+            )
             worker_one_rows = _diagnostic_projection(worker_one_full)
+            worker_four_rows = _diagnostic_projection(worker_four_full)
+            worker_equivalence = compare_diagnostic_worker_semantics(
+                worker_one_rows,
+                worker_four_rows,
+            )
+            static_cache_audit = execute_read_only_static_cache_audit(
+                bundle["terrain_payloads"]
+            )
             _accept_phase(
                 store,
                 phase_id="p03",
@@ -2239,25 +2603,46 @@ def run_g2(
                 audit={
                     "status": "complete",
                     "formal_sample": False,
-                    "worker_count": 1,
+                    **_runtime_binding(
+                        runtime_source_closure_sha256
+                    ),
+                    "worker_one_count": 1,
+                    "worker_four_count": 4,
                     "request_count": len(worker_one_rows),
                     "worker_one_results": worker_one_rows,
+                    "worker_one_results_sha256": _canonical_sha256(
+                        worker_one_rows
+                    ),
+                    "worker_four_results": worker_four_rows,
+                    "worker_four_results_sha256": _canonical_sha256(
+                        worker_four_rows
+                    ),
+                    "worker_equivalence": worker_equivalence,
+                    "worker_equivalence_sha256": _canonical_sha256(
+                        worker_equivalence
+                    ),
+                    "static_cache_audit": static_cache_audit,
+                    "static_cache_audit_sha256": _canonical_sha256(
+                        static_cache_audit
+                    ),
                 },
             )
-        else:
-            recorded_worker_one = _accepted_phase_audit(
-                store,
-                "p03",
-            ).get("worker_one_results")
-            if not isinstance(recorded_worker_one, list):
-                raise G2Blocked("g2_worker_one_results_missing")
-            worker_one_rows = [
-                dict(row)
-                for row in recorded_worker_one
-                if isinstance(row, Mapping)
-            ]
-            if len(worker_one_rows) != len(recorded_worker_one):
-                raise G2Blocked("g2_worker_one_results_missing")
+        diagnostic_evidence = validate_preformal_diagnostic_evidence(
+            _accepted_phase_audit(store, "p03"),
+            bundle["terrain_payloads"],
+        )
+        recorded_worker_one = diagnostic_evidence[
+            "worker_one_results"
+        ]
+        if not isinstance(recorded_worker_one, list):
+            raise G2Blocked("g2_worker_one_results_missing")
+        worker_one_rows = [
+            dict(row)
+            for row in recorded_worker_one
+            if isinstance(row, Mapping)
+        ]
+        if len(worker_one_rows) != len(recorded_worker_one):
+            raise G2Blocked("g2_worker_one_results_missing")
         if mode == "diagnostic":
             return {
                 "execution_status": "incomplete",
@@ -2298,6 +2683,9 @@ def run_g2(
                 audit={
                     "status": "complete",
                     "formal_sample": True,
+                    **_runtime_binding(
+                        runtime_source_closure_sha256
+                    ),
                     "formal_worker_count": 4,
                     "formal_call_count": len(formal_rows),
                     "schedule_sha256": schedule["schedule_sha256"],
@@ -2322,6 +2710,7 @@ def run_g2(
             "run_id": run_id,
             "status": recomputed["status"],
             "formal_evidence_eligible": True,
+            **_runtime_binding(runtime_source_closure_sha256),
             "recomputed": recomputed,
         }
         report = _render_report(summary)
@@ -2335,6 +2724,18 @@ def run_g2(
             report,
             {
                 "g2_input": input_audit,
+                "g2_runtime_source_closure": runtime_source_closure,
+                "g2_platform_invariants": _platform_invariants_audit(
+                    run_id=run_id,
+                    config_sha256=store.config_sha256,
+                    input_sha256=str(bundle["input_sha256"]),
+                    code_sha256=code_sha256,
+                    runtime_source_closure_sha256=(
+                        runtime_source_closure_sha256
+                    ),
+                    status="passed",
+                    formal_evidence_eligible=True,
+                ),
                 "g2_report": report_audit,
                 "g2_worker_semantics": worker_audit,
                 "g2_schedule": {
@@ -2376,6 +2777,7 @@ def run_g2(
             mode=mode,
             input_audit=input_audit,
             code_sha256=code_sha256,
+            runtime_source_closure=runtime_source_closure,
             reason=exc.reason,
         )
     except Exception as exc:
@@ -2389,6 +2791,7 @@ def run_g2(
             mode=mode,
             input_audit=input_audit,
             code_sha256=code_sha256,
+            runtime_source_closure=runtime_source_closure,
             reason=f"g2_runner_exception:{type(exc).__name__}",
         )
 

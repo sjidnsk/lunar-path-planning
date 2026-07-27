@@ -48,9 +48,30 @@ def _formal_g2_rows() -> list[PlanningCallRow]:
     rows: list[PlanningCallRow] = []
     for platform in G2_PLATFORMS:
         request_index = 0
-        for scale, count in (("standard", 33), ("kilometer", 10)):
-            for _ in range(count):
-                outcome_kind = "reachable" if request_index < 38 else "unreachable"
+        for scale, classes in (
+            (
+                "standard",
+                (
+                    ["normal_reachable"] * 23
+                    + ["hard_reachable"] * 7
+                    + ["unreachable"] * 3
+                ),
+            ),
+            (
+                "kilometer",
+                (
+                    ["normal_reachable"] * 6
+                    + ["hard_reachable"] * 2
+                    + ["unreachable"] * 2
+                ),
+            ),
+        ):
+            for request_class in classes:
+                outcome_kind = (
+                    "unreachable"
+                    if request_class == "unreachable"
+                    else "reachable"
+                )
                 request_id = f"{platform}-request-{request_index:02d}"
                 for repeat in range(G2_REPEATS):
                     rows.append(
@@ -63,6 +84,7 @@ def _formal_g2_rows() -> list[PlanningCallRow]:
                             call_id=f"{platform}-call-{request_index:02d}-{repeat}",
                             platform=platform,
                             scale=scale,
+                            request_class=request_class,
                             outcome_kind=outcome_kind,
                             source_sha256=_HASH,
                             config_sha256=_HASH,
@@ -75,8 +97,8 @@ def _formal_g2_rows() -> list[PlanningCallRow]:
                             search_ms=6.0,
                             complete_route_validation_ms=1.0,
                             result_assembly_ms=1.0,
-                            provider_success=True,
-                            route_l2_valid=True,
+                            provider_success=outcome_kind == "reachable",
+                            route_l2_valid=outcome_kind == "reachable",
                             semantic_digest=f"semantic-{platform}-{request_index:02d}",
                         )
                     )
@@ -234,8 +256,66 @@ def test_formal_g2_gates_each_platform_scale_outcome_partition() -> None:
     routed = evaluate_formal_g2(rows)
     assert routed["midterm_reduced_passed"] is False
     assert routed["final_threshold_reduced_passed"] is False
-    partition = routed["timing_by_platform_scale_outcome"][("wheel", "kilometer", "unreachable")]
+    partition = routed["timing_by_platform_scale_outcome"][
+        "wheel/kilometer/unreachable"
+    ]
     assert partition["p95_ms"] == 2001.0
+
+
+def test_g2_partition_rejects_max_over_2000_even_when_p95_is_fast() -> None:
+    """Catch the known 19-fast/1-over-limit false pass."""
+    routed = evaluate_g2_platform(
+        platform="wheel",
+        scale="standard",
+        outcome_kind="reachable",
+        elapsed_ms=[100.0] * 19 + [2001.0],
+    )
+
+    assert routed["midterm_reduced_passed"] is False
+    assert routed["final_threshold_reduced_passed"] is False
+    assert routed["max_ms"] == 2001.0
+
+
+def test_g2_partition_rejects_final_mean_over_1000() -> None:
+    """Catch the known P95-only false pass with a 1050 ms mean."""
+    routed = evaluate_g2_platform(
+        platform="wheel",
+        scale="standard",
+        outcome_kind="reachable",
+        elapsed_ms=[1000.0] * 19 + [2000.0],
+    )
+
+    assert routed["midterm_reduced_passed"] is True
+    assert routed["final_threshold_reduced_passed"] is False
+    assert routed["mean_ms"] == 1050.0
+
+
+def test_formal_g2_final_gate_includes_hard_reachable_subgroup() -> None:
+    """Catch one slow hard-reachable repeat hidden by its parent partition."""
+    rows = _formal_g2_rows()
+    target = next(
+        index
+        for index, row in enumerate(rows)
+        if row.platform == "wheel"
+        and row.scale == "kilometer"
+        and row.request_class == "hard_reachable"
+    )
+    rows[target] = replace(
+        rows[target],
+        elapsed_ms=1500.0,
+        search_ms=1496.0,
+    )
+
+    routed = evaluate_formal_g2(rows)
+
+    assert routed["timing_by_platform_scale"]["wheel/kilometer"][
+        "final_threshold_reduced_passed"
+    ] is True
+    assert routed["timing_by_platform_scale_class"][
+        "wheel/kilometer/hard_reachable"
+    ]["final_threshold_reduced_passed"] is False
+    assert routed["midterm_reduced_passed"] is True
+    assert routed["final_threshold_reduced_passed"] is False
 
 
 @pytest.mark.parametrize("hash_field", ["provider_sha256", "oracle_sha256"])
@@ -265,7 +345,13 @@ def test_reachable_consensus_requires_per_platform_38_unique_repeated_requests()
     only_37_reachable = [*rows]
     for index, row in enumerate(only_37_reachable):
         if row.platform == "hopper" and row.request_id == "hopper-request-37":
-            only_37_reachable[index] = replace(row, outcome_kind="unreachable")
+            only_37_reachable[index] = replace(
+                row,
+                request_class="unreachable",
+                outcome_kind="unreachable",
+                provider_success=False,
+                route_l2_valid=False,
+            )
     assert reachable_request_success_rate(only_37_reachable)["status"] == "blocked"
 
 

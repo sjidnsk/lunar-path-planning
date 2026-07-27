@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import random
 import statistics
 import struct
 import sys
@@ -135,6 +136,89 @@ def _json_sha256(payload: Mapping[str, object]) -> str:
     return _sha256_bytes(encoded)
 
 
+def _framed_domain_sha256(domain: str, payload: bytes) -> str:
+    parts = (domain.encode("utf-8"), payload)
+    return _sha256_bytes(
+        b"".join(struct.pack(">Q", len(part)) + part for part in parts)
+    )
+
+
+def _g2_platform_invariants() -> dict[str, dict[str, float]]:
+    return {
+        platform: {"max_traversable_slope_deg": 30.0}
+        for platform in G2_PLATFORMS
+    }
+
+
+def _g2_runtime_source_closure() -> dict[str, object]:
+    required_paths = sorted(
+        [
+            "src/path_planner/v2/api.py",
+            "src/path_planner/v2/formal_request_codec.py",
+            "src/path_planner/v2/hopper_api.py",
+            "src/path_planner/v2/hopper_authority.py",
+            "src/path_planner/v2/hopper_route_validation.py",
+            "src/path_planner/v2/profiles.py",
+            "src/path_planner/v2/providers/__init__.py",
+            "src/path_planner/v2/terrain.py",
+            "src/path_planner/v2/validation.py",
+        ]
+    )
+    core: dict[str, object] = {
+        "schema_version": (
+            "xunce-mid-dual-path-planner-runtime-source-closure/v1"
+        ),
+        "submodule_commit": "1" * 40,
+        "dirty_inventory": [],
+        "required_sources": [
+            {
+                "logical_path": path,
+                "size_bytes": index + 1,
+                "sha256": _sha256_text(f"fixture:{path}"),
+            }
+            for index, path in enumerate(required_paths)
+        ],
+        "active_platforms": list(G2_PLATFORMS),
+        "platform_invariants": _g2_platform_invariants(),
+    }
+    canonical = json.dumps(
+        core,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        **core,
+        "path_planner_runtime_source_closure_sha256": (
+            _framed_domain_sha256(
+                "xunce-mid-dual-path-planner-runtime-source-closure/v1",
+                canonical,
+            )
+        ),
+    }
+
+
+def _g2_combined_code_sha256(
+    local_source_sha256: str,
+    runtime_source_closure_sha256: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "local_source_sha256": local_source_sha256,
+            "path_planner_runtime_source_closure_sha256": (
+                runtime_source_closure_sha256
+            ),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return _framed_domain_sha256(
+        "xunce-mid-dual-g2-code-with-runtime-source/v1",
+        payload,
+    )
+
+
 def _g2_semantic_digest(
     request_sha256: str,
     provider_success: bool,
@@ -192,6 +276,42 @@ def _timing_expected(values: Sequence[float]) -> dict[str, object]:
             >= 0.95
             and maximum <= 2000.0
         ),
+    }
+
+
+def _g2_timing_expected(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    values = [float(row["elapsed_ms"]) for row in rows]
+    grouped: dict[str, list[float]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["request_id"]), []).append(
+            float(row["elapsed_ms"])
+        )
+    request_means = [
+        statistics.mean(items)
+        for _request_id, items in sorted(grouped.items())
+    ]
+    generator = random.Random(20260726)
+    bootstrap = sorted(
+        statistics.mean(
+            generator.choice(request_means) for _ in request_means
+        )
+        for _ in range(2000)
+    )
+    at_or_below = sum(value <= 1000.0 for value in values)
+    return {
+        **_timing_expected(values),
+        "unique_request_count": len(grouped),
+        "proportion_at_or_below_1000ms": at_or_below / len(values),
+        "bootstrap_ci": {
+            "unit": "unique_request",
+            "seed": 20260726,
+            "resamples": 2000,
+            "confidence_level": 0.95,
+            "lower_mean_ms": _nearest_rank(bootstrap, 0.025),
+            "upper_mean_ms": _nearest_rank(bootstrap, 0.975),
+        },
     }
 
 
@@ -296,6 +416,13 @@ def _g1_input_audit() -> dict[str, object]:
 
 def _g2_input_audit() -> dict[str, object]:
     requests: list[dict[str, object]] = []
+    provider_requests: list[dict[str, object]] = []
+    runtime_source_closure = _g2_runtime_source_closure()
+    runtime_source_closure_sha256 = str(
+        runtime_source_closure[
+            "path_planner_runtime_source_closure_sha256"
+        ]
+    )
     for platform in G2_PLATFORMS:
         platform_index = 0
         for scale, normal_count, hard_count, unreachable_count in (
@@ -334,6 +461,21 @@ def _g2_input_audit() -> dict[str, object]:
                         "expected_route_l2_valid": expected_success,
                     }
                 )
+                provider_requests.append(
+                    {
+                        "schema_version": (
+                            "xunce-mid-dual-g2-provider-request/v1"
+                        ),
+                        "request_id": request_id,
+                        "platform": platform,
+                        "scale": scale,
+                        "platform_stack": {
+                            "profile_id": f"fixture-{platform}-profile/v1",
+                            "max_traversable_slope_deg": 30.0,
+                        },
+                        "provider_request_sha256": request_sha256,
+                    }
+                )
                 platform_index += 1
     return {
         "schema_version": "xunce-mid-dual-g2-input-audit/v1",
@@ -350,6 +492,12 @@ def _g2_input_audit() -> dict[str, object]:
         "input_set_id": "fixture-g2-input-set",
         "manifest_core_sha256": _sha256_text("fixture-g2-manifest-core"),
         "authorization_sha256": _sha256_text("fixture-g2-authorization"),
+        "active_platforms": list(G2_PLATFORMS),
+        "platform_invariants": _g2_platform_invariants(),
+        "path_planner_runtime_source_closure": runtime_source_closure,
+        "path_planner_runtime_source_closure_sha256": (
+            runtime_source_closure_sha256
+        ),
         "candidate_boundary": {
             "technical_independence": "T2_candidate",
             "organizational_independence": "project_internal",
@@ -388,8 +536,18 @@ def _g2_input_audit() -> dict[str, object]:
             "approval_record_sha256": _sha256_text("fixture-approval-record"),
             "approval_artifact_sha256": _sha256_text("fixture-approval-artifact"),
             "approval_artifact_path": "D:/xunce/inputs/mid_dual/g2-approvals/fixture/artifact-bound-o2-approval.json",
+            "path_planner_runtime_source_closure": runtime_source_closure,
+            "path_planner_runtime_source_closure_sha256": (
+                runtime_source_closure_sha256
+            ),
         },
-        "hopper_resolution": {"formal_evidence_eligible": True, "blockers": []},
+        "hopper_resolution": {
+            "formal_evidence_eligible": True,
+            "blockers": [],
+            "path_planner_runtime_source_closure_sha256": (
+                runtime_source_closure_sha256
+            ),
+        },
         "primitive_label_audit": {"status": "verified"},
         "small_map_optimum_audit": {"status": "verified"},
         "request_matrix_audit": {"status": "verified"},
@@ -397,7 +555,7 @@ def _g2_input_audit() -> dict[str, object]:
         "g3_replay_cohort": {"cohort_sha256": _sha256_text("fixture-g3-cohort")},
         "g3_replay_cohort_sha256": _sha256_text("fixture-g3-cohort"),
         "requests": requests,
-        "provider_requests": [],
+        "provider_requests": provider_requests,
         "terrain_sha256": sorted({row["terrain_sha256"] for row in requests}),
         "formal_row_count": 0,
     }
@@ -468,6 +626,8 @@ def _g3_input_audit(g1_root: Path, g2_root: Path) -> dict[str, object]:
         "gate_id": "g3",
         "run_id": "g3-run",
         "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(G2_PLATFORMS),
+        "platform_invariants": _g2_platform_invariants(),
         "formal_evidence_eligible": True,
         "g1_source_manifest_sha256": _manifest_sha256(g1_root),
         "g2_source_manifest_sha256": _manifest_sha256(g2_root),
@@ -483,7 +643,7 @@ def _g3_upstream_binding(
     g1_config = artifact_io.read_json(g1_root / "config.json")
     g2_config = artifact_io.read_json(g2_root / "config.json")
     g1_input = artifact_io.read_json(g1_root / "source_input_audit.json")
-    g2_input = artifact_io.read_json(g2_root / "source_input_audit.json")
+    g2_input = artifact_io.read_json(g2_root / "g2_input_audit.json")
     return {
         "g1_source_manifest_sha256": _manifest_sha256(g1_root),
         "g2_source_manifest_sha256": _manifest_sha256(g2_root),
@@ -506,6 +666,8 @@ def _g3_upstream_binding(
         "g2_hopper_resolution_sha256": _json_sha256(
             g2_input["hopper_resolution"]
         ),
+        "active_platforms": list(G2_PLATFORMS),
+        "platform_invariants": _g2_platform_invariants(),
     }
 
 
@@ -516,6 +678,17 @@ def _source_config(
     upstream_binding: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     contract = _FIXTURE_SOURCE_CONTRACTS[gate_id]
+    local_code_sha256 = _lineage_code_sha256()
+    code_sha256 = local_code_sha256
+    if gate_id == "g2":
+        code_sha256 = _g2_combined_code_sha256(
+            local_code_sha256,
+            str(
+                input_audit[
+                    "path_planner_runtime_source_closure_sha256"
+                ]
+            ),
+        )
     payload: dict[str, object] = {
         "schema_version": contract["config_schema_version"],
         "gate_id": gate_id,
@@ -524,7 +697,7 @@ def _source_config(
         "output_root": contract["output_base"],
         "scale_profile": SCALE_PROFILE,
         "input_sha256": _sha256_bytes(_json_text(input_audit).encode("utf-8")),
-        "code_sha256": _lineage_code_sha256(),
+        "code_sha256": code_sha256,
         "required_phase_ids": list(contract["required_phase_ids"]),
         "source_contract_sha256": _json_sha256(contract),
         "evidence_binding": {
@@ -534,13 +707,44 @@ def _source_config(
             "report_audit_path": "source_report_audit.json",
         },
     }
+    if gate_id == "g2":
+        payload.update(
+            {
+                "active_platforms": list(G2_PLATFORMS),
+                "platform_invariants": _g2_platform_invariants(),
+                "path_planner_runtime_source_closure_sha256": input_audit[
+                    "path_planner_runtime_source_closure_sha256"
+                ],
+            }
+        )
+        payload["evidence_binding"] = {
+            "schema_version": "xunce-mid-dual-g2-evidence-binding/v1",
+            "input_audit_path": "g2_input_audit.json",
+            "lineage_audit_path": "lineage_audit.json",
+            "report_audit_path": "g2_report_audit.json",
+            "runtime_source_closure_audit_path": (
+                "g2_runtime_source_closure_audit.json"
+            ),
+            "platform_invariants_audit_path": (
+                "g2_platform_invariants_audit.json"
+            ),
+        }
     if gate_id == "g3":
-        payload["upstream_binding"] = dict(upstream_binding or {})
+        payload.update(
+            {
+                "active_platforms": list(G2_PLATFORMS),
+                "platform_invariants": _g2_platform_invariants(),
+                "upstream_binding": dict(upstream_binding or {}),
+            }
+        )
         payload["evidence_binding"] = {
             "schema_version": "xunce-mid-dual-g3-evidence-binding/v1",
             "input_audit_path": "g3_input_audit.json",
             "lineage_audit_path": "lineage_audit.json",
             "report_audit_path": "g3_report_audit.json",
+            "platform_invariants_audit_path": (
+                "platform_invariants_audit.json"
+            ),
         }
     return payload
 
@@ -593,9 +797,9 @@ def _expected_g2(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
                 for row in rows
                 if row.get("platform") == platform and row.get("scale") == scale
             ]
-            timing_by_platform_scale[f"{platform}/{scale}"] = _timing_expected(
-                [float(row["elapsed_ms"]) for row in selected]
-            )
+            timing_by_platform_scale[
+                f"{platform}/{scale}"
+            ] = _g2_timing_expected(selected)
             class_counts[f"{platform}/{scale}"] = {
                 request_class: len(
                     {
@@ -614,9 +818,7 @@ def _expected_g2(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
                 subset = [row for row in selected if row.get("outcome_kind") == outcome]
                 timing_by_platform_scale_outcome[
                     f"{platform}/{scale}/{outcome}"
-                ] = _timing_expected(
-                    [float(row["elapsed_ms"]) for row in subset]
-                )
+                ] = _g2_timing_expected(subset)
             for request_class in (
                 "normal_reachable",
                 "hard_reachable",
@@ -629,9 +831,7 @@ def _expected_g2(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
                 ]
                 timing_by_platform_scale_class[
                     f"{platform}/{scale}/{request_class}"
-                ] = _timing_expected(
-                    [float(row["elapsed_ms"]) for row in subset]
-                )
+                ] = _g2_timing_expected(subset)
     reachable_successes = {
         platform: len(
             {
@@ -669,6 +869,11 @@ def _expected_g2(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
         "status": "passed" if midterm else "failed",
         "formal_call_count": len(rows),
         "unique_request_count": len({str(row["request_id"]) for row in rows}),
+        "active_platforms": ["wheel", "legged", "hopper"],
+        "platform_invariants": {
+            platform: {"max_traversable_slope_deg": 30.0}
+            for platform in G2_PLATFORMS
+        },
         "g2_all_platforms_2s_passed": midterm,
         "g2_all_platforms_1s_passed": final,
         "correctness_passed": correctness,
@@ -746,6 +951,19 @@ def _expected_g3(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
     )
     return {
         "status": "passed" if midterm else "failed",
+        "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(G2_PLATFORMS),
+        "platform_invariants": _g2_platform_invariants(),
+        "full_scale_acceptance": False,
+        "thresholds": {
+            "midterm_coverage": 0.80,
+            "final_coverage": 0.99,
+            "paired_g1_delta_min": -0.01,
+            "midterm_planner_ms": 2000.0,
+            "final_planner_ms": 1000.0,
+            "final_proportion_at_or_below_1000": 0.95,
+            "absolute_max_planner_ms": 2000.0,
+        },
         "wheel_episode_count": len({str(row["episode_id"]) for row in wheel}),
         "wheel_step_count": len(wheel),
         "interface_replay_count": len(interface),
@@ -770,8 +988,26 @@ def _expected_g3(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
         ),
         "wheel_timing": wheel_timing,
         "interface_timing": interface_timing,
+        "wheel_coverage_all_episodes_passed": all(
+            value >= 0.80 for value in final_coverages
+        ),
+        "wheel_coverage_mean_passed": coverage_mean >= 0.80,
+        "paired_g1_delta_passed": statistics.mean(paired_deltas) >= -0.01,
+        "wheel_timing_midterm_passed": wheel_timing[
+            "midterm_reduced_passed"
+        ],
+        "wheel_timing_final_passed": wheel_timing[
+            "final_threshold_reduced_passed"
+        ],
+        "interface_timing_midterm_passed": interface_timing[
+            "midterm_reduced_passed"
+        ],
+        "interface_timing_final_passed": interface_timing[
+            "final_threshold_reduced_passed"
+        ],
         "wheel_integrity_passed": integrity,
         "interface_correctness_passed": interface_correct,
+        "required_replay_identities_passed": interface_correct,
     }
 
 
@@ -828,6 +1064,38 @@ def _create_source_root(
         name: dict(payload)
         for name, payload in (extra_audits or {}).items()
     }
+    if gate_id == "g2":
+        runtime_source_closure = dict(
+            input_audit["path_planner_runtime_source_closure"]
+        )
+        runtime_source_closure_sha256 = str(
+            input_audit[
+                "path_planner_runtime_source_closure_sha256"
+            ]
+        )
+        finalized_extra_audits.update(
+            {
+                "g2_runtime_source_closure": runtime_source_closure,
+                "g2_platform_invariants": {
+                    "schema_version": (
+                        "xunce-mid-dual-g2-platform-invariants-audit/v1"
+                    ),
+                    "gate_id": "g2",
+                    "scale_profile": SCALE_PROFILE,
+                    "run_id": "g2-run",
+                    "status": "passed",
+                    "formal_evidence_eligible": True,
+                    "active_platforms": list(G2_PLATFORMS),
+                    "platform_invariants": _g2_platform_invariants(),
+                    "path_planner_runtime_source_closure_sha256": (
+                        runtime_source_closure_sha256
+                    ),
+                    "config_sha256": store.config_sha256,
+                    "input_sha256": effective_config["input_sha256"],
+                    "code_sha256": effective_config["code_sha256"],
+                },
+            }
+        )
     g3_decisions: dict[str, object] | None = None
     g3_observations: dict[str, object] | None = None
     upstream_lineage_sha256: str | None = None
@@ -846,6 +1114,29 @@ def _create_source_root(
         assert upstream_lineage is not None
         upstream_lineage_sha256 = _sha256_bytes(
             _json_text(upstream_lineage).encode("utf-8")
+        )
+        platform_invariants_audit = {
+            "schema_version": (
+                "xunce-mid-dual-g3-platform-invariants-audit/v1"
+            ),
+            "gate_id": "g3",
+            "scale_profile": SCALE_PROFILE,
+            "run_id": "g3-run",
+            "status": "passed",
+            "formal_evidence_eligible": True,
+            "active_platforms": list(G2_PLATFORMS),
+            "platform_invariants": _g2_platform_invariants(),
+            "full_scale_acceptance": False,
+            "config_sha256": store.config_sha256,
+            "input_sha256": effective_config["input_sha256"],
+            "code_sha256": effective_config["code_sha256"],
+            "upstream_lineage_audit_sha256": upstream_lineage_sha256,
+        }
+        finalized_extra_audits[
+            "platform_invariants"
+        ] = platform_invariants_audit
+        platform_invariants_audit_sha256 = _sha256_bytes(
+            _json_text(platform_invariants_audit).encode("utf-8")
         )
     for phase_id in _FIXTURE_SOURCE_CONTRACTS[gate_id]["required_phase_ids"]:
         if gate_id == "g3":
@@ -877,6 +1168,11 @@ def _create_source_root(
                 "status": "complete",
                 "formal_sample": True,
                 "formal_evidence_eligible": True,
+                "active_platforms": list(G2_PLATFORMS),
+                "platform_invariants": _g2_platform_invariants(),
+                "platform_invariants_audit_sha256": (
+                    platform_invariants_audit_sha256
+                ),
                 "upstream_lineage_audit_sha256": upstream_lineage_sha256,
                 "phase_projection": projection,
                 "config_sha256": first["config_sha256"],
@@ -927,6 +1223,18 @@ def _create_source_root(
                 else []
             )
             phase_audit = {"gate_id": gate_id, "phase_id": phase_id}
+            if gate_id == "g2":
+                phase_audit.update(
+                    {
+                        "active_platforms": list(G2_PLATFORMS),
+                        "platform_invariants": _g2_platform_invariants(),
+                        "path_planner_runtime_source_closure_sha256": (
+                            input_audit[
+                                "path_planner_runtime_source_closure_sha256"
+                            ]
+                        ),
+                    }
+                )
         attempt = store.write_phase_attempt(
             str(phase_id),
             phase_rows,
@@ -962,6 +1270,26 @@ def _create_source_root(
         "formal_evidence_eligible": True,
         "recomputed": recomputed,
     }
+    if gate_id == "g2":
+        stored.update(
+            {
+                "active_platforms": list(G2_PLATFORMS),
+                "platform_invariants": _g2_platform_invariants(),
+                "path_planner_runtime_source_closure_sha256": (
+                    input_audit[
+                        "path_planner_runtime_source_closure_sha256"
+                    ]
+                ),
+            }
+        )
+    elif gate_id == "g3":
+        stored.update(
+            {
+                "active_platforms": list(G2_PLATFORMS),
+                "platform_invariants": _g2_platform_invariants(),
+                "full_scale_acceptance": False,
+            }
+        )
     if gate_id == "g2":
         producer = importlib.import_module(
             "run_xunce_mid_dual_g2_planning_time"
@@ -1001,6 +1329,9 @@ def _create_source_root(
     if gate_id == "g3":
         finalized_extra_audits["g3_input"] = input_audit
         finalized_extra_audits["g3_report"] = report_audit
+    elif gate_id == "g2":
+        finalized_extra_audits["g2_input"] = input_audit
+        finalized_extra_audits["g2_report"] = report_audit
     else:
         finalized_extra_audits["source_input"] = input_audit
         finalized_extra_audits["source_report"] = report_audit
@@ -1603,9 +1934,7 @@ def _create_g3_source_root(
     upstream_binding = _g3_upstream_binding(g1_root, g2_root)
     g1_config = artifact_io.read_json(g1_root / "config.json")
     g2_config = artifact_io.read_json(g2_root / "config.json")
-    g2_input = artifact_io.read_json(
-        g2_root / "source_input_audit.json"
-    )
+    g2_input = artifact_io.read_json(g2_root / "g2_input_audit.json")
     g1_summary = artifact_io.read_json(g1_root / "summary.json")
     upstream_lineage = {
         "schema_version": "xunce-mid-dual-g3-upstream-lineage/v1",
@@ -2062,6 +2391,83 @@ def test_g2_exact_input_matrix_and_approval_chain_fail_closed(
 @pytest.mark.parametrize(
     ("mutation_kind", "blocking_fragment"),
     (
+        ("slope", "platform_invariant"),
+        ("approval_runtime_source", "runtime_source"),
+    ),
+)
+def test_g2_runtime_source_and_platform_invariants_fail_closed(
+    tmp_path: Path,
+    mutation_kind: str,
+    blocking_fragment: str,
+) -> None:
+    input_audit = _g2_input_audit()
+    if mutation_kind == "slope":
+        input_audit["platform_invariants"]["hopper"][
+            "max_traversable_slope_deg"
+        ] = 30.1
+    else:
+        input_audit["approval"][
+            "path_planner_runtime_source_closure"
+        ]["submodule_commit"] = "2" * 40
+    g1 = _create_source_root(
+        tmp_path,
+        "g1",
+        _g1_rows,
+        {
+            "status": "passed",
+            "sample_count": 48,
+            "g1_coverage_80_passed": True,
+            "g1_coverage_99_passed": True,
+        },
+    )
+    g2 = _create_source_root(
+        tmp_path,
+        "g2",
+        lambda config_sha256: _g2_rows(
+            config_sha256,
+            input_audit=input_audit,
+        ),
+        {
+            "status": "passed",
+            "formal_call_count": 645,
+            "g2_all_platforms_2s_passed": True,
+            "g2_all_platforms_1s_passed": True,
+        },
+        input_audit=input_audit,
+    )
+    g3 = _create_g3_source_root(tmp_path, g1, g2)
+
+    result = _aggregate((g1, g2, g3))
+
+    assert result["status"] == "blocked"
+    assert any(blocking_fragment in reason for reason in result["blockers"])
+
+
+def test_g2_every_accepted_phase_binds_runtime_source_and_slope(
+    tmp_path: Path,
+) -> None:
+    g1, g2, g3 = _valid_roots(tmp_path)
+    attempts = artifact_io.read_jsonl(g2 / "phase-attempts.jsonl")
+    p03 = next(
+        row
+        for row in attempts
+        if row["phase_id"] == "p03" and row["status"] == "accepted"
+    )
+    audit_path = str(p03["audit_path"])
+    audit = artifact_io.read_json(g2 / audit_path)
+    audit.pop("path_planner_runtime_source_closure_sha256")
+    artifact_io.write_json(g2 / audit_path, audit)
+    _refresh_manifest_entry(g2, audit_path)
+
+    result = _aggregate((g1, g2, g3))
+
+    assert result["status"] == "blocked"
+    assert any("phase_runtime_binding" in reason for reason in result["blockers"])
+
+
+@pytest.mark.parametrize(
+    ("mutation_kind", "blocking_fragment"),
+    (
         ("raw_ns", "timing_component_sum"),
         ("derived_ms", "timing_ms_projection"),
         ("provider_result", "provider_result_consensus"),
@@ -2090,7 +2496,7 @@ def test_g2_task8_raw_ns_and_provider_result_are_fail_closed(
         module.recompute_g2(
             rows,
             artifact_io.read_json(g2 / "config.json"),
-            artifact_io.read_json(g2 / "source_input_audit.json"),
+            artifact_io.read_json(g2 / "g2_input_audit.json"),
         )
 
 

@@ -19,6 +19,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import struct
+import subprocess
 import sys
 from typing import Any, Iterable, Mapping, Sequence
 import zipfile
@@ -87,6 +88,14 @@ GENERIC_HOPPER_IMPLEMENTATION_PARAMETER_SET_ID = (
     "hopper_generic_internal_computational_simulation_proxy_midterm_g2g3/v1"
 )
 GATE5B_HOPPER_PARAMETER_SET_ID = "hopper_gate5b_algorithm_fixture/v1"
+PATH_PLANNER_RUNTIME_SOURCE_CLOSURE_SCHEMA_VERSION = (
+    "xunce-mid-dual-path-planner-runtime-source-closure/v1"
+)
+ACTIVE_PLATFORMS = ("wheel", "legged", "hopper")
+PLATFORM_INVARIANTS = {
+    platform: {"max_traversable_slope_deg": 30.0}
+    for platform in ACTIVE_PLATFORMS
+}
 
 PLATFORM_STACKS: dict[str, dict[str, object]] = {
     "wheel": {
@@ -272,6 +281,227 @@ def _domain_hash(domain: str, *parts: bytes) -> str:
         payload.extend(struct.pack(">Q", len(part)))
         payload.extend(part)
     return _sha256(bytes(payload))
+
+
+def build_path_planner_runtime_source_closure(
+    *,
+    submodule_commit: str,
+    dirty_inventory: Sequence[Mapping[str, object]],
+    required_sources: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    """Build a canonical exact-byte closure for every Path Planner v2 module."""
+    if (
+        type(submodule_commit) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", submodule_commit) is None
+    ):
+        _fail("path_planner_runtime_source_commit_invalid")
+    inventory: list[dict[str, str]] = []
+    seen_inventory: set[str] = set()
+    for raw in dirty_inventory:
+        if type(raw) is not dict or set(raw) != {"path", "status"}:
+            _fail("path_planner_runtime_source_dirty_inventory_invalid")
+        path = _safe_relative_path(raw["path"])
+        status = raw["status"]
+        if (
+            type(status) is not str
+            or len(status) != 2
+            or path in seen_inventory
+        ):
+            _fail("path_planner_runtime_source_dirty_inventory_invalid")
+        seen_inventory.add(path)
+        inventory.append({"path": path, "status": status})
+    if inventory != sorted(inventory, key=lambda row: row["path"]):
+        _fail("path_planner_runtime_source_dirty_inventory_invalid")
+
+    sources: list[dict[str, object]] = []
+    seen_sources: set[str] = set()
+    for raw in required_sources:
+        if (
+            type(raw) is not dict
+            or set(raw) != {"logical_path", "size_bytes", "sha256"}
+        ):
+            _fail("path_planner_runtime_source_rows_invalid")
+        logical_path = _safe_relative_path(raw["logical_path"])
+        size_bytes = raw["size_bytes"]
+        if (
+            not logical_path.startswith("src/path_planner/v2/")
+            or not logical_path.endswith(".py")
+            or type(size_bytes) is not int
+            or size_bytes < 0
+            or logical_path in seen_sources
+        ):
+            _fail("path_planner_runtime_source_rows_invalid")
+        seen_sources.add(logical_path)
+        sources.append(
+            {
+                "logical_path": logical_path,
+                "size_bytes": size_bytes,
+                "sha256": _require_sha256(
+                    raw["sha256"],
+                    "path_planner_runtime_source_rows_invalid",
+                ),
+            }
+        )
+    if not sources or sources != sorted(
+        sources,
+        key=lambda row: str(row["logical_path"]),
+    ):
+        _fail("path_planner_runtime_source_rows_invalid")
+    required_layers = {
+        "src/path_planner/v2/api.py",
+        "src/path_planner/v2/formal_request_codec.py",
+        "src/path_planner/v2/profiles.py",
+        "src/path_planner/v2/terrain.py",
+        "src/path_planner/v2/hopper_authority.py",
+        "src/path_planner/v2/hopper_api.py",
+        "src/path_planner/v2/validation.py",
+        "src/path_planner/v2/hopper_route_validation.py",
+    }
+    logical_paths = {str(row["logical_path"]) for row in sources}
+    if not required_layers.issubset(logical_paths) or not any(
+        path.startswith("src/path_planner/v2/providers/")
+        for path in logical_paths
+    ):
+        _fail("path_planner_runtime_source_layers_incomplete")
+    core = {
+        "schema_version": (
+            PATH_PLANNER_RUNTIME_SOURCE_CLOSURE_SCHEMA_VERSION
+        ),
+        "submodule_commit": submodule_commit,
+        "dirty_inventory": inventory,
+        "required_sources": sources,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+    }
+    return {
+        **core,
+        "path_planner_runtime_source_closure_sha256": _domain_hash(
+            PATH_PLANNER_RUNTIME_SOURCE_CLOSURE_SCHEMA_VERSION,
+            _canonical_json_bytes(core),
+        ),
+    }
+
+
+def _validated_path_planner_runtime_source_closure(
+    value: Mapping[str, object],
+) -> dict[str, object]:
+    if type(value) is not dict:
+        _fail("path_planner_runtime_source_closure_invalid")
+    try:
+        rebuilt = build_path_planner_runtime_source_closure(
+            submodule_commit=value["submodule_commit"],
+            dirty_inventory=value["dirty_inventory"],
+            required_sources=value["required_sources"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise G2InputContractError(
+            "path_planner_runtime_source_closure_invalid"
+        ) from exc
+    if dict(value) != rebuilt:
+        _fail("path_planner_runtime_source_closure_invalid")
+    return rebuilt
+
+
+def validate_path_planner_runtime_source_closure(
+    approved: Mapping[str, object],
+    current: Mapping[str, object],
+) -> dict[str, object]:
+    """Reject both commit switches and same-commit working-byte drift."""
+    approved_closure = _validated_path_planner_runtime_source_closure(
+        approved
+    )
+    current_closure = _validated_path_planner_runtime_source_closure(
+        current
+    )
+    if (
+        approved_closure["submodule_commit"]
+        != current_closure["submodule_commit"]
+    ):
+        _fail("path_planner_runtime_source_commit_drift")
+    if approved_closure != current_closure:
+        _fail("path_planner_runtime_source_dirty_drift")
+    return current_closure
+
+
+def _path_planner_git_output(
+    root: Path,
+    *args: str,
+    binary: bool = False,
+) -> bytes | str:
+    result = subprocess.run(
+        ("git", *args),
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=not binary,
+        encoding=None if binary else "utf-8",
+    )
+    if result.returncode != 0:
+        _fail("path_planner_runtime_source_git_probe_failed")
+    return result.stdout
+
+
+def capture_path_planner_runtime_source_closure(
+    path_planner_root: str | Path | None = None,
+) -> dict[str, object]:
+    """Capture current commit, full dirty inventory, and all v2 Python bytes."""
+    root = Path(path_planner_root or (REPO_ROOT / "path-planner")).resolve()
+    source_root = root / "src" / "path_planner" / "v2"
+    if not artifact_io.path_is_dir(source_root):
+        _fail("path_planner_runtime_source_missing")
+    commit = str(
+        _path_planner_git_output(root, "rev-parse", "HEAD")
+    ).strip()
+    raw_status = _path_planner_git_output(
+        root,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        binary=True,
+    )
+    if type(raw_status) is not bytes:
+        _fail("path_planner_runtime_source_git_probe_failed")
+    records = raw_status.split(b"\0")
+    inventory: list[dict[str, str]] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4:
+            _fail("path_planner_runtime_source_dirty_inventory_invalid")
+        status = record[:2].decode("ascii")
+        path = record[3:].decode(
+            "utf-8",
+            errors="surrogateescape",
+        ).replace("\\", "/")
+        inventory.append({"path": path, "status": status})
+        if "R" in status or "C" in status:
+            index += 1
+    inventory.sort(key=lambda row: row["path"])
+    sources: list[dict[str, object]] = []
+    for relative in artifact_io.list_relative_files(root):
+        if (
+            not relative.startswith("src/path_planner/v2/")
+            or not relative.endswith(".py")
+        ):
+            continue
+        payload = artifact_io.read_bytes(root / PurePosixPath(relative))
+        sources.append(
+            {
+                "logical_path": relative,
+                "size_bytes": len(payload),
+                "sha256": _sha256(payload),
+            }
+        )
+    sources.sort(key=lambda row: str(row["logical_path"]))
+    return build_path_planner_runtime_source_closure(
+        submodule_commit=commit,
+        dirty_inventory=inventory,
+        required_sources=sources,
+    )
 
 
 def _safe_relative_path(value: object) -> str:
@@ -1193,6 +1423,7 @@ def resolve_hopper_formal_eligibility(
     input_binding: Mapping[str, object],
     provider_source: Mapping[str, object],
     oracle_source: Mapping[str, object],
+    current_runtime_source_closure: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if candidate_record is None:
         return {
@@ -1247,6 +1478,30 @@ def resolve_hopper_formal_eligibility(
         audit_source_separation(
             provider_source=provider,
             oracle_source=oracle,
+        )
+        current_closure = _validated_path_planner_runtime_source_closure(
+            dict(current_runtime_source_closure)
+            if current_runtime_source_closure is not None
+            else capture_path_planner_runtime_source_closure()
+        )
+        approved_closure = approval_record.get(
+            "path_planner_runtime_source_closure"
+        )
+        approved_closure_sha256 = approval_record.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        if (
+            type(approved_closure) is not dict
+            or not _is_sha256(approved_closure_sha256)
+            or approved_closure_sha256
+            != approved_closure.get(
+                "path_planner_runtime_source_closure_sha256"
+            )
+        ):
+            _fail("artifact_bound_approval_runtime_source_missing")
+        validate_path_planner_runtime_source_closure(
+            approved_closure,
+            current_closure,
         )
         required_input = {
             "authorization_sha256": AUTHORIZATION_SHA256,
@@ -1387,6 +1642,13 @@ def resolve_hopper_formal_eligibility(
         "simulation_proxy": True,
         "physical_capability_claimed": False,
         "hardware_certification_claimed": False,
+        "path_planner_runtime_source_closure_sha256": (
+            None
+            if blockers
+            else approval_record.get(
+                "path_planner_runtime_source_closure_sha256"
+            )
+        ),
         "blockers": sorted(set(blockers)),
     }
 
@@ -1708,12 +1970,16 @@ def audit_truth_bundle(
             row["provider_request_sha256"] for row in cohort_rows
         ],
     }
+    runtime_source_closure = (
+        capture_path_planner_runtime_source_closure()
+    )
     hopper_resolution = resolve_hopper_formal_eligibility(
         candidate_record=candidate_record,
         approval_record=approval_record,
         input_binding=input_binding,
         provider_source=provider_source,
         oracle_source=oracle_source,
+        current_runtime_source_closure=runtime_source_closure,
     )
     blockers = sorted(
         set(
@@ -1775,6 +2041,14 @@ def audit_truth_bundle(
         "input_set_id": input_set_id,
         "manifest_core_sha256": manifest_core_sha256,
         "authorization_sha256": AUTHORIZATION_SHA256,
+        "active_platforms": list(ACTIVE_PLATFORMS),
+        "platform_invariants": PLATFORM_INVARIANTS,
+        "path_planner_runtime_source_closure": runtime_source_closure,
+        "path_planner_runtime_source_closure_sha256": (
+            runtime_source_closure[
+                "path_planner_runtime_source_closure_sha256"
+            ]
+        ),
         "candidate_boundary": {
             "technical_independence": "T2_candidate",
             "organizational_independence": "project_internal",

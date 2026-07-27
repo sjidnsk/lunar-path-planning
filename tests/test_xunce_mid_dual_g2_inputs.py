@@ -328,6 +328,105 @@ def _hopper_candidate() -> dict[str, object]:
     }
 
 
+def _runtime_source_rows() -> list[dict[str, object]]:
+    rows = [
+        {
+            "logical_path": logical_path,
+            "size_bytes": index + 1,
+            "sha256": hashlib.sha256(logical_path.encode("utf-8")).hexdigest(),
+        }
+        for index, logical_path in enumerate(
+            (
+                "src/path_planner/v2/api.py",
+                "src/path_planner/v2/formal_request_codec.py",
+                "src/path_planner/v2/profiles.py",
+                "src/path_planner/v2/terrain.py",
+                "src/path_planner/v2/hopper_authority.py",
+                "src/path_planner/v2/hopper_api.py",
+                "src/path_planner/v2/providers/hopper.py",
+                "src/path_planner/v2/providers/legged.py",
+                "src/path_planner/v2/providers/wheel.py",
+                "src/path_planner/v2/validation.py",
+                "src/path_planner/v2/hopper_route_validation.py",
+            )
+        )
+    ]
+    return sorted(rows, key=lambda row: str(row["logical_path"]))
+
+
+def test_runtime_source_closure_rejects_committed_and_dirty_drift() -> None:
+    module = _load_module()
+    approved = module.build_path_planner_runtime_source_closure(
+        submodule_commit="a" * 40,
+        dirty_inventory=[],
+        required_sources=_runtime_source_rows(),
+    )
+    committed_drift = module.build_path_planner_runtime_source_closure(
+        submodule_commit="b" * 40,
+        dirty_inventory=[],
+        required_sources=_runtime_source_rows(),
+    )
+    with pytest.raises(
+        module.G2InputContractError,
+        match="path_planner_runtime_source_commit_drift",
+    ):
+        module.validate_path_planner_runtime_source_closure(
+            approved,
+            committed_drift,
+        )
+
+    changed_sources = _runtime_source_rows()
+    changed_sources[0] = {
+        **changed_sources[0],
+        "size_bytes": 99,
+        "sha256": hashlib.sha256(b"same-commit-dirty").hexdigest(),
+    }
+    dirty_drift = module.build_path_planner_runtime_source_closure(
+        submodule_commit="a" * 40,
+        dirty_inventory=[
+            {
+                "path": "src/path_planner/v2/api.py",
+                "status": " M",
+            }
+        ],
+        required_sources=changed_sources,
+    )
+    with pytest.raises(
+        module.G2InputContractError,
+        match="path_planner_runtime_source_dirty_drift",
+    ):
+        module.validate_path_planner_runtime_source_closure(
+            approved,
+            dirty_drift,
+        )
+
+
+def test_current_runtime_source_closure_covers_all_approved_stack_layers() -> None:
+    module = _load_module()
+
+    closure = module.capture_path_planner_runtime_source_closure()
+
+    logical_paths = {
+        row["logical_path"] for row in closure["required_sources"]
+    }
+    assert closure["active_platforms"] == ["wheel", "legged", "hopper"]
+    assert closure["platform_invariants"] == {
+        platform: {"max_traversable_slope_deg": 30.0}
+        for platform in PLATFORMS
+    }
+    assert {
+        "src/path_planner/v2/formal_request_codec.py",
+        "src/path_planner/v2/profiles.py",
+        "src/path_planner/v2/terrain.py",
+        "src/path_planner/v2/hopper_authority.py",
+        "src/path_planner/v2/hopper_api.py",
+        "src/path_planner/v2/validation.py",
+        "src/path_planner/v2/hopper_route_validation.py",
+    }.issubset(logical_paths)
+    assert any("/providers/" in path for path in logical_paths)
+    assert len(closure["path_planner_runtime_source_closure_sha256"]) == 64
+
+
 def test_default_config_is_blocked_and_contains_no_formal_input_paths() -> None:
     module = _load_module()
     assert CONFIG_PATH.is_file(), "default G2 config is missing"
@@ -628,6 +727,17 @@ def test_hopper_test_fixture_is_rejected_as_formal_evidence() -> None:
         "physical_capability_claimed": False,
         "hardware_certification_claimed": False,
     }
+    runtime_source_closure = (
+        module.capture_path_planner_runtime_source_closure()
+    )
+    approval["path_planner_runtime_source_closure"] = (
+        runtime_source_closure
+    )
+    approval["path_planner_runtime_source_closure_sha256"] = (
+        runtime_source_closure[
+            "path_planner_runtime_source_closure_sha256"
+        ]
+    )
     approved = module.resolve_hopper_formal_eligibility(
         candidate_record=candidate,
         approval_record=approval,

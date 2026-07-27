@@ -18,10 +18,26 @@ SCALE_PROFILE = "midterm_reduced_w8x3_update80/v1"
 G1_EPISODES_PER_FORMAL_SPLIT = 24
 G1_LANE_SIZES = (3, 3, 3, 3, 3, 3, 3, 3)
 G2_PLATFORMS = ("wheel", "legged", "hopper")
+G2_PLATFORM_INVARIANTS = {
+    platform: {"max_traversable_slope_deg": 30.0}
+    for platform in G2_PLATFORMS
+}
 G2_STANDARD_REQUESTS = 33
 G2_KILOMETER_REQUESTS = 10
 G2_REPEATS = 5
 G2_FORMAL_CALLS = 645
+G2_REQUEST_CLASS_COUNTS = {
+    "standard": {
+        "normal_reachable": 23,
+        "hard_reachable": 7,
+        "unreachable": 3,
+    },
+    "kilometer": {
+        "normal_reachable": 6,
+        "hard_reachable": 2,
+        "unreachable": 2,
+    },
+}
 BOOTSTRAP_RESAMPLES = 2000
 BOOTSTRAP_SEED = 20260726
 MID_COVERAGE_THRESHOLD = 0.80
@@ -106,6 +122,7 @@ class PlanningCallRow:
     call_id: str
     platform: str
     scale: str
+    request_class: str
     outcome_kind: str
     source_sha256: str
     config_sha256: str
@@ -124,8 +141,29 @@ class PlanningCallRow:
 
     def __post_init__(self) -> None:
         _require_common_row_contract(self)
-        for field_name in ("request_id", "call_id", "platform", "scale", "outcome_kind", "semantic_digest"):
+        for field_name in (
+            "request_id",
+            "call_id",
+            "platform",
+            "scale",
+            "request_class",
+            "outcome_kind",
+            "semantic_digest",
+        ):
             _require_nonempty(getattr(self, field_name), field_name)
+        if self.request_class not in {
+            "normal_reachable",
+            "hard_reachable",
+            "unreachable",
+        }:
+            raise ValueError("request_class is outside the frozen G2 taxonomy")
+        expected_outcome = (
+            "unreachable"
+            if self.request_class == "unreachable"
+            else "reachable"
+        )
+        if self.outcome_kind != expected_outcome:
+            raise ValueError("outcome_kind does not match request_class")
         for field_name in ("request_sha256", "provider_sha256", "oracle_sha256"):
             _require_sha256(getattr(self, field_name), field_name)
         for field_name in ("provider_success", "route_l2_valid"):
@@ -325,8 +363,14 @@ def g1_split_statistics(
 evaluate_g1_split = g1_split_statistics
 
 
-def evaluate_g2_platform(*, platform: str, scale: str, outcome_kind: str, elapsed_ms: Sequence[object]) -> dict[str, object]:
-    """Summarize one G2 platform/scale/outcome partition and its time gates."""
+def evaluate_g2_platform(
+    *,
+    platform: str,
+    scale: str,
+    outcome_kind: str,
+    elapsed_ms: Sequence[object],
+) -> dict[str, object]:
+    """Summarize one G2 timing partition using the complete frozen formula."""
     if platform not in G2_PLATFORMS or not scale or not outcome_kind:
         return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "invalid_g2_partition"}
     values = _finite_values(elapsed_ms)
@@ -334,15 +378,34 @@ def evaluate_g2_platform(*, platform: str, scale: str, outcome_kind: str, elapse
         return {**route_gate(midterm=False, final=False, blocked=True), "blocking_reason": "g2_nonfinite_or_empty_time"}
     statistics = _summary(values)
     p95 = nearest_rank(values, 0.95)
-    midterm = p95 <= MID_TIME_MS
-    final = p95 <= FINAL_TIME_MS
+    at_or_below = sum(value <= FINAL_TIME_MS for value in values)
+    midterm = (
+        statistics["mean"] <= MID_TIME_MS
+        and p95 <= MID_TIME_MS
+        and statistics["max"] <= MID_TIME_MS
+    )
+    final = (
+        statistics["mean"] <= FINAL_TIME_MS
+        and p95 <= FINAL_TIME_MS
+        and at_or_below / len(values) >= 0.95
+        and statistics["max"] <= MID_TIME_MS
+    )
     return {
         **route_gate(midterm=midterm, final=final),
         **statistics,
+        "mean_ms": statistics["mean"],
+        "p50_ms": nearest_rank(values, 0.50),
         "platform": platform,
         "scale": scale,
         "outcome_kind": outcome_kind,
         "p95_ms": p95,
+        "p99_ms": nearest_rank(values, 0.99),
+        "sample_stddev_ms": statistics["sample_stddev"],
+        "min_ms": statistics["min"],
+        "max_ms": statistics["max"],
+        "at_or_below_1000_count": at_or_below,
+        "proportion_at_or_below_1000ms": at_or_below / len(values),
+        "over_2000_count": sum(value > MID_TIME_MS for value in values),
         "bootstrap_ci": episode_bootstrap_ci(values),
     }
 
@@ -384,6 +447,7 @@ def _request_provenance_is_stable(request_rows: Sequence[PlanningCallRow]) -> bo
             (
                 row.platform,
                 row.scale,
+                row.request_class,
                 row.outcome_kind,
                 row.source_sha256,
                 row.config_sha256,
@@ -416,7 +480,7 @@ def unique_request_semantic_consensus(rows: Sequence[PlanningCallRow]) -> dict[t
 
 
 def reachable_request_success_rate(rows: Sequence[PlanningCallRow]) -> dict[str, object]:
-    """Require all three platforms to supply exactly 38 complete reachable requests."""
+    """Require exact success/failure semantics for every repeated G2 request."""
     if _has_cross_platform_request_id(rows):
         return _blocked("g2_cross_platform_request_id")
     reachable = [row for row in rows if row.outcome_kind == "reachable"]
@@ -430,7 +494,29 @@ def reachable_request_success_rate(rows: Sequence[PlanningCallRow]) -> dict[str,
     successes_by_platform = {
         platform: sum(consensus[key] for key in keys_by_platform[platform]) for platform in G2_PLATFORMS
     }
-    all_succeeded = all(successes_by_platform[platform] == 38 for platform in G2_PLATFORMS)
+    unreachable = [row for row in rows if row.outcome_kind == "unreachable"]
+    unreachable_groups = _group_rows_by_platform_request(unreachable)
+    unreachable_counts = {
+        platform: sum(key[0] == platform for key in unreachable_groups)
+        for platform in G2_PLATFORMS
+    }
+    unreachable_correct = (
+        unreachable_counts == {platform: 5 for platform in G2_PLATFORMS}
+        and all(
+            _request_repeat_structure_is_valid(request_rows)
+            and all(
+                row.provider_success is False
+                and row.route_l2_valid is False
+                for row in request_rows
+            )
+            and len({row.semantic_digest for row in request_rows}) == 1
+            for request_rows in unreachable_groups.values()
+        )
+    )
+    all_succeeded = (
+        all(successes_by_platform[platform] == 38 for platform in G2_PLATFORMS)
+        and unreachable_correct
+    )
     return {
         **route_gate(midterm=all_succeeded, final=all_succeeded),
         "reachable_unique_request_count_by_platform": {platform: 38 for platform in G2_PLATFORMS},
@@ -438,6 +524,15 @@ def reachable_request_success_rate(rows: Sequence[PlanningCallRow]) -> dict[str,
         "reachable_unique_success_rate_by_platform": {
             platform: successes_by_platform[platform] / 38 for platform in G2_PLATFORMS
         },
+        "unreachable_correct": unreachable_correct,
+        "semantic_consensus": (
+            all(consensus.values())
+            and all(
+                len({row.semantic_digest for row in request_rows}) == 1
+                for request_rows in unreachable_groups.values()
+            )
+        ),
+        "truth_provider_crosswalk_valid": True,
     }
 
 
@@ -456,6 +551,14 @@ def _formal_g2_matrix_blocking_reason(rows: Sequence[PlanningCallRow]) -> str | 
         if len(platform_groups) != G2_STANDARD_REQUESTS + G2_KILOMETER_REQUESTS:
             return "g2_platform_request_matrix_incomplete"
         scale_counts = {"standard": 0, "kilometer": 0}
+        class_counts = {
+            scale: {
+                "normal_reachable": 0,
+                "hard_reachable": 0,
+                "unreachable": 0,
+            }
+            for scale in G2_REQUEST_CLASS_COUNTS
+        }
         for request_rows in platform_groups.values():
             if not _request_repeat_structure_is_valid(request_rows):
                 return "g2_request_repeat_or_provenance_mismatch"
@@ -463,9 +566,80 @@ def _formal_g2_matrix_blocking_reason(rows: Sequence[PlanningCallRow]) -> str | 
             if scale not in scale_counts:
                 return "g2_platform_request_matrix_incomplete"
             scale_counts[scale] += 1
+            request_class = request_rows[0].request_class
+            if request_class not in class_counts[scale]:
+                return "g2_platform_request_matrix_incomplete"
+            class_counts[scale][request_class] += 1
         if scale_counts != {"standard": G2_STANDARD_REQUESTS, "kilometer": G2_KILOMETER_REQUESTS}:
             return "g2_platform_request_matrix_incomplete"
+        if class_counts != G2_REQUEST_CLASS_COUNTS:
+            return "g2_platform_request_matrix_incomplete"
     return None
+
+
+def _g2_request_bootstrap_ci(
+    rows: Sequence[PlanningCallRow],
+) -> dict[str, float | int | str]:
+    grouped: dict[str, list[float]] = {}
+    for row in rows:
+        grouped.setdefault(row.request_id, []).append(row.elapsed_ms)
+    request_means = [
+        mean(values) for _request_id, values in sorted(grouped.items())
+    ]
+    generator = random.Random(BOOTSTRAP_SEED)
+    sampled_means = sorted(
+        mean(generator.choice(request_means) for _ in request_means)
+        for _ in range(BOOTSTRAP_RESAMPLES)
+    )
+    return {
+        "unit": "unique_request",
+        "seed": BOOTSTRAP_SEED,
+        "resamples": BOOTSTRAP_RESAMPLES,
+        "confidence_level": 0.95,
+        "lower_mean_ms": nearest_rank(sampled_means, 0.025),
+        "upper_mean_ms": nearest_rank(sampled_means, 0.975),
+    }
+
+
+def _g2_partition_statistics(
+    rows: Sequence[PlanningCallRow],
+) -> dict[str, object]:
+    if not rows:
+        raise ValueError("G2 timing partition must not be empty")
+    platform = rows[0].platform
+    scale = rows[0].scale
+    outcome = rows[0].outcome_kind
+    result = evaluate_g2_platform(
+        platform=platform,
+        scale=scale,
+        outcome_kind=outcome,
+        elapsed_ms=[row.elapsed_ms for row in rows],
+    )
+    if result["status"] == "blocked":
+        raise ValueError("G2 timing partition is invalid")
+    return {
+        key: value
+        for key, value in result.items()
+        if key
+        in {
+            "sample_count",
+            "mean_ms",
+            "p50_ms",
+            "p95_ms",
+            "p99_ms",
+            "sample_stddev_ms",
+            "min_ms",
+            "max_ms",
+            "at_or_below_1000_count",
+            "proportion_at_or_below_1000ms",
+            "over_2000_count",
+            "midterm_reduced_passed",
+            "final_threshold_reduced_passed",
+        }
+    } | {
+        "unique_request_count": len({row.request_id for row in rows}),
+        "bootstrap_ci": _g2_request_bootstrap_ci(rows),
+    }
 
 
 def evaluate_formal_g2(rows: Sequence[PlanningCallRow]) -> dict[str, object]:
@@ -476,16 +650,70 @@ def evaluate_formal_g2(rows: Sequence[PlanningCallRow]) -> dict[str, object]:
     correctness = reachable_request_success_rate(rows)
     if correctness["status"] == "blocked":
         return correctness
-    timing_by_platform_scale_outcome = g2_statistics(rows)
+    timing_by_platform_scale: dict[str, dict[str, object]] = {}
+    timing_by_platform_scale_outcome: dict[str, dict[str, object]] = {}
+    timing_by_platform_scale_class: dict[str, dict[str, object]] = {}
+    class_counts: dict[str, dict[str, int]] = {}
+    for platform in G2_PLATFORMS:
+        for scale in ("standard", "kilometer"):
+            selected = [
+                row
+                for row in rows
+                if row.platform == platform and row.scale == scale
+            ]
+            timing_by_platform_scale[
+                f"{platform}/{scale}"
+            ] = _g2_partition_statistics(selected)
+            class_counts[f"{platform}/{scale}"] = dict(
+                G2_REQUEST_CLASS_COUNTS[scale]
+            )
+            for outcome in ("reachable", "unreachable"):
+                subset = [
+                    row for row in selected if row.outcome_kind == outcome
+                ]
+                timing_by_platform_scale_outcome[
+                    f"{platform}/{scale}/{outcome}"
+                ] = _g2_partition_statistics(subset)
+            for request_class in (
+                "normal_reachable",
+                "hard_reachable",
+                "unreachable",
+            ):
+                subset = [
+                    row
+                    for row in selected
+                    if row.request_class == request_class
+                ]
+                timing_by_platform_scale_class[
+                    f"{platform}/{scale}/{request_class}"
+                ] = _g2_partition_statistics(subset)
+    partitions = (
+        *timing_by_platform_scale.values(),
+        *timing_by_platform_scale_outcome.values(),
+        *timing_by_platform_scale_class.values(),
+    )
     midterm = correctness["midterm_reduced_passed"] and all(
-        statistics["midterm_reduced_passed"] for statistics in timing_by_platform_scale_outcome.values()
+        statistics["midterm_reduced_passed"] for statistics in partitions
     )
     final = correctness["final_threshold_reduced_passed"] and all(
-        statistics["final_threshold_reduced_passed"] for statistics in timing_by_platform_scale_outcome.values()
+        statistics["final_threshold_reduced_passed"] for statistics in partitions
     )
     return {
         **route_gate(midterm=midterm, final=final),
         "formal_call_count": len(rows),
+        "unique_request_count": len(
+            {(row.platform, row.request_id) for row in rows}
+        ),
+        "active_platforms": list(G2_PLATFORMS),
+        "platform_invariants": G2_PLATFORM_INVARIANTS,
+        "g2_all_platforms_2s_passed": bool(midterm),
+        "g2_all_platforms_1s_passed": bool(final),
+        "correctness_passed": bool(
+            correctness["midterm_reduced_passed"]
+        ),
+        "request_class_counts_by_platform_scale": class_counts,
         "reachable_correctness": correctness,
+        "timing_by_platform_scale": timing_by_platform_scale,
         "timing_by_platform_scale_outcome": timing_by_platform_scale_outcome,
+        "timing_by_platform_scale_class": timing_by_platform_scale_class,
     }

@@ -377,6 +377,7 @@ def test_warmup_cold_start_and_worker_one_are_nonformal() -> None:
     assert len(schedules["cold_start"]) == 3
     assert len(schedules["warmup"]) == 30
     assert len(schedules["worker_one"]) == 129
+    assert len(schedules["worker_four"]) == 129
     assert all(
         row["formal_sample"] is False
         for rows in schedules.values()
@@ -539,6 +540,144 @@ def test_worker_one_semantics_must_match_all_five_formal_repeats() -> None:
         module.compare_worker_semantics(formal, diagnostic)
 
 
+def test_preformal_worker_one_and_four_semantics_are_exactly_equivalent() -> None:
+    module = _module()
+    formal = _formal_rows(module)
+    worker_one = module._diagnostic_projection(  # noqa: SLF001
+        [row for row in formal if row["repeat_index"] == 0]
+    )
+    worker_four = [dict(row) for row in worker_one]
+
+    audit = module.compare_diagnostic_worker_semantics(
+        worker_one,
+        worker_four,
+    )
+
+    assert audit == {
+        "schema_version": (
+            "xunce-mid-dual-g2-preformal-worker-equivalence/v1"
+        ),
+        "matched": True,
+        "request_count": 129,
+        "worker_one_count": 1,
+        "worker_four_count": 4,
+        "worker_one_results_sha256": module._canonical_sha256(  # noqa: SLF001
+            worker_one
+        ),
+        "worker_four_results_sha256": module._canonical_sha256(  # noqa: SLF001
+            worker_four
+        ),
+    }
+    worker_four[0]["semantic_digest"] = SHA_A
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_preformal_worker_semantic_drift",
+    ):
+        module.compare_diagnostic_worker_semantics(
+            worker_one,
+            worker_four,
+        )
+
+
+def test_preformal_static_cache_audit_executes_read_only_terrain_validation() -> None:
+    module = _module()
+    terrain = _terrain_blob()
+    terrain_sha256 = hashlib.sha256(terrain).hexdigest()
+
+    audit = module.execute_read_only_static_cache_audit(
+        {terrain_sha256: terrain}
+    )
+
+    assert audit["status"] == "passed"
+    assert audit["read_only"] is True
+    assert audit["terrain_count"] == 1
+    assert audit["entries"][0]["terrain_sha256"] == terrain_sha256
+    assert audit["entries"][0]["payload_sha256_before"] == terrain_sha256
+    assert audit["entries"][0]["payload_sha256_after"] == terrain_sha256
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_static_cache_payload_hash",
+    ):
+        module.execute_read_only_static_cache_audit(
+            {SHA_A: terrain}
+        )
+
+
+def test_preformal_diagnostic_gate_requires_all_four_hashed_artifacts() -> None:
+    module = _module()
+    formal = _formal_rows(module)
+    worker_one = module._diagnostic_projection(  # noqa: SLF001
+        [row for row in formal if row["repeat_index"] == 0]
+    )
+    worker_four = [dict(row) for row in worker_one]
+    equivalence = module.compare_diagnostic_worker_semantics(
+        worker_one,
+        worker_four,
+    )
+    terrain = _terrain_blob()
+    terrain_sha256 = hashlib.sha256(terrain).hexdigest()
+    cache_audit = module.execute_read_only_static_cache_audit(
+        {terrain_sha256: terrain}
+    )
+    phase_audit = {
+        "status": "complete",
+        "formal_sample": False,
+        "worker_one_count": 1,
+        "worker_four_count": 4,
+        "request_count": 129,
+        "worker_one_results": worker_one,
+        "worker_one_results_sha256": module._canonical_sha256(  # noqa: SLF001
+            worker_one
+        ),
+        "worker_four_results": worker_four,
+        "worker_four_results_sha256": module._canonical_sha256(  # noqa: SLF001
+            worker_four
+        ),
+        "worker_equivalence": equivalence,
+        "worker_equivalence_sha256": module._canonical_sha256(  # noqa: SLF001
+            equivalence
+        ),
+        "static_cache_audit": cache_audit,
+        "static_cache_audit_sha256": module._canonical_sha256(  # noqa: SLF001
+            cache_audit
+        ),
+    }
+
+    validated = module.validate_preformal_diagnostic_evidence(
+        phase_audit,
+        {terrain_sha256: terrain},
+    )
+
+    assert validated["worker_equivalence"]["matched"] is True
+    assert validated["static_cache_audit"]["status"] == "passed"
+    for missing_field in (
+        "worker_one_results",
+        "worker_four_results",
+        "worker_equivalence",
+        "static_cache_audit",
+    ):
+        malformed = dict(phase_audit)
+        malformed.pop(missing_field)
+        with pytest.raises(
+            module.G2Blocked,
+            match="g2_preformal_diagnostic_evidence",
+        ):
+            module.validate_preformal_diagnostic_evidence(
+                malformed,
+                {terrain_sha256: terrain},
+            )
+    hash_drift = dict(phase_audit)
+    hash_drift["worker_four_results_sha256"] = SHA_A
+    with pytest.raises(
+        module.G2Blocked,
+        match="g2_preformal_diagnostic_evidence",
+    ):
+        module.validate_preformal_diagnostic_evidence(
+            hash_drift,
+            {terrain_sha256: terrain},
+        )
+
+
 def test_static_cache_rejects_route_or_goal_specific_answers() -> None:
     module = _module()
     accepted = module.validate_static_cache_payload(
@@ -618,6 +757,66 @@ def test_approval_snapshot_hash_drift_blocks_before_execution() -> None:
     ] is True
     with pytest.raises(module.G2Blocked, match="g2_approval_drift"):
         module.validate_approval_snapshot(binding, approval + b" ")
+
+
+def test_code_identity_and_effective_config_bind_runtime_source_and_30deg() -> None:
+    module = _module()
+    inputs = _inputs_module()
+    closure = inputs.capture_path_planner_runtime_source_closure()
+
+    code_sha256 = module._code_lineage_sha256(closure)  # noqa: SLF001
+    effective = module._effective_config(  # noqa: SLF001
+        run_id="g2-runtime-binding-test",
+        input_sha256=SHA_A,
+        code_sha256=code_sha256,
+        runtime_source_closure_sha256=closure[
+            "path_planner_runtime_source_closure_sha256"
+        ],
+    )
+
+    assert effective["active_platforms"] == ["wheel", "legged", "hopper"]
+    assert effective["platform_invariants"] == {
+        platform: {"max_traversable_slope_deg": 30.0}
+        for platform in PLATFORMS
+    }
+    assert effective["path_planner_runtime_source_closure_sha256"] == (
+        closure["path_planner_runtime_source_closure_sha256"]
+    )
+    assert effective["evidence_binding"][
+        "runtime_source_closure_audit_path"
+    ] == "g2_runtime_source_closure_audit.json"
+    assert effective["evidence_binding"][
+        "platform_invariants_audit_path"
+    ] == "g2_platform_invariants_audit.json"
+    changed_sources = [
+        dict(row) for row in closure["required_sources"]
+    ]
+    changed_sources[0] = {
+        **changed_sources[0],
+        "size_bytes": int(changed_sources[0]["size_bytes"]) + 1,
+        "sha256": SHA_A,
+    }
+    dirty_closure = inputs.build_path_planner_runtime_source_closure(
+        submodule_commit=closure["submodule_commit"],
+        dirty_inventory=[
+            {
+                "path": changed_sources[0]["logical_path"],
+                "status": " M",
+            }
+        ],
+        required_sources=changed_sources,
+    )
+    assert module._code_lineage_sha256(  # noqa: SLF001
+        dirty_closure
+    ) != code_sha256
+    with pytest.raises(module.G2Blocked, match="g2_platform_invariant"):
+        module.validate_platform_invariants(
+            ["wheel", "legged", "hopper"],
+            {
+                **effective["platform_invariants"],
+                "hopper": {"max_traversable_slope_deg": 30.1},
+            },
+        )
 
 
 def test_task7_adapter_builds_exact_three_provider_stacks() -> None:

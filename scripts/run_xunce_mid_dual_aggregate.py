@@ -86,6 +86,14 @@ _TIMING_COMPONENT_FIELDS = (
     "complete_route_validation_ns",
     "result_assembly_ns",
 )
+_G2_ACTIVE_PLATFORMS = ("wheel", "legged", "hopper")
+_G2_PLATFORM_INVARIANTS = {
+    platform_name: {"max_traversable_slope_deg": 30.0}
+    for platform_name in _G2_ACTIVE_PLATFORMS
+}
+_G2_RUNTIME_SOURCE_SCHEMA_VERSION = (
+    "xunce-mid-dual-path-planner-runtime-source-closure/v1"
+)
 
 _G1_ROW_KEYS = frozenset(
     {
@@ -284,6 +292,8 @@ _G3_UPSTREAM_BINDING_KEYS = frozenset(
         "g2_provider_identity_sha256",
         "g2_oracle_identity_sha256",
         "g2_hopper_resolution_sha256",
+        "active_platforms",
+        "platform_invariants",
     }
 )
 
@@ -419,6 +429,193 @@ def _canonical_json_sha256(value: object) -> str:
     except (TypeError, ValueError) as exc:
         raise AggregateBlocked("canonical_json_invalid") from exc
     return _sha256_bytes(payload)
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise AggregateBlocked("canonical_json_invalid") from exc
+
+
+def _framed_domain_sha256(domain: str, *parts: bytes) -> str:
+    framed = bytearray()
+    for part in (domain.encode("utf-8"), *parts):
+        framed.extend(struct.pack(">Q", len(part)))
+        framed.extend(part)
+    return _sha256_bytes(bytes(framed))
+
+
+def _validate_g2_platform_invariants(
+    active_platforms: object,
+    platform_invariants: object,
+    reason: str = "g2_platform_invariant_drift",
+) -> dict[str, object]:
+    if (
+        active_platforms != list(_G2_ACTIVE_PLATFORMS)
+        or platform_invariants != _G2_PLATFORM_INVARIANTS
+    ):
+        raise AggregateBlocked(reason)
+    return {
+        "active_platforms": list(_G2_ACTIVE_PLATFORMS),
+        "platform_invariants": _G2_PLATFORM_INVARIANTS,
+    }
+
+
+def _validate_g2_runtime_source_closure(
+    value: object,
+    reason: str = "g2_runtime_source_closure_invalid",
+) -> dict[str, Any]:
+    expected_keys = {
+        "schema_version",
+        "submodule_commit",
+        "dirty_inventory",
+        "required_sources",
+        "active_platforms",
+        "platform_invariants",
+        "path_planner_runtime_source_closure_sha256",
+    }
+    closure = _exact_keys(value, expected_keys, reason)
+    if (
+        closure["schema_version"] != _G2_RUNTIME_SOURCE_SCHEMA_VERSION
+        or not isinstance(closure["submodule_commit"], str)
+        or re.fullmatch(
+            r"[0-9a-f]{40}",
+            closure["submodule_commit"],
+        )
+        is None
+    ):
+        raise AggregateBlocked(reason)
+    _validate_g2_platform_invariants(
+        closure["active_platforms"],
+        closure["platform_invariants"],
+        reason,
+    )
+    inventory = closure["dirty_inventory"]
+    if not isinstance(inventory, list):
+        raise AggregateBlocked(reason)
+    normalized_inventory: list[dict[str, str]] = []
+    seen_inventory: set[str] = set()
+    for raw in inventory:
+        row = _exact_keys(raw, {"path", "status"}, reason)
+        path = row["path"]
+        status = row["status"]
+        if (
+            not isinstance(path, str)
+            or not path
+            or "\\" in path
+            or path.startswith("/")
+            or ".." in path.split("/")
+            or not isinstance(status, str)
+            or len(status) != 2
+            or path in seen_inventory
+        ):
+            raise AggregateBlocked(reason)
+        seen_inventory.add(path)
+        normalized_inventory.append({"path": path, "status": status})
+    if normalized_inventory != sorted(
+        normalized_inventory,
+        key=lambda row: row["path"],
+    ):
+        raise AggregateBlocked(reason)
+    sources = closure["required_sources"]
+    if not isinstance(sources, list) or not sources:
+        raise AggregateBlocked(reason)
+    normalized_sources: list[dict[str, object]] = []
+    seen_sources: set[str] = set()
+    for raw in sources:
+        row = _exact_keys(
+            raw,
+            {"logical_path", "size_bytes", "sha256"},
+            reason,
+        )
+        logical_path = row["logical_path"]
+        size_bytes = row["size_bytes"]
+        digest = row["sha256"]
+        if (
+            not isinstance(logical_path, str)
+            or not logical_path.startswith("src/path_planner/v2/")
+            or not logical_path.endswith(".py")
+            or "\\" in logical_path
+            or ".." in logical_path.split("/")
+            or logical_path in seen_sources
+            or type(size_bytes) is not int
+            or size_bytes < 0
+            or not _is_sha256(digest)
+        ):
+            raise AggregateBlocked(reason)
+        seen_sources.add(logical_path)
+        normalized_sources.append(
+            {
+                "logical_path": logical_path,
+                "size_bytes": size_bytes,
+                "sha256": digest,
+            }
+        )
+    if normalized_sources != sorted(
+        normalized_sources,
+        key=lambda row: str(row["logical_path"]),
+    ):
+        raise AggregateBlocked(reason)
+    required_layers = {
+        "src/path_planner/v2/api.py",
+        "src/path_planner/v2/formal_request_codec.py",
+        "src/path_planner/v2/profiles.py",
+        "src/path_planner/v2/terrain.py",
+        "src/path_planner/v2/hopper_authority.py",
+        "src/path_planner/v2/hopper_api.py",
+        "src/path_planner/v2/validation.py",
+        "src/path_planner/v2/hopper_route_validation.py",
+    }
+    logical_paths = {
+        str(row["logical_path"]) for row in normalized_sources
+    }
+    if not required_layers.issubset(logical_paths) or not any(
+        path.startswith("src/path_planner/v2/providers/")
+        for path in logical_paths
+    ):
+        raise AggregateBlocked(reason)
+    core = {
+        "schema_version": _G2_RUNTIME_SOURCE_SCHEMA_VERSION,
+        "submodule_commit": closure["submodule_commit"],
+        "dirty_inventory": normalized_inventory,
+        "required_sources": normalized_sources,
+        "active_platforms": list(_G2_ACTIVE_PLATFORMS),
+        "platform_invariants": _G2_PLATFORM_INVARIANTS,
+    }
+    expected_sha256 = _framed_domain_sha256(
+        _G2_RUNTIME_SOURCE_SCHEMA_VERSION,
+        _canonical_json_bytes(core),
+    )
+    if (
+        closure["path_planner_runtime_source_closure_sha256"]
+        != expected_sha256
+    ):
+        raise AggregateBlocked(reason)
+    return {**core, "path_planner_runtime_source_closure_sha256": expected_sha256}
+
+
+def _g2_code_sha256_with_runtime_source(
+    local_source_sha256: str,
+    runtime_source_closure_sha256: str,
+) -> str:
+    return _framed_domain_sha256(
+        "xunce-mid-dual-g2-code-with-runtime-source/v1",
+        _canonical_json_bytes(
+            {
+                "local_source_sha256": local_source_sha256,
+                "path_planner_runtime_source_closure_sha256": (
+                    runtime_source_closure_sha256
+                ),
+            }
+        ),
+    )
 
 
 def _artifact_text_bytes(text: str) -> bytes:
@@ -901,6 +1098,160 @@ def _validate_g2_p04_results_snapshot(snapshot: Mapping[str, bytes]) -> None:
         raise AggregateBlocked("g2_results_not_canonical_p04")
 
 
+def _validate_g2_runtime_binding_artifacts(
+    *,
+    snapshot: Mapping[str, bytes],
+    config: Mapping[str, Any],
+    input_audit: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    input_projection = _validate_g2_platform_invariants(
+        input_audit.get("active_platforms"),
+        input_audit.get("platform_invariants"),
+    )
+    config_projection = _validate_g2_platform_invariants(
+        config.get("active_platforms"),
+        config.get("platform_invariants"),
+    )
+    if config_projection != input_projection:
+        raise AggregateBlocked("g2_platform_invariant_drift")
+    closure = _validate_g2_runtime_source_closure(
+        input_audit.get("path_planner_runtime_source_closure")
+    )
+    closure_sha256 = closure[
+        "path_planner_runtime_source_closure_sha256"
+    ]
+    if (
+        input_audit.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != closure_sha256
+        or config.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != closure_sha256
+    ):
+        raise AggregateBlocked("g2_runtime_source_closure_binding")
+    approval = input_audit.get("approval")
+    if (
+        not isinstance(approval, Mapping)
+        or approval.get("path_planner_runtime_source_closure") != closure
+        or approval.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != closure_sha256
+    ):
+        raise AggregateBlocked("g2_runtime_source_approval_binding")
+
+    closure_path = _safe_manifest_path(
+        binding.get("runtime_source_closure_audit_path"),
+        "g2",
+    )
+    invariants_path = _safe_manifest_path(
+        binding.get("platform_invariants_audit_path"),
+        "g2",
+    )
+    if closure_path not in snapshot or invariants_path not in snapshot:
+        raise AggregateBlocked("g2_runtime_source_audit_missing")
+    stored_closure = _parse_json_bytes(
+        snapshot[closure_path],
+        "g2_runtime_source_closure_audit_invalid",
+    )
+    if (
+        _validate_g2_runtime_source_closure(stored_closure) != closure
+        or snapshot[closure_path]
+        != _artifact_text_bytes(
+            _canonical_json_artifact_text(stored_closure)
+        )
+    ):
+        raise AggregateBlocked("g2_runtime_source_closure_audit_invalid")
+    expected_invariants_audit = {
+        "schema_version": (
+            "xunce-mid-dual-g2-platform-invariants-audit/v1"
+        ),
+        "gate_id": "g2",
+        "scale_profile": SCALE_PROFILE,
+        "run_id": run_id,
+        "status": "passed",
+        "formal_evidence_eligible": True,
+        **input_projection,
+        "path_planner_runtime_source_closure_sha256": closure_sha256,
+        "config_sha256": config.get("config_sha256"),
+        "input_sha256": config.get("input_sha256"),
+        "code_sha256": config.get("code_sha256"),
+    }
+    stored_invariants = _parse_json_bytes(
+        snapshot[invariants_path],
+        "g2_platform_invariant_audit_invalid",
+    )
+    if (
+        stored_invariants != expected_invariants_audit
+        or snapshot[invariants_path]
+        != _artifact_text_bytes(
+            _canonical_json_artifact_text(stored_invariants)
+        )
+    ):
+        raise AggregateBlocked("g2_platform_invariant_audit_invalid")
+
+    state_rows = _parse_jsonl_bytes(
+        snapshot["phase-state.jsonl"],
+        "g2_phase_state_invalid",
+    )
+    attempts_bytes = snapshot.get("phase-attempts.jsonl")
+    if attempts_bytes is None:
+        raise AggregateBlocked("g2_phase_runtime_binding_missing")
+    attempt_rows = _parse_jsonl_bytes(
+        attempts_bytes,
+        "g2_phase_attempts_invalid",
+    )
+    for state in state_rows:
+        if not isinstance(state, Mapping):
+            raise AggregateBlocked("g2_phase_state_invalid")
+        phase_id = state.get("phase_id")
+        matching = [
+            row
+            for row in attempt_rows
+            if isinstance(row, Mapping)
+            and row.get("phase_id") == phase_id
+            and row.get("status") == "accepted"
+            and row.get("attempt_id") == state.get("attempt_id")
+        ]
+        if len(matching) != 1:
+            raise AggregateBlocked("g2_phase_attempt_binding_invalid")
+        audit_path = _safe_manifest_path(
+            matching[0].get("audit_path"),
+            "g2",
+        )
+        audit_bytes = snapshot.get(audit_path)
+        if audit_bytes is None:
+            raise AggregateBlocked("g2_phase_runtime_binding_missing")
+        phase_audit = _parse_json_bytes(
+            audit_bytes,
+            "g2_phase_runtime_binding_invalid",
+        )
+        try:
+            _validate_g2_platform_invariants(
+                phase_audit.get("active_platforms"),
+                phase_audit.get("platform_invariants"),
+                "g2_phase_runtime_binding_invalid",
+            )
+        except AggregateBlocked as exc:
+            raise AggregateBlocked(
+                "g2_phase_runtime_binding_invalid"
+            ) from exc
+        if (
+            phase_audit.get("gate_id") != "g2"
+            or phase_audit.get("phase_id") != phase_id
+            or phase_audit.get(
+                "path_planner_runtime_source_closure_sha256"
+            )
+            != closure_sha256
+        ):
+            raise AggregateBlocked("g2_phase_runtime_binding_invalid")
+    return closure
+
+
 def _load_verified_native_g1_source(
     *,
     source_root: Path,
@@ -916,6 +1267,7 @@ def _load_verified_native_g1_source(
         "routing.json",
         "phase-attempts.jsonl",
         "environment_audit.json",
+        "platform_invariants_audit.json",
         "g1_input_audit.json",
     }
     if not required_artifacts.issubset(snapshot):
@@ -1261,6 +1613,51 @@ def _validate_g3_evidence_snapshot(
     if upstream_bytes != _artifact_text_bytes(upstream_text):
         raise AggregateBlocked("g3_upstream_lineage_bytes_noncanonical")
     upstream_sha256 = _sha256_bytes(upstream_text.encode("utf-8"))
+    invariant_projection = _validate_g2_platform_invariants(
+        config.get("active_platforms"),
+        config.get("platform_invariants"),
+        "g3_platform_slope_invariant",
+    )
+    platform_audit_path = _safe_manifest_path(
+        config["evidence_binding"].get(
+            "platform_invariants_audit_path"
+        ),
+        "g3",
+    )
+    platform_audit_bytes = snapshot.get(platform_audit_path)
+    if platform_audit_bytes is None:
+        raise AggregateBlocked("g3_platform_invariants_audit_invalid")
+    platform_audit = _parse_json_bytes(
+        platform_audit_bytes,
+        "g3_platform_invariants_audit_invalid",
+    )
+    expected_platform_audit = {
+        "schema_version": (
+            "xunce-mid-dual-g3-platform-invariants-audit/v1"
+        ),
+        "gate_id": "g3",
+        "scale_profile": SCALE_PROFILE,
+        "run_id": config.get("run_id"),
+        "status": "passed",
+        "formal_evidence_eligible": True,
+        **invariant_projection,
+        "full_scale_acceptance": False,
+        "config_sha256": config.get("config_sha256"),
+        "input_sha256": config.get("input_sha256"),
+        "code_sha256": config.get("code_sha256"),
+        "upstream_lineage_audit_sha256": upstream_sha256,
+    }
+    if (
+        platform_audit != expected_platform_audit
+        or platform_audit_bytes
+        != _artifact_text_bytes(
+            _canonical_json_artifact_text(platform_audit)
+        )
+    ):
+        raise AggregateBlocked("g3_platform_invariants_audit_invalid")
+    platform_audit_sha256 = _sha256_bytes(
+        _canonical_json_artifact_text(platform_audit).encode("utf-8")
+    )
     for phase_id, raw_state in zip(("p01", "p02"), states, strict=True):
         state = _exact_keys(
             raw_state,
@@ -1323,6 +1720,14 @@ def _validate_g3_evidence_snapshot(
             or audit.get("status") != "complete"
             or audit.get("formal_sample") is not True
             or audit.get("formal_evidence_eligible") is not True
+            or _validate_g2_platform_invariants(
+                audit.get("active_platforms"),
+                audit.get("platform_invariants"),
+                "g3_phase_audit_invalid",
+            )
+            != invariant_projection
+            or audit.get("platform_invariants_audit_sha256")
+            != platform_audit_sha256
             or audit.get("upstream_lineage_audit_sha256") != upstream_sha256
             or audit.get("phase_projection") != projection
             or any(
@@ -1479,7 +1884,21 @@ def _load_verified_source(
         "config_sha256",
     }
     if gate_id == "g3":
-        expected_config_keys.add("upstream_binding")
+        expected_config_keys.update(
+            {
+                "active_platforms",
+                "platform_invariants",
+                "upstream_binding",
+            }
+        )
+    elif gate_id == "g2":
+        expected_config_keys.update(
+            {
+                "active_platforms",
+                "platform_invariants",
+                "path_planner_runtime_source_closure_sha256",
+            }
+        )
     if config.get("schema_version") != _contract_value(
         contract,
         "config_schema_version",
@@ -1508,14 +1927,24 @@ def _load_verified_source(
         config.get("code_sha256")
     ):
         raise AggregateBlocked(f"{gate_id}_config_lineage_invalid")
+    binding_keys = {
+        "schema_version",
+        "input_audit_path",
+        "lineage_audit_path",
+        "report_audit_path",
+    }
+    if gate_id == "g2":
+        binding_keys.update(
+            {
+                "runtime_source_closure_audit_path",
+                "platform_invariants_audit_path",
+            }
+        )
+    elif gate_id == "g3":
+        binding_keys.add("platform_invariants_audit_path")
     binding = _exact_keys(
         config.get("evidence_binding"),
-        {
-            "schema_version",
-            "input_audit_path",
-            "lineage_audit_path",
-            "report_audit_path",
-        },
+        binding_keys,
         f"{gate_id}_evidence_binding_invalid",
     )
     if binding["schema_version"] != f"xunce-mid-dual-{gate_id}-evidence-binding/v1":
@@ -1552,6 +1981,18 @@ def _load_verified_source(
         ),
         gate_id=gate_id,
     )
+    if gate_id == "g2":
+        closure_sha256 = input_audit.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        if not _is_sha256(closure_sha256):
+            raise AggregateBlocked(
+                "g2_runtime_source_closure_binding"
+            )
+        recomputed_code = _g2_code_sha256_with_runtime_source(
+            recomputed_code,
+            str(closure_sha256),
+        )
     if config["code_sha256"] != recomputed_code:
         raise AggregateBlocked(f"{gate_id}_code_sha256_mismatch")
     _validate_phase_sequence(
@@ -1560,6 +2001,13 @@ def _load_verified_source(
         gate_id,
     )
     if gate_id == "g2":
+        _validate_g2_runtime_binding_artifacts(
+            snapshot=snapshot,
+            config=config,
+            input_audit=input_audit,
+            binding=binding,
+            run_id=run_id,
+        )
         _validate_g2_p04_results_snapshot(snapshot)
     stored_summary = _parse_json_bytes(
         snapshot["summary.json"],
@@ -1942,6 +2390,9 @@ def recompute_g2(
         "truth_manifest_sha256", "truth_freeze_sha256",
         "truth_payload_root_sha256", "truth_source_attestations_sha256",
         "input_set_id", "manifest_core_sha256", "authorization_sha256",
+        "active_platforms", "platform_invariants",
+        "path_planner_runtime_source_closure",
+        "path_planner_runtime_source_closure_sha256",
         "candidate_boundary", "provider_source", "oracle_source",
         "expected_approval_artifact_path", "approval", "hopper_resolution",
         "primitive_label_audit", "small_map_optimum_audit",
@@ -1965,6 +2416,30 @@ def recompute_g2(
         or not _is_sha256(audit["truth_manifest_sha256"])
     ):
         raise AggregateBlocked("g2_input_audit_binding_invalid")
+    invariant_projection = _validate_g2_platform_invariants(
+        audit["active_platforms"],
+        audit["platform_invariants"],
+    )
+    if _validate_g2_platform_invariants(
+        config.get("active_platforms"),
+        config.get("platform_invariants"),
+    ) != invariant_projection:
+        raise AggregateBlocked("g2_platform_invariant_drift")
+    runtime_source_closure = _validate_g2_runtime_source_closure(
+        audit["path_planner_runtime_source_closure"]
+    )
+    runtime_source_closure_sha256 = runtime_source_closure[
+        "path_planner_runtime_source_closure_sha256"
+    ]
+    if (
+        audit["path_planner_runtime_source_closure_sha256"]
+        != runtime_source_closure_sha256
+        or config.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_source_closure_sha256
+    ):
+        raise AggregateBlocked("g2_runtime_source_closure_binding")
     source_keys = {
         "identity",
         "source_bytes_sha256",
@@ -2004,6 +2479,8 @@ def recompute_g2(
         "g2_scope_authorized", "g3_scope_authorized",
         "physical_capability_claimed", "hardware_certification_claimed",
         "formal_evidence_eligible",
+        "path_planner_runtime_source_closure",
+        "path_planner_runtime_source_closure_sha256",
     )
     if (
         any(field not in approval for field in required_approval)
@@ -2013,6 +2490,12 @@ def recompute_g2(
         ))
         or approval.get("provider_source") != provider
         or approval.get("oracle_source") != oracle
+        or approval.get("path_planner_runtime_source_closure")
+        != runtime_source_closure
+        or approval.get(
+            "path_planner_runtime_source_closure_sha256"
+        )
+        != runtime_source_closure_sha256
         or any(_exact_bool(approval[field], f"g2_approval_{field}") is not True
                for field in ("g2_scope_authorized", "g3_scope_authorized", "formal_evidence_eligible"))
         or any(_exact_bool(approval[field], f"g2_approval_{field}") is not False
@@ -2029,6 +2512,38 @@ def recompute_g2(
         "d:/xunce/inputs/mid_dual/"
     ):
         raise AggregateBlocked("g2_approval_payload_root_invalid")
+
+    provider_requests = audit["provider_requests"]
+    if not isinstance(provider_requests, list) or len(provider_requests) != 129:
+        raise AggregateBlocked("g2_provider_request_matrix_invalid")
+    provider_request_keys: set[tuple[str, str, str]] = set()
+    for raw_provider_request in provider_requests:
+        if not isinstance(raw_provider_request, Mapping):
+            raise AggregateBlocked("g2_provider_request_matrix_invalid")
+        platform_name = raw_provider_request.get("platform")
+        request_id = raw_provider_request.get("request_id")
+        request_sha256 = raw_provider_request.get(
+            "provider_request_sha256"
+        )
+        platform_stack = raw_provider_request.get("platform_stack")
+        if (
+            platform_name not in _G2_ACTIVE_PLATFORMS
+            or not isinstance(request_id, str)
+            or not request_id
+            or not _is_sha256(request_sha256)
+            or not isinstance(platform_stack, Mapping)
+            or platform_stack.get("max_traversable_slope_deg") != 30.0
+        ):
+            raise AggregateBlocked("g2_platform_invariant_drift")
+        provider_request_keys.add(
+            (
+                str(platform_name),
+                request_id,
+                str(request_sha256),
+            )
+        )
+    if len(provider_request_keys) != 129:
+        raise AggregateBlocked("g2_provider_request_matrix_invalid")
 
     request_keys = {
         "platform",
@@ -2119,6 +2634,8 @@ def recompute_g2(
         request_hashes.add(str(request_sha))
     if len(request_hashes) != 129:
         raise AggregateBlocked("g2_request_hash_unique_mismatch")
+    if set(request_index) != provider_request_keys:
+        raise AggregateBlocked("g2_provider_request_matrix_invalid")
     for platform_name in G2_PLATFORMS:
         for scale in ("standard", "kilometer"):
             key = f"{platform_name}/{scale}"
@@ -2173,8 +2690,6 @@ def recompute_g2(
             "outcome_kind": request["outcome_kind"],
             "truth_sha256": request["truth_request_sha256"],
             "oracle_result_sha256": request["truth_certificate_sha256"],
-            "provider_success": request["expected_success"],
-            "route_l2_valid": request["expected_route_l2_valid"],
             "provider_sha256": provider["implementation_sha256"],
             "provider_source_bytes_sha256": provider["source_bytes_sha256"],
             "oracle_sha256": oracle["implementation_sha256"],
@@ -2215,102 +2730,59 @@ def recompute_g2(
     if any(len(values) != 1 for values in provider_results_by_request.values()):
         raise AggregateBlocked("g2_provider_result_consensus_mismatch")
 
-    timing_by_platform_scale: dict[str, dict[str, Any]] = {}
-    timing_by_platform_scale_outcome: dict[str, dict[str, Any]] = {}
-    timing_by_platform_scale_class: dict[str, dict[str, Any]] = {}
-    for platform_name in G2_PLATFORMS:
-        for scale in ("standard", "kilometer"):
-            selected = [
-                row
+    try:
+        canonical = evaluate_formal_g2(
+            [
+                PlanningCallRow(
+                    **_dataclass_kwargs(row, PlanningCallRow)
+                )
                 for row in materialized
-                if row["platform"] == platform_name and row["scale"] == scale
             ]
-            expected_count = (
-                G2_STANDARD_REQUESTS
-                if scale == "standard"
-                else G2_KILOMETER_REQUESTS
-            ) * G2_REPEATS
-            if len(selected) != expected_count:
-                raise AggregateBlocked("g2_request_matrix_mismatch")
-            timing_by_platform_scale[
-                f"{platform_name}/{scale}"
-            ] = _timing_statistics([row["elapsed_ms"] for row in selected])
-            for outcome in ("reachable", "unreachable"):
-                subset = [
-                    row for row in selected if row["outcome_kind"] == outcome
-                ]
-                timing_by_platform_scale_outcome[
-                    f"{platform_name}/{scale}/{outcome}"
-                ] = _timing_statistics(
-                    [row["elapsed_ms"] for row in subset]
-                )
-            for request_class in (
-                "normal_reachable",
-                "hard_reachable",
-                "unreachable",
-            ):
-                subset = [
-                    row
-                    for row in selected
-                    if row["request_class"] == request_class
-                ]
-                timing_by_platform_scale_class[
-                    f"{platform_name}/{scale}/{request_class}"
-                ] = _timing_statistics(
-                    [row["elapsed_ms"] for row in subset]
-                )
-    reachable_successes = {
-        platform_name: len(
-            {
-                row["request_id"]
-                for row in materialized
-                if row["platform"] == platform_name
-                and row["outcome_kind"] == "reachable"
-                and row["provider_success"] is True
-                and row["route_l2_valid"] is True
-            }
         )
-        for platform_name in G2_PLATFORMS
-    }
-    unreachable_correct = all(
-        row["provider_success"] is False and row["route_l2_valid"] is False
-        for row in materialized
-        if row["outcome_kind"] == "unreachable"
-    )
-    correctness = (
-        reachable_successes
-        == {platform_name: 38 for platform_name in G2_PLATFORMS}
-        and unreachable_correct
-    )
-    partitions = (
-        *timing_by_platform_scale.values(),
-        *timing_by_platform_scale_outcome.values(),
-        *timing_by_platform_scale_class.values(),
-    )
-    midterm = correctness and all(
-        item["midterm_reduced_passed"] for item in partitions
-    )
-    final = correctness and all(
-        item["final_threshold_reduced_passed"] for item in partitions
-    )
+    except (TypeError, ValueError) as exc:
+        raise AggregateBlocked("g2_canonical_evaluator_input") from exc
+    if canonical.get("status") == "blocked":
+        raise AggregateBlocked(
+            str(
+                canonical.get(
+                    "blocking_reason",
+                    "g2_canonical_evaluator_blocked",
+                )
+            )
+        )
+    correctness = canonical["reachable_correctness"]
     return {
-        "status": _status_for(midterm),
-        "formal_call_count": len(materialized),
-        "unique_request_count": len(request_index),
-        "g2_all_platforms_2s_passed": midterm,
-        "g2_all_platforms_1s_passed": final,
-        "correctness_passed": correctness,
-        "request_class_counts_by_platform_scale": class_counts,
-        "timing_by_platform_scale": timing_by_platform_scale,
-        "timing_by_platform_scale_outcome": timing_by_platform_scale_outcome,
-        "timing_by_platform_scale_class": timing_by_platform_scale_class,
+        "status": canonical["status"],
+        "formal_call_count": canonical["formal_call_count"],
+        "unique_request_count": canonical["unique_request_count"],
+        "active_platforms": canonical["active_platforms"],
+        "platform_invariants": canonical["platform_invariants"],
+        "g2_all_platforms_2s_passed": canonical[
+            "g2_all_platforms_2s_passed"
+        ],
+        "g2_all_platforms_1s_passed": canonical[
+            "g2_all_platforms_1s_passed"
+        ],
+        "correctness_passed": canonical["correctness_passed"],
+        "request_class_counts_by_platform_scale": canonical[
+            "request_class_counts_by_platform_scale"
+        ],
+        "timing_by_platform_scale": canonical["timing_by_platform_scale"],
+        "timing_by_platform_scale_outcome": canonical[
+            "timing_by_platform_scale_outcome"
+        ],
+        "timing_by_platform_scale_class": canonical[
+            "timing_by_platform_scale_class"
+        ],
         "reachable_correctness": {
-            "reachable_unique_request_count_by_platform": {
-                platform_name: 38 for platform_name in G2_PLATFORMS
-            },
-            "reachable_unique_success_count_by_platform": reachable_successes,
-            "unreachable_correct": unreachable_correct,
-            "semantic_consensus": True,
+            "reachable_unique_request_count_by_platform": correctness[
+                "reachable_unique_request_count_by_platform"
+            ],
+            "reachable_unique_success_count_by_platform": correctness[
+                "reachable_unique_success_count_by_platform"
+            ],
+            "unreachable_correct": correctness["unreachable_correct"],
+            "semantic_consensus": correctness["semantic_consensus"],
             "truth_provider_crosswalk_valid": True,
         },
     }
@@ -2498,6 +2970,8 @@ def recompute_g3(
             "gate_id",
             "run_id",
             "scale_profile",
+            "active_platforms",
+            "platform_invariants",
             "formal_evidence_eligible",
             "g1_source_manifest_sha256",
             "g2_source_manifest_sha256",
@@ -2511,9 +2985,28 @@ def recompute_g3(
         _G3_UPSTREAM_BINDING_KEYS,
         "g3_upstream_binding_invalid",
     )
-    for field in _G3_UPSTREAM_BINDING_KEYS - {"g2_input_set_id"}:
+    for field in _G3_UPSTREAM_BINDING_KEYS - {
+        "g2_input_set_id",
+        "active_platforms",
+        "platform_invariants",
+    }:
         if not _is_sha256(upstream[field]):
             raise AggregateBlocked("g3_upstream_binding_invalid")
+    _validate_g2_platform_invariants(
+        audit["active_platforms"],
+        audit["platform_invariants"],
+        "g3_platform_slope_invariant",
+    )
+    _validate_g2_platform_invariants(
+        config.get("active_platforms"),
+        config.get("platform_invariants"),
+        "g3_platform_slope_invariant",
+    )
+    _validate_g2_platform_invariants(
+        upstream["active_platforms"],
+        upstream["platform_invariants"],
+        "g3_platform_slope_invariant",
+    )
     if (
         not isinstance(upstream["g2_input_set_id"], str)
         or not upstream["g2_input_set_id"]
@@ -2549,6 +3042,8 @@ def recompute_g3(
         "g2_hopper_resolution_sha256": _canonical_json_sha256(
             g2_input_audit.get("hopper_resolution")
         ),
+        "active_platforms": list(_G2_ACTIVE_PLATFORMS),
+        "platform_invariants": _G2_PLATFORM_INVARIANTS,
     }
     if (
         audit["schema_version"] != "xunce-mid-dual-g3-input-audit/v1"
@@ -3190,8 +3685,24 @@ def recompute_g3(
         and wheel_timing["final_threshold_reduced_passed"] is True
         and interface_timing["final_threshold_reduced_passed"] is True
     )
+    wheel_coverage_80_count = sum(
+        value >= MID_COVERAGE_THRESHOLD for value in final_coverages
+    )
     return {
         "status": _status_for(midterm),
+        "scale_profile": SCALE_PROFILE,
+        "active_platforms": list(_G2_ACTIVE_PLATFORMS),
+        "platform_invariants": _G2_PLATFORM_INVARIANTS,
+        "full_scale_acceptance": False,
+        "thresholds": {
+            "midterm_coverage": MID_COVERAGE_THRESHOLD,
+            "final_coverage": FINAL_COVERAGE_THRESHOLD,
+            "paired_g1_delta_min": -0.01,
+            "midterm_planner_ms": MID_TIME_MS,
+            "final_planner_ms": FINAL_TIME_MS,
+            "final_proportion_at_or_below_1000": 0.95,
+            "absolute_max_planner_ms": MID_TIME_MS,
+        },
         "g1_source_manifest_sha256": g1_manifest_sha256,
         "g2_source_manifest_sha256": g2_manifest_sha256,
         "upstream_lineage_audit_sha256": upstream_lineage_audit_sha256,
@@ -3202,9 +3713,7 @@ def recompute_g3(
         "g3_midterm_crosscheck_passed": midterm,
         "g3_final_crosscheck_passed": final,
         "wheel_coverage_mean": coverage_mean,
-        "wheel_coverage_80_count": sum(
-            value >= MID_COVERAGE_THRESHOLD for value in final_coverages
-        ),
+        "wheel_coverage_80_count": wheel_coverage_80_count,
         "wheel_coverage_99_count": sum(
             value >= FINAL_COVERAGE_THRESHOLD for value in final_coverages
         ),
@@ -3216,8 +3725,28 @@ def recompute_g3(
         ),
         "wheel_timing": wheel_timing,
         "interface_timing": interface_timing,
+        "wheel_coverage_all_episodes_passed": (
+            wheel_coverage_80_count == 10
+        ),
+        "wheel_coverage_mean_passed": (
+            coverage_mean >= MID_COVERAGE_THRESHOLD
+        ),
+        "paired_g1_delta_passed": paired_delta_mean >= -0.01,
+        "wheel_timing_midterm_passed": wheel_timing[
+            "midterm_reduced_passed"
+        ],
+        "wheel_timing_final_passed": wheel_timing[
+            "final_threshold_reduced_passed"
+        ],
+        "interface_timing_midterm_passed": interface_timing[
+            "midterm_reduced_passed"
+        ],
+        "interface_timing_final_passed": interface_timing[
+            "final_threshold_reduced_passed"
+        ],
         "wheel_integrity_passed": True,
         "interface_correctness_passed": True,
+        "required_replay_identities_passed": True,
     }
 
 
@@ -3227,6 +3756,7 @@ def _stored_summary_matches(
     stored: Mapping[str, Any],
     *,
     run_id: str,
+    config: Mapping[str, Any] | None = None,
 ) -> bool:
     expected = {
         "schema_version": f"xunce-mid-dual-{gate_id}-canonical-summary/v1",
@@ -3237,6 +3767,33 @@ def _stored_summary_matches(
         "formal_evidence_eligible": True,
         "recomputed": dict(recomputed),
     }
+    if gate_id == "g2":
+        if config is None:
+            return False
+        expected.update(
+            {
+                **_validate_g2_platform_invariants(
+                    config.get("active_platforms"),
+                    config.get("platform_invariants"),
+                ),
+                "path_planner_runtime_source_closure_sha256": (
+                    config.get(
+                        "path_planner_runtime_source_closure_sha256"
+                    )
+                ),
+            }
+        )
+    elif gate_id == "g3":
+        expected.update(
+            {
+                **_validate_g2_platform_invariants(
+                    recomputed.get("active_platforms"),
+                    recomputed.get("platform_invariants"),
+                    "g3_platform_slope_invariant",
+                ),
+                "full_scale_acceptance": False,
+            }
+        )
     return dict(stored) == expected
 
 
@@ -3261,6 +3818,31 @@ def _report_audit_matches(
         "formal_evidence_eligible": True,
         "recomputed": dict(recomputed),
     }
+    if gate_id == "g2":
+        expected_summary.update(
+            {
+                **_validate_g2_platform_invariants(
+                    source["config"].get("active_platforms"),
+                    source["config"].get("platform_invariants"),
+                ),
+                "path_planner_runtime_source_closure_sha256": (
+                    source["config"].get(
+                        "path_planner_runtime_source_closure_sha256"
+                    )
+                ),
+            }
+        )
+    elif gate_id == "g3":
+        expected_summary.update(
+            {
+                **_validate_g2_platform_invariants(
+                    recomputed.get("active_platforms"),
+                    recomputed.get("platform_invariants"),
+                    "g3_platform_slope_invariant",
+                ),
+                "full_scale_acceptance": False,
+            }
+        )
     if gate_id in {"g2", "g3"}:
         producer = _import_local_script(
             {
@@ -3383,6 +3965,7 @@ def aggregate_completed_roots(
                 recomputed,
                 source["stored_summary"],
                 run_id=source["run_id"],
+                config=source["config"],
             ):
                 blockers.append(f"{gate_id}_stored_summary_mismatch")
             if not native_g1 and not _report_audit_matches(
@@ -3465,6 +4048,7 @@ def aggregate_completed_roots(
                 recomputed_g3,
                 g3_source["stored_summary"],
                 run_id=g3_source["run_id"],
+                config=g3_source["config"],
             ):
                 blockers.append("g3_stored_summary_mismatch")
             if not _report_audit_matches(
