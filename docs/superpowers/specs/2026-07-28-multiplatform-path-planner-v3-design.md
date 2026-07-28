@@ -2,9 +2,10 @@
 
 ## 1. 文档状态
 
-- 状态：逐项设计决策已确认，本文为完整汇总稿，待最终通读确认。
+- 状态：逐项设计决策已确认，本文为 v3 冻结设计基线。
 - 适用平台：可原地旋转且允许倒车的轮式平台、仅接收机体参考的足式平台、采用纯弹道质心平移的飞跃式平台。
 - 核心实现：C++20；Python 仅用于离线标定、数据分析和可选模型训练。
+- 实现隔离：采用 clean-room 路线，不读取、包装、移植或复制仓库内既有路径规划实现。
 - 性能目标：在声明的固定基准配置上，单次路径规划 API 延迟 `P95 < 1 s`。
 - 性能目标不是运行时截止时间。规划器不得因为墙钟时间到达 1 秒而中断、降级或改变结果。
 - 本文是接口、安全语义、算法边界和验收规则的规范；引用文献只提供设计依据，不改变本文的规范性要求。
@@ -122,6 +123,7 @@ PlanningRequest
 ├── map_snapshot
 ├── platform_capability
 ├── planner_algorithm_config
+├── optional_learned_cost_snapshot
 ├── previous_execution_context
 └── request_metadata
 ```
@@ -162,7 +164,7 @@ WheeledOrLeggedState
 ```text
 HopperState
 ├── position_xyz
-├── orientation_quaternion
+├── orientation_body_to_frame
 ├── linear_velocity_xyz
 ├── angular_velocity_xyz
 └── deterministic_error_bounds
@@ -227,7 +229,11 @@ PlatformCapability
 └── platform_specific_parameters
 ```
 
-解析能力基线必须完整且可独立运行。平台能力变化后，所有依赖该能力的投影层、运动原语、启发式和验证缓存必须失效。
+解析能力基线必须完整且可独立运行。解码时必须把能力中的运动、解析代价和
+飞跃重力引用，以及运动模型固定的误差模型、执行器/冲量模型和可选姿态收紧表，
+解析为一次调用内不可变的 `ResolvedCapabilityBindings`；仅保存
+`ContentRef` 而未解析模型内容不能进入平台规划。平台能力或任一嵌套绑定变化后，
+所有依赖该能力的投影层、运动原语、启发式和验证缓存必须失效。
 
 请求中的 `platform_capability` 是第 15.1 节 `SafetyCapabilityProfile` 的运行时不可变绑定，不是另一套独立安全配置。
 
@@ -235,14 +241,16 @@ PlatformCapability
 
 ```text
 PreviousExecutionContext
-├── active_bundle_id
-├── active_bundle_version
+├── active_bundle_ref
+│   ├── id
+│   ├── revision
+│   └── content_hash
 ├── active_bundle_handle
 ├── committed_until_or_boundary
 ├── execution_cursor
 ├── controller_status
-├── source_map_snapshot_id
-└── source_capability_version
+├── source_map_snapshot_ref
+└── source_capability_ref
 ```
 
 规划器必须验证：
@@ -251,6 +259,26 @@ PreviousExecutionContext
 - 执行游标没有越过允许替换的边界。
 - 已承诺部分与当前状态相容。
 - 地图或能力变化没有触发显式失效条件。
+
+### 4.8 可选学习代价快照
+
+学习软代价只可通过请求开始前已经固定的不可变快照接入：
+
+```text
+LearnedCostSnapshot
+├── snapshot_id
+├── model_id
+├── model_version
+├── model_hash
+├── input_schema_id
+├── output_bounds
+└── immutable_ready_handle
+```
+
+请求未携带该快照、句柄未就绪或校验失败时，本次调用从开始到结束只使用解析代价。在线规划不得等待模型加载，也不得根据模型推理完成的墙钟先后切换代价源。
+本次调用若尝试学习快照，`call_diagnostics` 必须记录同一完整 ref；若发布的候选
+实际使用有界学习软代价，`generation_evidence` 也必须记录该 ref。解析基线或
+fallback 生成的 bundle 不得声称使用学习快照。
 
 ---
 
@@ -261,26 +289,38 @@ PreviousExecutionContext
 ```text
 ReferenceBundle
 ├── bundle_id
-├── bundle_version
+├── bundle_revision
+├── bundle_hash
 ├── supersedes_bundle_id
 ├── source_request_id
-├── source_map_snapshot_id
-├── source_capability_profile_id
-├── source_capability_version
-├── source_algorithm_config_id
+├── source_map_snapshot_ref
+│   ├── id
+│   ├── revision
+│   └── content_hash
+├── source_safety_capability_ref
+│   ├── id
+│   ├── revision
+│   └── content_hash
+├── source_algorithm_config_ref
+│   ├── id
+│   ├── revision
+│   └── content_hash
 ├── platform_reference
 ├── route_skeleton
 │   ├── component_id
+│   ├── component_hash
 │   └── non_authoritative_content
 ├── committed_prefix
 │   ├── component_id
+│   ├── component_hash
 │   └── inline_view
 ├── preview
 │   ├── component_id
+│   ├── component_hash
 │   └── inline_view
 ├── validity
 ├── validation_summary
-└── diagnostics
+└── generation_evidence
 ```
 
 `platform_reference` 是 `WheeledReference`、`LeggedBodyReference`、`HopperReference` 三者之一的类型安全变体，必须与请求的平台类型一致。
@@ -289,11 +329,24 @@ ID 规则：
 
 - `bundle_id` 是唯一的原子激活、替换和回滚权威。
 - 三个子组件各自具有可追踪 `component_id`，但不得单独激活。
+- 相同 `component_id` 必须对应相同 `component_hash` 和相同规范化内容。
 - 子组件必须随 bundle 内联传递，不允许二次远程获取。
 - 不得混用不同 bundle 的子组件。
 - 新 bundle 可以复用旧的已承诺子组件 ID，同时发布新的预览子组件。
 
 `committed_prefix` 和 `preview` 必须是同一个 `platform_reference` 在承诺边界两侧的视图，不能是两个互相独立的权威路径副本。
+
+bundle 只有通过带请求上下文的激活校验后才可交给仲裁器。该校验至少逐字段连接：
+
+- `source_map_snapshot_ref == validity.required_map_snapshot_ref`，且飞跃 tube
+  使用同一地图快照；
+- `source_safety_capability_ref == validity.required_capability_ref`，并与请求的
+  已解析能力完全一致；
+- `source_algorithm_config_ref` 与本次请求的固定算法配置一致；
+- 所有嵌套 `ContentRef` 都能由 registry 解析为声明类型，ID、revision 和 hash
+  三元组完全匹配。
+
+结构合法但 provenance 不一致的 bundle 不得激活。
 
 ### 5.2 有效性
 
@@ -301,8 +354,8 @@ ID 规则：
 ReferenceValidity
 ├── valid_from
 ├── optional_valid_until
-├── required_map_snapshot_id
-├── required_capability_version
+├── required_map_snapshot_ref
+├── required_capability_ref
 ├── allowed_state_deviation
 └── invalidation_conditions
 ```
@@ -312,8 +365,12 @@ ReferenceValidity
 - 地图修订改变已验证的碰撞或地形条件。
 - 状态偏差超出认证误差包络。
 - 平台能力版本改变。
-- 执行器越过替换边界。
+- 执行游标已耗尽整个参考时域。
 - 飞跃式平台已经锁定或发射，而请求仍试图替换当前一跳。
+
+锁定或发射不是整个 Hopper bundle 的失效条件；它们只关闭替换资格，并要求通过
+`CONTINUE_COMMITTED_JUMP` 继续同一不可变 bundle。只有地图/能力/状态安全条件
+失效或参考时域真正耗尽，才进入 bundle 失效处理。
 
 ### 5.3 `route_skeleton`
 
@@ -405,14 +462,13 @@ footstep_feasibility_guaranteed = false
 
 ```text
 HopperReference
+├── GroundHoldAnchor
 ├── NextLandingRegion
 ├── JumpBoundary
 ├── PredictedLandingFootprint
 ├── CertifiedFlightTube
 ├── AttitudeBoundary
 ├── nominal_aim_point
-├── landing_time_window
-├── landing_velocity_bounds
 └── future_route_preview
 ```
 
@@ -444,11 +500,15 @@ JumpBoundary
 ├── nominal_launch_angular_velocity
 ├── allowed_launch_state_error_set
 ├── gravity_model_id
+├── ballistic_time_origin = BALLISTIC_LAUNCH_EVENT
 ├── ballistic_flight_time
 └── actuator_or_impulse_profile_id
 ```
 
 `JumpBoundary` 中只有一组名义发射边界条件；`allowed_launch_state_error_set` 只定义该命令仍保持认证有效的执行容差，不提供第二个可选命令。
+flight tube 和 landing window 的 offset 均相对检测到的
+`BALLISTIC_LAUNCH_EVENT`，而不是规划响应时刻；tube 必须覆盖 `[0,T]`，landing
+window 必须包含 `T`。
 
 `PredictedLandingFootprint`：
 
@@ -467,11 +527,24 @@ PredictedLandingFootprint
 语义：
 
 - `NextLandingRegion` 是单个确定性凸安全着陆范围，不是概率分布、信念状态或单个确定点。
+- `GroundHoldAnchor` 是边界锁定前唯一 committed ground-hold 真值，包含认证
+  静止状态、允许误差集合和地形证书；它不是第二个发射命令。
 - `JumpBoundary` 是控制器唯一可执行的下一跳命令。
 - `PredictedLandingFootprint` 是考虑全部声明误差后，实际机体中心落点的确定性最坏情况外包集合。
+- 着陆时间窗与着陆线速度边界只在 `PredictedLandingFootprint` 中保存一份，
+  `HopperReference` 顶层不得复制第二份。
 - `nominal_aim_point` 只是解释性或内部求解参数，不是控制器可自由选择的目标。
 - 控制器不得在 `NextLandingRegion` 内自行选择另一个点；改变目标必须重新规划并发布新 bundle。
 - `future_route_preview` 只表达后续任务可行性，不授权第二跳。
+- 在 `JUMP_READY` bundle 中，`committed_prefix` 只选择
+  `GroundHoldAnchor`，`preview` 选择未锁定的唯一 `JumpBoundary`；锁定后通过既有
+  execution context 继续同一 bundle，不把 preview 静默改写成 committed 内容。
+- 请求的当前 Hopper 状态集合必须包含于 `GroundHoldAnchor` 的允许静止集合；
+  anchor 与 `JumpBoundary` 的名义位置和姿态连续，速度跃迁及误差映射必须由同一
+  已解析执行器/冲量 profile 认证，不能构造“A 点保持、B 点发射”的 bundle。
+- `JumpBoundary.gravity_model_ref` 必须等于能力绑定的重力模型；
+  `PredictedLandingFootprint.source_error_model_ref` 与
+  `CertifiedFlightTube.error_model_ref` 必须等于本次调用固定的同一误差模型。
 
 必须满足：
 
@@ -479,6 +552,16 @@ PredictedLandingFootprint
 \operatorname{PredictedLandingFootprint}
 \oplus \operatorname{safe\_margin}
 \subseteq \operatorname{NextLandingRegion}.
+\]
+
+并且圆周区间必须满足：
+
+\[
+\operatorname{footprint.landing\_yaw}
+\subseteq
+\operatorname{attitude.target.allowed\_yaw}
+\subseteq
+\operatorname{region.allowed\_yaw}.
 \]
 
 ---
@@ -552,12 +635,11 @@ PredictedLandingFootprint
 输出：
 
 ```text
-ResolvedTerminal
-├── mode = GOAL | SAFE_FRONTIER | NONE
-├── terminal_region_or_id
-├── safe_stop_anchor_or_landing_region
-├── original_goal
-└── unresolved_tail
+ResolvedTerminalSet
+├── kind = GOAL | SAFE_FRONTIER | GOAL_INFEASIBLE | NO_KNOWN_SAFE_ROUTE
+├── candidates[]
+├── unresolved_tail
+└── reason_code
 ```
 
 `unresolved_tail` 只用于任务提示，不可执行。
@@ -623,7 +705,8 @@ f_T(n)=g_T(n)+\epsilon h_T(n).
 - 学习输出必须经过有限性、范围和版本检查。
 - 修正值必须裁剪到配置包络。
 - 学习模型不得修改碰撞、坡度、动力学或确定性误差硬边界。
-- 模型不可用、输出异常或调用未在其独立配置上限内完成时，立即使用解析代价。
+- 请求开始前没有通过校验的 `LearnedCostSnapshot` 时，整次调用使用解析代价。
+- 快照存在时，在线推理仍必须使用确定性的输入规模、批大小和操作上限；输出异常时，整次调用回退到解析代价。
 - 回退不得改变硬可行集合。
 
 ---
@@ -909,15 +992,20 @@ REJECTED
 
 流程：
 
-1. 用距离、能量和粗略弹道下界进行便宜筛选。
+1. 用距离、正飞行时间、速度和粗略弹道时间下界进行便宜筛选；能量估计只作为
+   硬可行候选的有界次级排序量，不得用于拒绝边。
 2. 在有向着陆域图上运行 ARA*，主代价仍为预计执行时间。
 3. 对候选任务路线的第一条边执行完整物理认证。
 4. 认证失败时把该边标记为 `REJECTED`，继续图搜索。
-5. 认证成功的第一条边标记为 `CERTIFIED_NEXT_HOP` 并可发布。
+5. 维护完整认证 incumbent；继续认证所有仍满足
+   `first_edge_time_lower_bound <= incumbent_time + ΔT_eq` 的竞争第一边。
+6. 所有竞争第一边已排除后，按真实预计执行时间选择；若完整认证尝试上限先触发，
+   只能发布完整认证 incumbent，并显式标记“竞争边未排尽”的资源受限诊断，
+   不得声称时间最优或 ARA* 次优界。
 
 节点数、出度、候选瞄准点数、完整认证尝试数和区间细分深度必须有配置上限。
 
-后续节点只形成 `future_route_preview`。后续可达性是任务层元数据，不是当前一跳的物理安全证书。若当前区域安全但没有后续已知安全跳，可标记 `SAFE_DEAD_END`。
+后续节点只形成 `future_route_preview`。后续可达性是任务层元数据，不是当前一跳的物理安全证书。若当前区域安全但没有后续已知安全跳，使用 `reason_code = SAFE_DEAD_END`；它不是新的 `planning_outcome`。
 
 ### 9.4 名义瞄准点与飞行时间
 
@@ -948,13 +1036,16 @@ v_f(T)
 
 求解方法：
 
-1. 由起跳速度、能量、飞行高度、着陆速度和姿态时间条件求解析可行时间区间。
+1. 由严格正飞行时间、能力的最小/最大飞行时间、起跳速度、可解析执行器冲量、
+   着陆速度、向下横截性和姿态时间条件求解析可行时间区间。
 2. 在约束表达式的解析断点处分段。
 3. 采用固定最大深度的区间细分排除不可行区间。
 4. 对剩余一维根或极值使用有界二分或 Brent 法。
 5. 对有限候选执行完整验证。
 
 候选选择遵循：硬可行、最短预计时间、时间等价池内最低能耗，再比较着陆余量和飞行净空。
+能量是由固定解析代价模型给出的有界估计，不是 `HopperLaunchLimits` 的硬约束；
+最高点只用于重力有效域和连续碰撞区间切分，不形成未声明的高度上限。
 
 飞跃边的预计执行时间至少包括发射准备时间、弹道飞行时间 \(T\) 和着陆稳定时间。姿态重定向若与弹道飞行并行，不得重复计时，但必须满足着陆前稳定约束。
 
@@ -1025,7 +1116,7 @@ v_f(T)
 一条下一跳必须同时通过：
 
 - 着陆地形和完整 yaw 区间认证。
-- 发射速度、能量和执行边界认证。
+- 正飞行时间、发射速度、执行器/冲量和执行边界认证。
 - 连续弹道 `CertifiedFlightTube` 碰撞认证。
 - 姿态可达与着陆前稳定认证。
 - 着陆时间窗和速度边界认证。
@@ -1050,7 +1141,7 @@ v_f(T)
 - `committed_prefix` 终止于安全停止锚点。
 - 重新规划不得修改执行游标之前或已承诺的控制点。
 - 新预览不可用时，执行器继续当前承诺前缀至锚点。
-- `HoldReference` 只允许在平台已经静止且当前位置解析安全时发布。
+- `HOLD_STATIONARY` 只允许在平台已经静止且当前位置解析安全时返回；该指令不创建或激活新 bundle。
 - 移动中的减速过程必须是承诺前缀的一部分，不能用静止保持替代。
 
 ### 10.3 飞跃式承诺状态机
@@ -1071,7 +1162,8 @@ stateDiagram-v2
 - `JUMP_READY` 之前可替换候选。
 - 在 `JUMP_READY` 中，地面静止保持属于 `committed_prefix`，待执行的 `JumpBoundary` 属于 `preview`。
 - `JUMP_COMMITTED` 后不得改变当前 `JumpBoundary`。
-- 进入 `JUMP_COMMITTED` 后，已锁定的 `JumpBoundary` 转为 `committed_prefix` 的权威内容。
+- 进入 `JUMP_COMMITTED` 后只更新 `PreviousExecutionContext` 的锁定边界和执行游标；
+  已激活 bundle 保持不可变，继续执行其中原有的唯一 `JumpBoundary`。
 - `IN_FLIGHT` 阶段只可更新状态估计、着陆预测和应急建议，不能发布重定向弹道。
 - 稳定进入 `LANDED_HOLD` 后才允许激活下一跳。
 - 地图突变若使已承诺动作失效，进入独立应急状态，而不是把应急动作伪装成正常重规划结果。
@@ -1179,7 +1271,7 @@ planner_core/
 该条件是实验验收指标，不是单次请求的运行时截止条件：
 
 - 规划器不会在任何预设墙钟里程碑停止新计算或强制返回。
-- 超过 1 秒只影响性能统计与 `latency_target_met` 诊断。
+- 超过 1 秒只影响性能统计与 `p95_latency_target_met` 诊断。
 - 规划状态、候选选择和安全降级不得仅因墙钟时间越过 1 秒而改变。
 
 ### 12.2 计时边界
@@ -1214,7 +1306,7 @@ planner_core/
 - 地图尺寸、分辨率、已知率、障碍密度和地形复杂度。
 - 起终点距离、搜索扩展数、候选数和最终终止原因。
 - 各模块耗时分解。
-- `latency_target_met`。
+- `p95_latency_target_met`。
 
 ### 12.4 有限终止与性能优化
 
@@ -1240,8 +1332,9 @@ PlanningResponse
 ├── planning_outcome
 ├── execution_directive
 ├── reason_code
-├── optional_reference_bundle
-└── diagnostics
+├── optional new_reference_bundle
+├── optional active_bundle_ref
+└── call_diagnostics
 ```
 
 `planning_outcome`：
@@ -1272,8 +1365,9 @@ NO_SAFE_PLANNER_REFERENCE
 
 - `ACTIVATE_NEW_BUNDLE` 必须携带经过完整验证的 bundle。
 - `NEW_REFERENCE_READY` 或 `SAFE_FRONTIER_REFERENCE_READY` 才能与 `ACTIVATE_NEW_BUNDLE` 组合。
-- `CONTINUE_ACTIVE_BUNDLE` 必须验证活动承诺仍有效。
-- `HOLD_STATIONARY` 只能在当前状态已静止且位置安全时使用。
+- `CONTINUE_ACTIVE_BUNDLE` 必须验证活动承诺仍有效；`ACTIVE_REFERENCE_INVALIDATED` 不得与该指令组合。
+- `CONTINUE_ACTIVE_BUNDLE` 与 `CONTINUE_COMMITTED_JUMP` 必须携带匹配的 `active_bundle_ref`；其他指令不得携带该字段。
+- `HOLD_STATIONARY` 只能在当前状态已静止且位置安全时使用，并且不得携带待激活的新 bundle。
 - `CONTINUE_COMMITTED_JUMP` 只适用于 `JUMP_COMMITTED` 或 `IN_FLIGHT`。
 - `GOAL_INFEASIBLE` 只表示目标位于已知硬不可行区域。
 - `NO_KNOWN_SAFE_ROUTE` 表示当前已知安全空间中没有可发布路线。
@@ -1350,7 +1444,11 @@ NO_SAFE_PLANNER_REFERENCE
 - 任意轴姿态能力包络和收紧查表。
 - 落点误差集合、着陆时间区间和向下横截性。
 - 落点外包集合不满足包含关系时拒绝。
-- 有安全当前落区但无后续跳的 `SAFE_DEAD_END`。
+- 零飞行时间、超出能力飞行时间区间或 capability/reference provenance 不一致时拒绝。
+- 请求状态、ground-hold anchor 和 launch boundary 不连续时拒绝。
+- 第一条下界较优但完整认证后真实时间较差时，仍选择真实时间更短的竞争边；
+  尝试上限触发时只报告完整认证 incumbent，不伪造最优界。
+- 有安全当前落区但无后续跳时返回 `reason_code = SAFE_DEAD_END`。
 - 发射锁定后拒绝替换，稳定着陆后才规划下一跳。
 
 ### 14.6 故障注入
@@ -1385,10 +1483,11 @@ NO_SAFE_PLANNER_REFERENCE
 
 - 碰撞外形和参考点。
 - 坡度、粗糙度、台阶、沟隙、净空。
-- 速度、角速度、加速度、制动和能量。
+- 速度、角速度、加速度、制动，以及飞跃执行器/冲量边界。
 - 轮式运动模型与原语认证边界。
 - 足式机体原语与高度区间边界。
-- 飞跃重力、起跳、姿态、着陆和确定性误差模型。
+- 飞跃重力、起跳、姿态、着陆和确定性误差模型；着陆地形硬阈值必须显式包含
+  坡度、粗糙度、单平面残差、顶/侧净空和最小非退化着陆域面积。
 
 该配置必须完整、版本化、可哈希。缺失字段不得用宽松默认值补齐。
 
@@ -1413,6 +1512,7 @@ NO_SAFE_PLANNER_REFERENCE
 
 - 硬件、操作系统、编译器和线程数。
 - 地图集合、场景分布和平台能力版本。
+- 三个平台共享的算法配置 ID、修订和哈希。
 - 预热次数、样本数和冷启动规则。
 - API 计时边界。
 - P95 小于 1 秒的验收阈值。
@@ -1421,7 +1521,7 @@ NO_SAFE_PLANNER_REFERENCE
 
 ### 15.4 追踪与缓存失效
 
-响应必须记录三个配置的 ID、版本和哈希。任何影响安全、搜索图、代价、误差传播或验证结果的字段变化，都必须使相关缓存失效。
+运行时 `ReferenceBundle` 必须记录 `SafetyCapabilityProfile` 与 `PlannerAlgorithmConfig` 的 ID、修订和哈希。固定三平台基准中，每个平台 suite/result 分别记录其 `SafetyCapabilityProfile` 的 ID、修订和哈希；报告顶层记录三平台共享的 `PlannerAlgorithmConfig` 与 `BenchmarkProfile` 的 ID、修订和哈希。任何影响安全、搜索图、代价、误差传播或验证结果的字段变化，都必须使相关缓存失效。
 
 ---
 

@@ -23,6 +23,20 @@ This file defines where Xunce stage information belongs. Keep it short and use i
 | `D:/xunce/out/path_v2/g0/report.md` | Gate 0 clean-worktree baseline and isolation result. |
 | `D:/xunce/out/path_v2/g0/manifest.json` | Hash and size bindings for the Gate 0 artifact set, excluding the manifest itself. |
 
+## Path Planner v3 Clean-Room Route
+
+| Location | Responsibility |
+|---|---|
+| `docs/superpowers/specs/2026-07-28-multiplatform-path-planner-v3-design.md` | Frozen shared-layer and three-platform algorithm, safety, fallback, commitment, and performance contract. |
+| `docs/superpowers/specs/2026-07-28-multiplatform-path-planner-v3-interface-schema.md` | Human-readable C++ domain model, wire mapping, identity, time, bundle, response, and benchmark contract. |
+| `path-planner/schemas/v3/` | Draft 2020-12 machine-readable request, response, reference, capability, algorithm, and benchmark schemas. |
+| `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-roadmap.md` | Master execution order, dependency gates, and final acceptance handoff. |
+| `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-contracts-core.md` | C++20 build, contracts, immutable map, shared search, corridor, learned-cost snapshot, cache, and bounded-QP plan. |
+| `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-wheel.md` | Wheeled platform plan for forward, reverse, in-place spin, smoothing, timing, and primitive fallback. |
+| `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-legged.md` | Legged body-reference plan for pose-height search, product-space corridor, timing, and bounded feasibility claims. |
+| `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-hopper.md` | Hopper plan for deterministic landing regions, one executable ballistic boundary, flight-tube and attitude certification. |
+| `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-integration-performance.md` | Unified planner, atomic bundle, outcome/directive arbitration, codecs, system tests, and fixed-profile latency plan. |
+
 ## Current Stage26 Mainline
 
 ```text
