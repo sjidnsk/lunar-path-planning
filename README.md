@@ -13,6 +13,10 @@
 
 旧的 `a_gcs_ws-2.0.1` 执行层参考工程不再作为父仓库运行依赖。
 
+`path-planner/cpp` 另提供 opt-in 的 C++20 多平台规划 v3：轮式、足式机体
+参考和纯弹道飞跃式下一着陆参考共用强类型接口。该实现不替换默认 A*、不连接
+executor；1 秒仅是 Release benchmark 的 P95 实验指标。
+
 ### 当前路线
 
 当前 Xunce 主线处在 Stage26 synthetic terrain policy-signal 诊断阶段：
