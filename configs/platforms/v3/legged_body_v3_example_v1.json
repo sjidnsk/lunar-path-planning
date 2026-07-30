@@ -1,0 +1,154 @@
+{
+  "schema_version": "path-planner-v3-safety-capability-profile/v1",
+  "content_ref": {
+    "id": "legged-body-v3-example-v1",
+    "revision": 1,
+    "content_hash": "4a45aad3c34bd062b8c63e8664a0059b0facffa6c1b020df40395c21f78cb363"
+  },
+  "content": {
+    "platform_type": "LEGGED",
+    "frame_id": "map",
+    "reference_point_id": "base_link",
+    "reference_point_definition": "FIXED_BODY_FRAME_POINT",
+    "collision_envelope": {
+      "shape": "convex_polytope",
+      "body_frame_halfspaces": {
+        "representation": "halfspace_intersection",
+        "halfspaces": [
+          {"normal": [1, 0, 0], "offset_m": 0.4},
+          {"normal": [-1, 0, 0], "offset_m": 0.4},
+          {"normal": [0, 1, 0], "offset_m": 0.25},
+          {"normal": [0, -1, 0], "offset_m": 0.25},
+          {"normal": [0, 0, 1], "offset_m": 0.5},
+          {"normal": [0, 0, -1], "offset_m": 0.5}
+        ]
+      }
+    },
+    "motion_model_ref": {
+      "id": "legged-body-motion-model-example-v1",
+      "revision": 1,
+      "content_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "analytic_cost_model_ref": {
+      "id": "legged-analytic-cost-model-example-v1",
+      "revision": 1,
+      "content_hash": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "terrain_thresholds": {
+      "maximum_slope_rad": 0.5235987755982988,
+      "maximum_roughness_m": 0.1,
+      "maximum_step_height_m": 0.2,
+      "maximum_gap_width_m": 0,
+      "minimum_confidence": 0.8,
+      "minimum_body_clearance_m": 0.15,
+      "minimum_body_height_m": 0.35,
+      "maximum_body_height_m": 0.65
+    },
+    "body_velocity_limits": {
+      "forward_mps": {"lower": -0.3, "upper": 0.6},
+      "lateral_mps": {"lower": -0.25, "upper": 0.25},
+      "vertical_mps": {"lower": -0.1, "upper": 0.1},
+      "yaw_rate_radps": {"lower": -0.5, "upper": 0.5},
+      "linear_acceleration_mps2": 0.4,
+      "yaw_acceleration_radps2": 0.6
+    },
+    "certified_state_error_bounds": {
+      "position_bound_m": {
+        "shape": "euclidean_ball",
+        "center": [0, 0, 0],
+        "radius": 0.08
+      },
+      "yaw_bound_rad": {
+        "shape": "symmetric_interval",
+        "center": 0,
+        "half_width": 0.02
+      },
+      "linear_velocity_bound_mps": {
+        "shape": "euclidean_ball",
+        "center": [0, 0, 0],
+        "radius": 0.04
+      },
+      "yaw_rate_bound_radps": {
+        "shape": "symmetric_interval",
+        "center": 0,
+        "half_width": 0.02
+      }
+    },
+    "motion_primitives": [
+      {
+        "primitive_id": "forward",
+        "kind": "FORWARD",
+        "body_frame_displacement_m": [0.5, 0, 0],
+        "yaw_change_rad": 0,
+        "nominal_duration_ns": "1000000000",
+        "sampled_body_sweep_ref": {
+          "id": "legged-forward-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      },
+      {
+        "primitive_id": "backward",
+        "kind": "BACKWARD",
+        "body_frame_displacement_m": [-0.3, 0, 0],
+        "yaw_change_rad": 0,
+        "nominal_duration_ns": "1000000000",
+        "sampled_body_sweep_ref": {
+          "id": "legged-backward-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "4444444444444444444444444444444444444444444444444444444444444444"
+        }
+      },
+      {
+        "primitive_id": "lateral-left",
+        "kind": "LATERAL",
+        "body_frame_displacement_m": [0, 0.2, 0],
+        "yaw_change_rad": 0,
+        "nominal_duration_ns": "1000000000",
+        "sampled_body_sweep_ref": {
+          "id": "legged-lateral-left-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "5555555555555555555555555555555555555555555555555555555555555555"
+        }
+      },
+      {
+        "primitive_id": "lateral-right",
+        "kind": "LATERAL",
+        "body_frame_displacement_m": [0, -0.2, 0],
+        "yaw_change_rad": 0,
+        "nominal_duration_ns": "1000000000",
+        "sampled_body_sweep_ref": {
+          "id": "legged-lateral-right-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      },
+      {
+        "primitive_id": "spin-ccw",
+        "kind": "SPIN",
+        "body_frame_displacement_m": [0, 0, 0],
+        "yaw_change_rad": 0.5,
+        "nominal_duration_ns": "1000000000",
+        "sampled_body_sweep_ref": {
+          "id": "legged-spin-ccw-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      },
+      {
+        "primitive_id": "spin-cw",
+        "kind": "SPIN",
+        "body_frame_displacement_m": [0, 0, 0],
+        "yaw_change_rad": -0.5,
+        "nominal_duration_ns": "1000000000",
+        "sampled_body_sweep_ref": {
+          "id": "legged-spin-cw-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      }
+    ],
+    "feasibility_scope": "body_geometry_and_terrain_thresholds_only",
+    "footstep_feasibility_guaranteed": false
+  }
+}
