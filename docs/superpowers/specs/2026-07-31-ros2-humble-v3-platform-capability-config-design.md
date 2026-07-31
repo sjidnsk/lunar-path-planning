@@ -100,6 +100,8 @@ v3 `additionalProperties=false`。示例状态和替换规则统一写在目录 
 `content_ref.content_hash` 必须等于顶层 `content` 对象经过 RFC 8785
 JCS 规范化后的 SHA-256。
 
+`content_ref.content_hash` 和 ROS 2 参数中的期望内容哈希均由本项目生成。外部平台控制单位只提供原始能力事实、能力版本和参数证据，不提供本项目最终能力配置的预期哈希。
+
 修改任何能力数值、几何、原语或引用时必须：
 
 1. 创建新版本文件；

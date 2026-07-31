@@ -12,7 +12,7 @@
 | `/mission/exploration_task` | `lunar_navigation_msgs/msg/ExplorationTask` | 区域探索任务完整状态快照 |
 | `science_regions[]` | `lunar_navigation_msgs/msg/ScienceTargetRegion` | 科学目标区域 |
 | 平台能力资料包 | `platform-control-capability-source/v1`，YAML/JSON | 平台控制单位提供的版本化静态能力配置 |
-| `/path_planner_v3` ROS 2 参数 | ROS 2 parameter | 选择本项目转换并校验后的 v3 平台能力配置 |
+| 平台规划节点 ROS 2 参数 | ROS 2 parameter | 选择本项目转换并校验后的平台能力配置 |
 
 ## 2. 全局图与局部图
 
@@ -38,7 +38,7 @@ grid_map_msgs/msg/GridMap
 | `outer_start_index` | `uint16` | GridMap 循环缓冲区外层起始索引 |
 | `inner_start_index` | `uint16` | GridMap 循环缓冲区内层起始索引 |
 
-### 必选通道
+### 地图通道
 
 | 字段 | 格式/范围 | 定义 |
 |---|---|---|
@@ -48,20 +48,9 @@ grid_map_msgs/msg/GridMap
 | `obstacle_height` | `float32`，m，`>=0` | 障碍物相对局部地面的高度 |
 | `observation_age_s` | `float32`，s，`>=0` | 相对 `header.stamp` 距最后一次有效融合观测的时间 |
 | `observation_quality` | `float32`，`[0,1]` | 最近一次参与地图更新的有效观测综合质量 |
-
-### 可选质量通道
-
-| 字段 | 格式/范围 | 定义 |
-|---|---|---|
 | `elevation_variance` | `float32`，m²，`>=0` | 高程估计误差方差 |
 | `obstacle_variance` | `float32`，`[0,0.25]` | 障碍概率估计不确定度 |
 | `observation_count` | `float32` 中的整数，`[0,65535]` | 累计有效融合观测次数，超过上限后饱和 |
-
-### 条件通道
-
-| 字段 | 格式/范围 | 定义 |
-|---|---|---|
-| `illumination` | `float32`，`[0,1]` | 当前或预测时刻的归一化照明可用度 |
 | `forbidden` | `float32`，`0.0/1.0` | 任务或安全系统指定的禁入区域 |
 
 ## 3. 平台定位与运动状态
@@ -200,9 +189,9 @@ Format: YAML/JSON
 
 | 字段 | 格式/范围 | 定义 |
 |---|---|---|
-| `safety_capability_profile_package` | 非空 string，ROS 2 package 名称 | v3 平台能力配置所在资源包 |
-| `safety_capability_profile_resource` | 非空 package-relative path | v3 平台能力 JSON 资源路径 |
-| `safety_capability_profile_expected_hash` | 64 位小写十六进制 SHA-256 | 预期能力配置内容哈希 |
+| `safety_capability_profile_package` | 非空 string，ROS 2 package 名称 | 平台能力配置所在资源包 |
+| `safety_capability_profile_resource` | 非空 package-relative path | 平台能力 JSON 资源路径 |
+| `safety_capability_profile_expected_hash` | 本项目生成的 64 位小写十六进制 SHA-256 | 本项目对最终能力配置 `content` 进行 RFC 8785 JCS 规范化后计算的预期哈希 |
 
 ### 公共字段
 

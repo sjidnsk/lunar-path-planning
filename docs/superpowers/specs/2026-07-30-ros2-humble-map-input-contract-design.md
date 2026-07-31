@@ -134,9 +134,9 @@ map -> odom -> base_link
 - 本项目不把局部图反向融合进全局图；
 - 全局地图融合仍属于外部建图系统职责。
 
-## 4. 必选输入通道
+## 4. 地图输入通道
 
-全局图和局部图都必须包含以下六个通道。
+全局图和局部图使用以下输入通道。
 
 | 通道名 | 数值格式 | 单位/范围 | 定义 | 数据所有者 |
 |---|---|---|---|---|
@@ -146,6 +146,10 @@ map -> odom -> base_link
 | `obstacle_height` | `float32` | m，非负 | 障碍物相对局部地面的高度 | 外部建图/融合系统 |
 | `observation_age_s` | `float32` | s，非负 | 相对 `header.stamp`，距该格最后一次有效融合观测的时间 | 外部建图/融合系统 |
 | `observation_quality` | `float32` | `[0,1]` | 最近一次实际参与地图更新的有效观测综合质量 | 外部建图/融合系统 |
+| `elevation_variance` | `float32` | m²，非负 | 上游高程估计误差方差 | 外部建图/融合系统 |
+| `obstacle_variance` | `float32` | `[0,0.25]` | 上游障碍概率估计不确定度，不是障碍概率本身 | 外部建图/融合系统 |
+| `observation_count` | `float32` 中的整数 | `[0,65535]` | 累计有效融合观测次数，超过上限后饱和 | 外部建图/融合系统 |
+| `forbidden` | `float32` | `0.0/1.0` | 任务或安全系统指定的禁入区域 | 外部任务/安全系统 |
 
 `observation_quality` 应由上游根据实际观测证据给出，可综合：
 
@@ -164,27 +168,7 @@ map -> odom -> base_link
 last_observation_time = header.stamp - observation_age_s
 ```
 
-## 5. 可选质量通道
-
-全局图和局部图可包含以下三个质量通道。
-
-| 通道名 | 数值格式 | 单位/范围 | 定义 |
-|---|---|---|---|
-| `elevation_variance` | `float32` | m²，非负 | 上游高程估计误差方差 |
-| `obstacle_variance` | `float32` | `[0,0.25]` | 上游障碍概率估计不确定度，不是障碍概率本身 |
-| `observation_count` | `float32` 中的整数 | `[0,65535]` | 该格累计有效融合观测次数，超过上限后饱和 |
-
-可选通道一旦出现在 `layers` 中，就必须对所有 `valid_mask=1.0` 的单元提供有限、满足范围约束的数值。
-
-## 6. 条件输入通道
-
-以下通道根据任务配置启用。
-
-| 通道名 | 数值格式 | 单位/范围 | 定义 | 缺失行为 |
-|---|---|---|---|---|
-| `illumination` | `float32` | `[0,1]` | 当前或预测时刻的归一化照明可用度 | 禁用 illumination 代价权重，不能静默解释为零照明 |
-| `forbidden` | `float32` | `0.0/1.0` | 任务或安全系统指定的禁入区域 | 按全零处理 |
-`forbidden` 是任务或安全事实，不参与地图数据置信度计算。`illumination` 可影响风险和代价，但照明值本身不表示地图是否可信。
+`forbidden` 是任务或安全事实，不参与地图数据置信度计算。
 
 在线 ROS 2 区域探索模式下，科学价值不再作为外部地图层输入。外部任务系统通过
 `/mission/exploration_task` 中的 `science_regions` 提供矢量科学区域和软优先级，本项目确定性栅格化并在派生全局图中生成 `value`。
@@ -196,7 +180,7 @@ last_observation_time = header.stamp - observation_age_s
 - 忽略外部 `value` 并报告 `EXTERNAL_VALUE_IGNORED`；
 - 禁止与任务派生 `value` 求和、取平均或静默覆盖。
 
-## 7. 有效性与 NaN 规则
+## 5. 有效性与 NaN 规则
 
 推荐：
 
@@ -222,11 +206,11 @@ basic_layers:
 
 当 `valid_mask=1.0`：
 
-- 六个必选通道必须为有限值；
+- 地图输入通道必须为有限值；
 - `observation_age_s >= 0`；
 - `observation_quality`、`obstacle` 必须位于 `[0,1]`；
 - `obstacle_height >= 0`；
-- 出现的可选和条件通道必须满足各自范围。
+- 其余输入通道必须满足各自范围。
 
 禁止：
 
@@ -235,9 +219,9 @@ basic_layers:
 - 把 synthetic terrain proxy 写入在线 `obstacle`；
 - 混用不同时间、分辨率、范围或坐标系的图层拼成同一快照。
 
-## 8. 本项目派生层
+## 6. 本项目派生层
 
-以下内容不是外部必选输入，由本项目根据事实层、质量证据、平台能力和地图历史计算：
+以下内容不是外部地图输入，由本项目根据事实层、质量证据、平台能力和地图历史计算：
 
 | 派生层 | 定义 |
 |---|---|
@@ -283,7 +267,7 @@ confidence_model
 
 `confidence` 只影响风险与规划代价，不得单独把低置信度格变成硬不可通行格。硬不可通行仍由无效数据、坡度、物理障碍、障碍高度和禁入区决定。
 
-## 9. 接收校验和失败行为
+## 7. 接收校验和失败行为
 
 每次接收地图快照时至少校验：
 
@@ -291,7 +275,7 @@ confidence_model
 2. `header.stamp` 非零且未超过配置的新鲜度上限；
 3. 分辨率、长度和地图位姿合法；
 4. `layers` 名称唯一，`layers` 与 `data` 数量一致；
-5. 六个必选通道存在；
+5. 地图输入通道存在；
 6. 每层逻辑尺寸与地图几何一致；
 7. `outer_start_index/inner_start_index` 合法；
 8. 所有有效格满足数值范围；
@@ -308,7 +292,7 @@ confidence_model
 - 全局图超时不自动删除已有路线，但禁止基于过期图生成新的全局探索决策；
 - 同一物理区域中，局部图与全局图冲突时，以局部图约束当前近场规划，同时报告冲突，不由本项目执行地图融合。
 
-## 10. ROS 2 Humble 依赖与参考
+## 8. ROS 2 Humble 依赖与参考
 
 - `grid_map_msgs/msg/GridMap`：
   <https://docs.ros.org/en/ros2_packages/humble/api/grid_map_msgs/msg/GridMap.html>
@@ -317,7 +301,7 @@ confidence_model
 - `nav_msgs`：
   <https://docs.ros.org/en/humble/p/nav_msgs/>
 
-## 11. 当前代码映射
+## 9. 当前代码映射
 
 现有代码已具备以下派生能力：
 
