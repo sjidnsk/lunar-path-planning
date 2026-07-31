@@ -1,7 +1,7 @@
 # Stage 6 U80 候选增益热路径严格等价提速设计
 
 日期：2026-07-31  
-状态：用户已批准方案方向，待书面规格复核  
+状态：用户已批准隔离原型验证；生产源码替换需二次确认
 适用范围：PPO High-Resolution Frontier Map Exploration / Stage 6 / `FrontierGenerator.extract()`
 
 ## 1. 背景与基准
@@ -141,6 +141,20 @@ flat index 按整数升序排列。对于固定 width，这与原来的 `(cell.y
 
 基准 artifact 写入 `D:/xunce/review/` 下的新短目录，不写入仓库。
 
+### 5.1 隔离原型门
+
+首次实现只能存在于 `D:/xunce/review/` 的独立原型和 benchmark harness 中。原型可以在独立 Python 进程里临时替换模块私有 gain callable，以便对同一已加载 U80 状态执行 baseline/optimized A/B；不得修改、覆盖或格式化仓库中的 `src/lunar_exploration_ppo/env/frontier.py`。
+
+原型阶段必须先交付：
+
+- 原型源码及 SHA-256；
+- U80 worker 0 原始计时样本和逐项等价结果；
+- 若 worker 0 达到 `2.0x`，再交付 U80 全部 8 个状态的结果；
+- 随机与边界差分 oracle 结果；
+- 失败、未达标和剩余热点的如实报告。
+
+完成上述报告后必须暂停，等待用户确认。只有用户明确确认结果可接受后，后续任务才可以修改生产 `frontier.py`、仓库测试或 source identity；原型通过本身不构成生产替换授权。
+
 ## 6. 风险与控制
 
 - **DDA 漂移：** 用旧实现差分 oracle 和边界 fixture 锁定每格顺序。
@@ -151,4 +165,4 @@ flat index 按整数升序排列。对于固定 width，这与原来的 `(cell.y
 
 ## 7. 完成边界
 
-只有在严格等价测试、U80 8-state 基准、受影响回归和 diff/UTF-8 检查全部通过后，才可声称“候选生成热路径提速”。未达到 `2.0x` 时应报告实验结果与剩余热点，不得把约 `1.5x` 描述为目标已完成。
+隔离原型只有在严格等价测试和 U80 基准通过后，才可声称“原型候选生成热路径达到目标”；它不能被描述为生产代码已经提速。未达到 `2.0x` 时应报告实验结果与剩余热点，不得把约 `1.5x` 描述为目标已完成。生产源码、受影响回归与 source identity 的任何修改都必须等待用户看到原型结果后的再次明确确认。
