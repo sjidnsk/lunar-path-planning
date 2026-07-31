@@ -11,8 +11,7 @@
 | `/tf` | `tf2_msgs/msg/TFMessage` | `map -> odom -> base_link` 坐标变换 |
 | `/mission/exploration_task` | `lunar_navigation_msgs/msg/ExplorationTask` | 区域探索任务完整状态快照 |
 | `science_regions[]` | `lunar_navigation_msgs/msg/ScienceTargetRegion` | 科学目标区域 |
-| 平台能力资料包 | `platform-control-capability-source/v1`，YAML/JSON | 平台控制单位提供的版本化静态能力配置 |
-| 平台规划节点 ROS 2 参数 | ROS 2 parameter | 选择本项目转换并校验后的平台能力配置 |
+| 平台能力资料包 | `platform-control-capability-source/v1`，YAML/JSON/URDF | 平台控制单位提供的版本化静态能力资料和 URDF 几何来源 |
 
 ## 2. 全局图与局部图
 
@@ -182,63 +181,24 @@ lunar_navigation_msgs/msg/ScienceTargetRegion
 
 ```text
 Schema: platform-control-capability-source/v1
-Format: YAML/JSON
+Format: YAML/JSON + URDF/mesh resources
 ```
-
-### ROS 2 配置选择字段
-
-| 字段 | 格式/范围 | 定义 |
-|---|---|---|
-| `safety_capability_profile_package` | 非空 string，ROS 2 package 名称 | 平台能力配置所在资源包 |
-| `safety_capability_profile_resource` | 非空 package-relative path | 平台能力 JSON 资源路径 |
-| `safety_capability_profile_expected_hash` | 本项目生成的 64 位小写十六进制 SHA-256 | 本项目对最终能力配置 `content` 进行 RFC 8785 JCS 规范化后计算的预期哈希 |
 
 ### 公共字段
 
 | 字段 | 格式/范围 | 定义 |
 |---|---|---|
-| `schema_version` | 固定 `platform-control-capability-source/v1` | 外部能力资料格式版本 |
 | `platform.platform_id` | 非空 string | 平台型号或实例的稳定标识 |
 | `platform.platform_type` | `WHEELED/LEGGED/HOPPER` | 平台类型 |
 | `platform.capability_version` | 非空 string | 能力资料版本 |
 | `platform.base_frame_id` | 非空 string，默认 `base_link` | 几何和运动方向参考坐标系 |
-| `collision_envelope.type` | `EXTRUDED_CONVEX_POLYGON/CONVEX_POLYTOPE` | 碰撞包络类型 |
-| `collision_envelope.data` | 对应包络结构 | 保守覆盖平台本体的碰撞几何 |
-| `collision_envelope.included_structures` | string[] | 包络包含的机体、机械臂、天线和支架等结构 |
-| `platform_specific_capability.geometry_and_terrain_limits` | 平台类型对应结构 | 几何和地形硬限制 |
-| `platform_specific_capability.velocity_limits` | 平台类型对应结构 | 速度硬限制 |
-| `platform_specific_capability.acceleration_limits` | 平台类型对应结构 | 加速度硬限制 |
-| `platform_specific_capability.supported_motion_kinds` | 非空枚举数组 | 底层控制系统可稳定跟踪的运动形式 |
-| `platform_specific_capability.certified_motion_descriptions` | 非空运动形式数组 | 已认证、测试或估算的运动描述 |
-| `trajectory_acceptance.accepted_representation` | 非空 string | 控制器接收的连续轨迹或离散采样表示 |
-| `trajectory_acceptance.accepted_frame_id` | 非空 string | 控制器接收轨迹的坐标系 |
-| `trajectory_acceptance.clock_id` | 非空 string | 轨迹时间基准 |
-| `trajectory_acceptance.supported_motion_modes` | 非空枚举数组 | 控制器接收的前进、倒退、旋转、横移或飞跃模式 |
-| `trajectory_acceptance.stop_condition` | 非空结构或枚举 | 轨迹段切换和末端停止条件 |
-| `trajectory_acceptance.tracking_tolerance` | SI 单位有界结构 | 控制器能够稳定保证的轨迹跟踪偏差范围 |
-| `trajectory_acceptance.rejection_interface` | 非空结构或标识 | 轨迹拒绝错误码和反馈接口 |
-| `provenance.source_kind` | `CERTIFIED/TESTED/MANUFACTURER_SPEC/ESTIMATED` | 能力参数来源类型 |
-| `provenance.document_id` | 非空 string | 参数依据文档或试验标识 |
-| `provenance.revision` | 非空 string | 参数依据版本 |
-| `provenance.description` | 非空 string | 参数依据说明 |
 
-### 碰撞包络：轮式平台
+### URDF 几何来源
 
-| 字段 | 格式/范围 | 定义 |
+| 字段/资源 | 格式/范围 | 定义 |
 |---|---|---|
-| `collision_envelope.type` | 固定 `EXTRUDED_CONVEX_POLYGON` | 拉伸凸多边形包络 |
-| `collision_envelope.vertices_xy_m` | `float64[N][2]`，`N>=3`，逆时针，严格凸 | `base_link` 中的二维包络顶点 |
-| `collision_envelope.minimum_z_m` | 有限 `float64`，m，`<=maximum_z_m` | 包络最低高度 |
-| `collision_envelope.maximum_z_m` | 有限 `float64`，m，`>=minimum_z_m` | 包络最高高度 |
-
-### 碰撞包络：足式与飞跃式平台
-
-| 字段 | 格式/范围 | 定义 |
-|---|---|---|
-| `collision_envelope.type` | 固定 `CONVEX_POLYTOPE` | 三维凸多面体包络 |
-| `collision_envelope.halfspaces[]` | 非空半空间数组 | 凸多面体半空间集合 |
-| `collision_envelope.halfspaces[].normal` | 有限 `float64[3]`，非零向量 | 半空间法向量 |
-| `collision_envelope.halfspaces[].offset_m` | 有限 `float64`，m | 满足 `normal·point<=offset_m` 的偏移量 |
+| `geometry_source.urdf_file` | 非空 package-relative path，URDF | 平台 `<collision>` 几何、坐标关系和关节限制来源 |
+| URDF 引用的 mesh 文件 | 随资料包交付的本地 STL/DAE 等资源 | URDF `<collision>` 中引用的外部几何 |
 
 ### 可执行运动描述
 
@@ -248,9 +208,6 @@ Format: YAML/JSON
 | `relative_end_pose.position_m` | 有限 `float64[3]`，m | 相对运动终点位置 |
 | `relative_end_pose.yaw_rad` | 有限 `float64`，rad | 相对运动终点偏航角 |
 | `nominal_duration_s` | 有限 `float64`，s，`>0` | 标称运动持续时间 |
-| `swept_geometry` | 几何数据或版本化引用 | 运动期间平台碰撞包络的扫掠几何 |
-| `tracking_validation.source` | 非空 string | 认证文档或试验标识 |
-| `tracking_validation.status` | `CERTIFIED/TESTED/ESTIMATED` | 运动形式验证状态 |
 
 ## 9. 轮式平台能力字段
 
@@ -259,7 +216,6 @@ Format: YAML/JSON
 ```text
 platform-control-capability-source/v1
 platform.platform_type: WHEELED
-motion model: SKID_STEER
 ```
 
 | 字段 | 格式/范围 | 定义 |
@@ -303,7 +259,6 @@ platform.platform_type: LEGGED
 | `linear_acceleration_mps2` | 有限 `float64`，m/s²，`>0` | 最大机体线加速度 |
 | `yaw_acceleration_radps2` | 有限 `float64`，rad/s²，`>0` | 最大偏航角加速度 |
 | `supported_motion_kinds` | `FORWARD/BACKWARD/LATERAL_LEFT/LATERAL_RIGHT/SPIN_CW/SPIN_CCW` | 必须确认可执行的机体运动形式 |
-| `body_reference_trajectory_executable` | boolean | 底层步态与足端规划是否能够执行机体参考轨迹 |
 
 ## 11. 飞跃式平台能力字段
 
@@ -312,12 +267,10 @@ platform.platform_type: LEGGED
 ```text
 platform-control-capability-source/v1
 platform.platform_type: HOPPER
-translation_model: PURE_BALLISTIC_NO_INFLIGHT_TRANSLATION_CONTROL
 ```
 
 | 字段 | 格式/范围 | 定义 |
 |---|---|---|
-| `translation_model` | 固定 `PURE_BALLISTIC_NO_INFLIGHT_TRANSLATION_CONTROL` | 飞行过程中无质心平移控制 |
 | `maximum_landing_slope_rad` | 有限 `float64`，rad，`[0,π/2]` | 最大安全着陆坡度 |
 | `maximum_landing_roughness_m` | 有限 `float64`，m，`>=0` | 最大安全着陆面粗糙度 |
 | `maximum_landing_plane_residual_m` | 有限 `float64`，m，`>=0` | 最大着陆面拟合残差 |
@@ -335,5 +288,7 @@ translation_model: PURE_BALLISTIC_NO_INFLIGHT_TRANSLATION_CONTROL
 | `maximum_angular_acceleration_radps2` | 有限 `float64`，rad/s²，`>0` | 最大任意轴角加速度 |
 | `maximum_initial_angular_speed_radps` | 有限 `float64`，rad/s，`>=0` | 发射前最大初始角速度 |
 | `minimum_settle_guard_s` | 有限 `float64`，s，`>=0` | 着陆后最小稳定等待时间 |
-| `actuator_impulse_profile` | 版本化模型或采样曲线 | 发射执行器或冲量曲线模型 |
-| `state_transition_conditions` | 非空状态转换结构 | 发射与着陆状态切换条件 |
+| `actuator_or_impulse_profile.platform_mass_kg` | 有限 `float64`，kg，`>0` | 飞跃动力学计算使用的平台总质量 |
+| `actuator_or_impulse_profile.launch_preparation_time_s` | 有限 `float64`，s，`>=0` | 从进入发射准备到允许起跳的持续时间 |
+| `actuator_or_impulse_profile.landing_settle_time_s` | 有限 `float64`，s，`>=0` | 着陆后进入稳定状态所需的持续时间 |
+| `actuator_or_impulse_profile.nominal_landing_center_normal_offset_m` | 有限 `float64`，m，`>=0` | 标称着陆中心相对着陆面的法向偏移 |

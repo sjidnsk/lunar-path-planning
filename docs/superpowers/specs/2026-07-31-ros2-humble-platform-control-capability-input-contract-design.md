@@ -58,7 +58,8 @@ v3 `SafetyCapabilityProfile`。
 platform-capability-source/
 ├── platform_capability.yaml
 ├── geometry/
-│   └── collision_envelope.*
+│   ├── platform.urdf
+│   └── meshes/
 ├── motion/
 │   ├── motion_model.*
 │   ├── certified_primitives.*
@@ -69,7 +70,7 @@ platform-capability-source/
     └── parameter_sources.md
 ```
 
-外部资料包可以使用 YAML、JSON 和受控文档；本项目将其转换成版本化 v3 JSON。
+外部资料包可以使用 YAML、JSON、URDF 和受控文档；本项目将其转换成版本化 v3 JSON。
 
 机器可读数值统一使用：
 
@@ -96,53 +97,35 @@ platform-capability-source/
 
 能力版本发生以下任一变化时必须升级：
 
-- 碰撞包络变化；
+- URDF `<collision>` 几何、关节限制或引用 mesh 变化；
 - 速度或加速度限制变化；
 - 支持的运动形式变化；
 - 底层控制器升级导致跟踪能力变化；
 - 平台载荷变化导致安全能力变化。
 
-### 4.2 机体碰撞包络
+### 4.2 URDF 几何来源
 
-平台控制单位必须提供保守覆盖平台本体的碰撞包络。
-
-轮式平台提供：
-
-```yaml
-collision_envelope:
-  type: EXTRUDED_CONVEX_POLYGON
-  vertices_xy_m:
-    - [x0, y0]
-    - [x1, y1]
-    - [x2, y2]
-  minimum_z_m: <required>
-  maximum_z_m: <required>
-```
-
-约束：
-
-- 顶点定义于 `base_link`；
-- 顶点按逆时针排列；
-- 多边形必须严格凸；
-- `minimum_z_m <= maximum_z_m`。
-
-足式和飞跃式平台提供三维凸包：
+平台控制单位必须提供平台 URDF 以及其中 `<collision>` 引用的全部本地
+mesh 资源：
 
 ```yaml
-collision_envelope:
-  type: CONVEX_POLYTOPE
-  halfspaces:
-    - normal: [nx, ny, nz]
-      offset_m: <required>
+geometry_source:
+  urdf_file: geometry/platform.urdf
 ```
 
-每个半空间满足：
+外部输入只包含 URDF 和引用资源，不直接提供规划器使用的凸包。URDF 必须：
 
-```text
-normal · point <= offset_m
-```
+- 以 `base_frame_id` 所指 link 为机体几何参考；
+- 为需要纳入平台外形的 link 提供 `<collision>`；
+- 包含活动关节的机械限制；
+- 将当前载荷、机械臂、天线和支架等实际结构纳入碰撞模型；
+- 使用资料包内可解析的本地 mesh，不依赖网络资源。
 
-外部单位应说明包络是否包含机械臂、天线、支架等附属结构。
+本项目离线解析 URDF，只使用 `<collision>`，不使用 `<visual>`。项目根据
+URDF 坐标树和关节限制生成覆盖允许关节范围的保守凸包并保存。缺少
+collision geometry、mesh、坐标关系或有限关节范围时生成失败，不自行猜测。
+
+运行时规划器只加载生成后的凸包，不解析 URDF。
 
 ### 4.3 可执行运动形式
 
@@ -164,7 +147,7 @@ tracking_validation:
 扫掠几何可以采用两种方式：
 
 1. 平台控制单位直接提供并确认；
-2. 本项目根据碰撞包络和运动轨迹生成，平台控制单位审核确认。
+2. 本项目根据 URDF 生成的碰撞包络和运动轨迹生成，平台控制单位审核确认。
 
 未确认的运动形式不得加入部署用 v3 运动原语目录。
 
@@ -212,7 +195,6 @@ source:
 
 | 内容 | 格式/单位 | 定义 |
 |---|---|---|
-| 机体凸包和高度范围 | m | 平台本体碰撞包络 |
 | `minimum_clearance_m` | m，非负 | 平台要求保持的最小机械净空 |
 | `maximum_slope_rad` | rad，`[0, π/2]` | 可规划通过的最大地形坡度 |
 | `maximum_obstacle_height_m` | m，非负 | 可跨越的最大离散障碍高度 |
@@ -255,7 +237,6 @@ source:
 | 内容 | 格式/单位 | 定义 |
 |---|---|---|
 | 固定机体参考点 | 标识和定义 | 规划轨迹所表示的机体点 |
-| 三维机体凸包 | 半空间 | 机体级碰撞包络 |
 | 最大地形坡度 | rad | 可规划通过的最大坡度 |
 | 最大地形粗糙度 | m | 对应本项目粗糙度定义的上限 |
 | 最大相邻高程突变 | m | 机体级地形模型允许的台阶高度 |
@@ -309,7 +290,6 @@ PURE_BALLISTIC_NO_INFLIGHT_TRANSLATION_CONTROL
 
 | 内容 | 单位 |
 |---|---:|
-| 三维机体凸包 | m |
 | 最大着陆坡度 | rad |
 | 最大着陆面粗糙度 | m |
 | 最大着陆面拟合残差 | m |
@@ -347,6 +327,8 @@ PURE_BALLISTIC_NO_INFLIGHT_TRANSLATION_CONTROL
 | v3 内容 | 生成责任 |
 |---|---|
 | `content_ref`、revision、JCS SHA-256 | 本项目 |
+| `collision_envelope` | 从 URDF `<collision>`、坐标树和允许关节范围生成并保存 |
+| `body_rotation_envelope` | 飞跃平台从生成的机体凸包继续生成并保存 |
 | `motion_model_ref` | 根据控制单位运动模型资料注册 |
 | `analytic_cost_model_ref` | 本项目代价模型 |
 | `gravity_model_ref` | 本项目环境模型 |
@@ -363,7 +345,7 @@ PURE_BALLISTIC_NO_INFLIGHT_TRANSLATION_CONTROL
 平台能力资料只有满足以下条件才可用于路径规划：
 
 1. 平台标识、版本和坐标系完整；
-2. 碰撞包络闭合、凸且使用 SI 单位；
+2. URDF、引用 mesh、坐标树和关节限制完整，本项目生成的碰撞包络闭合、凸且使用 SI 单位；
 3. 所有硬限制具有明确来源；
 4. 运动原语未超过速度和加速度限制；
 5. 平台控制单位确认相应运动形式可稳定跟踪；
@@ -383,9 +365,8 @@ platform:
   capability_version: <required>
   base_frame_id: base_link
 
-collision_envelope:
-  type: <required>
-  data: <required>
+geometry_source:
+  urdf_file: geometry/platform.urdf
 
 platform_specific_capability:
   geometry_and_terrain_limits: <required>
