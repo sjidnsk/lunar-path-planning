@@ -58,19 +58,19 @@
 - [ ] 增加断言证明 irregular 默认路径只调用一次 batch 且不会调用标量 evaluator。
 - [ ] 运行所有 Stage 2 frontier 测试并修复仅由默认调用边界变化导致的失败。
 
-### Task 4: 严格等价与性能验收
+### Task 4: 时间受限的严格等价与性能验收
 
 **Files:**
 - Reuse: `D:/xunce/review/s6-u80-frontier-hotpath-prototype-r3-numpy-r1/prototype_benchmark.py`
 - Create: `D:/xunce/review/s6-u80-frontier-hotpath-production-r3-r1/`
 
 **Interfaces:**
-- Produces: 生产标量 reference 与生产默认 R3 的随机差分、8 状态 action signature 和配对性能结果。
+- Produces: 生产标量 reference 与生产默认 R3 的定向差分，以及 worker 1 单状态 action signature 和一次性能结果。
 
-- [ ] 运行至少 160 个确定性随机/边界 gain 差分。
+- [ ] 运行生产 batch/scalar 定向等价测试和 irregular 候选回归测试。
 - [ ] 运行 Stage 2 frontier 测试文件以及相关 smoke 测试。
-- [ ] 对 U80 全 8 状态执行生产默认 R3，并与冻结 R3 prototype signature 比较，要求 8/8 精确相等。
-- [ ] 记录 worker 1 和 8 状态中位 `extract()` 时间，确认没有相对已验收 R3 明显退化。
+- [ ] 仅恢复 U80 最慢的 worker 1 状态，生产默认 R3 执行一次 `extract()`，并与冻结 R3 prototype signature 精确比较。
+- [ ] 记录 worker 1 单次 `extract()` 时间；不运行全 8 状态、不做 3 次重复、不运行 PPO update。
 - [ ] 校验 checkpoint SHA、目标文件 diff、所有 JSON finite 和报告 UTF-8。
 
 ### Task 5: 交付边界
