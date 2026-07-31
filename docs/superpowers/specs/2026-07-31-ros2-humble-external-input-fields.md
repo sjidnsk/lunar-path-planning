@@ -11,6 +11,7 @@
 | `/tf` | `tf2_msgs/msg/TFMessage` | `map -> odom -> base_link` 坐标变换 |
 | `/mission/exploration_task` | `lunar_navigation_msgs/msg/ExplorationTask` | 区域探索任务完整状态快照 |
 | `science_regions[]` | `lunar_navigation_msgs/msg/ScienceTargetRegion` | 科学目标区域 |
+| 观测能力资料 | YAML/JSON | 传感与融合系统提供的候选位置等效观测能力 |
 | 平台能力资料包 | `platform-control-capability-source/v1`，YAML/JSON/URDF | 平台控制单位提供的版本化静态能力资料和 URDF 几何来源 |
 
 ## 2. 全局图与局部图
@@ -175,7 +176,20 @@ lunar_navigation_msgs/msg/ScienceTargetRegion
 | `boundary.points[].z` | `float32=0.0` | 二维多边形 z |
 | `priority` | 有限 `float32`，`(0,1]` | 只影响候选目标排序的软探索优先级 |
 
-## 8. 平台能力资料包
+## 8. 观测能力资料
+
+### 载体类型
+
+```text
+YAML/JSON
+```
+
+| 字段 | 格式/范围 | 定义 |
+|---|---|---|
+| `sensor_range_m` | 有限 `float64`，m，`>0` | 从平台参考位置起、用于候选位置预计观测覆盖计算的等效距离 |
+| `sensor_fov_deg` | 有限 `float64`，deg，`(0,360]` | 以 `base_link` 前向轴为中心、用于候选位置预计观测覆盖计算的对称水平视场角 |
+
+## 9. 平台能力资料包
 
 ### 载体类型
 
@@ -200,16 +214,7 @@ Format: YAML/JSON + URDF/mesh resources
 | `geometry_source.urdf_file` | 非空 package-relative path，URDF | 平台 `<collision>` 几何、坐标关系和关节限制来源 |
 | URDF 引用的 mesh 文件 | 随资料包交付的本地 STL/DAE 等资源 | URDF `<collision>` 中引用的外部几何 |
 
-### 可执行运动描述
-
-| 字段 | 格式/范围 | 定义 |
-|---|---|---|
-| `motion_kind` | 平台类型对应枚举 | 底层控制系统能够稳定跟踪的运动形式 |
-| `relative_end_pose.position_m` | 有限 `float64[3]`，m | 相对运动终点位置 |
-| `relative_end_pose.yaw_rad` | 有限 `float64`，rad | 相对运动终点偏航角 |
-| `nominal_duration_s` | 有限 `float64`，s，`>0` | 标称运动持续时间 |
-
-## 9. 轮式平台能力字段
+## 10. 轮式平台能力字段
 
 ### 载体类型
 
@@ -223,6 +228,7 @@ platform.platform_type: WHEELED
 | `minimum_clearance_m` | 有限 `float64`，m，`>=0` | 平台要求保持的最小机械净空 |
 | `maximum_slope_rad` | 有限 `float64`，rad，`[0,π/2]` | 可规划通过的最大地形坡度 |
 | `maximum_obstacle_height_m` | 有限 `float64`，m，`>=0` | 可跨越的最大离散障碍高度 |
+| `ground_clearance_m` | 有限 `float64`，m，`>0` | 平台最低结构相对支撑面的离地间隙 |
 | `maximum_drive_curvature_per_m` | 有限 `float64`，1/m，`>0` | 非原地旋转行驶的最大曲率 |
 | `maximum_forward_speed_mps` | 有限 `float64`，m/s，`>0` | 最大前进速度幅值 |
 | `maximum_reverse_speed_mps` | 有限 `float64`，m/s，`>0` | 最大倒退速度幅值 |
@@ -231,9 +237,13 @@ platform.platform_type: WHEELED
 | `maximum_braking_deceleration_mps2` | 有限 `float64`，m/s²，`>0` | 最大制动减速度幅值 |
 | `maximum_yaw_acceleration_radps2` | 有限 `float64`，rad/s²，`>0` | 最大偏航角加速度幅值 |
 | `maximum_lateral_acceleration_mps2` | 有限 `float64`，m/s²，`>0` | 最大横向加速度幅值 |
-| `supported_motion_kinds` | `FORWARD_LINE/FORWARD_ARC_LEFT/FORWARD_ARC_RIGHT/REVERSE_LINE/REVERSE_ARC_LEFT/REVERSE_ARC_RIGHT/SPIN_CW/SPIN_CCW/STOP_AND_SWITCH` | 必须确认可执行的滑移转向运动形式 |
+| `motion_primitives[].primitive_id` | 数组内唯一的非空 string | 可执行运动原语的稳定标识 |
+| `motion_primitives[].kind` | `DRIVE_FORWARD_LINE/DRIVE_FORWARD_ARC/DRIVE_REVERSE_LINE/DRIVE_REVERSE_ARC/SPIN_CW/SPIN_CCW/STOP_AND_SWITCH` | 底层控制系统能够稳定跟踪的运动形式 |
+| `motion_primitives[].relative_end_pose.position_m` | 有限 `float64[3]`，m | 原语终点相对起点的位置 |
+| `motion_primitives[].relative_end_pose.yaw_rad` | 有限 `float64`，rad | 原语终点相对起点的偏航角 |
+| `motion_primitives[].nominal_duration_s` | 有限 `float64`，s，`>0` | 原语的标称持续时间 |
 
-## 10. 足式平台能力字段
+## 11. 足式平台能力字段
 
 ### 载体类型
 
@@ -245,7 +255,7 @@ platform.platform_type: LEGGED
 | 字段 | 格式/范围 | 定义 |
 |---|---|---|
 | `reference_point_id` | 非空 string | 机体参考点标识 |
-| `reference_point_definition` | 非空 string | 规划轨迹所表示的固定机体点定义 |
+| `reference_point_definition` | `FIXED_BODY_FRAME_POINT/FIXED_NOMINAL_COM` | 规划轨迹所表示的固定机体点定义 |
 | `maximum_slope_rad` | 有限 `float64`，rad，`[0,π/2]` | 可规划通过的最大地形坡度 |
 | `maximum_roughness_m` | 有限 `float64`，m，`>=0` | 可规划通过的最大地形粗糙度 |
 | `maximum_step_height_m` | 有限 `float64`，m，`>=0` | 机体级地形模型允许的最大相邻高程突变 |
@@ -258,9 +268,13 @@ platform.platform_type: LEGGED
 | `yaw_rate_radps` | 有限下界/上界，rad/s | 偏航角速度区间 |
 | `linear_acceleration_mps2` | 有限 `float64`，m/s²，`>0` | 最大机体线加速度 |
 | `yaw_acceleration_radps2` | 有限 `float64`，rad/s²，`>0` | 最大偏航角加速度 |
-| `supported_motion_kinds` | `FORWARD/BACKWARD/LATERAL_LEFT/LATERAL_RIGHT/SPIN_CW/SPIN_CCW` | 必须确认可执行的机体运动形式 |
+| `motion_primitives[].primitive_id` | 数组内唯一的非空 string | 可执行机体运动原语的稳定标识 |
+| `motion_primitives[].kind` | `FORWARD/BACKWARD/LATERAL/DIAGONAL/SPIN/COUPLED` | 底层控制系统能够稳定跟踪的机体运动形式 |
+| `motion_primitives[].body_frame_displacement_m` | 有限 `float64[3]`，m | 原语在机体坐标系中的位移 |
+| `motion_primitives[].yaw_change_rad` | 有限 `float64`，rad | 原语产生的偏航角变化 |
+| `motion_primitives[].nominal_duration_s` | 有限 `float64`，s，`>0` | 原语的标称持续时间 |
 
-## 11. 飞跃式平台能力字段
+## 12. 飞跃式平台能力字段
 
 ### 载体类型
 
