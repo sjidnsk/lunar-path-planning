@@ -842,10 +842,11 @@ def test_reviewed_stage1_source_set_binds_all_proxy_contract_paths() -> None:
         "docs/superpowers/specs/2026-07-10-rock-crater-proxy-fixture-design-addendum.md",
         "docs/superpowers/plans/2026-07-10-rock-crater-proxy-fixture.md",
         "src/lunar_exploration_ppo/env/terrain_proxy.py",
+        "tests/ppo_highres_frontier/test_stage1_behavior_regression.py",
         "tests/ppo_highres_frontier/test_stage1_terrain_proxy.py",
     } <= STAGE1_REVIEWED_PATHS
     assert "tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py" not in STAGE1_REVIEWED_PATHS
-    assert len(STAGE1_REVIEWED_PATHS) == 31
+    assert len(STAGE1_REVIEWED_PATHS) == 32
 
 
 def test_fixed_smoke_seed_passes_all_structural_gates_without_seed_search() -> None:

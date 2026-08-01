@@ -54,6 +54,7 @@ STAGE1_REVIEWED_PATHS: Final = frozenset(
         "src/lunar_exploration_ppo/workflows/stage1_review.py",
         "src/lunar_exploration_ppo/workflows/stage1_source.py",
         "tests/ppo_highres_frontier/test_foundation.py",
+        "tests/ppo_highres_frontier/test_stage1_behavior_regression.py",
         "tests/ppo_highres_frontier/test_stage1_smoke_env.py",
         "tests/ppo_highres_frontier/test_stage1_terrain_proxy.py",
     }
@@ -105,8 +106,8 @@ class Stage1SourceSnapshot:
     ) -> "Stage1SourceSnapshot":
         if mode not in {"review_dirty", "gate_committed"}:
             raise ReviewedSourceError("Stage 1 source snapshot mode is invalid")
-        if len(STAGE1_REVIEWED_PATHS) != 31:
-            raise ReviewedSourceError("Stage 1 reviewed source path count must remain 31")
+        if len(STAGE1_REVIEWED_PATHS) != 32:
+            raise ReviewedSourceError("Stage 1 reviewed source path count must remain 32")
         reviewed = tuple(sorted(STAGE1_REVIEWED_PATHS))
         _require_safe_reviewed_paths(reviewed)
         repo = Path(os.path.abspath(os.fspath(Path(repo_root).expanduser())))
@@ -268,7 +269,7 @@ def _verify_frozen_git_source_inputs(
         if head != base_commit:
             raise ReviewedSourceError("review requires the frozen Foundation base HEAD")
         if status_paths != set(STAGE1_REVIEWED_PATHS):
-            raise ReviewedSourceError("review requires the exact 31-path dirty source set")
+            raise ReviewedSourceError("review requires the exact 32-path dirty source set")
     else:
         if inputs.status:
             raise ReviewedSourceError("gate requires a clean Git status")
@@ -414,10 +415,10 @@ def compute_stage1_source_identity_from_snapshot(snapshot: Stage1SourceSnapshot)
 
 
 def compute_stage1_reviewed_source_set_sha256(repo_root: str | Path) -> str:
-    """Hash all 31 reviewed paths with unambiguous path and byte-length framing."""
+    """Hash all 32 reviewed paths with unambiguous path and byte-length framing."""
 
-    if len(STAGE1_REVIEWED_PATHS) != 31:
-        raise ReviewedSourceError("Stage 1 reviewed source path count must remain 31")
+    if len(STAGE1_REVIEWED_PATHS) != 32:
+        raise ReviewedSourceError("Stage 1 reviewed source path count must remain 32")
     repo = Path(repo_root).expanduser().resolve()
     digest = __import__("hashlib").sha256()
     digest.update(b"ppo_highres_frontier_stage1_reviewed_source_set/v1\0")

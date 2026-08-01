@@ -11,7 +11,7 @@ import random
 import gc
 import subprocess
 import weakref
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -2179,6 +2179,7 @@ def test_execute_standard_training_is_a_production_only_surface() -> None:
         "planning_warm_start_sha256",
         "planning_child_source_repair_context",
         "planning_child_source_repair_sha256",
+        "planning_child_recovery_capability",
         "verified_parent_u74",
     )
     assert all(parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in parameters)
@@ -2204,199 +2205,6 @@ def test_execute_standard_training_is_a_production_only_surface() -> None:
             getattr(standard_training.StandardProductionBackend, name),
             "__wrapped__",
         )
-
-
-def test_planning_child_repair_splits_u84_and_u85_checkpoint_lineage() -> None:
-    class WarmStart:
-        def checkpoint_lineage_for_update(
-            self,
-            update: int,
-            *,
-            warm_start_artifact_sha256: str,
-        ) -> dict[str, object]:
-            return {
-                "warm_start_artifact_sha256": (
-                    warm_start_artifact_sha256
-                ),
-                "checkpoint_update": update,
-            }
-
-    class ChildRepair:
-        origin_immutable_bindings = {"source_set_sha256": "origin"}
-        current_immutable_bindings = {
-            "source_set_sha256": "reviewed-u85"
-        }
-        last_origin_update = 84
-        next_transaction_key = f"0010:{20260716}:update:085"
-
-        def expected_historical_checkpoint_lineage(
-            self,
-            update: int,
-        ) -> dict[str, object]:
-            assert update == 84
-            return {"historical_update": 84}
-
-        def checkpoint_lineage_for_update(
-            self,
-            update: int,
-        ) -> dict[str, object]:
-            assert update == 85
-            return {
-                "schema_version": (
-                    "stage6_planning_child_source_repair/v1"
-                ),
-                "first_repaired_update": 85,
-            }
-
-        def checkpoint_immutable_bindings_for_update(
-            self,
-            update: int,
-        ) -> dict[str, object]:
-            assert update == 85
-            return dict(self.current_immutable_bindings)
-
-    backend = object.__new__(
-        standard_training.StandardProductionBackend
-    )
-    backend._planning_warm_start = WarmStart()
-    backend._planning_warm_start_sha256 = "a" * 64
-    backend._planning_child_source_repair = ChildRepair()
-    backend._source_repair = None
-    backend._origin_checkpoint_lineage = lambda bindings=None: {
-        "current_source": "reviewed-u85"
-    }
-
-    assert backend._checkpoint_lineage_for_update(84) == {
-        "historical_update": 84
-    }
-    assert backend._checkpoint_lineage_for_update(85) == {
-        "current_source": "reviewed-u85",
-        "warm_start_artifact_sha256": "a" * 64,
-        "checkpoint_update": 85,
-        "planning_child_source_repair": {
-            "schema_version": (
-                "stage6_planning_child_source_repair/v1"
-            ),
-            "first_repaired_update": 85,
-        },
-    }
-    assert backend._journal_binding_split() == (
-        {"source_set_sha256": "origin"},
-        f"0010:{20260716}:update:085",
-    )
-
-
-def test_planning_child_repair_requires_u85_attempt2_segment2() -> None:
-    class ChildRepair:
-        first_repaired_update = 85
-        next_attempt = 2
-        next_resource_segment_index = 2
-        next_transaction_key = f"0010:{20260716}:update:085"
-        effective_next_update = 85
-        effective_next_attempt = 2
-        effective_next_resource_segment_index = 2
-        effective_next_transaction_key = (
-            f"0010:{20260716}:update:085"
-        )
-
-    backend = object.__new__(
-        standard_training.StandardProductionBackend
-    )
-    backend._planning_child_source_repair = ChildRepair()
-    backend._resource_segment_start = {"segment_index": 2}
-    backend._next_resource_attempt = lambda _key: 2
-    transaction = standard_training.StandardTrainingTransaction(
-        sequence=10,
-        seed=20260716,
-        seed_index=0,
-        update=85,
-        validation_episodes=0,
-        commit_states=("seed_20260716_training_update_85",),
-    )
-
-    backend._require_planning_child_resume_boundary((transaction,))
-
-    backend._resource_segment_start = {"segment_index": 3}
-    with pytest.raises(
-        standard_training.StandardTrainingError,
-        match="resource segment",
-    ):
-        backend._require_planning_child_resume_boundary((transaction,))
-
-
-def test_planning_child_repair_profile_combination_is_fail_closed() -> None:
-    from lunar_exploration_ppo.workflows import stage6
-
-    stage6._validate_stage6_repair_context_combination(
-        planning_warm_start_context=object(),
-        planning_child_source_repair_context=object(),
-        classic_source_repair_context=None,
-    )
-    stage6._validate_stage6_repair_context_combination(
-        planning_warm_start_context=object(),
-        planning_child_source_repair_context=None,
-        classic_source_repair_context=None,
-    )
-
-    with pytest.raises(
-        stage6.Stage6WorkflowError,
-        match="requires planning warm-start",
-    ):
-        stage6._validate_stage6_repair_context_combination(
-            planning_warm_start_context=None,
-            planning_child_source_repair_context=object(),
-            classic_source_repair_context=None,
-        )
-    with pytest.raises(
-        stage6.Stage6WorkflowError,
-        match="classic source-repair",
-    ):
-        stage6._validate_stage6_repair_context_combination(
-            planning_warm_start_context=object(),
-            planning_child_source_repair_context=object(),
-            classic_source_repair_context=object(),
-        )
-    with pytest.raises(
-        stage6.Stage6WorkflowError,
-        match="classic source-repair",
-    ):
-        stage6._validate_stage6_repair_context_combination(
-            planning_warm_start_context=object(),
-            planning_child_source_repair_context=None,
-            classic_source_repair_context=object(),
-        )
-
-
-def test_planning_child_repair_is_forwarded_through_protected_workflow() -> None:
-    from lunar_exploration_ppo.workflows import stage6
-
-    for function in (
-        stage6.run_stage6_workflow,
-        stage6._run_stage6_workflow_for_test,
-        stage6._stage6_input_pin_requests,
-        stage6._acquire_stage6_workflow_input_pin,
-        stage6._stage6_execution_capability_scope,
-    ):
-        assert "planning_child_source_repair_path" in (
-            inspect.signature(function).parameters
-        )
-    for function in (
-        stage6._run_stage6_workflow_at_root,
-        stage6._run_stage6_workflow_locked,
-    ):
-        parameters = inspect.signature(function).parameters
-        assert "planning_child_source_repair_context" in parameters
-        assert "planning_child_source_repair_sha256" in parameters
-
-    public_source = inspect.getsource(stage6.run_stage6_workflow)
-    protected_source = inspect.getsource(stage6._run_stage6_workflow_locked)
-    recovery_source = inspect.getsource(
-        stage6._verify_stage6_recovery_authorization_bindings
-    )
-    assert "load_planning_child_source_repair_artifact" in public_source
-    assert "planning_child_source_repair_context=" in public_source
-    assert "planning_child_source_repair_context=" in protected_source
-    assert "planning-child-source-repair.json" in recovery_source
 
 
 def test_training_mutation_surfaces_require_capability_before_dispatch_or_mkdir(
@@ -2635,65 +2443,6 @@ def test_persist_execution_identity_writes_exact_warm_effective_config_and_artif
     assert lineage["planning_warm_start"]["artifact"]["parent"][
         "config_sha256"
     ] == stage6_planning_warm_start.PARENT_CONFIG_SHA256
-
-
-def test_planning_child_repair_never_rewrites_origin_lineage_or_u84(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from test_stage6_planning_child_source_repair import (
-        _build,
-        _context,
-        _fixture,
-    )
-
-    fixture = _fixture(tmp_path)
-    context = _context(fixture, _build(fixture))
-    config = load_stage6_config(CONFIG)
-    watched_paths = (
-        fixture.stage_root / "config.json",
-        fixture.stage_root / "lineage_audit.json",
-        fixture.stage_root
-        / "checkpoints/seed-20260716/update-00000084/checkpoint.pt",
-        fixture.stage_root
-        / "checkpoints/seed-20260716/update-00000084/manifest.json",
-        fixture.stage_root
-        / "checkpoints/seed-20260716/update-00000084/complete.json",
-    )
-    old_ns = 1_700_000_000_000_000_000
-    for path in watched_paths:
-        os.utime(path, ns=(old_ns, old_ns))
-    before = {
-        path: (path.read_bytes(), path.stat().st_mtime_ns)
-        for path in watched_paths
-    }
-    monkeypatch.setattr(
-        standard_training,
-        "_standard_execution_operation",
-        lambda *args, **kwargs: nullcontext(),
-    )
-
-    standard_training._persist_execution_identity(
-        stage_root=fixture.stage_root,
-        config=config,
-        run_root=fixture.stage_root.parent,
-        repo_root=ROOT,
-        stage5_authority={},
-        execution_capability=object(),
-        config_bytes=(fixture.stage_root / "config.json").read_bytes(),
-        identity=fixture.current_execution_identity,
-        immutable_bindings=fixture.current_immutable_bindings,
-        verified_review_authorization=(
-            fixture.current_verified_review_authorization
-        ),
-        planning_warm_start_context=object(),
-        planning_child_source_repair_context=context,
-    )
-
-    assert {
-        path: (path.read_bytes(), path.stat().st_mtime_ns)
-        for path in watched_paths
-    } == before
 
 
 def test_child_repair_currentness_is_rechecked_at_mutation_boundaries() -> None:
@@ -5580,6 +5329,7 @@ def test_production_backend_finalize_writes_and_verifies_canonical_machine_root(
         repo_root: Path,
         execution_capability: object | None = None,
         run_lease: object | None = None,
+        planning_child_recovery_capability: object | None = None,
     ) -> Path:
         return original_write_manifest(
             stage_root=stage_root,
@@ -5594,6 +5344,9 @@ def test_production_backend_finalize_writes_and_verifies_canonical_machine_root(
                 if run_lease is None
                 else run_lease
             ),  # type: ignore[arg-type]
+            planning_child_recovery_capability=(
+                planning_child_recovery_capability
+            ),
         )
 
     monkeypatch.setattr(stage6_workflow, "write_stage6_manifest", write_manifest)

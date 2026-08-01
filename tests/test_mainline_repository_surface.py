@@ -63,11 +63,14 @@ def test_default_astar_and_platform_slope_contracts_remain_explicit() -> None:
     assert "max_traversable_slope_deg" in stage6 and "30.0" in stage6
 
 
-def test_retained_ppo_test_surface_excludes_retired_r1_review_route() -> None:
+def test_retained_ppo_test_surface_migrates_behavior_and_excludes_r1_authority_route() -> None:
     active = _active_tracked_paths()
     retired = "tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py"
+    retained_behavior = "tests/ppo_highres_frontier/test_stage1_behavior_regression.py"
     stage6_contract = "tests/ppo_highres_frontier/test_stage6_standard_config.py"
 
     assert retired not in active
     assert not (REPO_ROOT / retired).exists()
+    assert retained_behavior in active
+    assert (REPO_ROOT / retained_behavior).is_file()
     assert stage6_contract in active

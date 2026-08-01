@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 try:
     from lunar_exploration_ppo.configs.schema import (
+        FOUNDATION_WORKTREE_ROOT,
         FoundationConfig,
         load_foundation_config,
         resolve_device,
@@ -26,6 +27,7 @@ try:
     from lunar_exploration_ppo.utils.artifact_io import ArtifactPathError, ArtifactStore
     from lunar_exploration_ppo.workflows.gates import GateBindings, GateError, GateRecord
 except ImportError:
+    FOUNDATION_WORKTREE_ROOT = ""
     FoundationConfig = load_foundation_config = resolve_device = None  # type: ignore[assignment]
     ArtifactPathError = ArtifactStore = None  # type: ignore[assignment,misc]
     GateBindings = GateError = GateRecord = None  # type: ignore[assignment,misc]
@@ -599,7 +601,11 @@ def _mock_authoritative_git(
         raise AssertionError(f"unexpected git command: {command}")
 
     monkeypatch.setattr(gates_module.subprocess, "run", fake_run)
-    if not REPO_ROOT.is_dir():
+    normalized_repo_root = os.path.normcase(os.path.normpath(str(REPO_ROOT.resolve())))
+    normalized_contract_root = os.path.normcase(
+        os.path.normpath(str(FOUNDATION_WORKTREE_ROOT))
+    )
+    if normalized_repo_root != normalized_contract_root:
         def portable_verify_repository(
             cls: object,
             repo_root: str | Path,

@@ -49,10 +49,13 @@ load、run lease、machine preflight、spawn worker、Rasterio、Stage 4 checkpo
 都失败关闭，pin 对象本身不写入 lineage，只有 authorization handle 的 canonical record
 进入 lineage。
 
-历史 `test_stage1_smoke_env_r1.py` 已从仓库、Stage 1 reviewed source set 和
-`STAGE6_TEST_SOURCE_PATHS` 移除。任何仍绑定该历史测试的 Stage 1 或 Stage 6 authorization
-或 source identity 都必须因 source-set 漂移失败关闭；正式执行或训练只能在新的独立 review
-完成后重新获得授权，不能更新或伪造旧记录的哈希来继续执行。
+历史 `test_stage1_smoke_env_r1.py` 的 frozen Git/authority fixture 已退役，文件本身已从仓库、
+Stage 1 reviewed source set 和 `STAGE6_TEST_SOURCE_PATHS` 移除；其中不依赖历史 authority 的
+13 个纯行为回归函数（16 个 pytest case）迁移到
+`test_stage1_behavior_regression.py`，并由 Stage 1 与 Stage 6 source set 继续绑定。由于路径和
+内容均已变化，任何仍绑定旧文件的 Stage 1 或 Stage 6 authorization/source identity 都必须
+因 source-set 漂移失败关闭；正式执行或训练只能在新的独立 review 完成后重新获得授权，
+不能更新或伪造旧记录的哈希来继续执行。
 
 workflow 只在上述锁、review authorization、Stage 5 authority 与完整 input pin 均有效时，
 签发一个进程内、不可复制、不可序列化且绑定 exact run/root/config/evidence 的 opaque

@@ -34,7 +34,7 @@
 - Modify `src/lunar_exploration_ppo/workflows/stage1_source.py`: add the approved spec, plan, generator, and focused test to the exact reviewed path set.
 - Create `tests/ppo_highres_frontier/test_stage1_terrain_proxy.py`: independent generator, morphology, placement, hash, occlusion, and leakage tests.
 - Modify `tests/ppo_highres_frontier/test_stage1_smoke_env.py`: update the scenario identity and full Smoke expectations.
-- Historical note: `test_stage1_smoke_env_r1.py` was retired during the 2026-08-02 mainline cleanup; current regression retains only `test_stage1_smoke_env.py` and `test_stage1_terrain_proxy.py`.
+- Historical note: the frozen Git/authority fixture in `test_stage1_smoke_env_r1.py` was retired during the 2026-08-02 mainline cleanup. Its 13 authority-independent behavior tests (16 pytest cases) moved to `test_stage1_behavior_regression.py`, while `test_stage1_smoke_env.py` and `test_stage1_terrain_proxy.py` remain retained. The new path/content changes the reviewed source identity, so every authorization bound to the old file must fail closed until a new independent review.
 - Runtime report: write final verification results to `D:/xunce/out/ppo_frontier/$runId/s1/report.md`; do not create or modify tracked internal SDD reports.
 
 ---
@@ -423,6 +423,11 @@ docs/superpowers/plans/2026-07-10-rock-crater-proxy-fixture.md
 src/lunar_exploration_ppo/env/terrain_proxy.py
 tests/ppo_highres_frontier/test_stage1_terrain_proxy.py
 ```
+
+The 2026-08-02 mainline cleanup additionally binds
+`tests/ppo_highres_frontier/test_stage1_behavior_regression.py` after migrating the pure behavior
+regressions out of the retired R1 authority fixture. This source-set path/content change intentionally
+invalidates old Stage 1 and Stage 6 authorizations; do not regenerate or rewrite their hashes here.
 
 - [ ] **Step 5: Run integration GREEN tests**
 
