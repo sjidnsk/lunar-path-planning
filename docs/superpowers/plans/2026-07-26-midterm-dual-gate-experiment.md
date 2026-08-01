@@ -599,9 +599,11 @@ def test_g1_hidden_truth_never_enters_policy_or_candidate_input() -> None: ...
 --repair-lineage <absolute path; only test-c-confirmation>
 ```
 
-- [ ] Formal phases:
+- [ ] Formal phases originally planned as
   `preflight → validation_dry_run → test_q24 → unseen24 → replay3 →
-  recompute → finalize`。
+  recompute → finalize`。2026-07-27 用户明确取消 replay3；本次执行以已完成的
+  Test-Q24、21 条只读 Unseen 父结果、3 条显式修复结果及不调用环境的独立离线
+  复算替代 replay3，不得再启动场景重跑。
 - [ ] If Test-Q24 fails, stop before Unseen-24 and route `failed`; do not
   automatically execute Test-C24。`test-c-confirmation` requires a new code/config
   lineage hash and rejects reuse of the failed run root。

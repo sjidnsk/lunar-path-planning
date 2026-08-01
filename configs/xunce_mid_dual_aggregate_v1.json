@@ -91,6 +91,7 @@
         "scripts/run_xunce_mid_dual_g3_closed_loop.py",
         "scripts/freeze_xunce_mid_dual_scenarios.py",
         "scripts/run_xunce_mid_dual_g1_coverage.py",
+        "scripts/xunce_mid_dual_g1_existing_run_assessment.py",
         "scripts/run_xunce_mid_dual_g2_planning_time.py",
         "scripts/xunce_mid_dual_g2_inputs.py",
         "scripts/xunce_mid_dual_contracts.py",
