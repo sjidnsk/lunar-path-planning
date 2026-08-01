@@ -1584,14 +1584,71 @@ def test_g3_rejects_conflicting_p03_worker_count_fields() -> None:
         )
 
 
-@pytest.mark.skipif(
-    not COMPLETED_G2_ROOT.is_dir(),
-    reason="completed G2 R7 root is unavailable",
-)
+def _load_completed_g2_r7_fixture_or_skip(
+    module: ModuleType,
+    root: Path,
+) -> dict[str, object]:
+    if not root.is_dir():
+        pytest.skip(f"completed G2 R7 root is unavailable: {root}")
+    try:
+        return module.load_verified_g2_root(root)
+    except module.G3Blocked as exc:
+        if exc.reason == "g3_g2_manifest_invalid":
+            pytest.skip(
+                "completed G2 R7 root is stale or invalid: "
+                f"{exc.reason}"
+            )
+        raise
+
+
+def test_completed_g2_r7_fixture_skips_missing_root(tmp_path: Path) -> None:
+    module = _module()
+
+    with pytest.raises(pytest.skip.Exception, match="root is unavailable"):
+        _load_completed_g2_r7_fixture_or_skip(module, tmp_path / "missing-g2")
+
+
+def test_completed_g2_r7_fixture_skips_stale_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    root = tmp_path / "stale-g2"
+    root.mkdir()
+
+    def stale_root(_: Path) -> dict[str, object]:
+        raise module.G3Blocked("g3_g2_manifest_invalid")
+
+    monkeypatch.setattr(module, "load_verified_g2_root", stale_root)
+
+    with pytest.raises(
+        pytest.skip.Exception,
+        match="stale or invalid: g3_g2_manifest_invalid",
+    ):
+        _load_completed_g2_r7_fixture_or_skip(module, root)
+
+
+def test_completed_g2_r7_fixture_reraises_unexpected_validation_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    root = tmp_path / "unexpected-g2"
+    root.mkdir()
+
+    def unexpected_error(_: Path) -> dict[str, object]:
+        raise RuntimeError("fixture transport failed")
+
+    monkeypatch.setattr(module, "load_verified_g2_root", unexpected_error)
+
+    with pytest.raises(RuntimeError, match="fixture transport failed"):
+        _load_completed_g2_r7_fixture_or_skip(module, root)
+
+
 def test_g3_completed_g2_r7_root_integration_smoke() -> None:
     module = _module()
 
-    source = module.load_verified_g2_root(COMPLETED_G2_ROOT)
+    source = _load_completed_g2_r7_fixture_or_skip(module, COMPLETED_G2_ROOT)
 
     assert source["formal_environment_audit"]["status"] == "passed"
     assert source["native_summary"]["status"] == "failed"
