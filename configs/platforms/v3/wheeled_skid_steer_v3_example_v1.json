@@ -1,0 +1,196 @@
+{
+  "schema_version": "path-planner-v3-safety-capability-profile/v1",
+  "content_ref": {
+    "id": "wheeled-skid-steer-v3-example-v1",
+    "revision": 1,
+    "content_hash": "e2518e770e49feed9cef0fa945ee468983bb831bfdaeaf9d81992e48b68b9559"
+  },
+  "content": {
+    "platform_type": "WHEELED",
+    "frame_id": "map",
+    "collision_envelope": {
+      "shape": "extruded_convex_polygon",
+      "vertices_xy_m": [
+        [-0.306, -0.29],
+        [0.306, -0.29],
+        [0.306, 0.29],
+        [-0.306, 0.29]
+      ],
+      "winding": "CCW",
+      "minimum_z_m": -0.1225,
+      "maximum_z_m": 0.1225
+    },
+    "motion_model_ref": {
+      "id": "wheeled-skid-steer-motion-model-example-v1",
+      "revision": 1,
+      "content_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "analytic_cost_model_ref": {
+      "id": "wheeled-analytic-cost-model-example-v1",
+      "revision": 1,
+      "content_hash": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "hard_limits": {
+      "maximum_forward_speed_mps": 3,
+      "maximum_reverse_speed_mps": 3,
+      "maximum_spin_rate_radps": 1,
+      "maximum_forward_acceleration_mps2": 1,
+      "maximum_braking_deceleration_mps2": 1,
+      "maximum_yaw_acceleration_radps2": 1,
+      "maximum_lateral_acceleration_mps2": 1,
+      "maximum_drive_curvature_per_m": 1,
+      "maximum_slope_rad": 0.5235987755982988,
+      "minimum_clearance_m": 0.115
+    },
+    "certified_state_error_bounds": {
+      "position_bound_m": {
+        "shape": "euclidean_ball",
+        "center": [0, 0, 0],
+        "radius": 0.1
+      },
+      "yaw_bound_rad": {
+        "shape": "symmetric_interval",
+        "center": 0,
+        "half_width": 0.05
+      },
+      "linear_velocity_bound_mps": {
+        "shape": "euclidean_ball",
+        "center": [0, 0, 0],
+        "radius": 0.1
+      },
+      "yaw_rate_bound_radps": {
+        "shape": "symmetric_interval",
+        "center": 0,
+        "half_width": 0.05
+      }
+    },
+    "motion_primitives": [
+      {
+        "primitive_id": "forward-line",
+        "kind": "DRIVE_FORWARD_LINE",
+        "relative_end_pose": {
+          "position_m": [0.5, 0, 0],
+          "yaw_rad": 0
+        },
+        "nominal_duration_ns": "1000000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-forward-line-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      },
+      {
+        "primitive_id": "forward-arc-left",
+        "kind": "DRIVE_FORWARD_ARC",
+        "relative_end_pose": {
+          "position_m": [0.479425538604203, 0.1224174381096272, 0],
+          "yaw_rad": 0.5
+        },
+        "nominal_duration_ns": "1000000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-forward-arc-left-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "4444444444444444444444444444444444444444444444444444444444444444"
+        }
+      },
+      {
+        "primitive_id": "forward-arc-right",
+        "kind": "DRIVE_FORWARD_ARC",
+        "relative_end_pose": {
+          "position_m": [0.479425538604203, -0.1224174381096272, 0],
+          "yaw_rad": -0.5
+        },
+        "nominal_duration_ns": "1000000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-forward-arc-right-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "5555555555555555555555555555555555555555555555555555555555555555"
+        }
+      },
+      {
+        "primitive_id": "reverse-line",
+        "kind": "DRIVE_REVERSE_LINE",
+        "relative_end_pose": {
+          "position_m": [-0.5, 0, 0],
+          "yaw_rad": 0
+        },
+        "nominal_duration_ns": "1000000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-reverse-line-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "6666666666666666666666666666666666666666666666666666666666666666"
+        }
+      },
+      {
+        "primitive_id": "reverse-arc-left",
+        "kind": "DRIVE_REVERSE_ARC",
+        "relative_end_pose": {
+          "position_m": [-0.479425538604203, 0.1224174381096272, 0],
+          "yaw_rad": -0.5
+        },
+        "nominal_duration_ns": "1000000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-reverse-arc-left-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "7777777777777777777777777777777777777777777777777777777777777777"
+        }
+      },
+      {
+        "primitive_id": "reverse-arc-right",
+        "kind": "DRIVE_REVERSE_ARC",
+        "relative_end_pose": {
+          "position_m": [-0.479425538604203, -0.1224174381096272, 0],
+          "yaw_rad": 0.5
+        },
+        "nominal_duration_ns": "1000000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-reverse-arc-right-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      },
+      {
+        "primitive_id": "spin-cw",
+        "kind": "SPIN_CW",
+        "relative_end_pose": {
+          "position_m": [0, 0, 0],
+          "yaw_rad": -0.5
+        },
+        "nominal_duration_ns": "500000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-spin-cw-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "9999999999999999999999999999999999999999999999999999999999999999"
+        }
+      },
+      {
+        "primitive_id": "spin-ccw",
+        "kind": "SPIN_CCW",
+        "relative_end_pose": {
+          "position_m": [0, 0, 0],
+          "yaw_rad": 0.5
+        },
+        "nominal_duration_ns": "500000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-spin-ccw-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "primitive_id": "stop-and-switch",
+        "kind": "STOP_AND_SWITCH",
+        "relative_end_pose": {
+          "position_m": [0, 0, 0],
+          "yaw_rad": 0
+        },
+        "nominal_duration_ns": "100000000",
+        "swept_geometry_ref": {
+          "id": "wheeled-stop-switch-sweep-example-v1",
+          "revision": 1,
+          "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      }
+    ]
+  }
+}
