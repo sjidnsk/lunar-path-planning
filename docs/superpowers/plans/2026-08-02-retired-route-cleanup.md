@@ -46,6 +46,6 @@
 ### Task 6: Final Mainline Verification
 
 - 运行 Stage 6/default A*、G1/G2/G3、parent platform、`path-planner` Python/C++ 与 `dev-platform-constraints` 基线。
-- 运行 `tests/test_route_retirement_preflight.py`、`git diff --check`、删除范围审计和 broken-reference 检查。
+- 运行 `tests/test_retired_routes_absent.py`、`tests/test_mainline_repository_surface.py`、`git diff --check`、删除范围审计和 broken-reference 检查。
 - 输出 D 盘 ignored runtime artifact 的精确人工清理清单；不使用递归删除命令。
 - 进行整分支审查，确认没有删除主线、共享 helper 或用户未跟踪文件。

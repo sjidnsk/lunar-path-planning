@@ -14,7 +14,8 @@
 
 ```powershell
 $env:PYTHONPATH = "$PWD\path-planner\src;$PWD\src"
-D:\conda_envs\lunar-explorer\python.exe -m pytest tests/ppo_highres_frontier tests/test_xunce_mid_dual_*.py -q
+$midDualTests = @(Get-ChildItem -File .\tests\test_xunce_mid_dual_*.py | Select-Object -ExpandProperty FullName)
+& D:\conda_envs\lunar-explorer\python.exe -m pytest .\tests\ppo_highres_frontier @midDualTests -q
 D:\conda_envs\lunar-explorer\python.exe scripts\run_platform_validation_matrix.py --profile windows-non-drake --dry-run
 ```
 
