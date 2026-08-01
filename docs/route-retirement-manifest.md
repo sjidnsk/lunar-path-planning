@@ -2,9 +2,29 @@
 
 ## 决策与审计快照
 
-本清单记录用户于 2026-08-01 确认的路线退役决定，并把“路线退役”与“允许物理删除”严格分开。退役范围为：Xunce Stage18--25 演进链、Xunce Stage26 synthetic terrain / PPO diagnostics、path-feedback / 早期策略实验，以及 `model-explorer`、`visual-workbench` 子模块。清单仅定义后续人工清理边界；提交本清单不授权或执行任何源码、子模块或产物的物理清理。
+本清单记录用户于 2026-08-01 确认的路线退役决定，并把“路线退役”与“允许物理删除”严格分开。退役范围为：Xunce Stage18--25 演进链、Xunce Stage26 synthetic terrain / PPO diagnostics、path-feedback / 早期策略实验，以及 `model-explorer`、`visual-workbench` 子模块。除下述 2026-08-02 测试级退役例外外，本清单仅定义后续人工清理边界；不得据此推导其他源码、子模块或产物的物理清理授权。
 
 只读审计给出的 Stage18--25 候选计数为：57 个 runner、64 个 config、59 个 test、78 个 plan doc；Stage26 候选计数为：38 个 runner、39 个 config、37 个 test、34 个 plan doc。这些是待逐路径核验的文件族计数，不是 glob 删除授权。
+
+## 已批准的测试级退役例外（2026-08-02）
+
+负责人已明确批准从 `tests/ppo_highres_frontier/test_stage1_smoke_env.py` 退役 11 个旧测试函数（参数化后共 15 个测试实例）及其专用 fixture。它们绑定冻结的 Stage1/Foundation 提交、旧 frontier/endpoint fixture、旧 failure token 或已被 Stage6 替代的静态导入边界，不再作为当前 Stage6、默认 grid A* 或 `PathPlannerAdapter` 的验收合同。
+
+| 退役测试函数 | 实例数 | 退役依据 |
+| --- | ---: | --- |
+| `test_frontier_recommended_theta_points_to_observed_unknown_side` | 4 | 旧候选紧邻未知区，与 Stage6 `planning_safe_mask` 和 `0.75m` unknown buffer 合同冲突 |
+| `test_frontier_and_observation_are_observed_only_stable_and_finite` | 1 | 旧 reset fixture 不再产生 planning-safe 候选 |
+| `test_env_and_workflow_rule_policy_share_one_conservative_selector` | 1 | 合成 observation 与环境内部重建的 legacy policy input 不再等价 |
+| `test_pre_execution_planner_failure_is_invalid_non_safety_transition` | 1 | 断言旧 token `target_unsafe`，当前合同为 `endpoint_physical_unsafe` |
+| `test_post_reveal_endpoint_clearance_failure_is_severe_safety` | 2 | 硬编码 endpoint 已被当前候选与未知区缓冲语义过滤 |
+| `test_post_reveal_distant_blocker_keeps_endpoint_safe` | 1 | 同上，旧硬编码 endpoint 不再属于当前 action set |
+| `test_conservative_smoke_contract_is_stable_across_python_hash_seeds` | 1 | 固化旧 `success_done >= 0.99` 行为，不再作为当前路线门槛 |
+| `test_ten_episode_workflow_writes_finite_append_only_machine_artifacts` | 1 | 绑定冻结 Foundation HEAD 与旧十回合成功分布 |
+| `test_stage1_import_isolation_and_only_adapter_imports_path_planner` | 1 | 旧静态检查错误覆盖 Stage6 runtime-identity 审计 import |
+| `test_stage1_gate_binds_required_sources_without_writing_gate_artifact` | 1 | 仅允许冻结 Foundation HEAD，在当前预检分支结构性失败 |
+| `test_stage1_gate_fails_closed_on_missing_review_jump_state_and_artifact_drift` | 1 | 同上，属于已退役的冻结 Stage1 gate fixture |
+
+退役前第 1 组为 `52 passed, 15 failed`；退役后仍使用项目解释器和原两文件命令验收，结果为 `52 passed`。其中当前 Stage6 unknown-buffer 测试保持 `11/11`，剩余 Stage1 测试保持 `41/41`。本例外不授权移除其他测试、生产实现、默认 A*、Stage6 或相关安全合同。
 
 ## 保留边界
 
