@@ -5,7 +5,7 @@
 - path-feedback：29 项；
 - Stage26：148 项；
 - Stage18--25：250 项；
-- 合计：427 项 fixture 候选，另删除其余早期策略、Stage0--17、path-v2、release/canary、旧文档和成对测试等 closure。
+- 合计：427 项 fixture 候选；此外删除不属于当前 Stage6 基础链的早期策略实验、Xunce Stage0--17、path-v2、release/canary、旧文档和对应测试等依赖闭包。Stage6 仍依赖的 PPO Stage1--5 基础 workflow 保留。
 
 `model-explorer` 与 `visual-workbench` 已从父仓库索引和 `.gitmodules` 移除；`path-planner`、`dev-platform-constraints` 保留。此操作不递归删除本地子模块目录，也不删除 D 盘外部 artifacts、备份、训练输出或 checkpoint。
 

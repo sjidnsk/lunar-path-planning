@@ -5,7 +5,7 @@
 | 能力 | 状态 | 入口 | 边界 |
 |---|---|---|---|
 | Stage6 高分辨率前沿 PPO | 当前主线 | `scripts/run_ppo_stage6_standard.py`、`scripts/run_ppo_stage6_r3_evaluation_pipeline.py` | 正式训练与评估入口均保留；本次清理未执行完整训练，也不发布 checkpoint、替换 default policy、连接 executor 或启动 canary。 |
-| G1/G2/G3 双门槛 | 当前主线 | `scripts/run_xunce_mid_dual_g1_coverage.py`、`run_xunce_mid_dual_g2_planning_time.py`、`run_xunce_mid_dual_g3_closed_loop.py` | 保留完整实验入口；本次清理仅运行测试，不自动执行完整实验，也不发布 checkpoint、替换 default policy、连接 executor 或启动 canary。 |
+| G1/G2/G3 双门槛 | 当前主线 | `scripts/run_xunce_mid_dual_g1_coverage.py`、`scripts/run_xunce_mid_dual_g2_planning_time.py`、`scripts/run_xunce_mid_dual_g3_closed_loop.py` | 保留完整实验入口；本次清理仅运行测试，不自动执行完整实验，也不发布 checkpoint、替换 default policy、连接 executor 或启动 canary。 |
 | Python grid A* | 默认 | `src/lunar_exploration_ppo/integrations/path_planner_adapter.py` | `path_planner.search.AStarPlanner` 不被替换。 |
 | Hybrid A* | opt-in | `path-planner` | 不宣称 Ackermann feasible。 |
 | 多平台 path-planner v3 | opt-in | `path-planner/cpp`、`configs/platforms/v3/README.md` | 三份平台能力配置仅为结构有效的示例，不是已认证部署配置；不替换默认 A*，不连接 executor。 |
