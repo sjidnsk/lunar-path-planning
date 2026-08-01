@@ -19,7 +19,9 @@
     "configs/platforms/**",
     "scripts/xunce_artifact_io.py",
     "scripts/xunce_artifact_paths.py",
-    "scripts/xunce_platform_contract.py"
+    "scripts/xunce_platform_contract.py",
+    "docs/superpowers/plans/*multiplatform-planner-v3*.md",
+    "docs/superpowers/specs/*multiplatform-path-planner-v3*.md"
   ],
   "manual_review_globs": [
     ".gitmodules",
@@ -41,6 +43,12 @@
     "configs/xunce_stage2[0-6]_*.json",
     "tests/test_xunce_stage1[89]_*.py",
     "tests/test_xunce_stage2[0-6]_*.py",
+    "scripts/*stage1[89]*.py",
+    "scripts/*stage2[0-6]*.py",
+    "configs/*stage1[89]*.json",
+    "configs/*stage2[0-6]*.json",
+    "tests/test_*stage1[89]*.py",
+    "tests/test_*stage2[0-6]*.py",
     "scripts/*path_feedback*",
     "configs/path_feedback_*",
     "tests/*path_feedback*",

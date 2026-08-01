@@ -4,6 +4,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import subprocess
 from dataclasses import asdict, dataclass
@@ -37,13 +38,30 @@ _POLICY_SCHEMA = "route_retirement_policy/v1"
 _PRECEDENCE = ("protected", "manual_review", "retire_candidate", "unclassified")
 _GRAPH_COMMIT = "1682d7f9f755eb59c85e6d0ceaaa6f6d5d203dfd"
 _GRAPH_COUNTS = (252, 1480, 2710, 7)
-_BUNDLE_NAMES = (
-    "dev-platform-constraints.bundle",
-    "lunar-path-planning.bundle",
-    "model-explorer.bundle",
-    "path-planner.bundle",
-    "visual-workbench.bundle",
-)
+_BASELINE_COMMIT = "6a4c2dd0352fd6c1918a5eef39c9783b9d3c5c65"
+_GRAPH_PATH = Path("D:/codex/project/lunar-path-planning/.ua/knowledge-graph.json")
+_BACKUP_ROOT = Path("D:/CodexDownloads/lunar-path-planning-backups/2026-08-01-6a4c2dd")
+_POLICY_RELPATH = Path("configs/route_retirement_policy_v1.json")
+_EXPECTED_GITLINKS = {
+    "dev-platform-constraints": "61e9fa8afd09db83632456bdcf181c222ee13513",
+    "model-explorer": "b547a997d94ad199c822136d1ae345e180b87ca7",
+    "path-planner": "2f6378d3c47da027c0d4146d94cab881b8f2a594",
+    "visual-workbench": "9acc4ce83fc2884221a9759fa00824692eab3315",
+}
+_EXPECTED_BUNDLE_COMMITS = {
+    "dev-platform-constraints.bundle": _EXPECTED_GITLINKS["dev-platform-constraints"],
+    "lunar-path-planning.bundle": _BASELINE_COMMIT,
+    "model-explorer.bundle": _EXPECTED_GITLINKS["model-explorer"],
+    "path-planner.bundle": _EXPECTED_GITLINKS["path-planner"],
+    "visual-workbench.bundle": _EXPECTED_GITLINKS["visual-workbench"],
+}
+_EXPECTED_BUNDLE_HASHES = {
+    "dev-platform-constraints.bundle": "e5b156378377d05986c5f1f8dc1bc3ea4d8d0419868dd1788803d214cba111f5",
+    "lunar-path-planning.bundle": "a23f5d663868692c2cbf52dc6713ecbfcec4c5cdb6711aeb1546157e711c7dea",
+    "model-explorer.bundle": "891860eb54c5ec5cebdd44b84bc4af1a9eede90c659de112f531cd9296185a55",
+    "path-planner.bundle": "37216255c231cf490e91d4f6d74c242b15e43570a8ee0f3ef035614eb97a4bc1",
+    "visual-workbench.bundle": "11053c6199c0f79a52668f3c7bfd42515d86620c005bd0937e5be016e483b977",
+}
 
 
 def _freeze(value: Any) -> Any:
@@ -67,6 +85,37 @@ def _normalize_repo_path(path: str) -> str:
     ):
         raise ValueError(f"repository path must be relative: {path!r}")
     return posix_path.as_posix()
+
+
+def _path_key(path: Path) -> str:
+    return os.path.normcase(str(path.resolve()))
+
+
+def _validate_fixed_paths(
+    repo_root: Path,
+    policy_path: Path,
+    graph_path: Path,
+    backup_root: Path,
+) -> None:
+    expected_policy = repo_root.resolve() / _POLICY_RELPATH
+    if _path_key(policy_path) != _path_key(expected_policy):
+        raise ValueError(f"policy path must be {expected_policy.as_posix()}")
+    if _path_key(graph_path) != _path_key(_GRAPH_PATH):
+        raise ValueError(f"knowledge graph path must be {_GRAPH_PATH.as_posix()}")
+    if _path_key(backup_root) != _path_key(_BACKUP_ROOT):
+        raise ValueError(f"backup root must be {_BACKUP_ROOT.as_posix()}")
+
+
+def _validate_fixed_cli_inputs(
+    repo_root: Path,
+    policy_path: Path,
+    graph_path: Path,
+    backup_root: Path,
+    baseline_commit: str,
+) -> None:
+    _validate_fixed_paths(repo_root, policy_path, graph_path, backup_root)
+    if baseline_commit != _BASELINE_COMMIT:
+        raise ValueError(f"baseline commit must be {_BASELINE_COMMIT}")
 
 
 def load_policy(path: Path) -> Mapping[str, Any]:
@@ -164,22 +213,42 @@ def list_tracked_paths(repo_root: Path) -> tuple[str, ...]:
     return tuple(sorted(paths))
 
 
-def _ignored_paths(repo_root: Path, paths: Sequence[str]) -> tuple[set[str], str]:
-    if not paths:
-        return set(), "ok"
-    payload = b"\0".join(path.encode("utf-8") for path in paths) + b"\0"
+def _is_permission_failure(result: subprocess.CompletedProcess[bytes]) -> bool:
+    stderr = result.stderr.decode("utf-8", errors="replace").lower()
+    return any(marker in stderr for marker in ("permission denied", "access is denied", "operation not permitted"))
+
+
+def _audit_ignored_outputs(repo_root: Path) -> dict[str, Any]:
     try:
-        result = _run(("git", "check-ignore", "-z", "--stdin"), repo_root, input_bytes=payload)
+        result = _run(("git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"), repo_root)
     except PermissionError:
-        return set(), "permission_denied"
-    if result.returncode not in (0, 1):
+        return {"status": "permission_denied", "paths": []}
+    if result.returncode != 0:
+        if _is_permission_failure(result):
+            return {"status": "permission_denied", "paths": []}
         raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip())
-    ignored = {
+    enumerated = tuple(sorted({
         _normalize_repo_path(item.decode("utf-8"))
         for item in result.stdout.split(b"\0")
         if item
-    }
-    return ignored, "ok"
+    }))
+    if not enumerated:
+        return {"status": "ok", "paths": []}
+    payload = b"\0".join(path.encode("utf-8") for path in enumerated) + b"\0"
+    try:
+        checked = _run(("git", "check-ignore", "-z", "--stdin"), repo_root, input_bytes=payload)
+    except PermissionError:
+        return {"status": "permission_denied", "paths": []}
+    if checked.returncode not in (0, 1):
+        if _is_permission_failure(checked):
+            return {"status": "permission_denied", "paths": []}
+        raise RuntimeError(checked.stderr.decode("utf-8", errors="replace").strip())
+    confirmed = sorted({
+        _normalize_repo_path(item.decode("utf-8"))
+        for item in checked.stdout.split(b"\0")
+        if item
+    })
+    return {"status": "ok", "paths": confirmed}
 
 
 def _json_text(value: Mapping[str, Any]) -> str:
@@ -298,47 +367,118 @@ def _expected_bundle_hashes(hash_path: Path) -> dict[str, str]:
     return expected
 
 
-def _audit_backups(repo_root: Path, backup_root: Path) -> dict[str, Any]:
+def _bundle_heads(result: subprocess.CompletedProcess[bytes]) -> tuple[str, ...]:
+    if result.returncode != 0:
+        return ()
+    heads = {
+        line.split(maxsplit=1)[0].decode("ascii")
+        for line in result.stdout.splitlines()
+        if re.match(rb"^[0-9a-f]{40}(?:\s|$)", line)
+    }
+    return tuple(sorted(heads))
+
+
+def _audit_backups(
+    repo_root: Path,
+    backup_root: Path,
+    *,
+    expected_hashes: Mapping[str, str] = _EXPECTED_BUNDLE_HASHES,
+    expected_commits: Mapping[str, str] = _EXPECTED_BUNDLE_COMMITS,
+) -> dict[str, Any]:
+    bundle_names = tuple(sorted(expected_commits))
+    if set(expected_hashes) != set(expected_commits):
+        raise ValueError("expected bundle hash and commit inventories must match")
     hash_path = backup_root / "bundle-hashes.txt"
-    expected_hashes = _expected_bundle_hashes(hash_path) if hash_path.is_file() else {}
+    declared_hashes = _expected_bundle_hashes(hash_path) if hash_path.is_file() else {}
     records: list[dict[str, Any]] = []
-    for bundle_name in _BUNDLE_NAMES:
+    for bundle_name in bundle_names:
         bundle_path = backup_root / bundle_name
-        expected = expected_hashes.get(bundle_name)
+        expected_hash = expected_hashes[bundle_name]
+        expected_commit = expected_commits[bundle_name]
+        declared_hash = declared_hashes.get(bundle_name)
         if not bundle_path.is_file():
             records.append(
                 {
                     "name": bundle_name,
-                    "expected_sha256": expected,
+                    "expected_sha256": expected_hash,
+                    "declared_sha256": declared_hash,
                     "actual_sha256": None,
                     "hash_matches": False,
                     "bundle_verified": False,
+                    "expected_commit": expected_commit,
+                    "contains_expected_commit": False,
+                    "heads": [],
                     "status": "missing",
                 }
             )
             continue
         actual = _sha256(bundle_path)
         verify = _run(("git", "bundle", "verify", str(bundle_path)), repo_root)
-        hash_matches = expected == actual
+        listed = _run(("git", "bundle", "list-heads", str(bundle_path)), repo_root)
+        heads = _bundle_heads(listed)
+        hash_matches = expected_hash == actual
         bundle_verified = verify.returncode == 0
-        status = "verified" if hash_matches and bundle_verified else "hash_mismatch" if not hash_matches else "verification_failed"
+        contains_expected_commit = expected_commit in heads
+        if not hash_matches:
+            status = "hash_mismatch"
+        elif not bundle_verified or listed.returncode != 0:
+            status = "verification_failed"
+        elif not contains_expected_commit:
+            status = "missing_expected_commit"
+        else:
+            status = "verified"
         records.append(
             {
                 "name": bundle_name,
-                "expected_sha256": expected,
+                "expected_sha256": expected_hash,
+                "declared_sha256": declared_hash,
                 "actual_sha256": actual,
                 "hash_matches": hash_matches,
                 "bundle_verified": bundle_verified,
+                "expected_commit": expected_commit,
+                "contains_expected_commit": contains_expected_commit,
+                "heads": list(heads),
                 "status": status,
             }
         )
+    hash_manifest_matches_expected = declared_hashes == dict(expected_hashes)
     return {
         "root": backup_root.as_posix(),
         "hash_manifest": hash_path.name,
         "hash_manifest_sha256": _sha256(hash_path) if hash_path.is_file() else None,
+        "hash_manifest_matches_expected": hash_manifest_matches_expected,
         "records": records,
-        "all_verified": all(record["status"] == "verified" for record in records),
+        "all_verified": hash_manifest_matches_expected and all(record["status"] == "verified" for record in records),
     }
+
+
+def _audit_baseline_gitlinks(
+    repo_root: Path,
+    baseline_commit: str,
+    expected_gitlinks: Mapping[str, str] = _EXPECTED_GITLINKS,
+) -> dict[str, Any]:
+    result = _run(("git", "ls-tree", baseline_commit, "--", *sorted(expected_gitlinks)), repo_root)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip())
+    actual: dict[str, str] = {}
+    for line in result.stdout.decode("utf-8").splitlines():
+        match = re.match(r"^160000 commit ([0-9a-f]{40})\t(.+)$", line)
+        if match:
+            actual[_normalize_repo_path(match.group(2))] = match.group(1)
+    records = []
+    for path in sorted(expected_gitlinks):
+        expected = expected_gitlinks[path]
+        observed = actual.get(path)
+        status = "matched" if observed == expected else "missing" if observed is None else "mismatch"
+        records.append(
+            {
+                "path": path,
+                "expected_commit": expected,
+                "actual_commit": observed,
+                "status": status,
+            }
+        )
+    return {"records": records, "all_match": all(record["status"] == "matched" for record in records)}
 
 
 def _resolve_commit(repo_root: Path, commit: str) -> str:
@@ -398,10 +538,14 @@ def build_manifest(
     backup_root: Path,
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
+    _validate_fixed_paths(repo_root, policy_path, graph_path, backup_root)
     policy = load_policy(policy_path)
     graph_summary = validate_graph(graph_path)
+    baseline_commit = _resolve_commit(repo_root, _BASELINE_COMMIT)
+    baseline_tree = _audit_baseline_gitlinks(repo_root, baseline_commit)
     tracked_paths = list_tracked_paths(repo_root)
-    ignored_paths, ignored_state_status = _ignored_paths(repo_root, tracked_paths)
+    ignored_outputs = _audit_ignored_outputs(repo_root)
+    ignored_paths = set(ignored_outputs["paths"])
     classified: list[CandidateRecord] = []
     for path in tracked_paths:
         record = classify_path(path, policy)
@@ -433,36 +577,89 @@ def build_manifest(
                     "reference_count": len(blockers),
                 }
             )
-    head_commit = _resolve_commit(repo_root, "HEAD")
+    backups = _audit_backups(repo_root, backup_root)
+    backups["bundles_all_verified"] = backups["all_verified"]
+    backups["all_verified"] = backups["bundles_all_verified"] and baseline_tree["all_match"]
     return {
         "schema_version": "route_retirement_preflight/v1",
-        "baseline_commit": head_commit,
+        "baseline_commit": baseline_commit,
         "graph": {
             **asdict(graph_summary),
-            "is_ancestor_of_baseline": _is_ancestor(repo_root, graph_summary.git_commit_hash, head_commit),
+            "is_ancestor_of_baseline": _is_ancestor(repo_root, graph_summary.git_commit_hash, baseline_commit),
         },
-        "ignored_state_status": ignored_state_status,
+        "ignored_outputs": ignored_outputs,
+        "ignored_state_status": ignored_outputs["status"],
         "records": records,
         "reference_audit": reference_audit,
-        "backups": _audit_backups(repo_root, backup_root),
+        "backups": backups,
+        "baseline_tree": baseline_tree,
         "blocking_reasons": blocking_reasons,
     }
 
 
 def _local_tags(repo_root: Path, baseline_commit: str) -> list[str]:
-    result = _run(("git", "tag", "--points-at", baseline_commit, "--sort=refname"), repo_root)
+    result = _run(
+        (
+            "git",
+            "for-each-ref",
+            "--format=%(refname:short)%00%(objectname)%00%(*objectname)",
+            "refs/tags",
+        ),
+        repo_root,
+    )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip())
-    return sorted(line for line in result.stdout.decode("utf-8").splitlines() if line)
+    tags: list[str] = []
+    for line in result.stdout.decode("utf-8").splitlines():
+        fields = line.split("\0")
+        if len(fields) != 3:
+            continue
+        name, direct, peeled = fields
+        if (peeled or direct) == baseline_commit:
+            tags.append(name)
+    return sorted(tags)
 
 
-def _remote_tag_status(repo_root: Path, tags: Sequence[str]) -> str:
+def _classify_remote_tag_status(tags: Sequence[str], baseline_commit: str, stdout: bytes) -> str:
+    refs: dict[str, dict[str, str]] = {}
+    for line in stdout.decode("utf-8").splitlines():
+        fields = line.split("\t", 1)
+        if len(fields) != 2:
+            continue
+        commit, ref = fields
+        if not ref.startswith("refs/tags/"):
+            continue
+        name = ref[len("refs/tags/") :]
+        peeled = name.endswith("^{}")
+        if peeled:
+            name = name[:-3]
+        refs.setdefault(name, {})["peeled" if peeled else "direct"] = commit
+    matched = 0
+    for tag in tags:
+        remote = refs.get(tag)
+        if remote is None:
+            continue
+        target = remote.get("peeled") or remote.get("direct")
+        if target != baseline_commit:
+            return "mismatch"
+        matched += 1
+    if matched == len(tags):
+        return "pushed"
+    if matched:
+        return "partial"
+    return "not_pushed"
+
+
+def _remote_tag_status(repo_root: Path, tags: Sequence[str], baseline_commit: str) -> str:
     if not tags:
         return "missing_local_tag"
-    result = _run(("git", "ls-remote", "--tags", "origin", *(f"refs/tags/{tag}" for tag in tags)), repo_root)
+    patterns: list[str] = []
+    for tag in tags:
+        patterns.extend((f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"))
+    result = _run(("git", "ls-remote", "--tags", "origin", *patterns), repo_root)
     if result.returncode != 0:
         return "remote_unavailable"
-    return "pushed" if result.stdout.strip() else "not_pushed"
+    return _classify_remote_tag_status(tags, baseline_commit, result.stdout)
 
 
 def _hash_baseline_tests(root: Path | None) -> dict[str, Any]:
@@ -536,6 +733,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = args.repo_root.resolve()
+    _validate_fixed_cli_inputs(
+        repo_root,
+        args.policy,
+        args.knowledge_graph,
+        args.backup_root,
+        args.baseline_commit,
+    )
     baseline_commit = _resolve_commit(repo_root, args.baseline_commit)
     manifest = build_manifest(repo_root, args.policy, args.knowledge_graph, args.backup_root)
     manifest["baseline_commit"] = baseline_commit
@@ -545,7 +749,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         baseline_commit,
     )
     local_tags = _local_tags(repo_root, baseline_commit)
-    remote_tag_status = _remote_tag_status(repo_root, local_tags)
+    remote_tag_status = _remote_tag_status(repo_root, local_tags, baseline_commit)
     baseline_tests = _hash_baseline_tests(args.baseline_tests_root)
     records = manifest["records"]
     summary = {
@@ -555,7 +759,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "classification_counts": _classification_counts(records),
         "blocking_candidate_count": len(manifest["blocking_reasons"]),
         "backups_all_verified": manifest["backups"]["all_verified"],
-        "ignored_state_status": manifest["ignored_state_status"],
+        "baseline_tree_all_match": manifest["baseline_tree"]["all_match"],
+        "ignored_outputs": manifest["ignored_outputs"],
+        "ignored_state_status": manifest["ignored_outputs"]["status"],
         "local_tags": local_tags,
         "remote_tag_status": remote_tag_status,
         "baseline_tests": baseline_tests,
@@ -577,6 +783,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "local_tags": local_tags,
         "remote_tag_status": remote_tag_status,
         "baseline_tests": baseline_tests,
+        "baseline_tree": manifest["baseline_tree"],
         **manifest["backups"],
     }
     output_root = args.output_root.resolve()
