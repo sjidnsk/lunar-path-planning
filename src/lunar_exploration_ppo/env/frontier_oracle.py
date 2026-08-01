@@ -13,6 +13,13 @@ from lunar_exploration_ppo.env.sensor_model import ray_cells_from_world
 from lunar_exploration_ppo.utils.geometry import CellXY, PoseXYTheta
 
 
+_START_FALLBACK_HEADINGS = tuple(
+    index * math.pi / 4.0 for index in range(8)
+)
+_START_FALLBACK_FOV_DEG = 90.0
+_START_FALLBACK_RAY_ANGLE_STEP_DEG = 1.0
+
+
 @dataclass(frozen=True, slots=True)
 class FrontierOpportunityAudit:
     opportunity_cells: tuple[CellXY, ...]
@@ -28,17 +35,31 @@ def audit_frontier_opportunities(
     observed_state: ObservedMapState,
     pose: PoseXYTheta,
     *,
+    planning_safe_mask: np.ndarray,
     sensor_range_m: float,
     max_slope_deg: float = 30.0,
 ) -> FrontierOpportunityAudit:
-    component = _corner_safe_component(observed_state.observed_safe_mask, pose.cell)
+    component = _corner_safe_component(planning_safe_mask, pose.cell)
     unknown = ~observed_state.observed_mask
     unknown_count = int(np.count_nonzero(unknown))
     if unknown_count == 0:
         return FrontierOpportunityAudit((), int(np.count_nonzero(component)), 0)
     radius_cells = sensor_range_m / observed_state.geometry.resolution_m
     opportunities: list[CellXY] = []
+    if (
+        observed_state.geometry.in_bounds(pose.cell)
+        and component[pose.cell.y, pose.cell.x]
+        and _has_start_fallback_observed_gain(
+            observed_state,
+            pose.cell,
+            sensor_range_m=sensor_range_m,
+            max_slope_deg=max_slope_deg,
+        )
+    ):
+        opportunities.append(pose.cell)
     for source_y, source_x in np.argwhere(component):
+        if source_x == pose.cell.x and source_y == pose.cell.y:
+            continue
         min_x = max(0, math.floor(source_x - radius_cells))
         max_x = min(observed_state.geometry.width - 1, math.ceil(source_x + radius_cells))
         min_y = max(0, math.floor(source_y - radius_cells))
@@ -115,4 +136,41 @@ def _has_observed_gain_los(
             return True
         if state.obstacle[cell.y, cell.x] or state.slope_deg[cell.y, cell.x] > max_slope_deg:
             return False
+    return False
+
+
+def _has_start_fallback_observed_gain(
+    state: ObservedMapState,
+    source: CellXY,
+    *,
+    sensor_range_m: float,
+    max_slope_deg: float,
+) -> bool:
+    origin = state.geometry.cell_to_world_center(source)
+    ray_count = int(
+        round(
+            _START_FALLBACK_FOV_DEG
+            / _START_FALLBACK_RAY_ANGLE_STEP_DEG
+        )
+    ) + 1
+    for heading in _START_FALLBACK_HEADINGS:
+        for ray_index in range(ray_count):
+            offset = (
+                -_START_FALLBACK_FOV_DEG / 2.0
+                + ray_index * _START_FALLBACK_RAY_ANGLE_STEP_DEG
+            )
+            angle = heading + math.radians(offset)
+            for cell in ray_cells_from_world(
+                origin,
+                angle,
+                state.geometry,
+                range_m=sensor_range_m,
+            )[1:]:
+                if not state.observed_mask[cell.y, cell.x]:
+                    return True
+                if (
+                    state.obstacle[cell.y, cell.x]
+                    or state.slope_deg[cell.y, cell.x] > max_slope_deg
+                ):
+                    break
     return False

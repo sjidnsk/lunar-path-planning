@@ -78,6 +78,67 @@ def test_standard_catalog_counts_density_parent_and_child_spatial_isolation() ->
     assert audit["child_overlap_pair_count"] == 0
 
 
+def test_every_catalog_record_has_an_exact_safe_start_center() -> None:
+    catalog_module = _catalog_module()
+    catalog = catalog_module.StandardScenarioCatalogBuilder(
+        dem_path=DEM_PATH,
+        slope_path=SLOPE_PATH,
+        verify_hashes=False,
+    ).build()
+    geometry = catalog_module.GridGeometry(
+        width=256,
+        height=256,
+        resolution_m=0.5,
+    )
+
+    missing = []
+    for record in catalog.records:
+        base_height = catalog_module._upsample_standard_dem(
+            catalog._read_dem_window(record)
+        )
+        candidates = catalog_module._standard_exact_safe_lowres_centers(
+            base_height,
+            geometry,
+        )
+        if not candidates:
+            missing.append(record.scenario_id)
+
+    assert len(catalog.records) == 1064
+    assert missing == []
+
+
+def test_standard_start_pose_fails_closed_without_an_exact_safe_center() -> None:
+    catalog_module = _catalog_module()
+    catalog = catalog_module.StandardScenarioCatalogBuilder(
+        dem_path=DEM_PATH,
+        slope_path=SLOPE_PATH,
+        verify_hashes=False,
+    ).build()
+    record = catalog.records[0]
+    prior = catalog.read_standard_prior(record)
+    geometry = catalog_module.GridGeometry(
+        width=256,
+        height=256,
+        resolution_m=0.5,
+    )
+    steep_height = np.repeat(
+        np.arange(256, dtype=np.float64)[None, :],
+        256,
+        axis=0,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"no exact-safe start center: train/scenario-0000",
+    ):
+        catalog_module._standard_start_pose(
+            record,
+            prior,
+            steep_height,
+            geometry,
+        )
+
+
 def test_catalog_is_deterministic_and_proxy_seeds_bind_assigned_split() -> None:
     catalog_module = _catalog_module()
     builder = catalog_module.StandardScenarioCatalogBuilder(

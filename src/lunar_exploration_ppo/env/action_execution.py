@@ -40,12 +40,13 @@ def build_sensor_poses(
         cumulative.append(cumulative[-1] + length)
     path_poses: list[SensorPose] = []
     distance = 0.0
+    segment_index = 0
+    last_segment_index = len(segment_lengths) - 1
     while distance < total_length - 1e-12:
-        segment_index = next(
-            index
-            for index, end_distance in enumerate(cumulative[1:])
-            if distance < end_distance - 1e-12 or index == len(segment_lengths) - 1
-        )
+        while segment_index < last_segment_index and not (
+            distance < cumulative[segment_index + 1] - 1e-12
+        ):
+            segment_index += 1
         segment_start = points[segment_index]
         segment_end = points[segment_index + 1]
         segment_length = segment_lengths[segment_index]

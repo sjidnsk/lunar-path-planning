@@ -12,6 +12,55 @@ from lunar_exploration_ppo.env.scenario import TruthMap
 from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry
 
 
+PLANNING_UNKNOWN_BUFFER_M = 0.75
+
+
+def build_planning_safe_mask(
+    *,
+    observed_safe_mask: np.ndarray,
+    observed_mask: np.ndarray,
+    resolution_m: float,
+    unknown_buffer_m: float = PLANNING_UNKNOWN_BUFFER_M,
+) -> np.ndarray:
+    """Build the observed-only planning mask without inflating ROI boundaries."""
+
+    physical = np.asarray(observed_safe_mask, dtype=bool)
+    observed = np.asarray(observed_mask, dtype=bool)
+    if physical.ndim != 2 or physical.shape != observed.shape:
+        raise ValueError("observed and physical safety masks must share a 2D shape")
+    if not math.isfinite(resolution_m) or resolution_m <= 0.0:
+        raise ValueError("planning mask resolution must be finite and positive")
+    if not math.isfinite(unknown_buffer_m) or unknown_buffer_m < 0.0:
+        raise ValueError("planning unknown buffer must be finite and nonnegative")
+    planning = physical.copy()
+    if unknown_buffer_m == 0.0 or np.all(observed):
+        return planning
+    unknown = ~observed
+    within_unknown_buffer = unknown.copy()
+    radius_cells = math.ceil(unknown_buffer_m / resolution_m)
+    height, width = observed.shape
+    for dy in range(-radius_cells, radius_cells + 1):
+        for dx in range(-radius_cells, radius_cells + 1):
+            if dx == 0 and dy == 0:
+                continue
+            if math.hypot(dx * resolution_m, dy * resolution_m) >= unknown_buffer_m:
+                continue
+            source_y0 = max(0, -dy)
+            source_y1 = min(height, height - dy)
+            source_x0 = max(0, -dx)
+            source_x1 = min(width, width - dx)
+            target_y0 = source_y0 + dy
+            target_y1 = source_y1 + dy
+            target_x0 = source_x0 + dx
+            target_x1 = source_x1 + dx
+            within_unknown_buffer[
+                target_y0:target_y1,
+                target_x0:target_x1,
+            ] |= unknown[source_y0:source_y1, source_x0:source_x1]
+    planning &= ~within_unknown_buffer
+    return planning
+
+
 @dataclass(slots=True)
 class ObservedMapState:
     geometry: GridGeometry
@@ -23,6 +72,14 @@ class ObservedMapState:
     traversability: np.ndarray
     observed_safe_mask: np.ndarray
     remaining_step_budget_norm: float = 1.0
+
+    @property
+    def planning_safe_mask(self) -> np.ndarray:
+        return build_planning_safe_mask(
+            observed_safe_mask=self.observed_safe_mask,
+            observed_mask=self.observed_mask,
+            resolution_m=self.geometry.resolution_m,
+        )
 
     @classmethod
     def empty(cls, geometry: GridGeometry) -> ObservedMapState:

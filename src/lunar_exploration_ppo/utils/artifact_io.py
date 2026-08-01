@@ -3,10 +3,22 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
+import uuid
 import warnings
 from pathlib import Path
 from typing import Any, Iterable
+
+from lunar_exploration_ppo.utils.path_security import (
+    DurableFileIdentity,
+    DurableParentGuard,
+    PathSecurityError,
+    durable_fsync_directory,
+    durable_makedirs,
+    durable_publish_exclusive,
+    durable_replace,
+    durable_unlink,
+    guarded_file_identity,
+)
 
 
 class ArtifactPathError(ValueError):
@@ -42,7 +54,16 @@ class ArtifactStore:
 
     @staticmethod
     def canonical_json_bytes(value: Any) -> bytes:
-        return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        return (
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
 
     def write_bytes(self, relative_path: str | Path, payload: bytes) -> Path:
         destination = self.resolve(relative_path)
@@ -59,12 +80,24 @@ class ArtifactStore:
 
     def append_jsonl(self, relative_path: str | Path, value: Any) -> Path:
         destination = self.resolve(relative_path)
+        line = (
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
         self._make_parent(destination)
-        line = (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        created = not os.path.lexists(destination)
         with open(self._native_path(destination), "ab") as stream:
             stream.write(line)
             stream.flush()
             os.fsync(stream.fileno())
+        if created:
+            durable_fsync_directory(destination.parent)
         return destination
 
     def build_manifest(self, relative_paths: Iterable[str | Path]) -> dict[str, object]:
@@ -90,48 +123,161 @@ class ArtifactStore:
 
     def _atomic_write(self, destination: Path, payload: bytes) -> None:
         self._make_parent(destination)
-        native_parent = self._native_path(destination.parent)
-        temporary: Path | None = None
+        temporary = destination.parent / (
+            f".{destination.name}.{uuid.uuid4().hex}.tmp"
+        )
+        temporary_identity: DurableFileIdentity | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=native_parent,
-                prefix=f".{destination.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as stream:
-                temporary = Path(stream.name)
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self._native_path(destination))
-        finally:
-            if temporary is not None and temporary.exists():
-                temporary.unlink()
+            temporary_identity = self._write_new_file(temporary, payload)
+            durable_replace(
+                temporary,
+                destination,
+                expected_source_identity=temporary_identity,
+                replace_existing=True,
+            )
+            temporary_identity = None
+        except BaseException as primary_error:
+            self._cleanup_temporary(
+                temporary,
+                expected_identity=temporary_identity,
+                primary_error=primary_error,
+            )
+            raise
 
     def _exclusive_write(self, destination: Path, payload: bytes) -> None:
         self._make_parent(destination)
-        native_parent = self._native_path(destination.parent)
-        temporary: Path | None = None
+        temporary = destination.parent / (
+            f".{destination.name}.{uuid.uuid4().hex}.tmp"
+        )
+        temporary_identity: DurableFileIdentity | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=native_parent,
-                prefix=f".{destination.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as stream:
-                temporary = Path(stream.name)
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.link(self._native_path(temporary), self._native_path(destination))
-        finally:
-            if temporary is not None and temporary.exists():
-                temporary.unlink()
+            temporary_identity = self._write_new_file(temporary, payload)
+            durable_publish_exclusive(
+                temporary,
+                destination,
+                expected_source_identity=temporary_identity,
+            )
+            temporary_identity = None
+        except BaseException as primary_error:
+            self._cleanup_temporary(
+                temporary,
+                expected_identity=temporary_identity,
+                primary_error=primary_error,
+            )
+            raise
+
+    def _write_new_file(
+        self,
+        path: Path,
+        payload: bytes,
+    ) -> DurableFileIdentity:
+        identity: DurableFileIdentity | None = None
+        try:
+            with DurableParentGuard(path.parent) as parent_guard:
+                descriptor = parent_guard.open_file(
+                    path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                identity = guarded_file_identity(
+                    descriptor,
+                    path,
+                    parent_guard=parent_guard,
+                )
+                primary_error: BaseException | None = None
+                try:
+                    self._write_all(
+                        descriptor,
+                        path,
+                        payload,
+                        parent_guard=parent_guard,
+                    )
+                    os.fsync(descriptor)
+                    identity = guarded_file_identity(
+                        descriptor,
+                        path,
+                        parent_guard=parent_guard,
+                    )
+                    if identity[3] != len(payload):
+                        raise PathSecurityError(
+                            "artifact temporary size changed while written"
+                        )
+                except BaseException as exc:
+                    primary_error = exc
+                    try:
+                        identity = guarded_file_identity(
+                            descriptor,
+                            path,
+                            parent_guard=parent_guard,
+                        )
+                    except BaseException as identity_error:
+                        exc.add_note(
+                            "suppressed failure while refreshing temporary identity: "
+                            f"{identity_error}"
+                        )
+                    raise
+                finally:
+                    try:
+                        os.close(descriptor)
+                    except BaseException as close_error:
+                        if primary_error is None:
+                            raise
+                        primary_error.add_note(
+                            f"suppressed descriptor close failure: {close_error}"
+                        )
+        except BaseException as primary_error:
+            self._cleanup_temporary(
+                path,
+                expected_identity=identity,
+                primary_error=primary_error,
+            )
+            raise
+        if identity is None:
+            raise PathSecurityError("artifact temporary identity was not captured")
+        return identity
+
+    @staticmethod
+    def _write_all(
+        descriptor: int,
+        path: Path,
+        payload: bytes,
+        *,
+        parent_guard: DurableParentGuard,
+    ) -> None:
+        view = memoryview(payload)
+        written = 0
+        while written < len(view):
+            count = os.write(descriptor, view[written:])
+            if count <= 0:
+                raise OSError("artifact descriptor write made no progress")
+            written += count
+            guarded_file_identity(
+                descriptor,
+                path,
+                parent_guard=parent_guard,
+            )
+
+    @staticmethod
+    def _cleanup_temporary(
+        temporary: Path,
+        *,
+        expected_identity: DurableFileIdentity | None,
+        primary_error: BaseException | None,
+    ) -> None:
+        if expected_identity is None or not os.path.lexists(temporary):
+            return
+        try:
+            durable_unlink(temporary, expected_identity=expected_identity)
+        except BaseException as cleanup_error:
+            if primary_error is None:
+                raise
+            primary_error.add_note(
+                "suppressed identity-bound temporary cleanup failure: "
+                f"{cleanup_error}"
+            )
 
     def _make_parent(self, path: Path) -> None:
-        self._native_path(path.parent).mkdir(parents=True, exist_ok=True)
+        durable_makedirs(path.parent)
 
     @classmethod
     def _validate_path(cls, path: Path) -> None:

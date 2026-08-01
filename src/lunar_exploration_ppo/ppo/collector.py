@@ -7,9 +7,11 @@ import math
 import multiprocessing as mp
 import os
 import pickle
+import sys
+import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from multiprocessing.connection import Connection
 from types import MappingProxyType
 from typing import Any, Final
@@ -39,13 +41,82 @@ from lunar_exploration_ppo.utils.artifact_io import ArtifactStore
 from lunar_exploration_ppo.utils.geometry import CellXY
 
 
-COLLECTOR_SCHEMA_VERSION: Final = "stage4_spawn_collector/v1"
+COLLECTOR_SCHEMA_VERSION: Final = "stage4_spawn_collector/v2"
 VECTOR_STATE_SCHEMA_VERSION: Final = "stage4_spawn_vector_worker_state/v1"
 _MAX_DIAGNOSTIC_RESETS_PER_ENV: Final = 1024
+PLANNER_FAILURE_REASONS: Final = (
+    "endpoint_physical_unsafe",
+    "endpoint_unknown_buffer_unsafe",
+    "path_physical_unsafe",
+    "path_unknown_buffer_unsafe",
+    "planner_no_path",
+)
+
+
+def _process_is_alive(process: mp.Process) -> bool:
+    try:
+        return bool(process.is_alive())
+    except BaseException:
+        return False
+
+
+def _process_exitcode(process: mp.Process) -> int | None:
+    try:
+        return process.exitcode
+    except BaseException:
+        return None
 
 
 class WorkerProcessError(RuntimeError):
     """Spawn worker exception、EOF、timeout 或协议漂移。"""
+
+
+@dataclass(frozen=True, slots=True)
+class _SpawnCleanupIssue:
+    worker_index: int | None
+    resource: str
+    operation: str
+    error_type: str
+    message: str
+
+    def render(self) -> str:
+        worker = "none" if self.worker_index is None else str(self.worker_index)
+        return (
+            f"{self.resource}[worker={worker}].{self.operation}="
+            f"{self.error_type}: {self.message}"
+        )
+
+
+class SpawnCleanupError(WorkerProcessError):
+    """Spawn vector 无法确认全部 worker 与 IPC/进程 handle 已清理。"""
+
+    def __init__(
+        self,
+        *,
+        alive_workers: Sequence[tuple[int, int | None, int | None]],
+        open_child_endpoints: Sequence[int],
+        open_parent_endpoints: Sequence[int],
+        open_process_handles: Sequence[int],
+        issues: Sequence[_SpawnCleanupIssue],
+    ) -> None:
+        self.alive_workers = tuple(alive_workers)
+        self.open_child_endpoints = tuple(open_child_endpoints)
+        self.open_parent_endpoints = tuple(open_parent_endpoints)
+        self.open_process_handles = tuple(open_process_handles)
+        self.issues = tuple(issues)
+        alive = ", ".join(
+            f"worker={worker},pid={pid},exitcode={exitcode}"
+            for worker, pid, exitcode in self.alive_workers
+        )
+        rendered_issues = ", ".join(issue.render() for issue in self.issues)
+        super().__init__(
+            "SpawnVectorEnv cleanup incomplete: "
+            f"alive_workers=[{alive}]; "
+            f"open_child_endpoints={list(self.open_child_endpoints)}; "
+            f"open_parent_endpoints={list(self.open_parent_endpoints)}; "
+            f"open_process_handles={list(self.open_process_handles)}; "
+            f"errors=[{rendered_issues}]"
+        )
 
 
 class CollectorError(RuntimeError):
@@ -93,6 +164,10 @@ class WorkerObservation:
     needs_policy: bool
     reset_trainable: bool = False
     fake_logprob_created: bool = False
+    reset_coverage_rate: float = 0.0
+    reset_reason: str = "none"
+    reset_done: bool = False
+    reset_diagnostics: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +216,12 @@ class CollectorAudit:
     policy_state_sha256: str
     snapshot_sha256: tuple[str, ...]
     terminal_transition_count: int
+    reset_diagnostics: tuple[Mapping[str, object], ...] = ()
+    planner_failure_counts: Mapping[str, int] = field(
+        default_factory=lambda: {
+            reason: 0 for reason in PLANNER_FAILURE_REASONS
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +229,29 @@ class CollectionResult:
     batch: RolloutBatch
     audit: CollectorAudit
     vector_env_states: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CollectorPreflightResult:
+    schema_version: str
+    transitions: tuple[RolloutTransition, ...]
+    trainable_transition_count: int
+    worker_pids: tuple[int, ...]
+    worker_start_methods: tuple[str, ...]
+    diagnostic_reset_counts: tuple[int, ...]
+    inference_pids: tuple[int, ...]
+    inference_batch_count: int
+    policy_device: str
+    policy_state_sha256: str
+    snapshot_sha256: tuple[str, ...]
+    terminal_transition_count: int
+    timings_seconds: Mapping[str, float]
+    reset_diagnostics: tuple[Mapping[str, object], ...] = ()
+    planner_failure_counts: Mapping[str, int] = field(
+        default_factory=lambda: {
+            reason: 0 for reason in PLANNER_FAILURE_REASONS
+        }
+    )
 
 
 class SpawnVectorEnv:
@@ -172,24 +276,33 @@ class SpawnVectorEnv:
         self.timeout_seconds = float(timeout_seconds)
         self._context = mp.get_context("spawn")
         self._connections: list[Connection] = []
+        self._child_connections: list[Connection] = []
         self._processes: list[mp.Process] = []
         self._worker_pids: tuple[int, ...] = ()
         self._worker_start_methods: tuple[str, ...] = ()
+        self._worker_alive_after_close: tuple[bool, ...] | None = None
+        self._worker_exitcodes_after_close: tuple[int | None, ...] | None = None
+        self._worker_cleanup_issues_after_close: tuple[_SpawnCleanupIssue, ...] = ()
+        self._closed_child_endpoint_indices: set[int] = set()
+        self._closed_parent_endpoint_indices: set[int] = set()
+        self._closed_process_handle_indices: set[int] = set()
         self._closed = False
         self._broken = False
         try:
             for worker_index, spec in enumerate(specs):
                 parent, child = self._context.Pipe(duplex=True)
+                self._connections.append(parent)
+                self._child_connections.append(child)
                 process = self._context.Process(
                     target=_worker_main,
                     args=(worker_index, child, spec),
                     name=f"stage4-spawn-env-{worker_index}",
                     daemon=False,
                 )
+                self._processes.append(process)
                 process.start()
                 child.close()
-                self._connections.append(parent)
-                self._processes.append(process)
+                self._closed_child_endpoint_indices.add(worker_index)
             ready = tuple(
                 self._receive(
                     worker_index,
@@ -213,7 +326,10 @@ class SpawnVectorEnv:
             if len(set(self._worker_pids)) != ROLLOUT_ENV_COUNT:
                 raise WorkerProcessError("spawn workers do not have distinct PIDs")
         except BaseException:
-            self.close()
+            try:
+                self.close()
+            except BaseException:
+                pass
             raise
 
     @property
@@ -226,10 +342,14 @@ class SpawnVectorEnv:
 
     @property
     def worker_alive(self) -> tuple[bool, ...]:
+        if self._worker_alive_after_close is not None:
+            return self._worker_alive_after_close
         return tuple(process.is_alive() for process in self._processes)
 
     @property
     def worker_exitcodes(self) -> tuple[int | None, ...]:
+        if self._worker_exitcodes_after_close is not None:
+            return self._worker_exitcodes_after_close
         return tuple(process.exitcode for process in self._processes)
 
     @property
@@ -309,35 +429,259 @@ class SpawnVectorEnv:
     def close(self) -> None:
         if self._closed:
             return
-        for connection, process in zip(
-            self._connections,
-            self._processes,
-            strict=True,
-        ):
-            if process.is_alive():
+        primary_exception = sys.exception()
+        issues: list[_SpawnCleanupIssue] = []
+        fatal_issues: list[_SpawnCleanupIssue] = []
+
+        def record_issue(
+            worker_index: int | None,
+            resource: str,
+            operation: str,
+            exc: BaseException,
+            *,
+            fatal: bool = True,
+        ) -> None:
+            message = str(exc).replace("\r", "\\r").replace("\n", "\\n")
+            issue = _SpawnCleanupIssue(
+                worker_index=worker_index,
+                resource=resource,
+                operation=operation,
+                error_type=type(exc).__name__,
+                message=message or "<empty>",
+            )
+            if issue not in issues:
+                issues.append(issue)
+            if fatal and issue not in fatal_issues:
+                fatal_issues.append(issue)
+
+        def close_endpoints(
+            connections: Sequence[Connection],
+            closed_indices: set[int],
+            resource: str,
+        ) -> None:
+            for worker_index, connection in enumerate(connections):
+                if worker_index in closed_indices:
+                    continue
+                try:
+                    connection.close()
+                    if getattr(connection, "closed", True) is False:
+                        raise RuntimeError("endpoint remained open after close")
+                except BaseException as exc:
+                    record_issue(worker_index, resource, "close", exc)
+                else:
+                    closed_indices.add(worker_index)
+
+        def process_alive(
+            worker_index: int,
+            process: mp.Process,
+            operation: str,
+        ) -> bool:
+            if worker_index in self._closed_process_handle_indices:
+                return False
+            try:
+                return bool(process.is_alive())
+            except BaseException as exc:
+                record_issue(worker_index, "process", operation, exc)
+                return True
+
+        def process_pid(worker_index: int, process: mp.Process) -> int | None:
+            if worker_index < len(self._worker_pids):
+                return self._worker_pids[worker_index]
+            try:
+                value = process.pid
+            except BaseException as exc:
+                record_issue(worker_index, "process", "pid", exc)
+                return None
+            return int(value) if isinstance(value, int) else None
+
+        def process_exitcode(
+            worker_index: int,
+            process: mp.Process,
+        ) -> int | None:
+            if (
+                worker_index in self._closed_process_handle_indices
+                and self._worker_exitcodes_after_close is not None
+                and worker_index < len(self._worker_exitcodes_after_close)
+            ):
+                return self._worker_exitcodes_after_close[worker_index]
+            try:
+                return process.exitcode
+            except BaseException as exc:
+                record_issue(worker_index, "process", "exitcode", exc)
+                return None
+
+        close_endpoints(
+            self._child_connections,
+            self._closed_child_endpoint_indices,
+            "child_endpoint",
+        )
+
+        for worker_index, process in enumerate(self._processes):
+            if worker_index in self._closed_process_handle_indices:
+                continue
+            connection = (
+                self._connections[worker_index]
+                if worker_index < len(self._connections)
+                else None
+            )
+            if (
+                connection is not None
+                and worker_index not in self._closed_parent_endpoint_indices
+                and process_alive(worker_index, process, "before-graceful-send")
+            ):
                 try:
                     connection.send(("close", None))
-                except (BrokenPipeError, EOFError, OSError):
-                    pass
-        for connection, process in zip(
-            self._connections,
-            self._processes,
-            strict=True,
-        ):
-            if process.is_alive():
+                except BaseException as exc:
+                    record_issue(
+                        worker_index,
+                        "parent_endpoint",
+                        "send-close",
+                        exc,
+                        fatal=False,
+                    )
+
+        for worker_index, process in enumerate(self._processes):
+            if worker_index in self._closed_process_handle_indices:
+                continue
+            connection = (
+                self._connections[worker_index]
+                if worker_index < len(self._connections)
+                else None
+            )
+            if (
+                connection is not None
+                and worker_index not in self._closed_parent_endpoint_indices
+                and process_alive(worker_index, process, "before-graceful-receive")
+            ):
                 try:
                     if connection.poll(min(max(self.timeout_seconds, 0.1), 1.0)):
                         connection.recv()
-                except (BrokenPipeError, EOFError, OSError):
-                    pass
-                process.join(timeout=5.0)
-            if process.is_alive():
-                process.terminate()
-                process.join(timeout=5.0)
+                except BaseException as exc:
+                    record_issue(
+                        worker_index,
+                        "parent_endpoint",
+                        "receive-close",
+                        exc,
+                        fatal=False,
+                    )
             try:
-                connection.close()
-            except OSError:
-                pass
+                process.join(timeout=5.0)
+            except BaseException as exc:
+                record_issue(worker_index, "process", "graceful-join", exc)
+
+        terminate_attempted: list[int] = []
+        for worker_index, process in enumerate(self._processes):
+            if worker_index in self._closed_process_handle_indices:
+                continue
+            if process_alive(worker_index, process, "before-terminate"):
+                terminate_attempted.append(worker_index)
+                try:
+                    process.terminate()
+                except BaseException as exc:
+                    record_issue(worker_index, "process", "terminate", exc)
+        for worker_index in terminate_attempted:
+            try:
+                self._processes[worker_index].join(timeout=5.0)
+            except BaseException as exc:
+                record_issue(worker_index, "process", "terminate-join", exc)
+
+        kill_attempted: list[int] = []
+        for worker_index, process in enumerate(self._processes):
+            if worker_index in self._closed_process_handle_indices:
+                continue
+            if process_alive(worker_index, process, "before-kill"):
+                kill_attempted.append(worker_index)
+                kill = getattr(process, "kill", None)
+                if callable(kill):
+                    try:
+                        kill()
+                    except BaseException as exc:
+                        record_issue(worker_index, "process", "kill", exc)
+                else:
+                    record_issue(
+                        worker_index,
+                        "process",
+                        "kill",
+                        RuntimeError("kill is unavailable"),
+                    )
+        for worker_index in kill_attempted:
+            try:
+                self._processes[worker_index].join(timeout=5.0)
+            except BaseException as exc:
+                record_issue(worker_index, "process", "kill-join", exc)
+
+        close_endpoints(
+            self._connections,
+            self._closed_parent_endpoint_indices,
+            "parent_endpoint",
+        )
+
+        alive_values: list[bool] = []
+        exitcodes: list[int | None] = []
+        alive_workers: list[tuple[int, int | None, int | None]] = []
+        for worker_index, process in enumerate(self._processes):
+            alive = process_alive(worker_index, process, "final-is-alive")
+            exitcode = process_exitcode(worker_index, process)
+            alive_values.append(alive)
+            exitcodes.append(exitcode)
+            if alive:
+                alive_workers.append(
+                    (worker_index, process_pid(worker_index, process), exitcode)
+                )
+                continue
+            if worker_index in self._closed_process_handle_indices:
+                continue
+            close_process = getattr(process, "close", None)
+            if callable(close_process):
+                try:
+                    close_process()
+                except BaseException as exc:
+                    record_issue(worker_index, "process_handle", "close", exc)
+                else:
+                    self._closed_process_handle_indices.add(worker_index)
+            else:
+                self._closed_process_handle_indices.add(worker_index)
+
+        self._worker_alive_after_close = tuple(alive_values)
+        self._worker_exitcodes_after_close = tuple(exitcodes)
+        self._worker_cleanup_issues_after_close = tuple(issues)
+        open_child_endpoints = tuple(
+            index
+            for index in range(len(self._child_connections))
+            if index not in self._closed_child_endpoint_indices
+        )
+        open_parent_endpoints = tuple(
+            index
+            for index in range(len(self._connections))
+            if index not in self._closed_parent_endpoint_indices
+        )
+        open_process_handles = tuple(
+            index
+            for index in range(len(self._processes))
+            if index not in self._closed_process_handle_indices
+        )
+        resources_closed = not (
+            alive_workers
+            or open_child_endpoints
+            or open_parent_endpoints
+            or open_process_handles
+        )
+        if fatal_issues or not resources_closed:
+            cleanup_error = SpawnCleanupError(
+                alive_workers=alive_workers,
+                open_child_endpoints=open_child_endpoints,
+                open_parent_endpoints=open_parent_endpoints,
+                open_process_handles=open_process_handles,
+                issues=issues,
+            )
+            if primary_exception is not None:
+                self._closed = resources_closed
+                note = str(cleanup_error)
+                if note not in tuple(getattr(primary_exception, "__notes__", ())):
+                    primary_exception.add_note(note)
+                return
+            self._closed = False
+            raise cleanup_error
         self._closed = True
 
     def __enter__(self) -> "SpawnVectorEnv":
@@ -440,6 +784,7 @@ class RolloutCollector:
         vector_env: SpawnVectorEnv,
         device: torch.device | str,
         contract: CollectorContract,
+        require_dual_scan: bool = False,
     ) -> None:
         if not isinstance(policy, nn.Module):
             raise CollectorError("collector policy must be a torch module")
@@ -447,10 +792,13 @@ class RolloutCollector:
             raise CollectorError("collector requires SpawnVectorEnv")
         if not isinstance(contract, CollectorContract):
             raise CollectorError("collector contract is invalid")
+        if type(require_dual_scan) is not bool:
+            raise CollectorError("collector reset diagnostics profile is invalid")
         self.policy = policy
         self.vector_env = vector_env
         self.device = torch.device(device)
         self.contract = contract
+        self.require_dual_scan = require_dual_scan
         if self.device.type == "cuda" and not torch.cuda.is_available():
             raise CollectorError("CUDA was requested but is unavailable; no CPU fallback")
         if self.device.type == "cuda" and self.device.index is None:
@@ -470,31 +818,53 @@ class RolloutCollector:
         self,
         *,
         continue_from_current_state: bool = False,
+        resource_guard: Callable[[str], None] | None = None,
     ) -> CollectionResult:
         if type(continue_from_current_state) is not bool:
             raise CollectorError("continue_from_current_state must be boolean")
+        if resource_guard is not None and not callable(resource_guard):
+            raise CollectorError("resource_guard must be callable")
+
+        def poll(boundary: str) -> None:
+            if resource_guard is not None:
+                resource_guard(boundary)
+
+        self._reset_inference_audit()
         self.policy.eval()
         initial_policy_hash = policy_state_sha256(self.policy)
         buffer = RolloutBuffer()
         counts = [0] * ROLLOUT_ENV_COUNT
         diagnostic_resets = [0] * ROLLOUT_ENV_COUNT
+        reset_audits: list[dict[str, object]] = []
+        planner_failure_counts = _empty_planner_failure_counts()
         current: dict[int, WorkerObservation] = {}
         if continue_from_current_state:
+            poll("rollout:before-current-observations")
             current.update(self.vector_env.current_observations())
+            poll("rollout:after-current-observations")
         else:
+            poll("rollout:before-reset")
             first_resets = self.vector_env.reset()
+            poll("rollout:after-reset")
             for env_index, envelope in first_resets.items():
                 current[env_index] = self._accept_reset(
                     env_index,
                     envelope,
                     diagnostic_resets,
+                    reset_audits,
                 )
         pending = [
             index
             for index, envelope in current.items()
             if not envelope.needs_policy
         ]
-        self._reset_until_trainable(current, pending, diagnostic_resets)
+        self._reset_until_trainable(
+            current,
+            pending,
+            diagnostic_resets,
+            reset_audits,
+            resource_guard=resource_guard,
+        )
 
         last_done = [False] * ROLLOUT_ENV_COUNT
         snapshot_hashes: list[str] = []
@@ -517,9 +887,11 @@ class RolloutCollector:
                 )
                 for index in active
             )
+            poll("rollout:before-inference")
             output, action_sample = self._infer_actions(
                 tuple(current[index].observation for index in active)
             )
+            poll("rollout:after-inference")
             actions = {
                 env_index: EnvAction(
                     candidate_index=int(
@@ -529,7 +901,9 @@ class RolloutCollector:
                 )
                 for row, env_index in enumerate(active)
             }
+            poll("rollout:before-step")
             step_values = self.vector_env.step(actions)
+            poll("rollout:after-step")
             terminal_to_reset: list[int] = []
             for row, env_index in enumerate(active):
                 worker_step = step_values[env_index]
@@ -544,6 +918,10 @@ class RolloutCollector:
                     raise CollectorError(
                         "next-empty sampled transition was not closed as terminal"
                     )
+                _accumulate_planner_failure(
+                    result,
+                    planner_failure_counts,
+                )
                 transition = self._transition_from_step(
                     snapshot=snapshots[row],
                     policy_hash=initial_policy_hash,
@@ -574,6 +952,8 @@ class RolloutCollector:
                 current,
                 terminal_to_reset,
                 diagnostic_resets,
+                reset_audits,
+                resource_guard=resource_guard,
             )
 
         last_values = np.zeros((ROLLOUT_ENV_COUNT,), dtype=np.float32)
@@ -581,13 +961,17 @@ class RolloutCollector:
             index for index, done in enumerate(last_done) if not done
         )
         if nonterminal:
+            poll("rollout:before-bootstrap-inference")
             output = self._forward(
                 tuple(current[index].observation for index in nonterminal)
             )
+            poll("rollout:after-bootstrap-inference")
             last_values[np.asarray(nonterminal, dtype=np.int64)] = (
                 output.value.detach().cpu().numpy().astype(np.float32, copy=False)
             )
+        poll("rollout:before-state-capture")
         vector_states = self.vector_env.capture_states()
+        poll("rollout:after-state-capture")
         if policy_state_sha256(self.policy) != initial_policy_hash:
             raise CollectorError("policy changed during rollout collection")
         try:
@@ -607,6 +991,8 @@ class RolloutCollector:
             policy_state_sha256=initial_policy_hash,
             snapshot_sha256=tuple(snapshot_hashes),
             terminal_transition_count=terminal_count,
+            reset_diagnostics=tuple(reset_audits),
+            planner_failure_counts=dict(planner_failure_counts),
         )
         return CollectionResult(
             batch=batch,
@@ -614,11 +1000,140 @@ class RolloutCollector:
             vector_env_states=vector_states,
         )
 
+    def preflight_one_step(self) -> CollectorPreflightResult:
+        """以真实 collector 合同让全部 worker 各执行一条 transition。"""
+
+        self._reset_inference_audit()
+        self.policy.eval()
+        initial_policy_hash = policy_state_sha256(self.policy)
+        diagnostic_resets = [0] * ROLLOUT_ENV_COUNT
+        reset_audits: list[dict[str, object]] = []
+        planner_failure_counts = _empty_planner_failure_counts()
+
+        reset_started = time.perf_counter()
+        current = self.vector_env.reset()
+        for env_index, envelope in tuple(current.items()):
+            current[env_index] = self._accept_reset(
+                env_index,
+                envelope,
+                diagnostic_resets,
+                reset_audits,
+            )
+        pending = tuple(
+            index for index, envelope in current.items() if not envelope.needs_policy
+        )
+        self._reset_until_trainable(
+            current,
+            pending,
+            diagnostic_resets,
+            reset_audits,
+        )
+        reset_seconds = time.perf_counter() - reset_started
+        if set(current) != set(range(ROLLOUT_ENV_COUNT)) or any(
+            not current[index].needs_policy for index in range(ROLLOUT_ENV_COUNT)
+        ):
+            raise CollectorError("preflight reset did not produce eight policy rows")
+
+        snapshots = tuple(
+            CandidateSnapshot.capture(
+                observation=current[index].observation,
+                frontier_cells=current[index].frontier_cells,
+                top_m_selection_summary=current[index].top_m_selection_summary,
+            )
+            for index in range(ROLLOUT_ENV_COUNT)
+        )
+        inference_started = time.perf_counter()
+        output = self._forward(
+            tuple(current[index].observation for index in range(ROLLOUT_ENV_COUNT))
+        )
+        policy_batch = batch_policy_observations(
+            tuple(current[index].observation for index in range(ROLLOUT_ENV_COUNT)),
+            device=self.device,
+        )
+        with torch.no_grad():
+            action_sample = sample_action(
+                output,
+                policy_batch.candidate_mask,
+                deterministic=True,
+            )
+        inference_seconds = time.perf_counter() - inference_started
+        actions = {
+            index: EnvAction(
+                candidate_index=int(action_sample.selected_frontier_index[index].item()),
+                target_theta=float(action_sample.selected_theta[index].item()),
+            )
+            for index in range(ROLLOUT_ENV_COUNT)
+        }
+
+        step_started = time.perf_counter()
+        step_values = self.vector_env.step(actions)
+        step_seconds = time.perf_counter() - step_started
+        transitions: list[RolloutTransition] = []
+        terminal_count = 0
+        for index in range(ROLLOUT_ENV_COUNT):
+            worker_step = step_values[index]
+            result = worker_step.result
+            if (
+                not result.trainable
+                or result.done != result.terminal
+                or (result.done and result.bootstrap_value != 0.0)
+                or (not result.done and not worker_step.next_observation.needs_policy)
+            ):
+                raise CollectorError("preflight worker transition contract drifted")
+            _accumulate_planner_failure(
+                result,
+                planner_failure_counts,
+            )
+            transition = self._transition_from_step(
+                snapshot=snapshots[index],
+                policy_hash=initial_policy_hash,
+                selected_index=actions[index].candidate_index,
+                selected_theta=actions[index].target_theta,
+                old_log_prob_frontier=float(
+                    action_sample.log_prob_frontier[index].item()
+                ),
+                old_log_prob_theta=float(action_sample.log_prob_theta[index].item()),
+                old_log_prob_total=float(action_sample.log_prob_total[index].item()),
+                old_value=float(output.value[index].item()),
+                result=result,
+            )
+            transitions.append(transition)
+            terminal_count += int(result.done)
+        if policy_state_sha256(self.policy) != initial_policy_hash:
+            raise CollectorError("policy changed during one-step preflight")
+        timings = MappingProxyType(
+            {
+                "reset": float(reset_seconds),
+                "inference": float(inference_seconds),
+                "step": float(step_seconds),
+            }
+        )
+        if any(not math.isfinite(value) or value < 0.0 for value in timings.values()):
+            raise CollectorError("preflight timing is invalid")
+        return CollectorPreflightResult(
+            schema_version="stage6_collector_one_step_preflight/v1",
+            transitions=tuple(transitions),
+            trainable_transition_count=len(transitions),
+            worker_pids=self.vector_env.worker_pids,
+            worker_start_methods=self.vector_env.worker_start_methods,
+            diagnostic_reset_counts=tuple(diagnostic_resets),
+            inference_pids=tuple(sorted(self._inference_pids)),
+            inference_batch_count=self._inference_batch_count,
+            policy_device=str(self.device),
+            policy_state_sha256=initial_policy_hash,
+            snapshot_sha256=tuple(snapshot.sha256 for snapshot in snapshots),
+            terminal_transition_count=terminal_count,
+            timings_seconds=timings,
+            reset_diagnostics=tuple(reset_audits),
+            planner_failure_counts=dict(planner_failure_counts),
+        )
+
     def _accept_reset(
         self,
         env_index: int,
         envelope: WorkerObservation,
         diagnostic_resets: list[int],
+        reset_audits: list[dict[str, object]],
     ) -> WorkerObservation:
         if envelope.reset_trainable or envelope.fake_logprob_created:
             raise CollectorError(
@@ -628,6 +1143,20 @@ class RolloutCollector:
             diagnostic_resets[env_index] += 1
             if diagnostic_resets[env_index] > _MAX_DIAGNOSTIC_RESETS_PER_ENV:
                 raise CollectorError("diagnostic reset retry limit exceeded")
+        try:
+            reset_payload = validate_reset_diagnostics_payload(
+                envelope.reset_diagnostics,
+                require_dual_scan=self.require_dual_scan,
+            )
+        except ValueError as exc:
+            raise CollectorError("worker reset diagnostics drifted") from exc
+        reset_audits.append(
+            {
+                "worker_index": env_index,
+                "reset_index": len(reset_audits),
+                **reset_payload,
+            }
+        )
         return envelope
 
     def _reset_until_trainable(
@@ -635,16 +1164,24 @@ class RolloutCollector:
         current: dict[int, WorkerObservation],
         indices: Sequence[int],
         diagnostic_resets: list[int],
+        reset_audits: list[dict[str, object]],
+        *,
+        resource_guard: Callable[[str], None] | None = None,
     ) -> None:
         pending = tuple(indices)
         while pending:
+            if resource_guard is not None:
+                resource_guard("rollout:before-diagnostic-reset")
             reset_values = self.vector_env.reset(pending)
+            if resource_guard is not None:
+                resource_guard("rollout:after-diagnostic-reset")
             next_pending: list[int] = []
             for env_index in pending:
                 envelope = self._accept_reset(
                     env_index,
                     reset_values[env_index],
                     diagnostic_resets,
+                    reset_audits,
                 )
                 current[env_index] = envelope
                 if not envelope.needs_policy:
@@ -682,6 +1219,10 @@ class RolloutCollector:
         self._inference_pids.add(os.getpid())
         self._inference_batch_count += 1
         return output
+
+    def _reset_inference_audit(self) -> None:
+        self._inference_pids.clear()
+        self._inference_batch_count = 0
 
     def _transition_from_step(
         self,
@@ -898,6 +1439,140 @@ def _worker_main(
         connection.close()
 
 
+def _empty_planner_failure_counts() -> dict[str, int]:
+    return {reason: 0 for reason in PLANNER_FAILURE_REASONS}
+
+
+def _sensor_diagnostics_payload(value: object) -> dict[str, object]:
+    if not hasattr(value, "__dataclass_fields__"):
+        raise TypeError("reset sensor diagnostics are invalid")
+    raw = asdict(value)  # type: ignore[arg-type]
+    try:
+        copied = json.loads(
+            json.dumps(
+                raw,
+                ensure_ascii=False,
+                sort_keys=True,
+                allow_nan=False,
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise TypeError("reset sensor diagnostics are not finite JSON") from exc
+    if not isinstance(copied, dict):
+        raise TypeError("reset sensor diagnostics mapping is invalid")
+    return copied
+
+
+def validate_reset_diagnostics_payload(
+    value: object,
+    *,
+    require_dual_scan: bool,
+) -> dict[str, object]:
+    if type(require_dual_scan) is not bool or not isinstance(value, Mapping):
+        raise ValueError("reset diagnostics payload is invalid")
+    if (
+        set(value)
+        != {
+            "schema_version",
+            "scan_order",
+            "local_safety_sensor",
+            "exploration_sensor",
+        }
+        or value.get("schema_version")
+        != "stage6_reset_scan_diagnostics/v1"
+    ):
+        raise ValueError("reset diagnostics field set drifted")
+    order = value.get("scan_order")
+    expected_order = ["reset_local_safety", "reset_exploration"]
+    if (
+        not isinstance(order, list)
+        or (
+            order != expected_order
+            and (require_dual_scan or order != ["reset_exploration"])
+        )
+    ):
+        raise ValueError("reset scan order drifted")
+    sensor_fields = {
+        "sample_count",
+        "ray_count",
+        "cell_visit_count",
+        "unique_visible_cell_count",
+        "duplicate_cell_visits",
+        "sample_sources",
+        "sample_headings",
+    }
+    sensors: dict[str, dict[str, object]] = {}
+    for name in ("local_safety_sensor", "exploration_sensor"):
+        sensor = value.get(name)
+        if (
+            not isinstance(sensor, Mapping)
+            or set(sensor) != sensor_fields
+            or any(
+                type(sensor.get(field_name)) is not int
+                or int(sensor[field_name]) < 0
+                for field_name in (
+                    "sample_count",
+                    "ray_count",
+                    "cell_visit_count",
+                    "unique_visible_cell_count",
+                    "duplicate_cell_visits",
+                )
+            )
+            or not isinstance(sensor.get("sample_sources"), list)
+            or any(
+                not isinstance(source, str) or not source
+                for source in sensor["sample_sources"]
+            )
+            or not isinstance(sensor.get("sample_headings"), list)
+            or any(
+                not isinstance(heading, (int, float))
+                or not math.isfinite(float(heading))
+                for heading in sensor["sample_headings"]
+            )
+        ):
+            raise ValueError("reset sensor diagnostics drifted")
+        sensors[name] = dict(sensor)
+    if order == expected_order and (
+        sensors["local_safety_sensor"]["sample_sources"]
+        != ["reset_local_safety"]
+        or sensors["exploration_sensor"]["sample_sources"] != ["reset"]
+    ):
+        raise ValueError("reset sensor source order drifted")
+    return {
+        "schema_version": "stage6_reset_scan_diagnostics/v1",
+        "scan_order": list(order),
+        "local_safety_sensor": sensors["local_safety_sensor"],
+        "exploration_sensor": sensors["exploration_sensor"],
+    }
+
+
+def _reset_diagnostics_payload(value: object) -> dict[str, object]:
+    local = getattr(value, "local_safety_sensor", None)
+    exploration = getattr(value, "exploration_sensor", None)
+    order = getattr(value, "scan_order", None)
+    return validate_reset_diagnostics_payload(
+        {
+            "schema_version": "stage6_reset_scan_diagnostics/v1",
+            "scan_order": list(order) if isinstance(order, tuple) else order,
+            "local_safety_sensor": _sensor_diagnostics_payload(local),
+            "exploration_sensor": _sensor_diagnostics_payload(exploration),
+        },
+        require_dual_scan=False,
+    )
+
+
+def _accumulate_planner_failure(
+    result: StepResult,
+    counts: dict[str, int],
+) -> None:
+    reason = result.diagnostics.planner.get("failure_reason")
+    if reason == "none":
+        return
+    if not isinstance(reason, str) or reason not in PLANNER_FAILURE_REASONS:
+        raise CollectorError("planner failure reason is unknown")
+    counts[reason] += 1
+
+
 def _worker_observation(
     env: object,
     observation: object,
@@ -915,12 +1590,21 @@ def _worker_observation(
         raise TypeError("worker env needs_policy must be boolean")
     reset_trainable = False
     fake_logprob_created = False
+    reset_payload = None
     if is_reset:
         reset_diagnostics = env.last_reset_diagnostics  # type: ignore[attr-defined]
         if reset_diagnostics is None:
             raise RuntimeError("worker env reset diagnostics are missing")
         reset_trainable = reset_diagnostics.trainable
         fake_logprob_created = reset_diagnostics.fake_logprob_created
+        reset_coverage_rate = float(reset_diagnostics.coverage_rate)
+        reset_reason = str(reset_diagnostics.reason)
+        reset_done = not needs_policy
+        reset_payload = _reset_diagnostics_payload(reset_diagnostics)
+    else:
+        reset_coverage_rate = 0.0
+        reset_reason = "none"
+        reset_done = False
     return WorkerObservation(
         observation=observation,
         frontier_cells=cells,
@@ -928,6 +1612,10 @@ def _worker_observation(
         needs_policy=needs_policy,
         reset_trainable=reset_trainable,
         fake_logprob_created=fake_logprob_created,
+        reset_coverage_rate=reset_coverage_rate,
+        reset_reason=reset_reason,
+        reset_done=reset_done,
+        reset_diagnostics=reset_payload,
     )
 
 
@@ -969,6 +1657,8 @@ __all__ = [
     "CollectorAudit",
     "CollectorContract",
     "CollectorError",
+    "CollectorPreflightResult",
+    "PLANNER_FAILURE_REASONS",
     "RolloutCollector",
     "SpawnEnvSpec",
     "SpawnVectorEnv",
@@ -978,4 +1668,5 @@ __all__ = [
     "WorkerStep",
     "build_lunar_exploration_env",
     "lunar_env_specs",
+    "validate_reset_diagnostics_payload",
 ]

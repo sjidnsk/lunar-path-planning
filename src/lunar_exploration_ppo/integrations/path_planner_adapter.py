@@ -43,10 +43,11 @@ class PathPlannerAdapter:
 
     def validate(
         self,
-        safe_mask: np.ndarray,
+        observed_safe_mask: np.ndarray,
+        planning_safe_mask: np.ndarray | CellXY,
         start: CellXY,
-        target: CellXY,
-        theta: float,
+        target: CellXY | float,
+        theta: float | None = None,
     ) -> PlannerResult:
         timings = {name: 0 for name in _TIMING_FIELDS}
         run_start_ns = perf_counter_ns()
@@ -76,24 +77,56 @@ class PathPlannerAdapter:
             finish_phase(phase_name)
             return assemble_failure(reason)
 
+        legacy_call = theta is None
+        if legacy_call:
+            if not isinstance(planning_safe_mask, CellXY) or not isinstance(
+                start, CellXY
+            ):
+                return fail("invalid_safe_mask", "input_validation_ns")
+            legacy_start = planning_safe_mask
+            legacy_target = start
+            legacy_theta = target
+            planning_safe_mask = observed_safe_mask
+            start = legacy_start
+            target = legacy_target
+            theta = float(legacy_theta)
+        if not isinstance(target, CellXY):
+            return fail("target_out_of_bounds", "input_validation_ns")
         try:
             normalized_theta = normalize_theta(theta)
-        except ValueError:
+        except (TypeError, ValueError):
             return fail("invalid_theta", "input_validation_ns")
-        mask = np.asarray(safe_mask, dtype=bool)
-        if mask.shape != self.geometry.shape:
+        physical_mask = np.asarray(observed_safe_mask, dtype=bool)
+        planning_mask = np.asarray(planning_safe_mask, dtype=bool)
+        if (
+            physical_mask.shape != self.geometry.shape
+            or planning_mask.shape != self.geometry.shape
+        ):
             return fail("invalid_safe_mask", "input_validation_ns")
         if not self.geometry.in_bounds(start):
             return fail("start_out_of_bounds", "input_validation_ns")
         if not self.geometry.in_bounds(target):
             return fail("target_out_of_bounds", "input_validation_ns")
-        if not mask[start.y, start.x]:
-            return fail("start_unsafe", "input_validation_ns")
-        if not mask[target.y, target.x]:
-            return fail("target_unsafe", "input_validation_ns")
-        component = reachable_component(mask, start)
+        if not physical_mask[start.y, start.x]:
+            return fail(
+                "start_unsafe" if legacy_call else "start_physical_unsafe",
+                "input_validation_ns",
+            )
+        if not planning_mask[start.y, start.x]:
+            return fail("start_unknown_buffer_unsafe", "input_validation_ns")
+        if not physical_mask[target.y, target.x]:
+            return fail(
+                "target_unsafe" if legacy_call else "endpoint_physical_unsafe",
+                "input_validation_ns",
+            )
+        if not planning_mask[target.y, target.x]:
+            return fail("endpoint_unknown_buffer_unsafe", "input_validation_ns")
+        component = reachable_component(planning_mask, start)
         if not component[target.y, target.x]:
-            return fail("target_unreachable", "input_validation_ns")
+            return fail(
+                "target_unreachable" if legacy_call else "planner_no_path",
+                "input_validation_ns",
+            )
         finish_phase("input_validation_ns")
 
         spec = GridSpec(
@@ -102,11 +135,11 @@ class PathPlannerAdapter:
             resolution=self.geometry.resolution_m,
             origin=(self.geometry.origin.x, self.geometry.origin.y),
         )
-        blocked_count = int(np.count_nonzero(~mask))
+        blocked_count = int(np.count_nonzero(~planning_mask))
         grid = CostGrid(
             spec=spec,
-            cost=np.ones(mask.shape, dtype=float),
-            passable_mask=mask,
+            cost=np.ones(planning_mask.shape, dtype=float),
+            passable_mask=planning_mask,
         )
         finish_phase("platform_instantiation_ns")
 
@@ -121,6 +154,8 @@ class PathPlannerAdapter:
         )
         finish_phase("search_ns")
         if not result.success:
+            if not legacy_call:
+                return assemble_failure("planner_no_path")
             reason = (
                 result.failure_reason.value
                 if result.failure_reason is not None
@@ -131,24 +166,23 @@ class PathPlannerAdapter:
         path_cells = tuple(CellXY(cell.x, cell.y) for cell in result.path_cells)
         for cell in path_cells:
             if not self.geometry.in_bounds(cell):
+                return fail("path_out_of_bounds", "complete_route_validation_ns")
+            if not physical_mask[cell.y, cell.x]:
                 return fail(
-                    "path_out_of_bounds",
+                    "path_unsafe" if legacy_call else "path_physical_unsafe",
                     "complete_route_validation_ns",
                 )
-            if not mask[cell.y, cell.x]:
-                return fail("path_unsafe", "complete_route_validation_ns")
+            if not planning_mask[cell.y, cell.x]:
+                return fail(
+                    "path_unknown_buffer_unsafe",
+                    "complete_route_validation_ns",
+                )
         finish_phase("complete_route_validation_ns")
 
-        path_centers = tuple(
-            self.geometry.cell_to_world_center(cell) for cell in path_cells
-        )
+        path_centers = tuple(self.geometry.cell_to_world_center(cell) for cell in path_cells)
         path_length_m = sum(
             math.hypot(right.x - left.x, right.y - left.y)
-            for left, right in zip(
-                path_centers[:-1],
-                path_centers[1:],
-                strict=True,
-            )
+            for left, right in zip(path_centers[:-1], path_centers[1:], strict=True)
         )
         diagnostics = {
             "neighbor_policy": "8-neighbor",
@@ -185,9 +219,7 @@ class PathPlannerAdapter:
         run_start_ns: int,
         final_end_ns: int,
     ) -> PlannerResult:
-        timing_values = {
-            name: int(timings[name]) for name in _TIMING_FIELDS
-        }
+        timing_values = {name: int(timings[name]) for name in _TIMING_FIELDS}
         component_total_ns = sum(timing_values.values())
         total_ns = final_end_ns - run_start_ns
         if total_ns < 0 or total_ns != component_total_ns:

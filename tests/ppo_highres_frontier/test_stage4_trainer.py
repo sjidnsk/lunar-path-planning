@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import math
 import random
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -115,6 +116,29 @@ class _ToyPolicy(nn.Module):
         )
 
 
+class _CollectionBatchAliasPolicy(_ToyPolicy):
+    """Expose batch-size aliases so replay must match collector boundaries."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.forward_batch_sizes: list[int] = []
+
+    def forward(self, observation) -> PolicyForwardOutput:
+        output = super().forward(observation)
+        batch_size = int(observation.candidate_mask.shape[0])
+        self.forward_batch_sizes.append(batch_size)
+        signs = torch.zeros_like(output.frontier_logits)
+        signs[:, 0] = 1.0
+        signs[:, 1] = -1.0
+        batch_alias = float(batch_size - 8) * 1.0e-3
+        logits = torch.where(
+            observation.candidate_mask,
+            output.frontier_logits + batch_alias * signs,
+            output.frontier_logits,
+        )
+        return replace(output, frontier_logits=logits)
+
+
 def _policy_observation() -> PolicyObservation:
     return PolicyObservation(
         prior_channels=np.zeros((7, 2, 2), dtype=np.float32),
@@ -130,6 +154,7 @@ def _trainer_batch(
     policy: _ToyPolicy,
     *,
     old_frontier_offset: float = 0.0,
+    collection_batch_size: int = 2,
 ):
     from lunar_exploration_ppo.ppo.trainer import policy_state_sha256
 
@@ -140,11 +165,23 @@ def _trainer_batch(
         top_m_selection_summary={"candidate_count_after_top_m": 2},
     )
     policy_hash = policy_state_sha256(policy)
+    policy_device = next(policy.parameters()).device
     with torch.no_grad():
-        policy_batch = batch_policy_observations([observation, observation])
+        policy_batch = batch_policy_observations(
+            [observation] * collection_batch_size,
+            device=policy_device,
+        )
         output = policy(policy_batch)
-        selected = torch.tensor([0, 1], dtype=torch.int64)
-        theta = torch.zeros(2, dtype=torch.float32)
+        selected = torch.tensor(
+            [index % 2 for index in range(collection_batch_size)],
+            dtype=torch.int64,
+            device=policy_device,
+        )
+        theta = torch.zeros(
+            collection_batch_size,
+            dtype=torch.float32,
+            device=policy_device,
+        )
         evaluation = recompute_action_log_probs(
             output,
             policy_batch.candidate_mask,
@@ -256,7 +293,94 @@ def test_ppo_trainer_updates_once_from_saved_snapshots_with_exact_accumulation(
     assert metrics.policy_state_sha256_before == before
     assert metrics.policy_state_sha256_after == policy_state_sha256(policy)
     assert metrics.policy_state_sha256_after != before
+    evidence = dict(metrics.math_evidence)
+    assert evidence["schema_version"] == "ppo_update_math_evidence/v1"
+    assert evidence["sample_count"] == 1024
+    assert evidence["batch_policy_state_sha256"] == before
+    assert len(evidence["snapshot_list_sha256"]) == 64
+    assert evidence["observed_compute_dtypes"] == ["float32"]
+    assert evidence["joint_logprob_factorization_max_abs_error"] <= 1.0e-7
+    assert evidence["mask_violation_count"] == 0
+    assert evidence["snapshot_mismatch_count"] == 0
+    assert evidence["stale_policy_transition_count"] == 0
+    assert all(
+        evidence[name] is True
+        for name in (
+            "observation_finite",
+            "action_finite",
+            "old_logprob_finite",
+            "old_value_finite",
+            "advantage_finite",
+            "return_finite",
+            "new_logprob_finite",
+            "new_value_finite",
+            "ratio_finite",
+            "loss_finite",
+            "kl_finite",
+            "grad_finite",
+        )
+    )
+    assert len(evidence["evidence_sha256"]) == 64
     assert batch.consumed
+
+
+@pytest.mark.parametrize(
+    ("device", "tolerance"),
+    (
+        pytest.param("cpu", 1.0e-6, id="cpu"),
+        pytest.param(
+            "cuda",
+            1.0e-5,
+            id="cuda",
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(),
+                reason="CUDA is genuinely unavailable",
+            ),
+        ),
+    ),
+)
+def test_initial_ratio_replay_uses_eight_env_time_major_batches_while_training_uses_32(
+    device: str,
+    tolerance: float,
+) -> None:
+    from lunar_exploration_ppo.ppo.trainer import PPOTrainer
+
+    policy = _CollectionBatchAliasPolicy().to(device)
+    batch = _trainer_batch(policy, collection_batch_size=8)
+    policy.forward_batch_sizes.clear()
+
+    metrics = PPOTrainer(policy, device=device, shuffle_seed=17).update(batch)
+
+    time_step_count, env_count = batch.layout_shape
+    assert (time_step_count, env_count) == (128, 8)
+    assert policy.forward_batch_sizes[:time_step_count] == [env_count] * time_step_count
+    assert policy.forward_batch_sizes[time_step_count:] == [32] * 128
+    assert metrics.initial_ratio_max_abs_error <= tolerance
+    assert metrics.physical_microbatch_sizes == (32,) * 128
+
+
+def test_ppo_trainer_resource_guard_aborts_before_optimizer_publication() -> None:
+    from lunar_exploration_ppo.ppo.trainer import PPOTrainer, policy_state_sha256
+
+    policy = _ToyPolicy()
+    batch = _trainer_batch(policy)
+    before = policy_state_sha256(policy)
+    boundaries: list[str] = []
+
+    def resource_guard(boundary: str) -> None:
+        boundaries.append(boundary)
+        if boundary == "ppo:before-optimizer-step":
+            raise RuntimeError("latched PPO hard stop")
+
+    with pytest.raises(RuntimeError, match="latched PPO hard stop"):
+        PPOTrainer(policy, device="cpu", shuffle_seed=17).update(
+            batch,
+            resource_guard=resource_guard,
+        )
+
+    assert policy_state_sha256(policy) == before
+    assert boundaries[-1] == "ppo:before-optimizer-step"
+    assert "ppo:after-physical-microbatch" in boundaries
 
 
 def test_ppo_trainer_initial_ratio_mismatch_fails_before_optimizer_step() -> None:
@@ -288,7 +412,7 @@ def test_ppo_trainer_stops_all_remaining_minibatches_after_target_kl() -> None:
     assert metrics.optimizer_steps == 1
     assert metrics.early_stop_epoch == 0
     assert metrics.early_stop_minibatch == 1
-    assert metrics.skipped_minibatch_count == 14
+    assert metrics.skipped_minibatch_count == 15
     assert metrics.grad_post_clip_norm_max <= 0.500001
     assert batch.consumed
 

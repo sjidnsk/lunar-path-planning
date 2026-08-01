@@ -225,13 +225,13 @@ D:/conda_envs/lunar-explorer/python.exe -c "import lunar_exploration_ppo"
 
 ### Task 7: Stage 6 — Standard 正式训练与评估
 
-顺序运行 5 个独立训练 seed，每个 100 PPO updates；每 10 次做 16 episode validation。每 seed 保存 latest、50 步 periodic、validation best；全局 best 按 success rate、mean final coverage、较早 seed/update 排序。冻结后执行 64 test、64 unseen 和四 baseline；test 不得选择或改变 checkpoint。可恢复状态机在 update 1/10/50/100 自动执行数学、显存、checkpoint、lineage 审计，异常立即停门。nonfinite/mask/snapshot/stale-policy 违规必须为 0；开始前 D 盘空闲 `>=100GiB`，运行中 `<50GiB` 停门；RSS 16GiB 预警、20GiB 硬停。报告分别给出系统与性能结论。
+只运行 seed `20260716` 的完整 100 个 PPO updates；每 10 次做 16 episode validation。Stage 6A 保存 latest、50 步 periodic 和 frozen validation best；冻结后执行 64 test、64 unseen 和四 baseline，test 不得选择或改变 checkpoint。该单 seed 运行是 `single_seed_system_closure/v1`，只证明系统闭环，不形成跨 seed 性能结论。额外 3--5 个 seed 只有用户明确要求才追加，且不阻塞 Stage 6 Gate、Stage 7 或 Stage 8；Stage 7 直接使用 Stage 6A frozen validation-best checkpoint。可恢复状态机在 update 1/10/50/100 自动执行数学、显存、checkpoint、lineage 审计，异常立即停门。nonfinite/mask/snapshot/stale-policy 违规必须为 0；开始前 D 盘空闲 `>=100GiB`，运行中 `<50GiB` 停门；RSS 16GiB 预警、20GiB 硬停。报告分别给出系统与性能结论。
 
 **Approval commit:** `feat: add standard ppo training workflow`
 
 ### Task 8: Stage 7 — Kilometer 稀疏压力测试
 
-使用 Stage 6 全局 best checkpoint，eval-only、无 fine-tune、`max_steps=512`。先 8 episode 预检，再 32 test 与 32 unseen，至少与 gain-over-cost 同环境同预算比较；test/unseen 的 low/medium/high rock-crater 密度按场景数近似等量分层。2048² highres 只留在环境；policy 保持 128² prior、192² local crop、2048 sparse frontiers、513 context tokens。exact coverable mask 按数据/起点/安全/sensor/proxy-catalog hash 预计算和校验缓存。硬门：VRAM `<=10.1GiB`、RSS `<=20GiB`、policy forward p95 `<=250ms`、candidate+prefilter p95 `<=8s`、无泄漏/OOM/NaN。结论仅表述为 proxy-based kilometer stress test。
+直接使用 Stage 6A seed `20260716` 的 frozen validation-best checkpoint，eval-only、无 fine-tune、`max_steps=512`。先 8 episode 预检，再 32 test 与 32 unseen，至少与 gain-over-cost 同环境同预算比较；test/unseen 的 low/medium/high rock-crater 密度按场景数近似等量分层。2048² highres 只留在环境；policy 保持 128² prior、192² local crop、2048 sparse frontiers、513 context tokens。exact coverable mask 按数据/起点/安全/sensor/proxy-catalog hash 预计算和校验缓存。硬门：VRAM `<=10.1GiB`、RSS `<=20GiB`、policy forward p95 `<=250ms`、candidate+prefilter p95 `<=8s`、无泄漏/OOM/NaN。结论仅表述为 proxy-based kilometer stress test。
 
 **Approval commit:** `feat: add kilometer stress evaluation`
 

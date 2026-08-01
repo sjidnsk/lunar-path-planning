@@ -3026,7 +3026,10 @@ scale_profile:
   Standard v1
 
 train_seed_count:
-  5
+  1
+
+train_seed:
+  20260716
 
 train_updates:
   100
@@ -3062,6 +3065,12 @@ baseline_set:
   max_potential_gain_frontier
   gain_over_cost_frontier
 ```
+
+Stage 6A is frozen as `single_seed_system_closure/v1`: it completes the
+training, recovery, checkpoint, evaluation, fairness, audit, and reproduction
+loop for seed `20260716`, but is not a cross-seed performance conclusion.
+An additional 3--5-seed extension is optional: 只有用户明确要求才追加，且它不阻塞
+Stage 6 Gate、Stage 7 或 Stage 8。
 
 Acceptance:
 
@@ -3121,7 +3130,7 @@ mode:
   eval_only
 
 policy_source:
-  Stage 6 checkpoint_best_success_rate.pt
+  Stage 6A seed 20260716 frozen validation-best checkpoint
 
 max_steps:
   512
@@ -3142,7 +3151,8 @@ Acceptance:
 
 3. full highres map is not fed as a dense policy tensor.
 
-4. PPO uses the Stage 6 checkpoint without Kilometer-specific fine-tuning.
+4. PPO directly uses the Stage 6A frozen validation-best checkpoint without
+   Kilometer-specific fine-tuning.
 
 5. candidate generation completes within the implementation runtime threshold.
 

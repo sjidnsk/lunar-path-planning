@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import struct
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -18,7 +19,11 @@ from lunar_exploration_ppo.policy.cross_attention import (
     batch_policy_observations,
     recompute_action_log_probs,
 )
-from lunar_exploration_ppo.ppo.rollout import RolloutBatch, RolloutContractError
+from lunar_exploration_ppo.ppo.rollout import (
+    ROLLOUT_ENV_COUNT,
+    RolloutBatch,
+    RolloutContractError,
+)
 
 
 class PPOTrainingError(RuntimeError):
@@ -60,6 +65,348 @@ class PPOUpdateMetrics:
     parameter_change_l2: float
     policy_state_sha256_before: str
     policy_state_sha256_after: str
+    math_evidence: Mapping[str, object]
+
+
+def snapshot_hash_list_sha256(snapshot_hashes: tuple[str, ...] | list[str]) -> str:
+    values = list(snapshot_hashes)
+    if not values or any(
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+        for value in values
+    ):
+        raise PPOTrainingError("snapshot hash evidence is invalid")
+    payload = json.dumps(
+        values,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _seal_math_evidence(value: Mapping[str, object]) -> Mapping[str, object]:
+    payload = dict(value)
+    if "evidence_sha256" in payload:
+        raise PPOTrainingError("math evidence cannot be sealed twice")
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return MappingProxyType(
+        {**payload, "evidence_sha256": hashlib.sha256(encoded).hexdigest()}
+    )
+
+
+def validate_ppo_math_evidence(
+    value: object,
+    *,
+    expected_policy_state_sha256: str,
+    expected_snapshot_hashes: Sequence[str],
+    expected_sample_count: int,
+    expected_optimizer_steps: int,
+) -> dict[str, object]:
+    boolean_fields = (
+        "observation_finite",
+        "action_finite",
+        "old_logprob_finite",
+        "old_value_finite",
+        "advantage_finite",
+        "return_finite",
+        "new_logprob_finite",
+        "new_value_finite",
+        "ratio_finite",
+        "loss_finite",
+        "kl_finite",
+        "grad_finite",
+    )
+    zero_count_fields = (
+        "mask_violation_count",
+        "snapshot_mismatch_count",
+        "stale_policy_transition_count",
+    )
+    count_fields = (
+        "sample_count",
+        "initial_forward_sample_count",
+        "forward_sample_count",
+        "loss_sample_count",
+        "gradient_step_count",
+    )
+    error_fields = (
+        "old_joint_logprob_factorization_max_abs_error",
+        "joint_logprob_factorization_max_abs_error",
+    )
+    required = {
+        "schema_version",
+        "snapshot_list_sha256",
+        "batch_policy_state_sha256",
+        "observed_compute_dtypes",
+        "evidence_sha256",
+        *boolean_fields,
+        *zero_count_fields,
+        *count_fields,
+        *error_fields,
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise PPOTrainingError("PPO math evidence schema drifted")
+    evidence = dict(value)
+    digest = evidence.pop("evidence_sha256")
+    encoded = json.dumps(
+        evidence,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    expected_digest = hashlib.sha256(encoded).hexdigest()
+    if digest != expected_digest:
+        raise PPOTrainingError("PPO math evidence seal drifted")
+    snapshot_hashes = tuple(expected_snapshot_hashes)
+    if (
+        evidence.get("schema_version") != "ppo_update_math_evidence/v1"
+        or evidence.get("batch_policy_state_sha256")
+        != expected_policy_state_sha256
+        or evidence.get("snapshot_list_sha256")
+        != snapshot_hash_list_sha256(snapshot_hashes)
+        or evidence.get("observed_compute_dtypes") != ["float32"]
+        or type(expected_sample_count) is not int
+        or expected_sample_count <= 0
+        or type(expected_optimizer_steps) is not int
+        or expected_optimizer_steps <= 0
+    ):
+        raise PPOTrainingError("PPO math evidence binding drifted")
+    if any(evidence[field] is not True for field in boolean_fields):
+        raise PPOTrainingError("PPO math evidence detected nonfinite values")
+    if any(evidence[field] != 0 for field in zero_count_fields):
+        raise PPOTrainingError("PPO math evidence detected contract violations")
+    if any(type(evidence[field]) is not int or int(evidence[field]) <= 0 for field in count_fields):
+        raise PPOTrainingError("PPO math evidence count drifted")
+    if (
+        evidence["sample_count"] != expected_sample_count
+        or evidence["initial_forward_sample_count"] != expected_sample_count
+        or int(evidence["forward_sample_count"])
+        != int(evidence["initial_forward_sample_count"])
+        + int(evidence["loss_sample_count"])
+        or evidence["gradient_step_count"] != expected_optimizer_steps
+    ):
+        raise PPOTrainingError("PPO math evidence coverage drifted")
+    for field in error_fields:
+        candidate = evidence[field]
+        if (
+            isinstance(candidate, bool)
+            or not isinstance(candidate, (int, float))
+            or not math.isfinite(float(candidate))
+            or not 0.0 <= float(candidate) <= 1.0e-6
+        ):
+            raise PPOTrainingError("PPO joint logprob evidence drifted")
+    return {**evidence, "evidence_sha256": digest}
+
+
+def _audit_rollout_batch_inputs(
+    batch: RolloutBatch,
+    *,
+    current_policy_state_sha256: str,
+) -> dict[str, object]:
+    transitions = batch.transitions
+    observation_finite = True
+    action_finite = True
+    old_logprob_finite = True
+    old_value_finite = True
+    mask_violation_count = 0
+    snapshot_mismatch_count = 0
+    stale_policy_transition_count = 0
+    observed_dtypes: set[str] = set()
+    old_joint_error = 0.0
+
+    for index, transition in enumerate(transitions):
+        actual_snapshot_sha256 = hashlib.sha256(transition.snapshot_bytes).hexdigest()
+        if (
+            actual_snapshot_sha256 != transition.candidate_snapshot_sha256
+            or batch.snapshot_hashes[index] != transition.candidate_snapshot_sha256
+        ):
+            snapshot_mismatch_count += 1
+            continue
+        try:
+            snapshot = transition.snapshot
+        except RolloutContractError:
+            snapshot_mismatch_count += 1
+            continue
+        for array in snapshot.array_fields()[:-1]:
+            observed_dtypes.add(str(array.dtype))
+            observation_finite = observation_finite and bool(np.isfinite(array).all())
+        selected = transition.selected_frontier_index
+        if (
+            type(selected) is not int
+            or not 0 <= selected < snapshot.candidate_mask.size
+            or not bool(snapshot.candidate_mask[selected])
+        ):
+            mask_violation_count += 1
+        action_finite = action_finite and math.isfinite(float(transition.selected_theta))
+        old_logprob_finite = old_logprob_finite and all(
+            math.isfinite(float(value))
+            for value in (
+                transition.old_log_prob_frontier,
+                transition.old_log_prob_theta,
+                transition.old_log_prob_total,
+            )
+        )
+        old_value_finite = old_value_finite and math.isfinite(
+            float(transition.old_value)
+        )
+        old_joint_error = max(
+            old_joint_error,
+            abs(
+                float(transition.old_log_prob_total)
+                - float(transition.old_log_prob_frontier)
+                - float(transition.old_log_prob_theta)
+            ),
+        )
+        stale_policy_transition_count += int(
+            transition.policy_state_sha256 != current_policy_state_sha256
+        )
+
+    for array in (
+        batch.rewards,
+        batch.raw_advantages,
+        batch.normalized_advantages,
+        batch.returns,
+        batch.old_log_prob_frontier,
+        batch.old_log_prob_theta,
+        batch.old_log_prob_total,
+        batch.old_values,
+        batch.selected_thetas,
+    ):
+        observed_dtypes.add(str(array.dtype))
+    evidence = {
+        "schema_version": "ppo_update_math_evidence/v1",
+        "sample_count": batch.size,
+        "snapshot_list_sha256": snapshot_hash_list_sha256(batch.snapshot_hashes),
+        "batch_policy_state_sha256": batch.policy_state_sha256,
+        "observation_finite": observation_finite,
+        "action_finite": action_finite,
+        "old_logprob_finite": old_logprob_finite,
+        "old_value_finite": old_value_finite,
+        "advantage_finite": bool(
+            np.isfinite(batch.raw_advantages).all()
+            and np.isfinite(batch.normalized_advantages).all()
+        ),
+        "return_finite": bool(np.isfinite(batch.returns).all()),
+        "mask_violation_count": mask_violation_count,
+        "snapshot_mismatch_count": snapshot_mismatch_count,
+        "stale_policy_transition_count": stale_policy_transition_count,
+        "old_joint_logprob_factorization_max_abs_error": old_joint_error,
+        "observed_compute_dtypes": sorted(observed_dtypes),
+    }
+    if (
+        not all(
+            evidence[name] is True
+            for name in (
+                "observation_finite",
+                "action_finite",
+                "old_logprob_finite",
+                "old_value_finite",
+                "advantage_finite",
+                "return_finite",
+            )
+        )
+        or any(
+            evidence[name] != 0
+            for name in (
+                "mask_violation_count",
+                "snapshot_mismatch_count",
+                "stale_policy_transition_count",
+            )
+        )
+        or evidence["observed_compute_dtypes"] != ["float32"]
+    ):
+        raise PPOTrainingError("rollout batch math evidence failed")
+    return evidence
+
+
+def _record_forward_math_evidence(
+    tracker: dict[str, object],
+    *,
+    output: PolicyForwardOutput,
+    evaluation: object,
+    sample_count: int,
+    initial_pass: bool,
+    terms: PPOLossTerms | None = None,
+) -> None:
+    log_prob_frontier = getattr(evaluation, "log_prob_frontier", None)
+    log_prob_theta = getattr(evaluation, "log_prob_theta", None)
+    log_prob_total = getattr(evaluation, "log_prob_total", None)
+    logprob_tensors = (log_prob_frontier, log_prob_theta, log_prob_total)
+    if any(not isinstance(value, torch.Tensor) for value in logprob_tensors):
+        raise PPOTrainingError("action logprob evidence is unavailable")
+    typed_logprobs = tuple(logprob_tensors)  # type: ignore[assignment]
+    observed_dtypes = tracker["observed_compute_dtypes"]
+    assert isinstance(observed_dtypes, set)
+    for tensor in (*typed_logprobs, output.value):
+        observed_dtypes.add(str(tensor.dtype).removeprefix("torch."))
+    tracker["new_logprob_finite"] = bool(tracker["new_logprob_finite"]) and all(
+        bool(torch.isfinite(tensor).all()) for tensor in typed_logprobs
+    )
+    tracker["new_value_finite"] = bool(tracker["new_value_finite"]) and bool(
+        torch.isfinite(output.value).all()
+    )
+    factorization_error = (
+        typed_logprobs[2] - (typed_logprobs[0] + typed_logprobs[1])
+    ).abs()
+    tracker["joint_logprob_factorization_max_abs_error"] = max(
+        float(tracker["joint_logprob_factorization_max_abs_error"]),
+        float(factorization_error.max().detach().cpu()),
+    )
+    tracker["forward_sample_count"] = int(tracker["forward_sample_count"]) + sample_count
+    if initial_pass:
+        tracker["initial_forward_sample_count"] = (
+            int(tracker["initial_forward_sample_count"]) + sample_count
+        )
+    if terms is None:
+        return
+    term_tensors = (
+        terms.ratio,
+        terms.policy_loss,
+        terms.value_loss,
+        terms.frontier_entropy,
+        terms.total_loss,
+        terms.approx_kl,
+    )
+    for tensor in term_tensors:
+        observed_dtypes.add(str(tensor.dtype).removeprefix("torch."))
+    tracker["ratio_finite"] = bool(tracker["ratio_finite"]) and bool(
+        torch.isfinite(terms.ratio).all()
+    )
+    tracker["loss_finite"] = bool(tracker["loss_finite"]) and all(
+        bool(torch.isfinite(tensor).all()) for tensor in term_tensors[1:5]
+    )
+    tracker["kl_finite"] = bool(tracker["kl_finite"]) and bool(
+        torch.isfinite(terms.approx_kl).all()
+    )
+    tracker["loss_sample_count"] = int(tracker["loss_sample_count"]) + sample_count
+
+
+def _record_gradient_math_evidence(
+    tracker: dict[str, object],
+    parameters,
+) -> None:
+    gradients = tuple(
+        parameter.grad.detach()
+        for parameter in parameters
+        if parameter.grad is not None
+    )
+    observed_dtypes = tracker["observed_compute_dtypes"]
+    assert isinstance(observed_dtypes, set)
+    if not gradients:
+        tracker["grad_finite"] = False
+        return
+    for gradient in gradients:
+        observed_dtypes.add(str(gradient.dtype).removeprefix("torch."))
+    tracker["grad_finite"] = bool(tracker["grad_finite"]) and all(
+        bool(torch.isfinite(gradient).all()) for gradient in gradients
+    )
+    tracker["gradient_step_count"] = int(tracker["gradient_step_count"]) + 1
 
 
 def compute_ppo_loss_terms(
@@ -209,21 +556,63 @@ class PPOTrainer:
             )
         self.update_step = update_step
 
-    def update(self, batch: RolloutBatch) -> PPOUpdateMetrics:
+    def update(
+        self,
+        batch: RolloutBatch,
+        *,
+        resource_guard: Callable[[str], None] | None = None,
+    ) -> PPOUpdateMetrics:
         if not isinstance(batch, RolloutBatch):
             raise PPOTrainingError("PPOTrainer.update requires a RolloutBatch")
+        if resource_guard is not None and not callable(resource_guard):
+            raise PPOTrainingError("resource_guard must be callable")
+
+        def poll(boundary: str) -> None:
+            if resource_guard is not None:
+                resource_guard(boundary)
+
+        poll("ppo:before-update")
         policy_hash_before = policy_state_sha256(self.policy)
         try:
             batch.claim_for_update(policy_hash_before)
         except RolloutContractError:
             raise
+        try:
+            input_math_evidence = _audit_rollout_batch_inputs(
+                batch,
+                current_policy_state_sha256=policy_hash_before,
+            )
+        except BaseException:
+            if batch.claimed:
+                batch.invalidate()
+            raise
+        math_tracker: dict[str, object] = {
+            "new_logprob_finite": True,
+            "new_value_finite": True,
+            "ratio_finite": True,
+            "loss_finite": True,
+            "kl_finite": True,
+            "grad_finite": True,
+            "joint_logprob_factorization_max_abs_error": 0.0,
+            "initial_forward_sample_count": 0,
+            "forward_sample_count": 0,
+            "loss_sample_count": 0,
+            "gradient_step_count": 0,
+            "observed_compute_dtypes": set(
+                input_math_evidence["observed_compute_dtypes"]
+            ),
+        }
         parameters_before = {
             name: parameter.detach().cpu().clone()
             for name, parameter in self.policy.named_parameters()
         }
         try:
             self.policy.train()
-            initial_error = self._initial_ratio_error(batch)
+            initial_error = self._initial_ratio_error(
+                batch,
+                math_tracker,
+                resource_guard=resource_guard,
+            )
             tolerance = 1e-5 if self.device.type == "cuda" else 1e-6
             if initial_error > tolerance:
                 raise PPOTrainingError(
@@ -278,6 +667,7 @@ class PPOTrainer:
                     for micro_start, micro_stop in physical_microbatch_slices(
                         effective_size
                     ):
+                        poll("ppo:before-physical-microbatch")
                         indices = effective_indices[micro_start:micro_stop]
                         physical_size = int(indices.size)
                         physical_sizes.append(physical_size)
@@ -311,6 +701,14 @@ class PPOTrainer:
                             ),
                             frontier_entropy=evaluation.frontier_entropy,
                         )
+                        _record_forward_math_evidence(
+                            math_tracker,
+                            output=output,
+                            evaluation=evaluation,
+                            sample_count=physical_size,
+                            initial_pass=False,
+                            terms=terms,
+                        )
                         weight = physical_size / effective_size
                         (terms.total_loss * weight).backward()
                         kl_sum += float(
@@ -340,6 +738,7 @@ class PPOTrainer:
                         local_kappas.extend(
                             float(value) for value in selected_kappa.detach().cpu().tolist()
                         )
+                        poll("ppo:after-physical-microbatch")
 
                     approx_kl = kl_sum / effective_size
                     if not math.isfinite(approx_kl):
@@ -350,10 +749,14 @@ class PPOTrainer:
                         early_stopped = True
                         early_stop_epoch = epoch
                         early_stop_minibatch = minibatch_index
-                        skipped_minibatches = planned_steps - linear_minibatch - 1
+                        skipped_minibatches = planned_steps - linear_minibatch
                         break
 
                     pre_clip = _gradient_norm(self.policy.parameters())
+                    _record_gradient_math_evidence(
+                        math_tracker,
+                        self.policy.parameters(),
+                    )
                     if not math.isfinite(pre_clip):
                         raise PPOTrainingError("pre-clip gradient norm is non-finite")
                     torch.nn.utils.clip_grad_norm_(
@@ -364,7 +767,9 @@ class PPOTrainer:
                     post_clip = _gradient_norm(self.policy.parameters())
                     if not math.isfinite(post_clip) or post_clip > 0.500001:
                         raise PPOTrainingError("post-clip gradient norm exceeds 0.500001")
+                    poll("ppo:before-optimizer-step")
                     self.optimizer.step()
+                    poll("ppo:after-optimizer-step")
                     optimizer_steps += 1
                     effective_sizes.append(effective_size)
                     policy_losses.append(local_policy_sum / effective_size)
@@ -406,6 +811,49 @@ class PPOTrainer:
             if policy_hash_after == policy_hash_before:
                 raise PPOTrainingError("PPO policy hash did not change")
             self.update_step += 1
+            observed_compute_dtypes = math_tracker["observed_compute_dtypes"]
+            assert isinstance(observed_compute_dtypes, set)
+            math_evidence_payload = {
+                **input_math_evidence,
+                "new_logprob_finite": bool(math_tracker["new_logprob_finite"]),
+                "new_value_finite": bool(math_tracker["new_value_finite"]),
+                "ratio_finite": bool(math_tracker["ratio_finite"]),
+                "loss_finite": bool(math_tracker["loss_finite"]),
+                "kl_finite": bool(math_tracker["kl_finite"]),
+                "grad_finite": bool(math_tracker["grad_finite"]),
+                "joint_logprob_factorization_max_abs_error": float(
+                    math_tracker["joint_logprob_factorization_max_abs_error"]
+                ),
+                "initial_forward_sample_count": int(
+                    math_tracker["initial_forward_sample_count"]
+                ),
+                "forward_sample_count": int(math_tracker["forward_sample_count"]),
+                "loss_sample_count": int(math_tracker["loss_sample_count"]),
+                "gradient_step_count": int(math_tracker["gradient_step_count"]),
+                "observed_compute_dtypes": sorted(observed_compute_dtypes),
+            }
+            if (
+                any(
+                    math_evidence_payload[name] is not True
+                    for name in (
+                        "new_logprob_finite",
+                        "new_value_finite",
+                        "ratio_finite",
+                        "loss_finite",
+                        "kl_finite",
+                        "grad_finite",
+                    )
+                )
+                or math_evidence_payload["initial_forward_sample_count"] != batch.size
+                or int(math_evidence_payload["forward_sample_count"])
+                != int(math_evidence_payload["initial_forward_sample_count"])
+                + int(math_evidence_payload["loss_sample_count"])
+                or int(math_evidence_payload["loss_sample_count"]) <= 0
+                or math_evidence_payload["gradient_step_count"] != optimizer_steps
+                or math_evidence_payload["observed_compute_dtypes"] != ["float32"]
+            ):
+                raise PPOTrainingError("PPO runtime math evidence failed")
+            math_evidence = _seal_math_evidence(math_evidence_payload)
             metrics = PPOUpdateMetrics(
                 update_step=self.update_step,
                 initial_ratio_max_abs_error=initial_error,
@@ -435,8 +883,10 @@ class PPOTrainer:
                 parameter_change_l2=parameter_change_l2,
                 policy_state_sha256_before=policy_hash_before,
                 policy_state_sha256_after=policy_hash_after,
+                math_evidence=math_evidence,
             )
             batch.mark_consumed()
+            poll("ppo:after-update")
             return metrics
         except BaseException as exc:
             if batch.claimed:
@@ -445,12 +895,28 @@ class PPOTrainer:
                 raise PPOTrainingError("CUDA OOM during PPO update") from exc
             raise
 
-    def _initial_ratio_error(self, batch: RolloutBatch) -> float:
+    def _initial_ratio_error(
+        self,
+        batch: RolloutBatch,
+        math_tracker: dict[str, object],
+        *,
+        resource_guard: Callable[[str], None] | None = None,
+    ) -> float:
         max_error = 0.0
         with torch.no_grad():
-            for start, stop in physical_microbatch_slices(batch.size):
+            for start in range(0, batch.size, ROLLOUT_ENV_COUNT):
+                stop = min(start + ROLLOUT_ENV_COUNT, batch.size)
+                if resource_guard is not None:
+                    resource_guard("ppo:before-initial-microbatch")
                 indices = np.arange(start, stop, dtype=np.int64)
-                _, evaluation, _ = self._evaluate(batch, indices)
+                output, evaluation, _ = self._evaluate(batch, indices)
+                _record_forward_math_evidence(
+                    math_tracker,
+                    output=output,
+                    evaluation=evaluation,
+                    sample_count=int(indices.size),
+                    initial_pass=True,
+                )
                 old_frontier = self._batch_tensor(
                     batch.old_log_prob_frontier,
                     indices,
@@ -476,6 +942,8 @@ class PPOTrainer:
                     max_error,
                     *(float(value.max().cpu()) for value in differences),
                 )
+                if resource_guard is not None:
+                    resource_guard("ppo:after-initial-microbatch")
         if not math.isfinite(max_error):
             raise PPOTrainingError("initial ratio is non-finite")
         return max_error
@@ -568,4 +1036,6 @@ __all__ = [
     "compute_ppo_loss_terms",
     "physical_microbatch_slices",
     "policy_state_sha256",
+    "snapshot_hash_list_sha256",
+    "validate_ppo_math_evidence",
 ]

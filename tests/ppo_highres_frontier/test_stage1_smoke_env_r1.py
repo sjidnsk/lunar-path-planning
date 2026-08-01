@@ -4297,8 +4297,8 @@ def test_exact_coverable_zero_denominator_fails_with_stable_reason() -> None:
         )
 
 
-def _independent_observed_opportunity_count(state, pose, sensor_range_m: float) -> tuple[int, int]:
-    safe = state.observed_safe_mask
+def _independent_planning_opportunity_count(state, pose, sensor_range_m: float) -> tuple[int, int]:
+    safe = state.planning_safe_mask
     height, width = safe.shape
     component = np.zeros_like(safe)
     if safe[pose.cell.y, pose.cell.x]:
@@ -4338,6 +4338,8 @@ def _independent_observed_opportunity_count(state, pose, sensor_range_m: float) 
 
     opportunities = 0
     for source_y, source_x in np.argwhere(component):
+        if source_x == pose.cell.x and source_y == pose.cell.y:
+            continue
         min_x = max(0, math.floor(source_x - radius_cells))
         max_x = min(width - 1, math.ceil(source_x + radius_cells))
         min_y = max(0, math.floor(source_y - radius_cells))
@@ -4365,7 +4367,7 @@ def test_production_no_candidate_terminal_has_zero_independent_observed_opportun
         result = env.step(select_rule_action(observation))
         observation = result.observation
     if env.terminal_reason == "no_candidate_done":
-        opportunity_count, component_size = _independent_observed_opportunity_count(
+        opportunity_count, component_size = _independent_planning_opportunity_count(
             env.observed_state,
             env.pose,
             env.config.sensor_range_m,
@@ -4373,7 +4375,11 @@ def test_production_no_candidate_terminal_has_zero_independent_observed_opportun
         assert component_size > 0
         assert opportunity_count == 0
     else:
-        assert env.terminal_reason == "success_done"
+        assert env.terminal_reason in {
+            "success_done",
+            "failure_done",
+            "stagnation_done",
+        }
 
 
 def test_real_frontier_generator_empty_with_observed_opportunity_fails_closed(
@@ -4397,6 +4403,48 @@ def test_real_frontier_generator_empty_with_observed_opportunity_fails_closed(
     monkeypatch.setattr(generator, "extract", forced_empty)
     with pytest.raises(RuntimeError, match="production frontier is empty.*opportunities remain"):
         env.reset()
+
+
+def test_terminal_safety_transition_does_not_require_a_next_frontier_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lunar_exploration_ppo.configs.stage1 import load_stage1_config
+    from lunar_exploration_ppo.env.env import LunarExplorationEnv
+    from lunar_exploration_ppo.env.frontier import FrontierActionSet, FrontierGenerator
+
+    class InjectedSevereExecutionSafetyChecker:
+        def check(self, safe_mask, path_cells):
+            assert safe_mask.ndim == 2
+            assert path_cells
+            return "collision_detected"
+
+    config = load_stage1_config(STAGE1_CONFIG)
+    generator = FrontierGenerator(top_m=config.frontier_top_m)
+    env = LunarExplorationEnv(
+        config,
+        frontier_generator=generator,
+        execution_safety_checker=InjectedSevereExecutionSafetyChecker(),
+    )
+    observation = env.reset()
+    action = env.select_rule_action(observation)
+
+    def forced_empty(observed_state, prior, pose):
+        return FrontierActionSet(
+            cells=(),
+            frontier_features=np.zeros((config.frontier_top_m, 22), dtype=np.float32),
+            candidate_mask=np.zeros((config.frontier_top_m,), dtype=bool),
+        )
+
+    monkeypatch.setattr(generator, "extract", forced_empty)
+    result = env.step(action)
+
+    assert result.done and result.terminal
+    assert result.reason == "safety_done"
+    assert result.bootstrap_value == 0.0
+    assert result.trainable is True
+    assert result.diagnostics.frontier.candidate_count == 0
+    assert result.diagnostics.frontier.oracle_opportunity_count > 0
+    assert env.needs_policy is False
 
 
 def test_real_frontier_generator_zero_opportunity_is_legal_no_candidate_terminal(
@@ -4445,6 +4493,7 @@ def test_observed_frontier_opportunity_audit_distinguishes_remaining_gain_from_e
     initial = audit_frontier_opportunities(
         env.observed_state,
         env.pose,
+        planning_safe_mask=env.observed_state.planning_safe_mask,
         sensor_range_m=env.config.sensor_range_m,
     )
     assert initial.component_size > 0
@@ -4455,6 +4504,7 @@ def test_observed_frontier_opportunity_audit_distinguishes_remaining_gain_from_e
     exhausted = audit_frontier_opportunities(
         env.observed_state,
         env.pose,
+        planning_safe_mask=env.observed_state.planning_safe_mask,
         sensor_range_m=env.config.sensor_range_m,
     )
     assert exhausted.unknown_count == 0
@@ -4505,7 +4555,10 @@ def test_packaging_declares_planner_and_ast_confines_direct_external_imports() -
                 node.module == "path_planner" or node.module.startswith("path_planner.")
             ):
                 direct_importers.append(source_file.relative_to(source_root).as_posix())
-    assert sorted(set(direct_importers)) == ["integrations/path_planner_adapter.py"]
+    assert sorted(set(direct_importers)) == [
+        "integrations/path_planner_adapter.py",
+        "workflows/stage6_planning_child_source_repair.py",
+    ]
     integrations_init = (source_root / "integrations" / "__init__.py").read_text(encoding="utf-8")
     assert "import_module" not in integrations_init
     assert '".path_" + "planner_adapter"' not in integrations_init

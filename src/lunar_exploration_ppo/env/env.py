@@ -224,11 +224,25 @@ class ResetDiagnostics:
     reward: float
     trainable: bool
     fake_logprob_created: bool
-    sensor: SensorDiagnostics
     coverage_rate: float
     progress: ProgressSnapshot
     reason: DoneReason
     frontier: FrontierDiagnostics
+    sensor: SensorDiagnostics | None = None
+    local_safety_sensor: SensorDiagnostics | None = None
+    exploration_sensor: SensorDiagnostics | None = None
+    scan_order: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        exploration = self.exploration_sensor or self.sensor
+        if exploration is None:
+            raise ValueError("reset exploration sensor diagnostics are required")
+        local = self.local_safety_sensor or exploration
+        object.__setattr__(self, "sensor", exploration)
+        object.__setattr__(self, "exploration_sensor", exploration)
+        object.__setattr__(self, "local_safety_sensor", local)
+        if not self.scan_order:
+            object.__setattr__(self, "scan_order", ("reset_exploration",))
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +277,46 @@ class StepResult:
 _COVERAGE_CACHE: dict[tuple[object, ...], CoverageMasks] = {}
 
 
+def _validate_precomputed_coverage_masks(masks: CoverageMasks, scenario: ScenarioBundle) -> None:
+    expected_shape = scenario.truth.geometry.shape
+    arrays = (
+        masks.safe_free_mask,
+        masks.reachable_safe_mask,
+        masks.coverable_mask,
+    )
+    if any(array.dtype != np.dtype(bool) or array.shape != expected_shape for array in arrays):
+        raise ValueError("precomputed coverage mask geometry or dtype drifted")
+    coverable_cell_count = int(np.count_nonzero(masks.coverable_mask))
+    if coverable_cell_count <= 0:
+        raise ValueError("precomputed coverage coverable denominator must be positive")
+    coverable_hash = hashlib.sha256(
+        np.ascontiguousarray(masks.coverable_mask).tobytes()
+    ).hexdigest()
+    expected_metadata = {
+        "algorithm_id": "exact_reachable_safe_pose_range_los/v1",
+        "sha256": coverable_hash,
+        "exact": True,
+        "precompute_scope": "scenario_reset/v1",
+        "coverable_cell_count": coverable_cell_count,
+    }
+    if not _strict_json_equal(dict(masks.metadata), expected_metadata):
+        raise ValueError("precomputed coverage mask metadata drifted")
+
+
+def _strict_json_equal(actual: object, expected: object) -> bool:
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(actual, dict):
+        return set(actual) == set(expected) and all(
+            _strict_json_equal(actual[key], expected[key]) for key in actual
+        )
+    if isinstance(actual, list):
+        return len(actual) == len(expected) and all(
+            _strict_json_equal(left, right) for left, right in zip(actual, expected, strict=True)
+        )
+    return actual == expected
+
+
 class LunarExplorationEnv:
     def __init__(
         self,
@@ -271,6 +325,7 @@ class LunarExplorationEnv:
         scenario_source: ScenarioSource | None = None,
         frontier_generator: FrontierExtractor | None = None,
         execution_safety_checker: ExecutionSafetyChecker | None = None,
+        precomputed_coverage_masks: CoverageMasks | None = None,
     ) -> None:
         self.config = config
         self._enforce_fixed_smoke_structural_gates = (
@@ -288,23 +343,27 @@ class LunarExplorationEnv:
                 )
             )
         self._scenario: ScenarioBundle = scenario_source.load(config.scenario_key)
-        cache_key = (
-            self._scenario.scenario_hash,
-            config.sensor_range_m,
-            config.min_clearance_m,
-            config.max_traversable_slope_deg,
-            config.traversability_threshold,
-        )
-        if cache_key not in _COVERAGE_CACHE:
-            _COVERAGE_CACHE[cache_key] = compute_coverage_masks(
-                self._scenario.truth,
-                self._scenario.start_pose.cell,
-                sensor_range_m=config.sensor_range_m,
-                min_clearance_m=config.min_clearance_m,
-                max_slope_deg=config.max_traversable_slope_deg,
-                traversability_threshold=config.traversability_threshold,
+        if precomputed_coverage_masks is None:
+            cache_key = (
+                self._scenario.scenario_hash,
+                config.sensor_range_m,
+                config.min_clearance_m,
+                config.max_traversable_slope_deg,
+                config.traversability_threshold,
             )
-        cached_masks = _COVERAGE_CACHE[cache_key]
+            if cache_key not in _COVERAGE_CACHE:
+                _COVERAGE_CACHE[cache_key] = compute_coverage_masks(
+                    self._scenario.truth,
+                    self._scenario.start_pose.cell,
+                    sensor_range_m=config.sensor_range_m,
+                    min_clearance_m=config.min_clearance_m,
+                    max_slope_deg=config.max_traversable_slope_deg,
+                    traversability_threshold=config.traversability_threshold,
+                )
+            cached_masks = _COVERAGE_CACHE[cache_key]
+        else:
+            _validate_precomputed_coverage_masks(precomputed_coverage_masks, self._scenario)
+            cached_masks = precomputed_coverage_masks
         self._coverage_masks = CoverageMasks(
             safe_free_mask=cached_masks.safe_free_mask.copy(),
             reachable_safe_mask=cached_masks.reachable_safe_mask.copy(),
@@ -318,6 +377,14 @@ class LunarExplorationEnv:
             range_m=config.sensor_range_m,
             fov_deg=config.sensor_fov_deg,
             ray_angle_step_deg=config.sensor_ray_angle_step_deg,
+            min_clearance_m=config.min_clearance_m,
+            max_slope_deg=config.max_traversable_slope_deg,
+            traversability_threshold=config.traversability_threshold,
+        )
+        self.local_safety_sensor_updater = SensorUpdater(
+            range_m=config.reset_local_safety_scan_range_m,
+            fov_deg=config.reset_local_safety_scan_fov_deg,
+            ray_angle_step_deg=config.reset_local_safety_scan_ray_angle_step_deg,
             min_clearance_m=config.min_clearance_m,
             max_slope_deg=config.max_traversable_slope_deg,
             traversability_threshold=config.traversability_threshold,
@@ -343,12 +410,29 @@ class LunarExplorationEnv:
         self.consecutive_no_gain_steps = 0
         self.is_done = False
         self.terminal_reason = "none"
-        reset_pose = SensorPose(
-            self._scenario.truth.geometry.cell_to_world_center(self.pose.cell),
+        reset_world = self._scenario.truth.geometry.cell_to_world_center(
+            self.pose.cell
+        )
+        local_safety_pose = SensorPose(
+            reset_world,
+            self.pose.theta,
+            "reset_local_safety",
+        )
+        exploration_pose = SensorPose(
+            reset_world,
             self.pose.theta,
             "reset",
         )
-        delta = self.sensor_updater.reveal(self._scenario.truth, self.observed_state, (reset_pose,))
+        local_delta = self.local_safety_sensor_updater.reveal(
+            self._scenario.truth,
+            self.observed_state,
+            (local_safety_pose,),
+        )
+        exploration_delta = self.sensor_updater.reveal(
+            self._scenario.truth,
+            self.observed_state,
+            (exploration_pose,),
+        )
         self.current_action_set = self.frontier_generator.extract(
             self.observed_state, self._scenario.prior, self.pose
         )
@@ -367,7 +451,9 @@ class LunarExplorationEnv:
             reward=0.0,
             trainable=False,
             fake_logprob_created=False,
-            sensor=delta.diagnostics,
+            local_safety_sensor=local_delta.diagnostics,
+            exploration_sensor=exploration_delta.diagnostics,
+            scan_order=("reset_local_safety", "reset_exploration"),
             coverage_rate=coverage_rate,
             progress=self._progress(coverage_rate),
             reason=self.terminal_reason,
@@ -406,6 +492,7 @@ class LunarExplorationEnv:
             target = self.current_action_set.cells[action.candidate_index]
             plan = self.planner.validate(
                 self.observed_state.observed_safe_mask,
+                self.observed_state.planning_safe_mask,
                 self.pose.cell,
                 target,
                 action.target_theta,
@@ -443,6 +530,7 @@ class LunarExplorationEnv:
                     self.pose = PoseXYTheta(target, plan.target_theta)
                     post_observation_safety_failure = _post_observation_safety_failure(
                         self.observed_state.observed_safe_mask,
+                        self.observed_state.planning_safe_mask,
                         plan.path_cells,
                         endpoint=target,
                     )
@@ -478,8 +566,15 @@ class LunarExplorationEnv:
             self.step_count,
             self.consecutive_no_gain_steps,
             self.current_action_set.candidate_count > 0,
+            success_coverage_rate=self.config.success_coverage_rate,
+            max_steps=self.config.max_steps,
+            stagnation_no_gain_steps=self.config.stagnation_no_gain_steps,
         )
-        frontier_diagnostics = self._frontier_diagnostics()
+        frontier_diagnostics = self._frontier_diagnostics(
+            enforce_oracle=(
+                not decision.done or decision.reason == "no_candidate_done"
+            )
+        )
         reward = compute_step_reward(
             self.config,
             coverage_gain_cells,
@@ -776,7 +871,9 @@ class LunarExplorationEnv:
         if self.current_action_set.candidate_count <= 0:
             raise RuntimeError("fixed Smoke structural gate failed: default candidate")
 
-    def _frontier_diagnostics(self) -> FrontierDiagnostics:
+    def _frontier_diagnostics(self, *, enforce_oracle: bool = True) -> FrontierDiagnostics:
+        if type(enforce_oracle) is not bool:
+            raise TypeError("enforce_oracle must be boolean")
         candidate_count = self.current_action_set.candidate_count
         unknown_count = int(np.count_nonzero(~self.observed_state.observed_mask))
         remaining_coverable = int(
@@ -788,12 +885,13 @@ class LunarExplorationEnv:
             audit = audit_frontier_opportunities(
                 self.observed_state,
                 self.pose,
+                planning_safe_mask=self.observed_state.planning_safe_mask,
                 sensor_range_m=self.config.sensor_range_m,
                 max_slope_deg=self.config.max_traversable_slope_deg,
             )
             component_size = audit.component_size
             oracle_count = audit.opportunity_count
-            if self._enforce_frontier_oracle and oracle_count > 0:
+            if enforce_oracle and self._enforce_frontier_oracle and oracle_count > 0:
                 raise RuntimeError("production frontier is empty while observed opportunities remain")
         return FrontierDiagnostics(
             candidate_count=candidate_count,
@@ -832,15 +930,19 @@ def resolve_terminal(
     step_count: int,
     consecutive_no_gain_steps: int,
     has_candidate: bool,
+    *,
+    success_coverage_rate: float = 0.99,
+    max_steps: int = 64,
+    stagnation_no_gain_steps: int = 8,
 ) -> TerminalDecision:
     reason: DoneReason = "none"
     if severe_safety:
         reason = "safety_done"
-    elif coverage_rate >= 0.99:
+    elif coverage_rate >= success_coverage_rate:
         reason = "success_done"
-    elif step_count >= 64:
+    elif step_count >= max_steps:
         reason = "failure_done"
-    elif consecutive_no_gain_steps >= 8:
+    elif consecutive_no_gain_steps >= stagnation_no_gain_steps:
         reason = "stagnation_done"
     elif not has_candidate:
         reason = "no_candidate_done"
@@ -854,21 +956,26 @@ def resolve_terminal(
 
 
 def _post_observation_safety_failure(
-    safe_mask: np.ndarray,
+    observed_safe_mask: np.ndarray,
+    planning_safe_mask: np.ndarray,
     path_cells: tuple[CellXY, ...],
     *,
     endpoint: CellXY,
 ) -> str | None:
-    height, width = safe_mask.shape
+    height, width = observed_safe_mask.shape
     if not (0 <= endpoint.x < width and 0 <= endpoint.y < height):
         return "post_observation_endpoint_out_of_bounds"
-    if not bool(safe_mask[endpoint.y, endpoint.x]):
+    if not bool(observed_safe_mask[endpoint.y, endpoint.x]):
         return "post_observation_endpoint_unsafe"
+    if not bool(planning_safe_mask[endpoint.y, endpoint.x]):
+        return "post_observation_endpoint_unknown_buffer_unsafe"
     for cell in path_cells:
         if not (0 <= cell.x < width and 0 <= cell.y < height):
             return "post_observation_path_out_of_bounds"
-        if not bool(safe_mask[cell.y, cell.x]):
+        if not bool(observed_safe_mask[cell.y, cell.x]):
             return "post_observation_path_unsafe"
+        if not bool(planning_safe_mask[cell.y, cell.x]):
+            return "post_observation_path_unknown_buffer_unsafe"
     return None
 
 

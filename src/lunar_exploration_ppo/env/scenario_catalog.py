@@ -22,6 +22,7 @@ from lunar_exploration_ppo.configs.schema import (
     SLOPE_SHA256,
     SLOPE_SIZE_BYTES,
 )
+from lunar_exploration_ppo.env.map_state import apply_clearance_once
 from lunar_exploration_ppo.env.scenario import LowResolutionPrior, ScenarioBundle, TruthMap
 from lunar_exploration_ppo.env.terrain_proxy import (
     ProceduralTerrainProxyGenerator,
@@ -235,7 +236,7 @@ class StandardScenarioFactory:
         native_height = self.catalog._read_dem_window(record)
         base_height = _upsample_standard_dem(native_height)
         geometry = GridGeometry(width=256, height=256, resolution_m=0.5)
-        start_pose = _standard_start_pose(record, prior)
+        start_pose = _standard_start_pose(record, prior, base_height, geometry)
         settings = TerrainProxySettings(
             generator_version=PROXY_GENERATOR_VERSION,
             density_profile=record.density_profile,
@@ -460,15 +461,57 @@ def _upsample_standard_dem(height: np.ndarray) -> np.ndarray:
 def _standard_start_pose(
     record: ScenarioCatalogRecord,
     prior: LowResolutionPrior,
+    base_height: np.ndarray,
+    geometry: GridGeometry,
 ) -> PoseXYTheta:
     rng = np.random.Generator(np.random.PCG64(int(record.start_pose_seed_hex, 16)))
     traversability = np.asarray(prior.channels[3], dtype=np.float64)
-    candidates = np.argwhere(traversability[2:-2, 2:-2] >= 0.75) + 2
-    if not len(candidates):
-        candidates = np.argwhere(np.ones((28, 28), dtype=bool)) + 2
-    low_y, low_x = candidates[int(rng.integers(0, len(candidates)))]
-    cell = CellXY(int(low_x) * 8 + 4, int(low_y) * 8 + 4)
+    exact_safe = _standard_exact_safe_lowres_centers(base_height, geometry)
+    preferred = tuple(
+        cell
+        for cell in exact_safe
+        if traversability[(cell.y - 4) // 8, (cell.x - 4) // 8] >= 0.75
+    )
+    candidates = preferred if preferred else exact_safe
+    if not candidates:
+        raise ValueError(f"no exact-safe start center: {record.scenario_id}")
+    cell = candidates[int(rng.integers(0, len(candidates)))]
     return PoseXYTheta(cell, float(rng.uniform(-math.pi, math.pi)))
+
+
+def _standard_exact_safe_lowres_centers(
+    base_height: np.ndarray,
+    geometry: GridGeometry,
+) -> tuple[CellXY, ...]:
+    values = np.asarray(base_height, dtype=np.float64)
+    if values.shape != (256, 256) or geometry.shape != values.shape:
+        raise ValueError("Standard exact-safe start selection requires a 256x256 base DEM")
+    if geometry.resolution_m != 0.5:
+        raise ValueError("Standard exact-safe start selection requires 0.5m resolution")
+    slope_deg = derive_physical_slope_deg(values, spacing_m=0.5)
+    traversability = np.clip(1.0 - slope_deg / 60.0, 0.0, 1.0)
+    finite = (
+        np.isfinite(values)
+        & np.isfinite(slope_deg)
+        & np.isfinite(traversability)
+    )
+    free = (
+        finite
+        & (slope_deg <= 30.0)
+        & (traversability >= 0.50)
+    )
+    exact_safe = apply_clearance_once(
+        free,
+        ~free,
+        resolution_m=0.5,
+        min_clearance_m=0.5215874761,
+    )
+    return tuple(
+        CellXY(low_x * 8 + 4, low_y * 8 + 4)
+        for low_y in range(2, 30)
+        for low_x in range(2, 30)
+        if exact_safe[low_y * 8 + 4, low_x * 8 + 4]
+    )
 
 
 def _array_content_sha256(array: np.ndarray, *, domain: str) -> str:

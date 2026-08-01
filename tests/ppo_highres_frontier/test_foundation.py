@@ -171,7 +171,10 @@ def test_namespace_is_importable_and_isolated_from_legacy_modules() -> None:
                 node.module == "path_planner" or node.module.startswith("path_planner.")
             ):
                 direct_planner_importers.append(source_file)
-    assert {path.name for path in direct_planner_importers} == {"path_planner_adapter.py"}
+    assert {path.name for path in direct_planner_importers} == {
+        "path_planner_adapter.py",
+        "stage6_planning_child_source_repair.py",
+    }
 
 
 def test_foundation_config_freezes_coordinate_safety_proxy_and_scan_contracts() -> None:
@@ -328,21 +331,36 @@ def test_artifact_store_warns_over_180_and_fails_at_240_full_path_chars(tmp_path
 def test_artifact_store_atomic_writes_append_jsonl_and_builds_sha256_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import lunar_exploration_ppo.utils.artifact_io as artifact_module
+
     store = ArtifactStore(tmp_path)
-    real_replace = os.replace
+    real_replace = artifact_module.durable_replace
     real_fsync = os.fsync
     real_open = builtins.open
     replacements: list[tuple[Path, Path]] = []
     fsync_calls: list[int] = []
     jsonl_modes: list[str] = []
 
-    def checked_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    def checked_replace(
+        source: str | os.PathLike[str],
+        destination: str | os.PathLike[str],
+        *,
+        expected_source_identity: tuple[int, int, int, int, int, int],
+        replace_existing: bool = True,
+    ) -> None:
         source_path = Path(source)
         destination_path = Path(destination)
         assert source_path.parent == destination_path.parent
         assert source_path.is_file()
+        assert len(expected_source_identity) == 6
+        assert replace_existing is True
         replacements.append((source_path, destination_path))
-        real_replace(source, destination)
+        real_replace(
+            source,
+            destination,
+            expected_source_identity=expected_source_identity,
+            replace_existing=replace_existing,
+        )
 
     def checked_fsync(file_descriptor: int) -> None:
         fsync_calls.append(file_descriptor)
@@ -353,7 +371,7 @@ def test_artifact_store_atomic_writes_append_jsonl_and_builds_sha256_manifest(
             jsonl_modes.append(mode)
         return real_open(file, mode, *args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(os, "replace", checked_replace)
+    monkeypatch.setattr(artifact_module, "durable_replace", checked_replace)
     monkeypatch.setattr(os, "fsync", checked_fsync)
     monkeypatch.setattr(builtins, "open", checked_open)
     store.write_json("config.json", {"b": 2, "a": 1})
@@ -380,6 +398,38 @@ def test_artifact_store_atomic_writes_append_jsonl_and_builds_sha256_manifest(
         payload = (tmp_path / relative_path).read_bytes()
         assert entry["size_bytes"] == len(payload)
         assert entry["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "nonfinite",
+    (float("nan"), float("inf"), float("-inf")),
+)
+def test_artifact_store_rejects_nested_nonfinite_json_without_side_effects(
+    tmp_path: Path,
+    nonfinite: float,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    value = {"outer": [{"nonfinite": nonfinite}]}
+    existing_jsonl = tmp_path / "existing.jsonl"
+    existing_payload = b'{"stable":true}\n'
+    existing_jsonl.write_bytes(existing_payload)
+
+    with pytest.raises(ValueError, match="JSON compliant|Out of range"):
+        ArtifactStore.canonical_json_bytes(value)
+    with pytest.raises(ValueError, match="JSON compliant|Out of range"):
+        store.write_json("atomic.json", value)
+    with pytest.raises(ValueError, match="JSON compliant|Out of range"):
+        store.write_json_exclusive("exclusive.json", value)
+    with pytest.raises(ValueError, match="JSON compliant|Out of range"):
+        store.append_jsonl("nested/new.jsonl", value)
+    with pytest.raises(ValueError, match="JSON compliant|Out of range"):
+        store.append_jsonl("existing.jsonl", value)
+
+    assert existing_jsonl.read_bytes() == existing_payload
+    assert not (tmp_path / "atomic.json").exists()
+    assert not (tmp_path / "exclusive.json").exists()
+    assert not (tmp_path / "nested").exists()
+    assert not [path for path in tmp_path.iterdir() if ".tmp" in path.name]
 
 
 def test_artifact_store_exclusive_json_publishes_canonical_complete_bytes(tmp_path: Path) -> None:
@@ -412,58 +462,70 @@ def test_artifact_store_exclusive_publish_race_preserves_foreign_and_cleans_temp
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import lunar_exploration_ppo.utils.path_security as path_security
+
     store = ArtifactStore(tmp_path)
     target = tmp_path / "gate.json"
     ours = b'{"actor":"ours"}\n'
     foreign = b'{"actor":"foreign-racer"}\n'
-    real_link = os.link
-    link_calls = 0
+    race_injections = 0
 
-    def competing_link(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
-        nonlocal link_calls
-        link_calls += 1
+    def inject_competing_destination(
+        event: str,
+        source: Path,
+        destination: Path | None,
+    ) -> None:
+        nonlocal race_injections
+        if event != "after_source_handle_bound" or destination != target:
+            return
+        race_injections += 1
         source_path = Path(source)
         destination_path = Path(destination)
         assert source_path.parent == destination_path.parent
-        assert source_path.read_bytes() == ours
+        assert source_path.name.startswith(".gate.json.")
         assert not destination_path.exists()
         destination_path.write_bytes(foreign)
-        real_link(source, destination)
 
     def reject_replace(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("exclusive publish must never fall back to os.replace")
 
-    monkeypatch.setattr(os, "link", competing_link)
+    monkeypatch.setattr(path_security, "_namespace_event", inject_competing_destination)
     monkeypatch.setattr(os, "replace", reject_replace)
 
     with pytest.raises(FileExistsError):
         store.write_bytes_exclusive("gate.json", ours)
 
-    assert link_calls == 1
+    assert race_injections == 1
     assert target.read_bytes() == foreign
     assert not [path for path in tmp_path.iterdir() if path.name.startswith(".gate.json.")]
 
 
-def test_artifact_store_exclusive_link_unsupported_fails_closed_without_fallback(
+def test_artifact_store_exclusive_namespace_unsupported_fails_closed_without_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = ArtifactStore(tmp_path)
-    link_error = OSError("hard links unsupported by test filesystem")
+    import lunar_exploration_ppo.utils.artifact_io as artifact_module
 
-    def reject_link(*_args: object, **_kwargs: object) -> None:
-        raise link_error
+    store = ArtifactStore(tmp_path)
+    namespace_error = OSError("identity-bound namespace primitive unavailable")
+
+    def reject_publish(*_args: object, **_kwargs: object) -> None:
+        raise namespace_error
 
     def reject_replace(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("exclusive publish must never fall back to os.replace")
 
-    monkeypatch.setattr(os, "link", reject_link)
+    monkeypatch.setattr(
+        artifact_module,
+        "durable_publish_exclusive",
+        reject_publish,
+    )
     monkeypatch.setattr(os, "replace", reject_replace)
 
     with pytest.raises(OSError) as captured:
         store.write_json_exclusive("gate.json", {"actor": "ours"})
 
-    assert captured.value is link_error
+    assert captured.value is namespace_error
     assert not (tmp_path / "gate.json").exists()
     assert not [path for path in tmp_path.iterdir() if path.name.startswith(".gate.json.")]
 

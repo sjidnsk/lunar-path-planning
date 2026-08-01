@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Iterable, Iterator, Literal
 
 from lunar_exploration_ppo.env.map_state import ObservedMapState
 from lunar_exploration_ppo.env.scenario import TruthMap
 from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry, WorldXY, normalize_theta
 
 
-SensorSampleSource = Literal["reset", "path_tangent", "endpoint_theta"]
+SensorSampleSource = Literal[
+    "reset_local_safety",
+    "reset",
+    "path_tangent",
+    "endpoint_theta",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +90,12 @@ class SensorUpdater:
         self.min_clearance_m = float(min_clearance_m)
         self.max_slope_deg = float(max_slope_deg)
         self.traversability_threshold = float(traversability_threshold)
+        rays_per_sample = int(round(self.fov_deg / self.ray_angle_step_deg)) + 1
+        half_fov = self.fov_deg / 2.0
+        self._ray_angle_offsets_rad = tuple(
+            math.radians(-half_fov + index * self.ray_angle_step_deg)
+            for index in range(rays_per_sample)
+        )
 
     def reveal(
         self,
@@ -93,33 +104,87 @@ class SensorUpdater:
         poses: Iterable[SensorPose],
     ) -> ObservationDelta:
         pose_tuple = tuple(poses)
-        visible: set[CellXY] = set()
+        visible_flat: set[int] = set()
         visits = 0
-        rays_per_sample = int(round(self.fov_deg / self.ray_angle_step_deg)) + 1
-        half_fov = self.fov_deg / 2.0
+        geometry = truth.geometry
+        width = geometry.width
+        height = geometry.height
+        resolution = geometry.resolution_m
+        grid_origin_x = geometry.origin.x
+        grid_origin_y = geometry.origin.y
+        range_m = self.range_m
+        max_slope_deg = self.max_slope_deg
+        hard_obstacle = truth.hard_obstacle
+        slope_deg = truth.slope_deg
+        ray_angle_offsets = self._ray_angle_offsets_rad
         for pose in pose_tuple:
-            for index in range(rays_per_sample):
-                offset_deg = -half_fov + index * self.ray_angle_step_deg
-                angle = pose.heading + math.radians(offset_deg)
-                for ray_cell_index, cell in enumerate(
-                    ray_cells_from_world(
-                        pose.world_xy,
-                        angle,
-                        truth.geometry,
-                        range_m=self.range_m,
-                    )
-                ):
-                    center = truth.geometry.cell_to_world_center(cell)
-                    if math.hypot(center.x - pose.world_xy.x, center.y - pose.world_xy.y) > self.range_m:
-                        continue
-                    visits += 1
-                    visible.add(cell)
-                    if ray_cell_index > 0 and (
-                        truth.hard_obstacle[cell.y, cell.x]
-                        or truth.slope_deg[cell.y, cell.x] > self.max_slope_deg
-                    ):
+            pose_x = pose.world_xy.x
+            pose_y = pose.world_xy.y
+            start = geometry.world_to_cell(pose.world_xy)
+            start_x = start.x
+            start_y = start.y
+            for offset_rad in ray_angle_offsets:
+                angle = pose.heading + offset_rad
+                direction_x = math.cos(angle)
+                direction_y = math.sin(angle)
+                step_x = 1 if direction_x > 0.0 else -1 if direction_x < 0.0 else 0
+                step_y = 1 if direction_y > 0.0 else -1 if direction_y < 0.0 else 0
+                current_x = start_x
+                current_y = start_y
+
+                if step_x:
+                    boundary_x = grid_origin_x + (
+                        current_x + (1 if step_x > 0 else 0)
+                    ) * resolution
+                    t_max_x = (boundary_x - pose_x) / direction_x
+                    t_delta_x = resolution / abs(direction_x)
+                else:
+                    t_max_x = math.inf
+                    t_delta_x = math.inf
+                if step_y:
+                    boundary_y = grid_origin_y + (
+                        current_y + (1 if step_y > 0 else 0)
+                    ) * resolution
+                    t_max_y = (boundary_y - pose_y) / direction_y
+                    t_delta_y = resolution / abs(direction_y)
+                else:
+                    t_max_y = math.inf
+                    t_delta_y = math.inf
+
+                ray_cell_index = 0
+                while 0 <= current_x < width and 0 <= current_y < height:
+                    center_x = grid_origin_x + (current_x + 0.5) * resolution
+                    center_y = grid_origin_y + (current_y + 0.5) * resolution
+                    if math.hypot(center_x - pose_x, center_y - pose_y) > range_m:
+                        pass
+                    else:
+                        visits += 1
+                        visible_flat.add(current_y * width + current_x)
+                        if ray_cell_index > 0 and (
+                            hard_obstacle[current_y, current_x]
+                            or slope_deg[current_y, current_x] > max_slope_deg
+                        ):
+                            break
+
+                    next_distance = min(t_max_x, t_max_y)
+                    if next_distance > range_m:
                         break
-        ordered_visible = tuple(sorted(visible, key=lambda cell: (cell.y, cell.x)))
+                    if math.isclose(t_max_x, t_max_y, rel_tol=0.0, abs_tol=1e-12):
+                        current_x += step_x
+                        current_y += step_y
+                        t_max_x += t_delta_x
+                        t_max_y += t_delta_y
+                    elif t_max_x < t_max_y:
+                        current_x += step_x
+                        t_max_x += t_delta_x
+                    else:
+                        current_y += step_y
+                        t_max_y += t_delta_y
+                    ray_cell_index += 1
+        ordered_visible = tuple(
+            CellXY(flat_index % width, flat_index // width)
+            for flat_index in sorted(visible_flat)
+        )
         newly_observed = observed_state.reveal_cells(
             truth,
             ordered_visible,
@@ -129,7 +194,7 @@ class SensorUpdater:
         )
         diagnostics = SensorDiagnostics(
             sample_count=len(pose_tuple),
-            ray_count=len(pose_tuple) * rays_per_sample,
+            ray_count=len(pose_tuple) * len(ray_angle_offsets),
             cell_visit_count=visits,
             unique_visible_cell_count=len(ordered_visible),
             duplicate_cell_visits=visits - len(ordered_visible),
@@ -139,14 +204,14 @@ class SensorUpdater:
         return ObservationDelta(newly_observed, ordered_visible, diagnostics)
 
 
-def ray_cells_from_world(
+def iter_ray_cells_from_world(
     origin: WorldXY,
     angle: float,
     geometry: GridGeometry,
     *,
     range_m: float,
-) -> tuple[CellXY, ...]:
-    """Traverse intersected cells from the original world pose up to exact range."""
+) -> Iterator[CellXY]:
+    """Yield intersected cells from the original world pose up to exact range."""
 
     current = geometry.world_to_cell(origin)
     direction_x = math.cos(angle)
@@ -170,9 +235,8 @@ def ray_cells_from_world(
         t_max_y = math.inf
         t_delta_y = math.inf
 
-    cells: list[CellXY] = []
     while geometry.in_bounds(current):
-        cells.append(current)
+        yield current
         next_distance = min(t_max_x, t_max_y)
         if next_distance > range_m:
             break
@@ -186,7 +250,25 @@ def ray_cells_from_world(
         else:
             current = CellXY(current.x, current.y + step_y)
             t_max_y += t_delta_y
-    return tuple(cells)
+
+
+def ray_cells_from_world(
+    origin: WorldXY,
+    angle: float,
+    geometry: GridGeometry,
+    *,
+    range_m: float,
+) -> tuple[CellXY, ...]:
+    """Traverse intersected cells from the original world pose up to exact range."""
+
+    return tuple(
+        iter_ray_cells_from_world(
+            origin,
+            angle,
+            geometry,
+            range_m=range_m,
+        )
+    )
 
 
 def grid_line(start: CellXY, end: CellXY) -> tuple[CellXY, ...]:

@@ -48,6 +48,10 @@ class Stage1Config(BaseModel):
     sensor_range_m: Literal[20.0]
     sensor_fov_deg: Literal[90.0]
     sensor_ray_angle_step_deg: Literal[1.0]
+    planning_unknown_buffer_m: Literal[0.75] = 0.75
+    reset_local_safety_scan_range_m: Literal[0.75] = 0.75
+    reset_local_safety_scan_fov_deg: Literal[360.0] = 360.0
+    reset_local_safety_scan_ray_angle_step_deg: Literal[1.0] = 1.0
     path_observation_step_m: Literal[1.0]
     connectivity: Literal[8]
     prevent_diagonal_corner_cutting: Literal[True]
