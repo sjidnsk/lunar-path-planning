@@ -1,0 +1,57 @@
+{
+  "schema_version": "route_retirement_policy/v1",
+  "classification_precedence": ["protected", "manual_review", "retire_candidate", "unclassified"],
+  "protected_globs": [
+    "src/lunar_exploration_ppo/**",
+    "configs/ppo_highres_frontier_stage*.json",
+    "scripts/*ppo_stage6*.py",
+    "scripts/run_ppo_stage6*.py",
+    "tests/ppo_highres_frontier/**",
+    "scripts/run_xunce_mid_dual_*.py",
+    "scripts/xunce_mid_dual_*.py",
+    "configs/xunce_mid_dual_*.json",
+    "tests/test_xunce_mid_dual_*.py",
+    "independent/g2_t2_producer/**",
+    "path-planner",
+    "path-planner/**",
+    "dev-platform-constraints",
+    "dev-platform-constraints/**",
+    "configs/platforms/**",
+    "scripts/xunce_artifact_io.py",
+    "scripts/xunce_artifact_paths.py",
+    "scripts/xunce_platform_contract.py"
+  ],
+  "manual_review_globs": [
+    ".gitmodules",
+    "configs/stage_registry.json",
+    "model-explorer",
+    "visual-workbench",
+    "scripts/bootstrap_env.py",
+    "scripts/bootstrap_ubuntu_conda.sh",
+    "scripts/bootstrap_windows_conda.ps1",
+    "scripts/run_platform_smoke.py",
+    "scripts/run_platform_validation_matrix.py",
+    "tests/test_platform_stage_runner.py",
+    "tests/test_platform_validation_matrix.py"
+  ],
+  "retire_candidate_globs": [
+    "scripts/run_xunce_stage1[89]_*.py",
+    "scripts/run_xunce_stage2[0-6]_*.py",
+    "configs/xunce_stage1[89]_*.json",
+    "configs/xunce_stage2[0-6]_*.json",
+    "tests/test_xunce_stage1[89]_*.py",
+    "tests/test_xunce_stage2[0-6]_*.py",
+    "scripts/*path_feedback*",
+    "configs/path_feedback_*",
+    "tests/*path_feedback*",
+    "docs/**/*path-feedback*",
+    "docs/superpowers/plans/*xunce-stage1[89]*",
+    "docs/superpowers/plans/*xunce-stage2[0-6]*"
+  ],
+  "forbidden_delete_roots": [
+    ".",
+    "src/lunar_exploration_ppo",
+    "path-planner",
+    "dev-platform-constraints"
+  ]
+}
