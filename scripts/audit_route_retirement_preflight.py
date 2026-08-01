@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import xml.etree.ElementTree as ElementTree
 from dataclasses import asdict, dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -43,6 +44,13 @@ _IGNORED_OUTPUT_SAMPLE_LIMIT = 16
 _GRAPH_PATH = Path("D:/codex/project/lunar-path-planning/.ua/knowledge-graph.json")
 _BACKUP_ROOT = Path("D:/CodexDownloads/lunar-path-planning-backups/2026-08-01-6a4c2dd")
 _POLICY_RELPATH = Path("configs/route_retirement_policy_v1.json")
+_REQUIRED_BASELINE_JUNIT_FILES = (
+    "stage6-planner.xml",
+    "mid-dual.xml",
+    "platform-parent.xml",
+    "path-planner-python.xml",
+    "dev-platform-constraints.xml",
+)
 _EXPECTED_GITLINKS = {
     "dev-platform-constraints": "61e9fa8afd09db83632456bdcf181c222ee13513",
     "model-explorer": "b547a997d94ad199c822136d1ae345e180b87ca7",
@@ -679,18 +687,102 @@ def _remote_tag_status(repo_root: Path, tags: Sequence[str], baseline_commit: st
 
 def _hash_baseline_tests(root: Path | None) -> dict[str, Any]:
     if root is None:
-        return {"status": "not_provided", "records": []}
-    if not root.is_dir():
-        return {"status": "missing", "records": []}
+        return {
+            "status": "not_provided",
+            "baseline_status": "not_provided",
+            "records": [],
+        }
     try:
+        if not root.is_dir():
+            return {
+                "status": "missing",
+                "baseline_status": "missing",
+                "records": [],
+            }
         paths = sorted(path for path in root.rglob("*.xml") if path.is_file())
-        records = [
-            {"path": path.relative_to(root).as_posix(), "sha256": _sha256(path)}
-            for path in paths
-        ]
+        records: list[dict[str, Any]] = []
+        for path in paths:
+            payload = path.read_bytes()
+            record: dict[str, Any] = {
+                "path": path.relative_to(root).as_posix(),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+            try:
+                parsed = ElementTree.fromstring(payload)
+                root_name = parsed.tag.rsplit("}", 1)[-1]
+                if root_name not in {"testsuite", "testsuites"}:
+                    raise ValueError("JUnit root element is invalid")
+                elements = tuple(parsed.iter())
+                suites = (
+                    parsed,
+                    *(
+                        element
+                        for element in elements
+                        if element is not parsed
+                        and element.tag.rsplit("}", 1)[-1] == "testsuite"
+                    ),
+                )
+                counters: dict[str, int] = {}
+                for name, tag in (
+                    ("tests", "testcase"),
+                    ("failures", "failure"),
+                    ("errors", "error"),
+                    ("skipped", "skipped"),
+                ):
+                    declared = [
+                        int(suite.attrib[name])
+                        for suite in suites
+                        if name in suite.attrib
+                    ]
+                    if any(value < 0 for value in declared):
+                        raise ValueError("JUnit counter must be nonnegative")
+                    observed = sum(
+                        element.tag.rsplit("}", 1)[-1] == tag
+                        for element in elements
+                    )
+                    counters[name] = max([observed, *declared])
+            except (ElementTree.ParseError, ValueError):
+                record["status"] = "malformed"
+            else:
+                record.update(counters)
+                record["status"] = "parsed"
+            records.append(record)
     except PermissionError:
-        return {"status": "permission_denied", "records": []}
-    return {"status": "hashed", "records": records}
+        return {
+            "status": "permission_denied",
+            "baseline_status": "permission_denied",
+            "records": [],
+        }
+    except OSError:
+        return {
+            "status": "unavailable",
+            "baseline_status": "unavailable",
+            "records": [],
+        }
+
+    by_path = {record["path"]: record for record in records}
+    for name in _REQUIRED_BASELINE_JUNIT_FILES:
+        if name not in by_path:
+            records.append({"path": name, "status": "missing"})
+    records.sort(key=lambda record: str(record["path"]))
+
+    required = [by_path.get(name) for name in _REQUIRED_BASELINE_JUNIT_FILES]
+    if any(record is None for record in required):
+        baseline_status = "missing"
+    elif any(record["status"] != "parsed" for record in required):
+        baseline_status = "malformed"
+    elif any(
+        record["failures"] != 0 or record["errors"] != 0
+        for record in required
+    ):
+        baseline_status = "failed"
+    else:
+        baseline_status = "passed"
+    return {
+        "status": "hashed",
+        "baseline_status": baseline_status,
+        "records": records,
+    }
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -782,6 +874,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "local_tags": local_tags,
         "remote_tag_status": remote_tag_status,
         "baseline_tests": baseline_tests,
+        "baseline_status": baseline_tests["baseline_status"],
     }
     candidate_manifest = {
         "schema_version": "route_retirement_candidate_manifest/v1",

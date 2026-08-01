@@ -13,6 +13,157 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from audit_route_retirement_preflight import build_manifest, classify_path, load_policy, validate_graph
 
 
+_REQUIRED_BASELINE_JUNIT = (
+    "stage6-planner.xml",
+    "mid-dual.xml",
+    "platform-parent.xml",
+    "path-planner-python.xml",
+    "dev-platform-constraints.xml",
+)
+
+
+def _write_junit(
+    path: Path,
+    *,
+    failure: bool = False,
+    error: bool = False,
+    skipped: bool = False,
+) -> None:
+    child = ""
+    if failure:
+        child = "<failure />"
+    elif error:
+        child = "<error />"
+    elif skipped:
+        child = "<skipped />"
+    path.write_text(
+        f'<testsuite><testcase name="fixture">{child}</testcase></testsuite>',
+        encoding="utf-8",
+    )
+
+
+def _write_required_junit(root: Path) -> None:
+    root.mkdir()
+    for name in _REQUIRED_BASELINE_JUNIT:
+        _write_junit(root / name)
+
+
+def test_baseline_status_passes_only_with_all_required_zero_failure_junit(
+    tmp_path: Path,
+) -> None:
+    import audit_route_retirement_preflight as module
+
+    root = tmp_path / "baseline-tests"
+    _write_required_junit(root)
+    _write_junit(root / "dev-platform-constraints.xml", skipped=True)
+
+    audit = module._hash_baseline_tests(root)
+
+    assert audit["baseline_status"] == "passed"
+    assert {record["path"] for record in audit["records"]} == set(
+        _REQUIRED_BASELINE_JUNIT
+    )
+    assert all(record["status"] == "parsed" for record in audit["records"])
+    assert all(record["failures"] == 0 and record["errors"] == 0 for record in audit["records"])
+    skipped_record = next(
+        record
+        for record in audit["records"]
+        if record["path"] == "dev-platform-constraints.xml"
+    )
+    assert skipped_record["skipped"] == 1
+
+
+@pytest.mark.parametrize("outcome", ("failure", "error"))
+def test_baseline_status_fails_closed_for_required_junit_failure_or_error(
+    tmp_path: Path,
+    outcome: str,
+) -> None:
+    import audit_route_retirement_preflight as module
+
+    root = tmp_path / "baseline-tests"
+    _write_required_junit(root)
+    _write_junit(root / "mid-dual.xml", **{outcome: True})
+
+    audit = module._hash_baseline_tests(root)
+
+    assert audit["baseline_status"] == "failed"
+    record = next(record for record in audit["records"] if record["path"] == "mid-dual.xml")
+    assert record[outcome + "s"] == 1
+
+
+def test_baseline_status_does_not_accept_extra_xml_for_missing_required_file(
+    tmp_path: Path,
+) -> None:
+    import audit_route_retirement_preflight as module
+
+    root = tmp_path / "baseline-tests"
+    root.mkdir()
+    for name in _REQUIRED_BASELINE_JUNIT[:-1]:
+        _write_junit(root / name)
+    _write_junit(root / "path-planner-cpp.xml")
+
+    audit = module._hash_baseline_tests(root)
+
+    assert audit["baseline_status"] == "missing"
+    missing = next(
+        record
+        for record in audit["records"]
+        if record["path"] == "dev-platform-constraints.xml"
+    )
+    assert missing == {"path": "dev-platform-constraints.xml", "status": "missing"}
+
+
+def test_baseline_status_fails_closed_for_malformed_required_junit(
+    tmp_path: Path,
+) -> None:
+    import audit_route_retirement_preflight as module
+
+    root = tmp_path / "baseline-tests"
+    _write_required_junit(root)
+    (root / "stage6-planner.xml").write_text("<testsuite>", encoding="utf-8")
+
+    audit = module._hash_baseline_tests(root)
+
+    assert audit["baseline_status"] == "malformed"
+    record = next(record for record in audit["records"] if record["path"] == "stage6-planner.xml")
+    assert record["status"] == "malformed"
+
+
+def test_baseline_status_fails_closed_for_non_junit_root(
+    tmp_path: Path,
+) -> None:
+    import audit_route_retirement_preflight as module
+
+    root = tmp_path / "baseline-tests"
+    _write_required_junit(root)
+    (root / "stage6-planner.xml").write_text("<not-junit />", encoding="utf-8")
+
+    audit = module._hash_baseline_tests(root)
+
+    assert audit["baseline_status"] == "malformed"
+    record = next(record for record in audit["records"] if record["path"] == "stage6-planner.xml")
+    assert record["status"] == "malformed"
+
+
+def test_baseline_status_counts_namespaced_junit_failures(
+    tmp_path: Path,
+) -> None:
+    import audit_route_retirement_preflight as module
+
+    root = tmp_path / "baseline-tests"
+    _write_required_junit(root)
+    (root / "stage6-planner.xml").write_text(
+        '<testsuite xmlns="urn:junit"><testcase name="fixture"><failure /></testcase></testsuite>',
+        encoding="utf-8",
+    )
+
+    audit = module._hash_baseline_tests(root)
+
+    assert audit["baseline_status"] == "failed"
+    record = next(record for record in audit["records"] if record["path"] == "stage6-planner.xml")
+    assert record["failures"] == 1
+
+
 def test_protected_rules_win_over_retirement_patterns() -> None:
     policy = load_policy(Path("configs/route_retirement_policy_v1.json"))
     assert classify_path("scripts/xunce_artifact_io.py", policy).classification == "protected"
@@ -269,6 +420,7 @@ def test_cli_writes_five_stable_artifacts_with_compact_ignored_summary(
         "summary.json",
     ]
     summary = json.loads((output_root / "summary.json").read_text(encoding="utf-8"))
+    assert summary["baseline_status"] == "not_provided"
     ignored_paths = manifest["ignored_outputs"]["paths"]
     expected_digest = hashlib.sha256(
         b"\0".join(path.encode("utf-8") for path in ignored_paths) + b"\0"
