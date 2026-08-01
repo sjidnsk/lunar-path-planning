@@ -28,7 +28,13 @@ def test_config_and_script_surface_match_the_mainline_allowlist() -> None:
     configs = {path for path in active if path.startswith("configs/")}
     expected_configs = {
         path for path in configs if path.startswith("configs/ppo_highres_frontier_") or path.startswith("configs/xunce_mid_dual_")
-    } | {"configs/mainline_routes_v1.json"}
+    } | {
+        "configs/mainline_routes_v1.json",
+        "configs/platforms/v3/README.md",
+        "configs/platforms/v3/wheeled_skid_steer_v3_example_v1.json",
+        "configs/platforms/v3/legged_body_v3_example_v1.json",
+        "configs/platforms/v3/hopper_ballistic_v3_example_v1.json",
+    }
     assert configs == expected_configs
     assert {path.removeprefix("scripts/") for path in active if path.startswith("scripts/")} == RETAINED_SCRIPTS
     assert "configs/stage_registry.json" not in active
@@ -55,3 +61,13 @@ def test_default_astar_and_platform_slope_contracts_remain_explicit() -> None:
     stage6 = (REPO_ROOT / "src/lunar_exploration_ppo/configs/stage6.py").read_text(encoding="utf-8")
     assert "AStarPlanner" in adapter
     assert "max_traversable_slope_deg" in stage6 and "30.0" in stage6
+
+
+def test_retained_ppo_test_surface_excludes_retired_r1_review_route() -> None:
+    active = _active_tracked_paths()
+    retired = "tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py"
+    stage6_contract = "tests/ppo_highres_frontier/test_stage6_standard_config.py"
+
+    assert retired not in active
+    assert not (REPO_ROOT / retired).exists()
+    assert stage6_contract in active

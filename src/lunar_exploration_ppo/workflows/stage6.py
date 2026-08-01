@@ -275,7 +275,6 @@ STAGE6_PRODUCTION_SOURCE_PATHS: Final = (
 )
 STAGE6_TEST_SOURCE_PATHS: Final = (
     "tests/ppo_highres_frontier/test_foundation.py",
-    "tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py",
     "tests/ppo_highres_frontier/test_stage2_catalog.py",
     "tests/ppo_highres_frontier/test_stage2_frontier.py",
     "tests/ppo_highres_frontier/test_stage4_checkpoint.py",

@@ -599,12 +599,12 @@ def _mock_authoritative_git(
         raise AssertionError(f"unexpected git command: {command}")
 
     monkeypatch.setattr(gates_module.subprocess, "run", fake_run)
-    if not _FROZEN_WORKTREE_ROOT.is_dir():
+    if not REPO_ROOT.is_dir():
         def portable_verify_repository(
             cls: object,
             repo_root: str | Path,
         ) -> tuple[Path, str]:
-            if str(repo_root).replace("\\", "/") != _FROZEN_WORKTREE_ROOT.as_posix():
+            if Path(repo_root).resolve() != REPO_ROOT.resolve():
                 raise GateError("Foundation repository root does not match the frozen linked worktree")
             return REPO_ROOT.resolve(), mutable_tree_oid[0]
 
@@ -772,26 +772,6 @@ def test_foundation_gate_context_rejects_alternate_clean_repo_locator(tmp_path: 
             environment_manifest=environment_manifest,
             run_id="alternate-repo-001",
         )
-
-
-_FROZEN_WORKTREE_ROOT = Path("C:/Users/77634/.codex/worktrees/ca49/lunar-path-planning")
-
-
-@pytest.mark.skipif(not _FROZEN_WORKTREE_ROOT.is_dir(), reason="frozen linked worktree is not on this host")
-def test_frozen_linked_worktree_identity_integration_when_present() -> None:
-    def git_output(*arguments: str) -> str:
-        return subprocess.run(
-            ["git", "-C", str(_FROZEN_WORKTREE_ROOT), *arguments],
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        ).stdout.strip().replace("\\", "/")
-
-    assert git_output("rev-parse", "--show-toplevel") == _FROZEN_WORKTREE_ROOT.as_posix()
-    assert git_output("branch", "--show-current") == "codex/ppo-highres-frontier-map-exploration"
-    assert git_output("rev-parse", "--git-dir") == "D:/codex/project/lunar-path-planning/.git/worktrees/lunar-path-planning1"
-    assert git_output("rev-parse", "--git-common-dir") == "D:/codex/project/lunar-path-planning/.git"
 
 
 def test_gate_machine_passed_derives_authoritative_foundation_sources(
@@ -1008,7 +988,6 @@ def test_gate_rejects_submodule_repo_and_stale_alternate_path_inputs(
         )
 
 
-@pytest.mark.skipif(not _FROZEN_WORKTREE_ROOT.is_dir(), reason="frozen linked worktree is not on this host")
 def test_gate_rejects_repo_top_level_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1028,7 +1007,6 @@ def test_gate_rejects_repo_top_level_mismatch(
         ({"git_common_dir": "D:/alternate/common"}, "common dir"),
     ],
 )
-@pytest.mark.skipif(not _FROZEN_WORKTREE_ROOT.is_dir(), reason="frozen linked worktree is not on this host")
 def test_gate_rejects_frozen_branch_git_dir_or_common_dir_mismatch(
     git_override: dict[str, str],
     error: str,

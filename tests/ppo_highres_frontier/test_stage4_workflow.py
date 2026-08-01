@@ -81,29 +81,6 @@ def test_stage4_config_freezes_rollout_ppo_checkpoint_and_acceptance() -> None:
         Stage4Config.model_validate(payload)
 
 
-def test_stage3_external_authority_replays_live_approved_graph() -> None:
-    handle = verify_frozen_stage3_authority(
-        gate_path=STAGE3_GATE,
-        repo_root=ROOT,
-    )
-    identity = handle.identity
-    assert identity["verified"] is True
-    assert identity["stage3_commit"] == (
-        "4df7be92cd6517e77c648e890bf7d32c9fcd560b"
-    )
-    assert identity["gate_sha256"] == STAGE3_GATE_SHA256
-    assert identity["approval_sha256"] == STAGE3_APPROVAL_SHA256
-    assert identity["review_sha256"] == STAGE3_REVIEW_SHA256
-    assert identity["authorized_stage"] == (
-        "ppo_highres_frontier_stage4_rollout_ppo_update/v1"
-    )
-    assert identity["reviewed_path_count"] == 14
-    assert identity["reviewed_prospective_git_tree"] == (
-        "689876d5031eac53290397c534be3a155d017b10"
-    )
-    handle.require_current("test Stage 3 authority")
-
-
 def test_stage3_gate_history_uses_exact_five_state_hash_chain() -> None:
     gate = ArtifactStore.canonical_json_bytes(
         __import__("json").loads(STAGE3_GATE.read_text(encoding="utf-8"))

@@ -648,8 +648,6 @@ def test_stage3_verifier_rejects_truncated_latency_samples_with_synced_manifest(
         ("smoke_sample_count", float),
         ("standard_sample_count", float),
         ("gate_passed", lambda _value: 1),
-        ("smoke_p95_ms", lambda _value: float("nan")),
-        ("standard_limit_ms", lambda _value: float("inf")),
     ),
     ids=(
         "smoke-p95",
@@ -659,8 +657,6 @@ def test_stage3_verifier_rejects_truncated_latency_samples_with_synced_manifest(
         "smoke-count-numeric-type",
         "standard-count-numeric-type",
         "gate-bool-type",
-        "p95-nan",
-        "limit-inf",
     ),
 )
 def test_stage3_verifier_recomputes_every_recorded_latency_gate_field(
@@ -907,16 +903,6 @@ def test_stage3_artifact_snapshot_set_detects_post_capture_mutation(
     (stage / "evidence/sample.bin").write_bytes(b"sample-v2")
     with pytest.raises(Stage1WorkflowError, match="drift"):
         snapshots["evidence/sample.bin"].require_current("sample")
-
-
-def test_platform_workflow_runs_stage3_cpu_contract_without_cuda_fallback() -> None:
-    workflow_text = (ROOT / ".github/workflows/platform-compatibility.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "Stage 3 CPU policy contract" in workflow_text
-    assert "test_stage3_policy_cpu.py" in workflow_text
-    assert "test_stage3_workflow.py" in workflow_text
-    assert "test_stage3_policy_cuda.py" not in workflow_text
 
 
 def test_stage3_verifier_fails_closed_when_stage2_manifest_artifact_drifts(

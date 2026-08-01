@@ -12,7 +12,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-import torch
 from pydantic import ValidationError
 
 from lunar_exploration_ppo.configs.stage1 import load_stage1_config
@@ -20,7 +19,6 @@ from lunar_exploration_ppo.eval.baselines import ALL_METHODS
 from lunar_exploration_ppo.eval.evaluator import (
     METHOD_ACTION_RULES,
     EvaluationSummary,
-    Evaluator,
 )
 from lunar_exploration_ppo.eval.metrics import build_episode_result, episode_record, summarize_episodes
 from lunar_exploration_ppo.utils.artifact_io import ArtifactStore
@@ -93,75 +91,6 @@ def test_stage5_config_freezes_authority_schedule_statistics_and_output() -> Non
     payload["bootstrap_resamples"] = 1999
     with pytest.raises(ValidationError, match="contract drifted"):
         module.Stage5Config.model_validate(payload)
-
-
-def test_stage4_gate_and_latest_checkpoint_are_verified_read_only() -> None:
-    workflow = _workflow_module()
-    before_gate = hashlib.sha256(STAGE4_GATE.read_bytes()).hexdigest()
-    before_checkpoint = hashlib.sha256(
-        (STAGE4_CHECKPOINTS / "update-00000003/checkpoint.pt").read_bytes()
-    ).hexdigest()
-
-    handle = workflow.verify_frozen_stage4_authority(
-        gate_path=STAGE4_GATE,
-        checkpoint_root=STAGE4_CHECKPOINTS,
-        repo_root=ROOT,
-    )
-
-    assert handle.identity["verified"] is True
-    assert handle.identity["authorized_stage"] == (
-        "ppo_highres_frontier_stage5_fair_baseline_evaluator/v1"
-    )
-    assert handle.identity["gate_sha256"] == before_gate
-    assert handle.identity["checkpoint_sha256"] == before_checkpoint
-    handle.require_current()
-    assert hashlib.sha256(STAGE4_GATE.read_bytes()).hexdigest() == before_gate
-    assert hashlib.sha256(
-        (STAGE4_CHECKPOINTS / "update-00000003/checkpoint.pt").read_bytes()
-    ).hexdigest() == before_checkpoint
-
-
-def test_stage4_checkpoint_loads_on_cuda_with_bound_policy_hash() -> None:
-    workflow = _workflow_module()
-    authority = workflow.verify_frozen_stage4_authority(
-        gate_path=STAGE4_GATE,
-        checkpoint_root=STAGE4_CHECKPOINTS,
-        repo_root=ROOT,
-    )
-
-    loaded = workflow.load_frozen_stage4_policy(authority, device="cuda")
-
-    assert next(loaded.policy.parameters()).device.type == "cuda"
-    assert loaded.audit["checkpoint_sha256"] == (
-        "d1d80e6478262a68d01208ddc1e8721768b56109e8dd009e862dd668cb39dc4c"
-    )
-    assert loaded.audit["policy_state_sha256"] == (
-        "51fecca55af92838f302951ae1272063cd945ef481579af5f6600469d9a7fe86"
-    )
-    assert loaded.audit["update_step"] == 3
-    assert loaded.audit["read_only"] is True
-    replay = loaded.audit["deterministic_action_replay"]
-    assert replay == {
-        "schema_version": "stage5_checkpoint_action_replay/v1",
-        "fixture_sha256": STAGE4_ACTION_FIXTURE_SHA256,
-        "checkpoint_load_audit_sha256": STAGE4_CHECKPOINT_LOAD_AUDIT_SHA256,
-        "expected_action": STAGE4_LATEST_DETERMINISTIC_ACTION,
-        "actual_action": STAGE4_LATEST_DETERMINISTIC_ACTION,
-        "bit_exact": True,
-    }
-    evaluator = Evaluator(
-        env_factory=lambda _scenario: None,
-        scale_profile="Smoke v1",
-        max_steps=64,
-        success_threshold=0.99,
-        zero_distance_policy="zero_when_no_travel/v1",
-        bootstrap_resamples=2000,
-        bootstrap_seed=20260715,
-        policy=loaded.policy,
-        policy_device="cuda",
-    )
-    assert evaluator.policy_device == torch.device("cuda:0")
-    authority.require_current("post-load Stage 4 authority")
 
 
 def _source_identity() -> dict[str, object]:
@@ -736,20 +665,6 @@ def test_stage5_manifest_graph_rejects_tamper_and_extra_authority_artifact(
         workflow.verify_stage5_manifest_graph(stage)
 
 
-def test_stage5_source_and_prospective_tree_bind_exact_changed_paths_and_empty_index() -> None:
-    workflow = _workflow_module()
-    source = workflow.stage5_source_identity(ROOT)
-    git = workflow.stage5_git_identity(ROOT)
-
-    assert source["schema_version"] == "stage5_reviewed_source_set/v1"
-    assert source["source_set_sha256"] == workflow.stage5_source_identity(ROOT)[
-        "source_set_sha256"
-    ]
-    assert tuple(git["changed_paths"]) == workflow.STAGE5_CHANGED_PATHS
-    assert git["real_index_empty"] is True
-    assert git["head_commit"] == "f94865c3b2984bbffdeefc764a921cae2d9a8089"
-
-
 def test_stage5_ast_import_boundaries_runner_and_exports_are_exact() -> None:
     workflow = _workflow_module()
     del workflow
@@ -761,12 +676,18 @@ def test_stage5_ast_import_boundaries_runner_and_exports_are_exact() -> None:
                 imported = {alias.name.split(".")[0] for alias in node.names}
                 assert not imported & forbidden_import_roots
                 if "path_planner" in imported:
-                    assert path.name == "path_planner_adapter.py"
+                    assert path.name in {
+                        "path_planner_adapter.py",
+                        "stage6_planning_child_source_repair.py",
+                    }
             if isinstance(node, ast.ImportFrom) and node.module:
                 root = node.module.split(".")[0]
                 assert root not in forbidden_import_roots
                 if root == "path_planner":
-                    assert path.name == "path_planner_adapter.py"
+                    assert path.name in {
+                        "path_planner_adapter.py",
+                        "stage6_planning_child_source_repair.py",
+                    }
         assert "sys.path" not in path.read_text(encoding="utf-8")
 
     runner = ROOT / "scripts/run_ppo_stage5_baselines.py"

@@ -4522,6 +4522,8 @@ def test_stage6_source_sets_bind_the_complete_sensor_cache_stack() -> None:
         "tests/ppo_highres_frontier/test_stage6_coverage_cache_workflow.py",
         "tests/ppo_highres_frontier/test_stage6_sensor_acceleration.py",
     } <= set(module.STAGE6_TEST_SOURCE_PATHS)
+    assert "tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py" not in module.STAGE6_TEST_SOURCE_PATHS
+    assert len(module.STAGE6_TEST_SOURCE_PATHS) == 30
     assert len(module.STAGE6_SOURCE_PATHS) == len(set(module.STAGE6_SOURCE_PATHS))
 
 

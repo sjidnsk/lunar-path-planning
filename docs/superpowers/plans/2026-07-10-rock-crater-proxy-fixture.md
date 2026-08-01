@@ -34,7 +34,7 @@
 - Modify `src/lunar_exploration_ppo/workflows/stage1_source.py`: add the approved spec, plan, generator, and focused test to the exact reviewed path set.
 - Create `tests/ppo_highres_frontier/test_stage1_terrain_proxy.py`: independent generator, morphology, placement, hash, occlusion, and leakage tests.
 - Modify `tests/ppo_highres_frontier/test_stage1_smoke_env.py`: update the scenario identity and full Smoke expectations.
-- Modify `tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py`: retain approval/gate tests and add provenance drift coverage.
+- Historical note: `test_stage1_smoke_env_r1.py` was retired during the 2026-08-02 mainline cleanup; current regression retains only `test_stage1_smoke_env.py` and `test_stage1_terrain_proxy.py`.
 - Runtime report: write final verification results to `D:/xunce/out/ppo_frontier/$runId/s1/report.md`; do not create or modify tracked internal SDD reports.
 
 ---
@@ -307,7 +307,6 @@ Do not stage or commit.
 - Modify: `src/lunar_exploration_ppo/workflows/stage1_gate.py`
 - Modify: `src/lunar_exploration_ppo/workflows/stage1_source.py`
 - Modify: `tests/ppo_highres_frontier/test_stage1_smoke_env.py`
-- Modify: `tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py`
 - Test: `tests/ppo_highres_frontier/test_stage1_terrain_proxy.py`
 
 **Interfaces:**
@@ -432,10 +431,9 @@ Run in separate processes:
 ```powershell
 D:/conda_envs/lunar-explorer/python.exe -m pytest tests/ppo_highres_frontier/test_stage1_terrain_proxy.py -q
 D:/conda_envs/lunar-explorer/python.exe -m pytest tests/ppo_highres_frontier/test_stage1_smoke_env.py -q
-D:/conda_envs/lunar-explorer/python.exe -m pytest tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py -q
 ```
 
-Expected: all pass; the existing approval-before-gate, actual-gate-file replay, no-candidate fail-closed, truth mutation, planner, reward, and terminal tests remain green.
+Expected: both retained suites pass; proxy, truth-mutation, planner, reward, and terminal contracts remain green.
 
 Do not stage or commit.
 
@@ -458,7 +456,7 @@ Add tests for final safe start, `reachable_safe/safe_free >= 0.70`, nonzero exac
 
 - [ ] **Step 2: Run the complete Stage 1 suites**
 
-Run `test_stage1_terrain_proxy.py`, `test_stage1_smoke_env.py`, and `test_stage1_smoke_env_r1.py` in independent processes. Any failure gets root-cause debugging; do not hide it by seed replacement, count reduction, or weaker assertions.
+Run `test_stage1_terrain_proxy.py` and `test_stage1_smoke_env.py` in independent processes. Any failure gets root-cause debugging; do not hide it by seed replacement, count reduction, or weaker assertions.
 
 - [ ] **Step 3: Run project regressions in separate processes**
 

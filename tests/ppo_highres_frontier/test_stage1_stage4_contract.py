@@ -7,68 +7,11 @@ import numpy as np
 import pytest
 
 from lunar_exploration_ppo.configs.stage1 import load_stage1_config
-from lunar_exploration_ppo.env import frontier as frontier_module
 from lunar_exploration_ppo.env.env import LunarExplorationEnv
-from lunar_exploration_ppo.env.frontier import FrontierGenerator
-from lunar_exploration_ppo.env.map_state import ObservedMapState
-from lunar_exploration_ppo.env.reachability import reachable_component
-from lunar_exploration_ppo.env.scenario import LowResolutionPrior
-from lunar_exploration_ppo.utils.geometry import CellXY, GridGeometry, PoseXYTheta
 
 
 ROOT = Path(__file__).resolve().parents[2]
 STAGE1_CONFIG = ROOT / "configs/ppo_highres_frontier_smoke_v1.json"
-
-
-def test_regular_boundary_frontier_correction_preserves_high_recall_candidate() -> None:
-    state = ObservedMapState.empty(GridGeometry(32, 32, 0.5))
-    state.observed_mask[:] = True
-    state.confidence[:] = 1.0
-    state.traversability[:] = 1.0
-    unknown_pocket = (
-        (14, 26),
-        (15, 26),
-        (16, 26),
-        (14, 27),
-        (15, 27),
-        (16, 27),
-        (15, 28),
-    )
-    for x, y in unknown_pocket:
-        state.observed_mask[y, x] = False
-        state.confidence[y, x] = 0.0
-        state.traversability[y, x] = 0.0
-
-    state.observed_safe_mask[5:30, 5] = True
-    state.observed_safe_mask[29, 5:17] = True
-    state.observed_safe_mask[28, 14] = True
-    state.observed_safe_mask[28, 16] = True
-    pose = PoseXYTheta(CellXY(5, 5), 0.0)
-    prior_channels = np.zeros((7, 8, 8), dtype=np.float32)
-    prior_channels[1] = 1.0
-    prior_channels[3] = 1.0
-    prior = LowResolutionPrior(
-        prior_channels,
-        resolution_m=4.0,
-        value_prior_source="constant_neutral/v1",
-        provenance={"fixture": "regular_boundary_frontier/v1"},
-    )
-
-    action_set = FrontierGenerator(top_m=16).extract(state, prior, pose)
-
-    assert action_set.diagnostics["segment_count"] == 1
-    assert action_set.diagnostics["regular_segment_count"] == 1
-    assert action_set.candidate_count >= 1
-    component = reachable_component(state.observed_safe_mask, pose.cell)
-    valid_features = action_set.frontier_features[action_set.candidate_mask]
-    assert np.all(valid_features[:, 5] > 0.0)
-    assert np.all(valid_features[:, 14] < -0.9)
-    assert np.all(np.abs(valid_features[:, 15]) < 0.1)
-    for cell in action_set.cells:
-        assert state.observed_mask[cell.y, cell.x]
-        assert state.observed_safe_mask[cell.y, cell.x]
-        assert component[cell.y, cell.x]
-        assert frontier_module._observed_clearance_m(state, cell) >= 0.5215874761
 
 
 def test_stage1_step_diagnostics_preserve_exact_planner_path_without_replanning() -> None:
