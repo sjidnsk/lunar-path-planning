@@ -6,18 +6,24 @@ from collections import Counter
 from pathlib import Path
 
 
-FROZEN_MANIFEST = Path("D:/xunce/out/route_retire_preflight/candidate-manifest.json")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RETIREMENT_FIXTURE = REPO_ROOT / "tests/fixtures/route_retirement_candidates_v1.json"
+SOURCE_MANIFEST_SHA256 = "da9f23c3af83c3506143338a41e1c1a8f8f09dc4f59d4a4bac5adea160f6371c"
 
 
 def _retired_stage26_paths() -> tuple[str, ...]:
-    manifest = json.loads(FROZEN_MANIFEST.read_text(encoding="utf-8"))
-    paths = tuple(
-        record["path"]
-        for record in manifest["records"]
-        if record["classification"] == "retire_candidate"
-        and "stage26" in record["path"].lower()
-    )
-    assert len(paths) == 148
+    fixture = json.loads(RETIREMENT_FIXTURE.read_text(encoding="utf-8"))
+    assert fixture["source_manifest_sha256"] == SOURCE_MANIFEST_SHA256
+    assert {
+        name: group["count"] for name, group in fixture["groups"].items()
+    } == {
+        "path_feedback": 29,
+        "stage26": 148,
+        "stage18_25": 250,
+    }
+    group = fixture["groups"]["stage26"]
+    paths = tuple(group["paths"])
+    assert group["count"] == len(paths) == 148
     assert Counter(Path(path).parts[0] for path in paths) == {
         "configs": 39,
         "scripts": 38,

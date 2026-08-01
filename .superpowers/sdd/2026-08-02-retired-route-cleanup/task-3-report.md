@@ -51,3 +51,17 @@ under D:/xunce/basetemp/retired-route-task3-*.
   candidate tests still name the removed reward-profile config; they belong to
   the Stage18--25 retirement set and are intentionally left unchanged for
   Task4 rather than deleting that set early.
+
+## Review fix round 1
+
+- Removed the 38 deleted Stage26 keys from the explicit
+  tests/test_platform_stage_runner.py dry-run coverage set. The test retains
+  its explicit coverage of all other currently registered stages.
+- Added the tracked compact fixture
+  tests/fixtures/route_retirement_candidates_v1.json. It records the frozen
+  source manifest SHA-256 and the exact path lists/counts for path_feedback
+  (29), Stage26 (148), and the remaining Stage18--25 Task4 set (250).
+- Updated both retired-path-feedback and retired-Stage26 absence audits to
+  load the fixture, assert the fixed SHA/count contracts, and no longer depend
+  on an uncommitted D: manifest.
+- Focused platform-runner, cleanup, and preflight tests: 42 passed.
