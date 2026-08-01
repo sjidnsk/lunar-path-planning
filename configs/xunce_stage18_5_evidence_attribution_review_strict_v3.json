@@ -1,7 +1,0 @@
-{
-  "schema_version": "xunce-stage18-5-evidence-attribution-review-config/v1",
-  "coverage_comparison_root": "D:/CodexDownloads/lunar-path-planning/stage18_9_strict_v3_evidence_run/count_036/stage18_4e",
-  "canonical_reward_profile": "configs/xunce_canonical_reward_guard_profile_v3.json",
-  "coverage_gain_per_path_cost_delta_mode": "audit_only",
-  "canary_traffic_fraction": 0.0
-}
