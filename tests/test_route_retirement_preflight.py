@@ -208,7 +208,7 @@ def test_production_cli_rejects_noncanonical_backup_root(
     assert not output_root.exists()
 
 
-def test_cli_writes_only_five_stable_artifacts_below_output_root(
+def test_cli_writes_five_stable_artifacts_with_compact_ignored_summary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -237,7 +237,10 @@ def test_cli_writes_only_five_stable_artifacts_below_output_root(
         "reference_audit": {"legacy.py": {"rg": [], "graph_edges": []}},
         "backups": {"all_verified": True, "records": []},
         "baseline_tree": {"all_match": True, "records": []},
-        "ignored_outputs": {"status": "ok", "paths": []},
+        "ignored_outputs": {
+            "status": "ok",
+            "paths": [f"outputs/ignored-{index:02d}.json" for index in range(20)],
+        },
     }
     monkeypatch.setattr(module, "_validate_fixed_cli_inputs", lambda *args: None, raising=False)
     monkeypatch.setattr(module, "_resolve_commit", lambda *args: "6a4c2dd0352fd6c1918a5eef39c9783b9d3c5c65")
@@ -265,6 +268,21 @@ def test_cli_writes_only_five_stable_artifacts_below_output_root(
         "report.md",
         "summary.json",
     ]
+    summary = json.loads((output_root / "summary.json").read_text(encoding="utf-8"))
+    ignored_paths = manifest["ignored_outputs"]["paths"]
+    expected_digest = hashlib.sha256(
+        b"\0".join(path.encode("utf-8") for path in ignored_paths) + b"\0"
+    ).hexdigest()
+    assert summary["ignored_outputs"] == {
+        "status": "ok",
+        "count": len(ignored_paths),
+        "sha256": expected_digest,
+        "sample": ignored_paths[:16],
+    }
+    assert "paths" not in summary["ignored_outputs"]
+    report = (output_root / "report.md").read_text(encoding="utf-8")
+    assert "owner approval=0" in report
+    assert "不授权任何物理删除" in report
     assert sentinel.read_text(encoding="utf-8") == "unchanged"
     assert module.main(argv) == 0
     assert {path.name: path.read_bytes() for path in output_root.iterdir()} == first

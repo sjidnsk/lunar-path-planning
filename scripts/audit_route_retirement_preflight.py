@@ -39,6 +39,7 @@ _PRECEDENCE = ("protected", "manual_review", "retire_candidate", "unclassified")
 _GRAPH_COMMIT = "1682d7f9f755eb59c85e6d0ceaaa6f6d5d203dfd"
 _GRAPH_COUNTS = (252, 1480, 2710, 7)
 _BASELINE_COMMIT = "6a4c2dd0352fd6c1918a5eef39c9783b9d3c5c65"
+_IGNORED_OUTPUT_SAMPLE_LIMIT = 16
 _GRAPH_PATH = Path("D:/codex/project/lunar-path-planning/.ua/knowledge-graph.json")
 _BACKUP_ROOT = Path("D:/CodexDownloads/lunar-path-planning-backups/2026-08-01-6a4c2dd")
 _POLICY_RELPATH = Path("configs/route_retirement_policy_v1.json")
@@ -249,6 +250,20 @@ def _audit_ignored_outputs(repo_root: Path) -> dict[str, Any]:
         if item
     })
     return {"status": "ok", "paths": confirmed}
+
+
+def _compact_ignored_outputs(ignored_outputs: Mapping[str, Any]) -> dict[str, Any]:
+    paths = tuple(sorted(str(path) for path in ignored_outputs["paths"]))
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.encode("utf-8"))
+        digest.update(b"\0")
+    return {
+        "status": ignored_outputs["status"],
+        "count": len(paths),
+        "sha256": digest.hexdigest(),
+        "sample": list(paths[:_IGNORED_OUTPUT_SAMPLE_LIMIT]),
+    }
 
 
 def _json_text(value: Mapping[str, Any]) -> str:
@@ -708,6 +723,7 @@ def _render_report(summary: Mapping[str, Any], blocking_reasons: Sequence[Mappin
         f"- 退役候选：{counts['retire_candidate']}",
         f"- 未分类：{counts['unclassified']}",
         f"- 阻塞候选：{summary['blocking_candidate_count']}",
+        "- owner approval=0；本 artifact 不授权任何物理删除。",
         "",
         "本报告仅提供审计证据，不执行文件系统或 Git 变更。",
     ]
@@ -752,6 +768,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     remote_tag_status = _remote_tag_status(repo_root, local_tags, baseline_commit)
     baseline_tests = _hash_baseline_tests(args.baseline_tests_root)
     records = manifest["records"]
+    ignored_outputs = _compact_ignored_outputs(manifest["ignored_outputs"])
     summary = {
         "schema_version": "route_retirement_preflight_summary/v1",
         "baseline_commit": baseline_commit,
@@ -760,8 +777,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "blocking_candidate_count": len(manifest["blocking_reasons"]),
         "backups_all_verified": manifest["backups"]["all_verified"],
         "baseline_tree_all_match": manifest["baseline_tree"]["all_match"],
-        "ignored_outputs": manifest["ignored_outputs"],
-        "ignored_state_status": manifest["ignored_outputs"]["status"],
+        "ignored_outputs": ignored_outputs,
+        "ignored_state_status": ignored_outputs["status"],
         "local_tags": local_tags,
         "remote_tag_status": remote_tag_status,
         "baseline_tests": baseline_tests,
