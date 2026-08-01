@@ -51,19 +51,19 @@ class BootstrapUbuntuCondaTests(unittest.TestCase):
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 0, output)
         self.assertIn("DRY RUN", output)
-        self.assertIn("git submodule update --init --recursive path-planner model-explorer dev-platform-constraints visual-workbench", output)
+        self.assertIn("git submodule update --init --recursive path-planner dev-platform-constraints", output)
         self.assertNotIn("a_gcs_ws-2.0.1", output)
         self.assertIn("conda env create/update", output)
         self.assertIn("environment.yml", output)
         self.assertIn("python=3.12", output)
         self.assertIn("assert sys.version_info[:2] == (3, 12)", output)
         self.assertIn("path_planner import ok", output)
-        self.assertIn("model_explorer import ok", output)
         self.assertIn("dev_platform_constraints import ok", output)
         self.assertIn("python -m pytest", output)
-        self.assertIn("python -m unittest discover -s tests -v", output)
-        self.assertIn("python -m model_explorer verify", output)
-        self.assertIn("python -m pip install -e path-planner -e dev-platform-constraints -e model-explorer[training]", output)
+        self.assertIn("python -m unittest discover -s tests", output)
+        self.assertIn("python -m pip install -e path-planner -e dev-platform-constraints", output)
+        self.assertNotIn("model-explorer", output)
+        self.assertNotIn("visual-workbench", output)
 
 
 if __name__ == "__main__":

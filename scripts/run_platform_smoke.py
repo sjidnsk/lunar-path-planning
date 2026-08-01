@@ -9,6 +9,9 @@ from platform_command import display_command
 
 
 PROFILES = {"windows-non-drake", "ubuntu-non-drake", "ubuntu-drake"}
+PARENT_NON_DRAKE_SMOKE_TESTS = (
+    "tests/ppo_highres_frontier/test_stage6_standard_config.py",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,16 +32,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     commands = [
-        [sys.executable, "-m", "pytest", "-q"],
+        [sys.executable, "-m", "pytest", *PARENT_NON_DRAKE_SMOKE_TESTS, "-q"],
         [sys.executable, "-m", "pytest", "-m", "not drake", "-q"],
-        [sys.executable, "-m", "pytest", "tests/test_model_explorer.py", "-q"],
-        [sys.executable, "-m", "pytest", "tests", "-q"],
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
     ]
     cwd_by_index = [
         repo_root,
         repo_root / "path-planner",
-        repo_root / "model-explorer",
-        repo_root / "visual-workbench",
+        repo_root / "dev-platform-constraints",
     ]
     for command, cwd in zip(commands, cwd_by_index, strict=True):
         code = _run(command, cwd=cwd, dry_run=args.dry_run)

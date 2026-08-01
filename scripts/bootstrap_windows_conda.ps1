@@ -3,7 +3,6 @@ param(
     [string]$EnvPrefix = "D:\conda_envs\lunar-explorer",
     [switch]$InstallEditable,
     [switch]$WithTraining,
-    [switch]$WithVisualWorkbench,
     [switch]$RunValidation,
     [switch]$DryRun
 )
@@ -21,7 +20,6 @@ $Args = @(
 )
 if ($InstallEditable) { $Args += "--install-editable" }
 if ($WithTraining) { $Args += "--with-training" }
-if ($WithVisualWorkbench) { $Args += "--with-visual-workbench" }
 if ($RunValidation) { $Args += "--run-validation" }
 if ($DryRun) { $Args += "--dry-run" }
 

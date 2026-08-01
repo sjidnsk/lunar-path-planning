@@ -27,8 +27,35 @@ def test_platform_validation_matrix_dry_run_does_not_create_output_root(tmp_path
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "[DRY RUN]" in completed.stdout
     assert "bootstrap_env.py" in completed.stdout
-    assert "npm" in completed.stdout
+    assert "path-planner" in completed.stdout
+    assert "model-explorer" not in completed.stdout
+    assert "visual-workbench" not in completed.stdout
+    assert "path_feedback" not in completed.stdout
+    assert "path-feedback" not in completed.stdout
     assert not output_root.exists()
+
+
+def test_platform_validation_matrix_uses_only_retained_submodule_checks() -> None:
+    from scripts import run_platform_validation_matrix as matrix
+
+    repo_root = Path(__file__).resolve().parents[1]
+    commands = matrix._commands_for_profile(
+        profile="windows-non-drake",
+        repo_root=repo_root,
+        skip_bootstrap=False,
+        skip_node=False,
+        real_bootstrap=False,
+    )
+    rendered = "\n".join(
+        f"{command['label']} {command['cwd']} {' '.join(command['argv'])}" for command in commands
+    )
+
+    assert "path_planner_non_drake_tests" in rendered
+    assert "dev_platform_constraints_tests" in rendered
+    assert "model-explorer" not in rendered
+    assert "visual-workbench" not in rendered
+    assert "path_feedback" not in rendered
+    assert "path-feedback" not in rendered
 
 
 def test_platform_validation_matrix_skip_node_summary_schema(tmp_path: Path, monkeypatch) -> None:

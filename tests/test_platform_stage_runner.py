@@ -5,8 +5,6 @@ from pathlib import Path
 
 
 SUPPORTED_STAGE_IDS = {
-    "path-feedback-validation",
-    "path-feedback-batch-validation",
     "policy-training-readiness-review",
     "policy-gated-sequential-canary-rollout",
     "guarded-ppo-rollout-pilot",

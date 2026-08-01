@@ -9,7 +9,7 @@ from pathlib import Path
 from platform_command import display_command
 
 
-MODULES = ("path-planner", "model-explorer", "dev-platform-constraints", "visual-workbench")
+MODULES = ("path-planner", "dev-platform-constraints")
 PYTHON_SPEC = "python=3.12"
 WINDOWS_DEFAULT_ENV_PREFIX = r"D:\conda_envs\lunar-explorer"
 WINDOWS_DEFAULT_DOWNLOAD_ROOT = r"D:\CodexDownloads\lunar-path-planning"
@@ -25,7 +25,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--download-root")
     parser.add_argument("--install-editable", action="store_true")
     parser.add_argument("--with-training", action="store_true")
-    parser.add_argument("--with-visual-workbench", action="store_true")
     parser.add_argument("--run-validation", action="store_true")
     parser.add_argument("--skip-submodules", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -85,16 +84,11 @@ def main(argv: list[str] | None = None) -> int:
             str(repo_root),
             str(repo_root / "path-planner"),
             str(repo_root / "dev-platform-constraints"),
-            str(repo_root / "model-explorer") + ("[training]" if args.with_training else ""),
         ]
-        if args.with_visual_workbench:
-            editable_specs.append(str(repo_root / "visual-workbench"))
         editable_args = [item for spec in editable_specs for item in ("-e", spec)]
         _run([args.conda, "run", *env_target, "python", "-m", "pip", "install", *editable_args], dry_run=args.dry_run, env=env)
     elif args.with_training:
         _run([args.conda, "run", *env_target, "python", "-m", "pip", "install", "torch>=2.0"], dry_run=args.dry_run, env=env)
-    if args.with_visual_workbench and not args.install_editable:
-        _run([args.conda, "run", *env_target, "python", "-m", "pip", "install", "-e", str(repo_root / "visual-workbench")], dry_run=args.dry_run, env=env)
 
     _run_import_smoke(
         args.conda,
@@ -145,7 +139,6 @@ def _run_import_smoke(
 ) -> None:
     smokes = [
         ("path-planner", "path_planner"),
-        ("model-explorer", "model_explorer"),
         ("dev-platform-constraints", "dev_platform_constraints"),
     ]
     if include_root:

@@ -24,7 +24,7 @@ Options:
   --env-name NAME       Named Conda environment. Default: lunar-explorer
   --env-prefix PATH     Prefix-based Conda environment path. Overrides --env-name.
   --install-editable    Install the core Python submodules as editable packages.
-  --with-training       Install model-explorer training dependency extras, including PyTorch.
+  --with-training       Install PyTorch for parent training workflows.
   --run-validation      Run the core submodule test suites after setup.
   --skip-submodules     Do not run git submodule update.
   --dry-run             Print commands without executing them.
@@ -96,7 +96,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENVIRONMENT_FILE="$REPO_ROOT/environment.yml"
-MODULES=(path-planner model-explorer dev-platform-constraints visual-workbench)
+MODULES=(path-planner dev-platform-constraints)
 
 if [[ -n "$ENV_PREFIX" ]]; then
   CONDA_TARGET_ARGS=(-p "$ENV_PREFIX")
@@ -199,15 +199,10 @@ ensure_submodules() {
 }
 
 install_editable_packages() {
-  local model_spec="$REPO_ROOT/model-explorer"
-  if [[ "$WITH_TRAINING" -eq 1 ]]; then
-    model_spec="$model_spec[training]"
-  fi
-
   "$CONDA_BIN" run "${CONDA_RUN_ARGS[@]}" python -m pip install \
+    -e "$REPO_ROOT" \
     -e "$REPO_ROOT/path-planner" \
-    -e "$REPO_ROOT/dev-platform-constraints" \
-    -e "$model_spec"
+    -e "$REPO_ROOT/dev-platform-constraints"
 }
 
 install_training_runtime_only() {
@@ -216,15 +211,12 @@ install_training_runtime_only() {
 
 run_import_smoke() {
   run_in_module path-planner python -c "import path_planner; print('path_planner import ok')"
-  run_in_module model-explorer python -c "import model_explorer; print('model_explorer import ok')"
   run_in_module dev-platform-constraints python -c "import dev_platform_constraints; print('dev_platform_constraints import ok')"
 }
 
 run_validation_suites() {
   run_in_module path-planner python -m pytest
-  run_in_module model-explorer python -m unittest discover -s tests -v
   run_in_module dev-platform-constraints python -m unittest discover -s tests
-  run_in_module model-explorer python -m model_explorer verify
 }
 
 cat <<INFO
@@ -250,13 +242,8 @@ run_step \
   "$CONDA_BIN" run "${CONDA_RUN_ARGS[@]}" python -c "$PYTHON_VERSION_CHECK"
 
 if [[ "$INSTALL_EDITABLE" -eq 1 ]]; then
-  editable_model_display="model-explorer"
-  if [[ "$WITH_TRAINING" -eq 1 ]]; then
-    editable_model_display="model-explorer[training]"
-  fi
-
   run_step \
-    "$CONDA_BIN run $ENV_TARGET_DISPLAY python -m pip install -e path-planner -e dev-platform-constraints -e $editable_model_display" \
+    "$CONDA_BIN run $ENV_TARGET_DISPLAY python -m pip install -e . -e path-planner -e dev-platform-constraints" \
     install_editable_packages
 elif [[ "$WITH_TRAINING" -eq 1 ]]; then
   run_step \
@@ -278,6 +265,5 @@ Next commands:
 
 Source-tree commands use per-module PYTHONPATH, for example:
   cd path-planner && PYTHONPATH=src python -m pytest
-  cd model-explorer && PYTHONPATH=src python -m model_explorer verify
   cd dev-platform-constraints && PYTHONPATH=src python scripts/run_minimal_closure.py
 NEXT

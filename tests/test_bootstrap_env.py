@@ -15,7 +15,6 @@ def test_windows_bootstrap_dry_run_uses_d_drive_defaults() -> None:
             "windows",
             "--install-editable",
             "--with-training",
-            "--with-visual-workbench",
             "--run-validation",
         ],
         cwd=repo_root,
@@ -31,10 +30,10 @@ def test_windows_bootstrap_dry_run_uses_d_drive_defaults() -> None:
     assert "Download root: D:\\CodexDownloads\\lunar-path-planning" in output
     assert "python=3.12" in output
     assert "path-planner" in output
-    assert "model-explorer[training]" in output
     assert "dev-platform-constraints" in output
-    assert "visual-workbench" in output
     assert "pytest" in output
+    assert "model-explorer" not in output
+    assert "visual-workbench" not in output
 
 
 def test_ubuntu_bootstrap_dry_run_uses_named_env_default() -> None:

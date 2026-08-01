@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -13,7 +12,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from platform_command import display_command, is_windows
+from platform_command import display_command
 
 
 PROFILES = {"windows-non-drake", "ubuntu-non-drake", "ubuntu-drake"}
@@ -129,7 +128,6 @@ def _commands_for_profile(
             platform_name,
             "--install-editable",
             "--with-training",
-            "--with-visual-workbench",
             "--run-validation",
         ]
         if not real_bootstrap:
@@ -147,7 +145,7 @@ def _commands_for_profile(
                     "pytest",
                     "tests/test_platform_stage_runner.py",
                     "tests/test_bootstrap_env.py",
-                    "tests/test_path_feedback_windows_compat.py",
+                    "tests/test_bootstrap_ubuntu_conda.py",
                     "tests/test_no_new_python_bash_dependencies.py",
                     "tests/test_platform_validation_matrix.py",
                     "-q",
@@ -167,53 +165,17 @@ def _commands_for_profile(
                 ],
             },
             {
-                "label": "path_feedback_compatibility_tests",
-                "cwd": repo_root,
-                "argv": [
-                    sys.executable,
-                    "-m",
-                    "pytest",
-                    "tests/test_path_feedback_windows_compat.py",
-                    "tests/test_batch_path_feedback_validation.py",
-                    "tests/test_path_feedback_validation_script.py",
-                    "-q",
-                ],
-            },
-            {
                 "label": "path_planner_non_drake_tests",
                 "cwd": repo_root / "path-planner",
                 "argv": [sys.executable, "-m", "pytest", "-m", "not drake", "-q"],
             },
             {
-                "label": "model_explorer_smoke_tests",
-                "cwd": repo_root / "model-explorer",
-                "argv": [sys.executable, "-m", "pytest", "tests/test_model_explorer.py", "-q"],
-            },
-            {
-                "label": "visual_workbench_backend_tests",
-                "cwd": repo_root / "visual-workbench",
-                "argv": [sys.executable, "-m", "pytest", "tests", "-q"],
+                "label": "dev_platform_constraints_tests",
+                "cwd": repo_root / "dev-platform-constraints",
+                "argv": [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
             },
         ]
     )
-    if not skip_node:
-        npm = _npm_executable() or ("npm.cmd" if is_windows() else "npm")
-        commands.extend(
-            [
-                {
-                    "label": "visual_workbench_web_npm_test",
-                    "cwd": repo_root / "visual-workbench" / "web",
-                    "argv": [npm, "test"],
-                    "requires_node": True,
-                },
-                {
-                    "label": "visual_workbench_web_build",
-                    "cwd": repo_root / "visual-workbench" / "web",
-                    "argv": [npm, "run", "build"],
-                    "requires_node": True,
-                },
-            ]
-        )
     return commands
 
 
@@ -234,7 +196,7 @@ def _write_summary(
         "platform": sys.platform,
         "python_executable": sys.executable,
         "bootstrap_mode": bootstrap_mode,
-        "node_validation_executed": not skip_node and profile != "ubuntu-drake",
+        "node_validation_executed": False,
         "drake_validation_executed": profile == "ubuntu-drake",
         "command_results": command_results,
         "final_status": final_status,
@@ -270,10 +232,6 @@ def _resolve_output_root(value: str | None, profile: str, repo_root: Path) -> Pa
     if not path.is_absolute():
         path = repo_root / path
     return path.resolve()
-
-
-def _npm_executable() -> str | None:
-    return shutil.which("npm.cmd" if is_windows() else "npm")
 
 
 def _display_path(path: Path, repo_root: Path) -> str:
