@@ -5,10 +5,8 @@ from pathlib import Path
 LEGACY_BASH_ALLOWED: set[str] = set()
 
 PLATFORM_SUPPORTED_CHAIN = {
-    "scripts/run_policy_gated_sequential_canary_rollout.py",
-    "scripts/run_guarded_ppo_rollout_pilot.py",
-    "scripts/run_iterative_ppo_mini_loop_stability.py",
-    "scripts/run_quasi_real_guarded_ppo_stability_replay.py",
+    "scripts/run_platform_smoke.py",
+    "scripts/run_platform_validation_matrix.py",
 }
 
 
@@ -57,16 +55,6 @@ def test_platform_supported_chain_does_not_reference_shell_wrappers() -> None:
 
     assert offenders == []
 
-
-def test_policy_training_readiness_review_is_called_as_python() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    offenders = []
-    for path in sorted((repo_root / "scripts").glob("*.py")):
-        text = _read_python_source(path)
-        if "run_policy_training_readiness_review.sh" in text:
-            offenders.append(path.relative_to(repo_root).as_posix())
-
-    assert offenders == []
 
 
 def test_python_source_reader_strips_utf8_bom(tmp_path: Path) -> None:

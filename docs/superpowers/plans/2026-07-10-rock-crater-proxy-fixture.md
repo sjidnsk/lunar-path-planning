@@ -467,7 +467,7 @@ D:/conda_envs/lunar-explorer/python.exe -m pytest tests/ppo_highres_frontier/tes
 D:/conda_envs/lunar-explorer/python.exe -m pytest tests/test_platform_stage_runner.py tests/test_bootstrap_env.py -q
 ```
 
-Then run `tests/test_astar.py` from `path-planner` and the full `model-explorer` suite from their own working directories. Expected: Foundation 89, root 8, A* 7, and model-explorer 327 plus 13 subtests remain passing unless the repository's authoritative current counts have legitimately increased; zero failures are required.
+Historical note: this plan originally required a separate `model-explorer` suite. That gitlink is retired and no longer belongs to the parent repository. Current verification runs the retained `path-planner` tests plus the Stage6, G1/G2/G3 and platform contracts.
 
 - [ ] **Step 4: Run static, packaging, and source-identity checks**
 

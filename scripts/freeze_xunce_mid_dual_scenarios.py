@@ -984,7 +984,7 @@ def verify_frozen_bundle(root: str | Path) -> bool:
 
 def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    if "--execute" not in raw_argv:
+    if "--execute" not in raw_argv and "--help" not in raw_argv:
         raise SystemExit("refusing to read inputs or write scenario freeze without --execute")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)

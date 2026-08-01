@@ -30,8 +30,7 @@ def test_platform_validation_matrix_dry_run_does_not_create_output_root(tmp_path
     assert "path-planner" in completed.stdout
     assert "model-explorer" not in completed.stdout
     assert "visual-workbench" not in completed.stdout
-    assert "path_feedback" not in completed.stdout
-    assert "path-feedback" not in completed.stdout
+    assert "run_stage.py" not in completed.stdout
     assert not output_root.exists()
 
 
@@ -54,8 +53,7 @@ def test_platform_validation_matrix_uses_only_retained_submodule_checks() -> Non
     assert "tests/test_platform_smoke.py" in rendered
     assert "model-explorer" not in rendered
     assert "visual-workbench" not in rendered
-    assert "path_feedback" not in rendered
-    assert "path-feedback" not in rendered
+    assert "xunce_stage_15_18_tests" not in rendered
 
 
 def test_platform_validation_matrix_summary_has_no_node_contract(tmp_path: Path, monkeypatch) -> None:

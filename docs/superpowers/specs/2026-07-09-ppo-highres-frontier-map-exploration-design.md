@@ -2,7 +2,7 @@
 
 ## Status
 
-Design approved for documentation. This document defines the first formal version of a new PPO exploration-mapping task. It does not implement code, publish checkpoints, replace any default policy, connect an executor, start canary traffic, or change the current Stage26 mainline.
+Design approved for documentation. This document defines the first formal version of a new PPO exploration-mapping task. At the time of writing it did not implement code, publish checkpoints, replace any default policy, connect an executor, or start canary traffic; the former Stage26 mainline is now retired.
 
 ## Purpose
 

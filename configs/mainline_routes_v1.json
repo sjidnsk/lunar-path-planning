@@ -1,0 +1,51 @@
+{
+  "schema_version": "mainline-routes/v1",
+  "routes": {
+    "stage6": {
+      "mode": "current_mainline",
+      "entrypoints": ["scripts/run_ppo_stage6_standard.py", "scripts/run_ppo_stage6_r3_evaluation_pipeline.py"],
+      "configs": ["configs/ppo_highres_frontier_stage6_v1.json"],
+      "tests": ["tests/ppo_highres_frontier/test_stage6_standard_config.py"],
+      "docs": ["docs/ppo-highres-frontier-stage6.md"]
+    },
+    "g1": {
+      "mode": "current_mainline",
+      "entrypoints": ["scripts/run_xunce_mid_dual_g1_coverage.py", "scripts/run_xunce_mid_dual_g1_repair.py"],
+      "configs": ["configs/xunce_mid_dual_g1_coverage_v1.json", "configs/xunce_mid_dual_g1_repair_v1.json"],
+      "tests": ["tests/test_xunce_mid_dual_g1_coverage.py"],
+      "docs": ["docs/xunce-midterm-dual-gate-runbook.md"]
+    },
+    "g2": {
+      "mode": "current_mainline",
+      "entrypoints": ["scripts/run_xunce_mid_dual_g2_planning_time.py"],
+      "configs": ["configs/xunce_mid_dual_g2_planning_time_v2.json"],
+      "tests": ["tests/test_xunce_mid_dual_g2_planning_time.py"],
+      "docs": ["docs/xunce-midterm-dual-gate-runbook.md"]
+    },
+    "g3": {
+      "mode": "current_mainline",
+      "entrypoints": ["scripts/run_xunce_mid_dual_g3_closed_loop.py"],
+      "configs": ["configs/xunce_mid_dual_g3_closed_loop_v1.json"],
+      "tests": ["tests/test_xunce_mid_dual_g3_closed_loop.py"],
+      "docs": ["docs/xunce-midterm-dual-gate-runbook.md"]
+    },
+    "default_grid_astar": {
+      "mode": "default",
+      "entrypoints": ["src/lunar_exploration_ppo/integrations/path_planner_adapter.py"],
+      "submodule": "path-planner",
+      "boundary": "Python grid AStarPlanner remains the default planner; Hybrid A* is opt-in and makes no Ackermann-feasibility claim."
+    },
+    "multiplatform_v3": {
+      "mode": "opt_in",
+      "submodule": "path-planner",
+      "docs": ["docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-roadmap.md"],
+      "boundary": "Does not replace default A* or connect an executor."
+    },
+    "platform_constraints": {
+      "mode": "retained_support",
+      "submodule": "dev-platform-constraints",
+      "docs": ["docs/platform/windows-ubuntu-compatibility-audit.md"],
+      "boundary": "max_traversable_slope_deg=30.0"
+    }
+  }
+}

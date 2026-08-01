@@ -63,12 +63,13 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
           python -m pytest \
-            tests/test_platform_stage_runner.py \
             tests/test_bootstrap_env.py \
             tests/test_bootstrap_ubuntu_conda.py \
             tests/test_platform_smoke.py \
             tests/test_no_new_python_bash_dependencies.py \
             tests/test_platform_validation_matrix.py \
+            tests/test_mainline_repository_surface.py \
+            tests/test_retired_routes_absent.py \
             -q
 
       - name: G2 input contract
@@ -77,14 +78,6 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
           python -m pytest tests/test_xunce_mid_dual_g2_inputs.py -q
-
-      - name: Stage runner dry-runs
-        shell: bash
-        run: |
-          python scripts/run_stage.py --stage xunce-shadow-replay-validation --dry-run
-          python scripts/run_stage.py --stage guarded-ppo-rollout-pilot --dry-run
-          python scripts/run_stage.py --stage iterative-ppo-mini-loop-stability --dry-run
-          python scripts/run_stage.py --stage quasi-real-guarded-ppo-stability-replay --dry-run
 
       - name: Platform matrix dry-run
         shell: bash

@@ -183,7 +183,7 @@ D:/conda_envs/lunar-explorer/python.exe -m pip install --force-reinstall --no-de
 D:/conda_envs/lunar-explorer/python.exe -c "import lunar_exploration_ppo"
 ```
 
-分别在独立进程复核起点基线：root 8 项、A* 7 项、model-explorer 93 项及 13 个 subtests；不得合并为同一 pytest 进程。
+退役前的起点基线曾在独立进程中覆盖 root、A* 与 `model-explorer`；后者已不属于当前父仓库。当前复核只运行保留的 Stage6、默认 A*、G1/G2/G3 和平台合同测试。
 
 **Step 7: Generate machine/review evidence and stop**
 
@@ -243,4 +243,4 @@ D:/conda_envs/lunar-explorer/python.exe -c "import lunar_exploration_ppo"
 
 ## Foundation 起点基线
 
-开始 Foundation 前已验证：root 8 项通过、A* 7 项通过、model-explorer 93 项及 13 个 subtests 通过。各子项目必须分进程测试，避免 import-isolation 测试互相污染。
+历史 Foundation 记录中的 `model-explorer` 通过计数属于退役前环境，不构成当前验收条件。当前保留路线按 `docs/documentation-index.md` 所列的 Stage6、默认 A*、G1/G2/G3 和平台合同分别验证。

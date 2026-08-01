@@ -29,8 +29,7 @@ def test_platform_smoke_dry_run_uses_only_retained_parent_and_submodule_checks()
     assert "dev-platform-constraints" in output
     assert "model-explorer" not in output
     assert "visual-workbench" not in output
-    assert "path_feedback" not in output
-    assert "path-feedback" not in output
+    assert "run_stage.py" not in output
 
 
 def test_platform_ci_and_setup_documentation_have_no_retired_bindings() -> None:
@@ -41,10 +40,7 @@ def test_platform_ci_and_setup_documentation_have_no_retired_bindings() -> None:
     for text in (workflow, setup):
         assert "model-explorer" not in text
         assert "visual-workbench" not in text
-        assert "path_feedback" not in text
-        assert "path-feedback" not in text
-        assert "--with-visual-workbench" not in text
-        assert "test_path_feedback_windows_compat.py" not in text
+        assert "run_stage.py" not in text
     assert "actions/setup-node" not in workflow
     assert "test_stage6_standard_config.py" in workflow
 
@@ -79,6 +75,5 @@ def test_platform_ci_excludes_tests_that_access_retired_submodule_sources() -> N
         if imports_retired_module or accesses_retired_directory:
             retired_source_tests.add(relative)
 
-    assert "tests/test_xunce_high_fidelity_real_map_comparison.py" not in ci_test_paths
     assert "tests/test_xunce_mid_dual_g2_inputs.py" in ci_test_paths
     assert retired_source_tests == set()

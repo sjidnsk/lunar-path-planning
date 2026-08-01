@@ -58,7 +58,7 @@ Windows non-Drake:
 
 ```powershell
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-python -m pytest tests/test_platform_stage_runner.py tests/test_bootstrap_env.py tests/test_bootstrap_ubuntu_conda.py tests/test_platform_smoke.py tests/test_no_new_python_bash_dependencies.py tests/test_platform_validation_matrix.py -q
+python -m pytest tests/test_bootstrap_env.py tests/test_bootstrap_ubuntu_conda.py tests/test_platform_smoke.py tests/test_no_new_python_bash_dependencies.py tests/test_platform_validation_matrix.py tests/test_mainline_repository_surface.py tests/test_retired_routes_absent.py -q
 python scripts\run_platform_validation_matrix.py --profile windows-non-drake --dry-run
 ```
 
@@ -66,7 +66,7 @@ Ubuntu non-Drake:
 
 ```bash
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-python -m pytest tests/test_platform_stage_runner.py tests/test_bootstrap_env.py tests/test_bootstrap_ubuntu_conda.py tests/test_platform_smoke.py tests/test_no_new_python_bash_dependencies.py tests/test_platform_validation_matrix.py -q
+python -m pytest tests/test_bootstrap_env.py tests/test_bootstrap_ubuntu_conda.py tests/test_platform_smoke.py tests/test_no_new_python_bash_dependencies.py tests/test_platform_validation_matrix.py tests/test_mainline_repository_surface.py tests/test_retired_routes_absent.py -q
 python scripts/run_platform_validation_matrix.py --profile ubuntu-non-drake --dry-run
 ```
 

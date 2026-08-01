@@ -1,8 +1,0 @@
-{
-  "schema_version": "xunce-safe-efficient-opportunity-root-cause-audit-config/v1",
-  "source_bound_coverage_root": "outputs/path_feedback_batch_xunce_true_incumbent_selection_binding_v1",
-  "source_cost_efficient_refinement_root": "outputs/path_feedback_batch_xunce_cost_efficient_coverage_opportunity_refinement_v1",
-  "required_scenario_count": 24,
-  "min_roi_group_count": 8,
-  "canary_traffic_fraction": 0.0
-}
