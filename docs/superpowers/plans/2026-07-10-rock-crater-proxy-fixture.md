@@ -35,7 +35,7 @@
 - Create `tests/ppo_highres_frontier/test_stage1_terrain_proxy.py`: independent generator, morphology, placement, hash, occlusion, and leakage tests.
 - Modify `tests/ppo_highres_frontier/test_stage1_smoke_env.py`: update the scenario identity and full Smoke expectations.
 - Modify `tests/ppo_highres_frontier/test_stage1_smoke_env_r1.py`: retain approval/gate tests and add provenance drift coverage.
-- Modify `.superpowers/sdd/task-2-report.md`: replace the superseded pre-rock/crater snapshot after final verification.
+- Runtime report: write final verification results to `D:/xunce/out/ppo_frontier/$runId/s1/report.md`; do not create or modify tracked internal SDD reports.
 
 ---
 
@@ -445,7 +445,7 @@ Do not stage or commit.
 
 **Files:**
 - Verify only: all Stage 1 source/config/test files completed by Tasks 1–3.
-- Modify: `.superpowers/sdd/task-2-report.md`
+- Runtime report: `D:/xunce/out/ppo_frontier/$runId/s1/report.md`; do not create or modify tracked internal SDD reports.
 - Runtime output: `D:/xunce/out/ppo_frontier/$runId/s1/`, where `$runId` is created by Step 5.
 
 **Interfaces:**
