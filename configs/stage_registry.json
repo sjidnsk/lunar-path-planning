@@ -774,17 +774,6 @@
       "default_output_root": "outputs/path_feedback_batch_xunce_stage18_research_evidence_pipeline_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
-    "path-feedback-validation": {
-      "script": "scripts/run_path_feedback_validation.py",
-      "default_output_root": "outputs/path_feedback_validation",
-      "args": ["--output-root", "{output_root}"]
-    },
-    "path-feedback-batch-validation": {
-      "script": "scripts/run_batch_path_feedback_validation.py",
-      "default_config": "configs/path_feedback_batch_dataset_v1.json",
-      "default_output_root": "outputs/path_feedback_batch_smoke",
-      "args": ["--matrix", "{config}", "--output-root", "{output_root}"]
-    },
     "policy-training-readiness-review": {
       "script": "scripts/run_policy_training_readiness_review.py",
       "default_config": "configs/policy_training_readiness_review_v1.json",

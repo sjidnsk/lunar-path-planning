@@ -2,11 +2,7 @@ import ast
 from pathlib import Path
 
 
-LEGACY_BASH_ALLOWED = {
-    # Explicit .sh compatibility path for legacy Ubuntu wrappers. Windows
-    # rejects this path before launch.
-    "scripts/run_batch_path_feedback_validation.py",
-}
+LEGACY_BASH_ALLOWED: set[str] = set()
 
 PLATFORM_SUPPORTED_CHAIN = {
     "scripts/run_policy_gated_sequential_canary_rollout.py",

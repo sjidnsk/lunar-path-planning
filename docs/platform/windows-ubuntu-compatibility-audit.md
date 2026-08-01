@@ -10,9 +10,7 @@
 ## Implemented Platform Boundary
 
 - `scripts/bootstrap_env.py` is the canonical Conda bootstrap entrypoint.
-- `scripts/run_stage.py` plus `configs/stage_registry.json` are the canonical stage runner for Xunce Stage 15-18 and the supported path-feedback / guarded research orchestration surface.
-- `scripts/run_path_feedback_validation.py` is the canonical single-run path-feedback entrypoint.
-- `scripts/run_batch_path_feedback_validation.py` defaults to the Python path-feedback runner and records `command_launcher`.
+- `scripts/run_stage.py` plus `configs/stage_registry.json` provide the retained stage-runner surface.
 - `scripts/run_platform_smoke.py` defines lightweight smoke profiles.
 - `scripts/run_platform_validation_matrix.py` defines full Windows/Ubuntu non-Drake and Ubuntu Drake validation profiles, writes a JSON summary, and keeps bootstrap real installation opt-in.
 - `scripts/run_stage.ps1` and `scripts/bootstrap_windows_conda.ps1` are PowerShell convenience wrappers.
@@ -24,8 +22,6 @@
 - `xunce-release-governance-gate`
 - `xunce-high-fidelity-real-map-roi-expansion`
 - `xunce-high-fidelity-real-map-comparison`
-- `path-feedback-validation`
-- `path-feedback-batch-validation`
 - `policy-training-readiness-review`
 - `policy-gated-sequential-canary-rollout`
 - `guarded-ppo-rollout-pilot`
@@ -40,7 +36,6 @@ machine-specific `/home/kai` paths.
 
 - Many historical `.sh` files remain as Ubuntu convenience wrappers.
 - Some legacy research orchestration scripts outside the supported registry may still chain shell-only wrappers and are not part of the Windows-supported profile.
-- `scripts/run_batch_path_feedback_validation.py` retains an explicit `.sh` compatibility branch for user-supplied legacy single-run scripts. On Windows, that branch fails before launch with `bash_single_run_script_unsupported_on_windows`.
 - The compatibility test suite prevents platform-supported Python paths from adding new direct `subprocess.run(["bash", ...])` dependencies.
 
 ## Drake Policy

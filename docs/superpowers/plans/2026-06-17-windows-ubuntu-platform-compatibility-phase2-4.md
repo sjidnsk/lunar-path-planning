@@ -43,7 +43,6 @@ python scripts\run_platform_validation_matrix.py --profile windows-non-drake --d
 ```bash
 python -m pytest \
   tests/test_platform_stage_runner.py \
-  tests/test_path_feedback_windows_compat.py \
   tests/test_no_new_python_bash_dependencies.py \
   tests/test_policy_gated_sequential_canary_rollout.py \
   tests/test_guarded_ppo_rollout_pilot.py \
