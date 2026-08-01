@@ -36,10 +36,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Install Python test dependencies
         shell: bash
         run: |
@@ -49,8 +45,6 @@ jobs:
           python -m pip install dist/*.whl
           python -m pip install -e dev-platform-constraints
           python -m pip install -e path-planner
-          python -m pip install -e "model-explorer[training]"
-          python -m pip install -e visual-workbench
 
       - name: Foundation CPU import and contract smoke
         shell: bash
@@ -58,11 +52,10 @@ jobs:
           python -c 'import lunar_exploration_ppo; from lunar_exploration_ppo.configs.schema import resolve_device; assert resolve_device("cpu", cuda_available=False) == "cpu"'
           python -m pytest tests/ppo_highres_frontier/test_foundation.py -q
 
-      - name: Stage 3 CPU policy contract
+      - name: Stage 6 standard configuration contract
         shell: bash
         run: |
-          python -m pytest tests/ppo_highres_frontier/test_stage3_policy_cpu.py -q
-          python -m pytest tests/ppo_highres_frontier/test_stage3_workflow.py -q
+          python -m pytest tests/ppo_highres_frontier/test_stage6_standard_config.py -q
 
       - name: Platform compatibility tests
         shell: bash
@@ -72,7 +65,8 @@ jobs:
           python -m pytest \
             tests/test_platform_stage_runner.py \
             tests/test_bootstrap_env.py \
-            tests/test_path_feedback_windows_compat.py \
+            tests/test_bootstrap_ubuntu_conda.py \
+            tests/test_platform_smoke.py \
             tests/test_no_new_python_bash_dependencies.py \
             tests/test_platform_validation_matrix.py \
             -q
@@ -99,14 +93,6 @@ jobs:
       - name: Platform matrix dry-run
         shell: bash
         run: python scripts/run_platform_validation_matrix.py --profile "${{ matrix.profile }}" --dry-run
-
-      - name: Visual Workbench frontend
-        shell: bash
-        working-directory: visual-workbench/web
-        run: |
-          npm ci
-          npm test
-          npm run build
 
   ubuntu-drake:
     name: ubuntu-latest Drake optional

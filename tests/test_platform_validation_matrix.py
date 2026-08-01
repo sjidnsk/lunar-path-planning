@@ -43,7 +43,6 @@ def test_platform_validation_matrix_uses_only_retained_submodule_checks() -> Non
         profile="windows-non-drake",
         repo_root=repo_root,
         skip_bootstrap=False,
-        skip_node=False,
         real_bootstrap=False,
     )
     rendered = "\n".join(
@@ -52,13 +51,14 @@ def test_platform_validation_matrix_uses_only_retained_submodule_checks() -> Non
 
     assert "path_planner_non_drake_tests" in rendered
     assert "dev_platform_constraints_tests" in rendered
+    assert "tests/test_platform_smoke.py" in rendered
     assert "model-explorer" not in rendered
     assert "visual-workbench" not in rendered
     assert "path_feedback" not in rendered
     assert "path-feedback" not in rendered
 
 
-def test_platform_validation_matrix_skip_node_summary_schema(tmp_path: Path, monkeypatch) -> None:
+def test_platform_validation_matrix_summary_has_no_node_contract(tmp_path: Path, monkeypatch) -> None:
     from scripts import run_platform_validation_matrix as matrix
 
     output_root = tmp_path / "matrix"
@@ -73,7 +73,6 @@ def test_platform_validation_matrix_skip_node_summary_schema(tmp_path: Path, mon
             "--profile",
             "windows-non-drake",
             "--skip-bootstrap",
-            "--skip-node",
             "--output-root",
             str(output_root),
         ]
@@ -84,11 +83,33 @@ def test_platform_validation_matrix_skip_node_summary_schema(tmp_path: Path, mon
     assert summary["schema_version"] == "platform-validation-matrix-summary/v1"
     assert summary["profile"] == "windows-non-drake"
     assert summary["bootstrap_mode"] == "skipped"
-    assert summary["node_validation_executed"] is False
+    assert "node_validation_executed" not in summary
     assert summary["drake_validation_executed"] is False
     assert summary["final_status"] == "passed"
     assert summary["failure_reason"] == ""
     assert summary["command_results"]
+
+
+def test_platform_matrix_contract_is_fresh_checkout_safe(tmp_path: Path) -> None:
+    from scripts import bootstrap_env
+    from scripts import run_platform_validation_matrix as matrix
+
+    fresh_checkout = tmp_path / "fresh-checkout"
+    (fresh_checkout / "path-planner").mkdir(parents=True)
+    (fresh_checkout / "dev-platform-constraints").mkdir()
+    commands = matrix._commands_for_profile(
+        profile="windows-non-drake",
+        repo_root=fresh_checkout,
+        skip_bootstrap=False,
+        real_bootstrap=False,
+    )
+    rendered = "\n".join(
+        f"{command['label']} {command['cwd']} {' '.join(command['argv'])}" for command in commands
+    )
+
+    assert bootstrap_env.MODULES == ("path-planner", "dev-platform-constraints")
+    assert "model-explorer" not in rendered
+    assert "visual-workbench" not in rendered
 
 
 def test_platform_validation_matrix_ubuntu_drake_missing_routes_to_exit_2(tmp_path: Path, monkeypatch) -> None:

@@ -24,7 +24,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", choices=sorted(PROFILES), required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-bootstrap", action="store_true")
-    parser.add_argument("--skip-node", action="store_true")
     parser.add_argument("--real-bootstrap", action="store_true")
     parser.add_argument("--output-root")
     args = parser.parse_args(argv)
@@ -35,7 +34,6 @@ def main(argv: list[str] | None = None) -> int:
         profile=args.profile,
         repo_root=repo_root,
         skip_bootstrap=args.skip_bootstrap,
-        skip_node=args.skip_node,
         real_bootstrap=args.real_bootstrap,
     )
 
@@ -72,7 +70,6 @@ def main(argv: list[str] | None = None) -> int:
                     repo_root=repo_root,
                     profile=args.profile,
                     bootstrap_mode=_bootstrap_mode(args.skip_bootstrap, args.real_bootstrap),
-                    skip_node=args.skip_node,
                     command_results=results,
                     final_status=final_status,
                     failure_reason="drake_runtime_missing",
@@ -85,7 +82,6 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
         profile=args.profile,
         bootstrap_mode=_bootstrap_mode(args.skip_bootstrap, args.real_bootstrap),
-        skip_node=args.skip_node,
         command_results=results,
         final_status=final_status,
         failure_reason=failure_reason,
@@ -100,7 +96,6 @@ def _commands_for_profile(
     profile: str,
     repo_root: Path,
     skip_bootstrap: bool,
-    skip_node: bool,
     real_bootstrap: bool,
 ) -> list[dict[str, Any]]:
     if profile == "ubuntu-drake":
@@ -146,6 +141,7 @@ def _commands_for_profile(
                     "tests/test_platform_stage_runner.py",
                     "tests/test_bootstrap_env.py",
                     "tests/test_bootstrap_ubuntu_conda.py",
+                    "tests/test_platform_smoke.py",
                     "tests/test_no_new_python_bash_dependencies.py",
                     "tests/test_platform_validation_matrix.py",
                     "-q",
@@ -185,7 +181,6 @@ def _write_summary(
     repo_root: Path,
     profile: str,
     bootstrap_mode: str,
-    skip_node: bool,
     command_results: list[dict[str, Any]],
     final_status: str,
     failure_reason: str,
@@ -196,7 +191,6 @@ def _write_summary(
         "platform": sys.platform,
         "python_executable": sys.executable,
         "bootstrap_mode": bootstrap_mode,
-        "node_validation_executed": False,
         "drake_validation_executed": profile == "ubuntu-drake",
         "command_results": command_results,
         "final_status": final_status,
