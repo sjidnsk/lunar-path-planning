@@ -25,7 +25,6 @@ SUPPORTED_STAGE_IDS = {
     "xunce-guarded-training-candidate-preflight",
     "xunce-controlled-training-candidate",
     "xunce-post-training-offline-evaluation",
-    "xunce-high-fidelity-exploration-coverage-comparison",
     "xunce-coverage-discriminability-audit",
     "xunce-candidate-level-coverage-opportunity-materialization",
     "xunce-cost-efficient-coverage-opportunity-refinement",
@@ -110,35 +109,6 @@ def test_stage_runner_supported_stages_dry_run_without_shell_wrappers() -> None:
         assert "bash" not in completed.stdout.lower()
         assert "python3" not in completed.stdout.lower()
         assert "/home/kai" not in completed.stdout
-
-
-def test_stage_runner_extra_arg_accepts_option_shaped_values() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "scripts/run_stage.py",
-            "--stage",
-            "xunce-high-fidelity-exploration-coverage-comparison",
-            "--extra-arg",
-            "--candidate-refresh-mode",
-            "--extra-arg",
-            "dynamic_from_coverage_memory",
-            "--extra-arg",
-            "--include-oracle-baselines",
-            "--dry-run",
-        ],
-        cwd=repo_root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "--candidate-refresh-mode" in completed.stdout
-    assert "dynamic_from_coverage_memory" in completed.stdout
-    assert "--include-oracle-baselines" in completed.stdout
 
 
 def test_stage_runner_rejects_bad_registry_schema(tmp_path: Path) -> None:

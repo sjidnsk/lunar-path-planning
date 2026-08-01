@@ -126,12 +126,6 @@
       "default_output_root": "outputs/path_feedback_batch_xunce_high_fidelity_real_map_comparison_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
     },
-    "xunce-high-fidelity-exploration-coverage-comparison": {
-      "script": "scripts/run_xunce_high_fidelity_exploration_coverage_comparison.py",
-      "default_config": "configs/xunce_high_fidelity_exploration_coverage_comparison_v1.json",
-      "default_output_root": "outputs/path_feedback_batch_xunce_high_fidelity_exploration_coverage_comparison_v1",
-      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
-    },
     "xunce-coverage-discriminability-audit": {
       "script": "scripts/run_xunce_coverage_discriminability_audit.py",
       "default_config": "configs/xunce_coverage_discriminability_audit_v1.json",

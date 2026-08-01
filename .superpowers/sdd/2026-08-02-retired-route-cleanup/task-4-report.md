@@ -53,3 +53,17 @@
   坡度合同。
 - `docs/算法设计与系统架构报告.md` 的纯历史文本入口依 brief 留给 Task5；它不构成
   registry、CI、platform 或保留运行入口的断链。
+
+## Review fix round 1
+
+- 复核发现 `xunce-high-fidelity-exploration-coverage-comparison` 虽未在冻结
+  Stage18--25 路径集合内，但其 registry runner 直接导入了已删除的
+  `xunce_stage18_guard_thresholds`，属于真实运行时断链和退役早期策略入口。
+- 定向删除该 registry entry、runner、config、直属测试、platform runner 的显式
+  key 与对应 dry-run 测试；同时删除直接导入该旧 runner 且另含 Stage18I 导入的
+  `tests/test_xunce_gate_simplification.py`。
+- `tests/test_retired_path_feedback_cleanup.py` 曾手工把已删除的 Stage23 runner
+  标为 retained executable；移除了该陈旧特例，保留 registry script 存在性及删除
+  runtime-module 扫描合同。
+- 两个保留 config 仅以历史 output-root 字符串描述下游输入，未导入或调用上述已删
+  文件；按本轮可执行引用边界不修改，留给 Task5 的历史表面收敛。
