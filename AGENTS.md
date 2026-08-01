@@ -30,7 +30,7 @@
 ## 文件命名与路径规范
 
 - 仓库内只保存源码、配置、测试、文档和轻量索引；训练输出、实验 artifact、checkpoint audit、job state、report、manifest 默认写入 D 盘。
-- 新 Stage26 实验默认使用短输出根目录：`D:/xunce/out/<stage_short>`。
+- 新实验默认使用短输出根目录：`D:/xunce/out/<stage_short>`；历史 Stage26 产物仅作只读兼容，不再创建新的 Stage26 路线。
 - 历史 `D:/CodexDownloads/...` 长路径 output 不移动、不删除、不重命名，只作为 legacy input 读取。
 - 不把完整 stage id、seed、combo、hash、lineage、参数 sweep 全塞进路径名或文件名；完整语义写入 `summary.json`、`manifest.json`、`routing.json`、`config.json`、`job-state.jsonl` 等结构化 artifact。
 - Python runner 命名：`scripts/run_xunce_<stage_short>_<purpose>.py`。
@@ -85,52 +85,15 @@
 - Hybrid A* 不宣称 Ackermann feasible。
 - 平台对齐硬坡度阈值保持 `max_traversable_slope_deg=30.0`。
 
-## 当前主线合同
+## 当前保留主线
 
-- `coverage_source=endpoint_theta_slope_obstacle_los/v1`
-- `path_cost_source=hybrid_astar_pose_path/v1`
-- `synthetic_source_kind=synthetic_terrain_obstacle_proxy/v1`
-- `action_space_type=hybrid_discrete_xy_continuous_theta/v1`
-- `hybrid_astar_candidate_eval_workers=4` 是 Stage26 synthetic terrain policy-signal 诊断默认并行 collector 设定。
-- 当前阶段是 Stage26.IO2 `remaining_runner_long_path_migration`；在 IO1 已治理 Stage21.1/21.2/21.3 后，补齐 Stage21.4/21.5、Stage26.2/26.3 和 Stage26.8D/F/G/H/I/O/P 的 long-path artifact IO 与短 root 合同，不改变 PPO、reward、Hybrid A*、candidate generation 或 synthetic terrain。
+- 高分辨率前沿 PPO / Stage6 是当前探索主线；权威入口为 `docs/ppo-highres-frontier-stage6.md`。
+- 中期缩减规模双门槛 G1/G2/G3 是当前交付链；权威运行与验收入口为 `docs/xunce-midterm-dual-gate-runbook.md`。
+- 多平台路径规划 v3 是保留的 opt-in 能力；它不替换默认运行时、不连接 executor，也不夸大平台可行性。
+- `dev-platform-constraints` 是保留的子模块，平台对齐硬坡度阈值保持 `max_traversable_slope_deg=30.0`。
+- 默认路径规划算法是 `path-planner` 中的 Python grid A*：PPO adapter 使用 `path_planner.search.AStarPlanner`。Hybrid A* 与 v3 均为 opt-in；Hybrid A* 不宣称 Ackermann feasible。
+- `path-planner` 是保留的子模块；`model-explorer` 与 `visual-workbench` 是退役候选，物理移除仍须额外人工确认。
 
-## Stage26.7C-26.7H Main-Coverable Efficiency And Eval Binding
+## 退役历史说明
 
-- Stage26.7C 已把成功判据切到 `main_coverable_cells/v1` 与单位路程主覆盖率；`hybrid_astar_path_cost_delta` 只作为诊断字段。
-- Stage26.7D 修复 synthetic credit sampler 的 continuous theta reachability 与 behavior point/theta logprob 合同，不改 reward、network 或 Hybrid A* 搜索语义。
-- Stage26.7G 已证明 PPO update 稳定性应使用 policy-vs-policy KL；behavior-policy KL 只作 off-policy diagnostic。
-- Stage26.7H 当前只修 post-update eval binding：区分 inference fields missing、explicit selected theta unreachable 与 valid coverage-efficiency result。
-- Stage26.8 将 AUC 降级为早期覆盖节奏诊断，使用 `main_coverage_per_100m_delta` 作为 synthetic terrain multi-seed pilot 的主指标。
-- Stage26.8A 只扩大 horizon 预算，不同时扩 seed；若 H12/H16/H20 都为 0，则回到 policy signal / credit target 诊断。
-- Stage26.8B 区分“synthetic sidecar 未加载”和“长 horizon 末端无 Hybrid A* 可达候选”；只有已达最小训练样本、lineage/safety 干净的 `no_hybrid_reachable_candidate_terminal` 可作为自然终止。
-- Stage26.8C 不复用旧 H16 failed root；H12 只作为 baseline audit，H16/H20 写入新 root 并继续以 `main_coverage_per_100m_delta` 为主判据。
-- Stage26.8D 不新增算法能力，只提供可恢复实验流水线；Stage26.8C partial artifacts 只能只读 carryover，failed/incomplete root 不得当作成功。
-- Stage26.8F 不推进 Stage26.8D job，不运行 Stage26.1/26.2/26.3；它只读已完成 Stage26.3 pre/post artifacts，并把 H16/H20 pending job 标记为 source incomplete。
-- Stage26.8G 不改 reward、PPO、network、Hybrid A* 或 synthetic terrain；它只新增 `scenario_diversity_source=synthetic_roi_start_seed_matrix/v1` 与可审计 scenario fixture。
-- Stage26.8M 是后续长时间 PPO update-strength / sample-count 实验的首选通用可恢复 runner；它只编排 `collector -> update -> eval_pre -> eval_post -> aggregate`，状态文件放在 D 盘 output root，不改 reward、network、Hybrid A* 或 synthetic terrain。
-- Stage26.IO1 只治理 artifact IO/path contract：新实验默认写 `D:/xunce/out/<stage_short>`，Stage21.1/21.2/21.3 迁移期双写短名和旧名，历史长 root 只读兼容，不移动旧 outputs。
-- Stage26.IO2 补齐剩余主线 runner 迁移：Stage21.4/21.5、Stage26.2/26.3 和 Stage26.8D/F/G/H/I/O/P artifact 读写必须走 `xunce_artifact_io.py`；Stage26.8O/8P 默认输出 root 使用 `D:/xunce/out/s26_8o` 与 `D:/xunce/out/s26_8p`。
-
-## Stage26.3 Synthetic Terrain Post-Update Eval
-
-- Stage26.3 对 Stage26.2 experimental checkpoint 做 Stage21.5 pre/post eval。
-- 强 join key 包含 `synthetic_terrain_hash`；弱 join 不得用来声称动作概率或轨迹变化。
-- 结果显示动作概率与 selected `(x,y,theta)` 基本不变，进入 Stage26.4。
-
-## Stage26.4 Synthetic Policy Update Signal Strength Repair
-
-- Stage26.4 使用 worker=4 collector，扩充到 16 条 trainable transition 并跑多个 update combo。
-- best combo 为 policy-amplified depth；概率有变化但未跨过离散候选选择边界。
-- 该阶段是离线诊断，不是性能结论。
-
-## Stage26.5 Synthetic Discrete Margin Crossing Calibration
-
-- Stage26.5 跳过 Stage26.4A 串并行等价验收，直接审计 Stage26.4 worker=4 结果。
-- 诊断结论：best synthetic candidate 没有被采样成 trainable selected action，未获得直接 PPO credit。
-- 同时发现 candidate feature 缺少 synthetic LOS / hard obstacle / Hybrid A* path-cost 候选级信号。
-
-## Stage26.6 Synthetic Exploration Credit Assignment
-
-- Stage26.6 给 8 维候选输入槽写入 synthetic/Hybrid/coverage 语义图，保持网络结构不变。
-- Stage21.1 新增 `synthetic_credit_mixture_policy/v1`，让 synthetic credit target 成为真实 selected action 并获得 direct PPO credit。
-- `old_log_prob` 使用 behavior total logprob，同时保留 `old_policy_*` 与 `old_behavior_*` 审计字段。
+Xunce Stage18--26、path-feedback 与早期策略实验已退役，仅保留为历史可复现和人工清理候选，不再构成当前主线或下一阶段任务。此前 Stage26.3--26.8 与 IO1/IO2 的诊断、评估和路径治理记录属于历史；退役不表示代码已删除。退役范围和人工清理边界的唯一详细入口是 `docs/route-retirement-manifest.md`；`configs/stage_registry.json` 仍仅是机器注册表，历史 stage 不因本说明而删除。

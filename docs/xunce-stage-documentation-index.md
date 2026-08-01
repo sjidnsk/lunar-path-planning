@@ -13,6 +13,17 @@ This file defines where Xunce stage information belongs. Keep it short and use i
 | `docs/算法设计与系统架构报告.md` | Architecture design, system evolution, and durable design decisions. It should not accumulate every smoke-run execution log. |
 | `docs/superpowers/specs` | Long-lived technical specifications and interface contracts. It should summarize current contracts, not repeat every runner result. |
 | `configs/stage_registry.json` | Machine-readable stage registration only. Do not use it as narrative documentation. |
+| `docs/route-retirement-manifest.md` | The sole detailed entry for retirement scope and manual-cleanup boundaries. It does not authorize deletion or replace a stage report or runtime evidence. |
+
+## Current Retained Mainline
+
+| Route | Authoritative documentation |
+|---|---|
+| High-resolution frontier PPO / Stage6 | `docs/ppo-highres-frontier-stage6.md`; `docs/superpowers/specs/2026-07-09-ppo-highres-frontier-map-exploration-design.md` |
+| Midterm reduced-scale dual-gate G1/G2/G3 | `docs/xunce-midterm-dual-gate-runbook.md`; `docs/superpowers/specs/2026-07-26-midterm-dual-gate-experiment-design.md` |
+| Multi-platform path planning v3 | `docs/superpowers/specs/2026-07-28-multiplatform-path-planner-v3-design.md` and the v3 route below; v3 is opt-in. |
+| Platform constraints | `dev-platform-constraints/`; the aligned hard slope threshold remains `max_traversable_slope_deg=30.0`. |
+| Default path planning | Retained `path-planner/` Python grid A*; the PPO adapter uses `path_planner.search.AStarPlanner`. Hybrid A* and v3 are opt-in, not default runtime paths. |
 
 ## Path Planner v2 Gate Route
 
@@ -37,25 +48,11 @@ This file defines where Xunce stage information belongs. Keep it short and use i
 | `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-hopper.md` | Hopper plan for deterministic landing regions, one executable ballistic boundary, flight-tube and attitude certification. |
 | `docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-integration-performance.md` | Unified planner, atomic bundle, outcome/directive arbitration, codecs, system tests, and fixed-profile latency plan. |
 
-## Current Stage26 Mainline
+## Retired Xunce History
 
-```text
-Stage26.0 -> Stage26.1 -> Stage26.2 -> Stage26.3 -> Stage26.4 -> Stage26.5
-```
+Xunce Stage18--26, path-feedback, and early policy experiments are retired history and no longer accept new development entry. They remain available only for historical reproducibility and as manual-cleanup candidates; retirement does not claim that source has been deleted. For the exclusive detailed retirement scope and manual-cleanup boundary, read `docs/route-retirement-manifest.md`.
 
-Short form:
-
-```text
-Stage26.0 -> Stage26.5
-```
-
-Current next route:
-
-```text
-repair_stage26_synthetic_exploration_credit_assignment
-```
-
-Stage26.5 diagnosed that the best synthetic terrain candidate was not sampled as a trainable selected action, so it did not receive direct PPO credit. It also found missing candidate-level synthetic LOS / hard obstacle / Hybrid A* path-cost feature exposure.
+`model-explorer` and `visual-workbench` are likewise retirement candidates, while `path-planner` and `dev-platform-constraints` remain retained submodules. Their physical removal, if any, requires separate human confirmation.
 
 ## Lookup Rules
 
