@@ -71,16 +71,12 @@ jobs:
             tests/test_platform_validation_matrix.py \
             -q
 
-      - name: Xunce Stage 15-18 tests
+      - name: G2 input contract
         shell: bash
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
-          python -m pytest \
-            tests/test_xunce_release_governance_gate.py \
-            tests/test_xunce_high_fidelity_real_map_roi_expansion.py \
-            tests/test_xunce_high_fidelity_real_map_comparison.py \
-            -q
+          python -m pytest tests/test_xunce_mid_dual_g2_inputs.py -q
 
       - name: Stage runner dry-runs
         shell: bash
