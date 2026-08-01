@@ -1113,6 +1113,12 @@ def _recompute_from_verified_sources(
             g1_source["stored_summary"],
         ),
         g1_trace_row_count=g1_source["trace_row_count"],
+        g1_evidence_binding=g1_source["assessment_binding"],
+        g1_review_metrics=g1_source.get("review_metrics"),
+        g1_platform_invariants=g1_source["platform_invariants"],
+        g1_platform_invariants_source_sha256=g1_source[
+            "platform_invariants_source_sha256"
+        ],
         g2_config=g2_source["config"],
         g2_input_audit=g2_source["input_audit"],
         upstream_lineage=g3_source["upstream_lineage"],

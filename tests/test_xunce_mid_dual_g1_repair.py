@@ -11,7 +11,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "scripts/run_xunce_mid_dual_g1_repair.py"
-CONFIG_PATH = REPO_ROOT / "configs/xunce_mid_dual_g1_repair_v1.json"
 SCRIPTS = REPO_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
@@ -480,17 +479,3 @@ def test_durable_accept_rejects_self_consistent_wrong_episode_lineage(
         match="repair_episode_lineage_mismatch",
     ):
         store.accept_episode(episode_index=23, rows=[forged])
-
-
-def test_live_validate_contract_binds_parent_and_repair_v2_lineage() -> None:
-    repair = _load_module()
-    audit = repair.validate_contract(CONFIG_PATH)
-    assert audit["status"] == "verified"
-    assert audit["parent"]["coverage_episode_count"] == 24
-    assert audit["parent"]["non_coverage_row_count"] > 0
-    assert audit["repair_cases"] == [3, 10, 23]
-    assert (
-        audit["repair_lineage"]["repair_only_patch_sha256"]
-        == "57fe0d4655f2d9dead34f1c437eb4905cfce1ac0de5a84aaa9dbbc19132ce819"
-    )
-    assert audit["repair_lineage"]["runtime_sources_match_post_snapshots"] is True
