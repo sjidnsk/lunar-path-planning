@@ -6,7 +6,6 @@ from pathlib import Path
 
 SUPPORTED_STAGE_IDS = {
     "policy-training-readiness-review",
-    "policy-gated-sequential-canary-rollout",
     "guarded-ppo-rollout-pilot",
     "iterative-ppo-mini-loop-stability",
     "quasi-real-guarded-ppo-stability-replay",

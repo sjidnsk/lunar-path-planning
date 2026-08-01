@@ -23,11 +23,11 @@ if MODEL_EXPLORER_SRC.is_dir() and str(MODEL_EXPLORER_SRC) not in sys.path:
 
 try:
     from git_provenance import git_snapshot
-    from run_quasi_real_map_path_feedback_bridge import _first_goal, _sidecar_from_roi, _slice_context_id
+    from xunce_terrain_sidecar import first_reachable_goal, sidecar_from_roi, slice_context_id
     from xunce_platform_contract import apply_stage23_platform_defaults
 except ModuleNotFoundError:  # pragma: no cover
     from scripts.git_provenance import git_snapshot
-    from scripts.run_quasi_real_map_path_feedback_bridge import _first_goal, _sidecar_from_roi, _slice_context_id
+    from scripts.xunce_terrain_sidecar import first_reachable_goal, sidecar_from_roi, slice_context_id
     from scripts.xunce_platform_contract import apply_stage23_platform_defaults
 
 from model_explorer.data.geotiff import GeoTiffDecodeUnavailable, read_geotiff_window
@@ -479,7 +479,7 @@ def _build_high_res_roi_expansion(
         contract_path = scenario_root / f"{file_stem}.contract.json"
         _write_json(contract_path, contract)
         generated_scenario_path.unlink(missing_ok=True)
-        sidecar = _sidecar_from_roi(
+        sidecar = sidecar_from_roi(
             dem_window.values,
             count_values,
             contract=contract,
@@ -500,9 +500,9 @@ def _build_high_res_roi_expansion(
             sidecar["metadata"]["map_source"]["slope_product_id"] = slope_product.product_id
         sidecar_path = scenario_root / f"{file_stem}.path-planner-sidecar.json"
         _write_json(sidecar_path, sidecar)
-        first_goal = _first_goal(contract)
+        first_goal = first_reachable_goal(contract)
         variant_id = f"{scenario_id}-seed-{roi.seed}-start-{start_cell[0]}-{start_cell[1]}"
-        context_id = _slice_context_id(
+        context_id = slice_context_id(
             scenario_id=scenario_id,
             scenario_group=roi.name,
             scenario_seed=roi.seed,

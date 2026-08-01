@@ -724,35 +724,5 @@ class PolicyRobustnessApplicationSmokeTests(unittest.TestCase):
         self.assertIn("policy_decision_robustness_summary_missing", application["reason_codes"])
 
 
-class PolicyRobustnessApplicationSmokeCompatibilityTests(unittest.TestCase):
-    def test_existing_smoke_related_cli_default_behaviors_remain_unchanged(self) -> None:
-        repo_root = Path(__file__).resolve().parents[1]
-        single = subprocess.run(
-            ["bash", str(repo_root / "scripts" / "run_path_feedback_validation.sh"), "--dry-run"],
-            cwd=repo_root,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        batch = subprocess.run(
-            [
-                "bash",
-                str(repo_root / "scripts" / "run_batch_path_feedback_validation.sh"),
-                "--matrix",
-                str(repo_root / "configs" / "path_feedback_batch_dataset_v1.json"),
-                "--validate-only",
-            ],
-            cwd=repo_root,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        self.assertEqual(single.returncode, 0, single.stdout + single.stderr)
-        self.assertIn("Scenario set: smoke", single.stdout)
-        self.assertEqual(batch.returncode, 0, batch.stdout + batch.stderr)
-        self.assertIn("matrix validated", batch.stdout)
-
-
 if __name__ == "__main__":
     unittest.main()

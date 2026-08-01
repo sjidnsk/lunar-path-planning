@@ -72,3 +72,27 @@ passed; emitted only retained platform, Stage15--18, path-planner and dev-platfo
 - post-change audit：29 个 manifest 路径均不存在；registry 内无 `path-feedback` key；`git diff --check` 通过。
 - 项目解释器初始从一个陈旧 worktree 导入了 `path_planner`，导致 G2 planning-time test 缺少 `formal_request_codec`；显式将当前 `path-planner/src` 置于 `PYTHONPATH` 首位后，G2 focused test 44 passed，完整保留路线合同组 297 passed / 2 skipped。
 - commit：当前 `HEAD` 的 Task 2 cleanup commit。
+
+## Review Fix Round 1
+
+- 删除 registry 中的 `xunce-high-fidelity-real-map-roi-expansion` 与 `policy-gated-sequential-canary-rollout`；同时删除前者的 runner/wrapper/config/test、低观测 geometry 旧入口及其 test、两个已删除 bridge 的 closure，以及只调用已删除 batch runner 的三项旧测试。
+- `run_policy_gated_sequential_canary_rollout.py` 保留为未注册的历史诊断模块，但不再调用已删除 runner：其旧生成步骤返回稳定的 retired status；`--help` 可正常运行。
+- Stage23 保留路线的 terrain sidecar、stable context id 和 first-goal 逻辑抽取到 `scripts/xunce_terrain_sidecar.py`。Stage23 runner 与相关测试均改用该无退役 route 语义的 helper；没有恢复任何 manifest-listed path-feedback 文件，也没有删除 Stage18--26 candidate。
+- 退役合同扩展为：registry 中每个 script 必须存在，且所有 registry scripts 与 Stage23 retained executable 都不能直接引用本次删除的 runtime module 名称。这是实际文件扫描，不依赖 `path_feedback` 字面子串。
+- `path-planner/README.md` 的 Minor 文案更改已按审查指令撤销；子模块回到原 gitlink `2f6378d3c47da027c0d4146d94cab881b8f2a594`，无子模块提交或工作区改动。
+
+Fix Round 1 GREEN：
+
+```text
+pytest tests/test_retired_path_feedback_cleanup.py tests/test_route_retirement_preflight.py \
+  tests/test_platform_stage_runner.py tests/test_bootstrap_env.py \
+  tests/test_bootstrap_ubuntu_conda.py tests/test_platform_smoke.py \
+  tests/test_no_new_python_bash_dependencies.py tests/test_platform_validation_matrix.py -q
+54 passed, 1 skipped
+
+pytest <all tests/test_xunce_stage23_*.py>
+85 passed
+
+pytest <Stage6 + G1/G2/G3 focused contract set>
+297 passed, 2 skipped
+```

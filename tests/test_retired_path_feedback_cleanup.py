@@ -36,6 +36,17 @@ RETIRED_PATH_FEEDBACK_PATHS = (
     "tests/test_path_feedback_windows_compat.py",
 )
 
+RETIRED_RUNTIME_MODULES = (
+    "run_batch_path_feedback_validation",
+    "run_path_feedback_stability_analysis",
+    "run_path_feedback_validation",
+    "run_quasi_real_map_path_feedback_bridge",
+)
+
+EXTRA_RETAINED_EXECUTABLES = (
+    "scripts/run_xunce_stage23_2a_high_resolution_terrain_data_prepare.py",
+)
+
 
 def test_manifest_listed_path_feedback_paths_are_absent() -> None:
     assert [path for path in RETIRED_PATH_FEEDBACK_PATHS if Path(path).exists()] == []
@@ -50,3 +61,28 @@ def test_stage_registry_and_platform_surface_do_not_expose_path_feedback() -> No
     assert "path_feedback" not in Path(".github/workflows/platform-compatibility.yml").read_text(
         encoding="utf-8"
     )
+
+
+def test_registry_scripts_exist_after_retired_entries_are_removed() -> None:
+    registry = json.loads(Path("configs/stage_registry.json").read_text(encoding="utf-8"))
+    missing = [
+        entry["script"]
+        for entry in registry["stages"].values()
+        if not Path(entry["script"]).is_file()
+    ]
+    assert missing == []
+
+
+def test_retained_executables_do_not_import_or_call_retired_runtime_modules() -> None:
+    registry = json.loads(Path("configs/stage_registry.json").read_text(encoding="utf-8"))
+    retained_executables = tuple(
+        dict.fromkeys(
+            [entry["script"] for entry in registry["stages"].values()]
+            + list(EXTRA_RETAINED_EXECUTABLES)
+        )
+    )
+    offenders = {
+        path: [module for module in RETIRED_RUNTIME_MODULES if module in Path(path).read_text(encoding="utf-8")]
+        for path in retained_executables
+    }
+    assert offenders == {path: [] for path in retained_executables}

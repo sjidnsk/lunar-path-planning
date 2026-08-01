@@ -14,9 +14,9 @@ for _path in (REPO_ROOT / "scripts", REPO_ROOT / "model-explorer" / "src"):
 
 
 def test_quasi_real_sidecar_exports_blocked_cells_from_passable_mask_false() -> None:
-    from scripts.run_quasi_real_map_path_feedback_bridge import _sidecar_from_roi
+    from scripts.xunce_terrain_sidecar import sidecar_from_roi
 
-    sidecar = _sidecar_from_roi(
+    sidecar = sidecar_from_roi(
         dem_values=[
             [0.0, 0.0, 0.0],
             [0.0, 0.0, 0.0],
@@ -41,9 +41,9 @@ def test_quasi_real_sidecar_exports_blocked_cells_from_passable_mask_false() -> 
 
 
 def test_quasi_real_sidecar_exports_slope_blocked_cells_from_physical_slope() -> None:
-    from scripts.run_quasi_real_map_path_feedback_bridge import _sidecar_from_roi
+    from scripts.xunce_terrain_sidecar import sidecar_from_roi
 
-    sidecar = _sidecar_from_roi(
+    sidecar = sidecar_from_roi(
         dem_values=[
             [0.0, 10.0],
             [0.0, 0.0],

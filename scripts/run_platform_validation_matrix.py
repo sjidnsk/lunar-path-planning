@@ -155,7 +155,6 @@ def _commands_for_profile(
                     "-m",
                     "pytest",
                     "tests/test_xunce_release_governance_gate.py",
-                    "tests/test_xunce_high_fidelity_real_map_roi_expansion.py",
                     "tests/test_xunce_high_fidelity_real_map_comparison.py",
                     "-q",
                 ],

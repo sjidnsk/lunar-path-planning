@@ -655,33 +655,11 @@ def _run_step_path_feedback(
     config: dict[str, Any],
     repo_root: Path,
 ) -> subprocess.CompletedProcess[str]:
-    generation = config.get("generation", {})
-    script = repo_root / "scripts" / "run_path_feedback_validation.py"
-    argv = python_script_command(
-        script,
-        "--scenario-set",
-        str(generation.get("scenario_set", "policy_canary_value_stability")),
-        "--scenario-spec-json",
-        str(spec_path),
-        "--diagnostic-profile",
-        str(generation.get("diagnostic_profile", "execution")),
-        "--top-k",
-        str(generation.get("top_k", 3)),
-        "--output-root",
-        str(step_root),
-        "--anchor-projection-candidate-generation",
-        "--anchor-projection-contract-aware-trainable-target-generation",
-        "--anchor-projection-prefer-contract-safe-trainable-targets",
-        "--anchor-projection-planner-validated-trainable-target-mining",
-        "--anchor-projection-allow-planner-validated-distance-exception",
-    )
-    argv.extend(str(item) for item in generation.get("planner_extra_args", []))
-    return subprocess.run(
-        argv,
-        cwd=repo_root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    return subprocess.CompletedProcess(
+        args=(str(spec_path), str(step_root)),
+        returncode=2,
+        stdout="",
+        stderr="policy-gated sequential canary route is retired; no validation runner is available\n",
     )
 
 

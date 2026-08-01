@@ -120,12 +120,6 @@
       "default_output_root": "outputs/path_feedback_batch_xunce_release_governance_gate_v1",
       "args": ["--config", "{config}", "--output-root", "{output_root}"]
     },
-    "xunce-high-fidelity-real-map-roi-expansion": {
-      "script": "scripts/run_xunce_high_fidelity_real_map_roi_expansion.py",
-      "default_config": "configs/xunce_high_fidelity_real_map_roi_expansion_v1.json",
-      "default_output_root": "outputs/path_feedback_batch_xunce_high_fidelity_real_map_roi_expansion_v1",
-      "args": ["--config", "{config}", "--output-root", "{output_root}", "--repo-root", "{repo_root}"]
-    },
     "xunce-high-fidelity-real-map-comparison": {
       "script": "scripts/run_xunce_high_fidelity_real_map_comparison.py",
       "default_config": "configs/xunce_high_fidelity_real_map_comparison_v1.json",
@@ -779,17 +773,6 @@
       "default_config": "configs/policy_training_readiness_review_v1.json",
       "default_output_root": "outputs/path_feedback_batch_training_readiness_review_v1",
       "args": ["--batch-root", "{output_root}", "--config", "{config}", "--dry-run"]
-    },
-    "policy-gated-sequential-canary-rollout": {
-      "script": "scripts/run_policy_gated_sequential_canary_rollout.py",
-      "default_config": "configs/policy_gated_sequential_canary_rollout_v1.json",
-      "default_output_root": "outputs/path_feedback_batch_policy_gated_sequential_canary_rollout_v1",
-      "args": [
-        "--source-root", "outputs/path_feedback_batch_value_stability_clean_src_v1",
-        "--candidate-root", "outputs/path_feedback_batch_value_stability_candidate_v1",
-        "--batch-root", "{output_root}",
-        "--config", "{config}"
-      ]
     },
     "guarded-ppo-rollout-pilot": {
       "script": "scripts/run_guarded_ppo_rollout_pilot.py",

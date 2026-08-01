@@ -67,9 +67,9 @@ def test_high_res_manifest_validation_requires_source_url_hash_and_resolution(tm
 
 
 def test_sidecar_prefers_provided_slope_map_over_dem_derived_slope() -> None:
-    from scripts.run_quasi_real_map_path_feedback_bridge import _sidecar_from_roi
+    from scripts.xunce_terrain_sidecar import sidecar_from_roi
 
-    sidecar = _sidecar_from_roi(
+    sidecar = sidecar_from_roi(
         dem_values=[
             [0.0, 100.0],
             [0.0, 0.0],
@@ -99,9 +99,9 @@ def test_sidecar_prefers_provided_slope_map_over_dem_derived_slope() -> None:
 
 
 def test_sidecar_dem_only_derives_physical_slope() -> None:
-    from scripts.run_quasi_real_map_path_feedback_bridge import _sidecar_from_roi
+    from scripts.xunce_terrain_sidecar import sidecar_from_roi
 
-    sidecar = _sidecar_from_roi(
+    sidecar = sidecar_from_roi(
         dem_values=[
             [0.0, 10.0],
             [0.0, 0.0],
