@@ -38,7 +38,15 @@
     "multiplatform_v3": {
       "mode": "opt_in",
       "submodule": "path-planner",
-      "docs": ["docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-roadmap.md"],
+      "configs": [
+        "configs/platforms/v3/wheeled_skid_steer_v3_example_v1.json",
+        "configs/platforms/v3/legged_body_v3_example_v1.json",
+        "configs/platforms/v3/hopper_ballistic_v3_example_v1.json"
+      ],
+      "docs": [
+        "configs/platforms/v3/README.md",
+        "docs/superpowers/plans/2026-07-28-multiplatform-planner-v3-roadmap.md"
+      ],
       "boundary": "Does not replace default A* or connect an executor."
     },
     "platform_constraints": {
