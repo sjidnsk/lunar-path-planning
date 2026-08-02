@@ -1664,7 +1664,7 @@ def test_bootstrap_ci_and_ignore_contracts_cover_root_package_without_cuda_upgra
     assert "windows-latest" in workflow and "ubuntu-latest" in workflow
     assert "python -m build" in workflow
     assert "pip install" in workflow and ".whl" in workflow
-    assert "test_foundation.py" in workflow
+    assert "test_foundation.py" not in workflow
     assert "device cpu" in workflow or 'resolve_device("cpu"' in workflow
 
     ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")

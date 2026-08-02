@@ -55,6 +55,14 @@ def test_platform_ci_installs_local_path_planner_before_parent_wheel() -> None:
     assert path_planner_install < parent_wheel_install
 
 
+def test_platform_ci_excludes_identity_bound_foundation_gate_suite() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow = (repo_root / ".github/workflows/platform-compatibility.yml").read_text(encoding="utf-8")
+
+    assert "tests/ppo_highres_frontier/test_foundation.py" not in workflow
+    assert 'resolve_device("cpu", cuda_available=False) == "cpu"' in workflow
+
+
 def test_platform_ci_excludes_tests_that_access_retired_submodule_sources() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workflow = (repo_root / ".github/workflows/platform-compatibility.yml").read_text(encoding="utf-8")

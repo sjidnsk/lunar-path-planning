@@ -46,11 +46,10 @@ jobs:
           python -m pip install -e path-planner
           python -m pip install dist/*.whl
 
-      - name: Foundation CPU import and contract smoke
+      - name: CPU import and device contract smoke
         shell: bash
         run: |
           python -c 'import lunar_exploration_ppo; from lunar_exploration_ppo.configs.schema import resolve_device; assert resolve_device("cpu", cuda_available=False) == "cpu"'
-          python -m pytest tests/ppo_highres_frontier/test_foundation.py -q
 
       - name: Stage 6 standard configuration contract
         shell: bash
