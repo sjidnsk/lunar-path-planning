@@ -1,0 +1,146 @@
+{
+  "schema_version": "xunce-mid-dual-g2-planning-time-config/v1",
+  "gate_id": "g2",
+  "runner_id": "run_xunce_mid_dual_g2_planning_time/v1",
+  "scale_profile": "midterm_reduced_w8x3_update80/v1",
+  "evaluation_mode": "reduced",
+  "output_base": "D:/xunce/out/mid_dual/g2",
+  "formal_inputs": {
+    "truth_bundle": null,
+    "artifact_bound_approval": null,
+    "hopper_candidate_record": null,
+    "execution_bundle": null
+  },
+  "approval_artifact": {
+    "base": "D:/xunce/inputs/mid_dual/g2-approvals",
+    "relative_contract": "<input_set_id>/artifact-bound-o2-approval.json",
+    "file_name": "artifact-bound-o2-approval.json",
+    "publication_mode": "separate-no-candidate-mutation/v1"
+  },
+  "default_readiness": {
+    "status": "blocked",
+    "formal_evidence_eligible": false,
+    "blockers": [
+      "missing_independent_g2_input_bundle",
+      "missing_artifact_bound_o2_approval",
+      "approve_midterm_hopper_simulation_proxy_parameter_set"
+    ]
+  },
+  "request_contract": {
+    "primitive_labels_per_platform": 3334,
+    "small_map_optima_per_platform": 1,
+    "requests_per_platform": 43,
+    "standard": {
+      "reachable": 23,
+      "hard_reachable": 7,
+      "unreachable": 3
+    },
+    "kilometer": {
+      "reachable": 6,
+      "hard_reachable": 2,
+      "unreachable": 2
+    },
+    "repeat_count": 5,
+    "formal_call_count": 645
+  },
+  "execution": {
+    "formal_worker_count": 4,
+    "diagnostic_worker_count": 1,
+    "warmup_requests_per_platform": 10,
+    "cold_start_calls_per_platform": 1,
+    "formal_timing_contract": "five-phase-sequential-ns/v1",
+    "formal_cache_contract": "immutable-terrain-static-validation-only/v1",
+    "formal_environment_gate": {
+      "schema_version": "xunce-mid-dual-g2-formal-environment-policy/v1",
+      "lease_path": "D:/xunce/out/mid_dual/g2/.formal-exclusive-lease.json",
+      "allowed_power_scheme_guids": [
+        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+      ],
+      "required_thread_variables": {
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1"
+      },
+      "sample_window_seconds": 2.0,
+      "limits": {
+        "cpu_percent_max": 20.0,
+        "memory_percent_max": 85.0,
+        "memory_available_bytes_min": 4294967296,
+        "disk_busy_percent_max": 20.0,
+        "disk_free_bytes_min": 10737418240
+      },
+      "competing_process_patterns": [
+        "run_xunce_mid_dual_g1_coverage.py",
+        "run_xunce_mid_dual_g2_planning_time.py",
+        "run_xunce_mid_dual_g3_closed_loop.py",
+        "run_ppo_stage6_standard.py",
+        "pytest",
+        "training",
+        "formal"
+      ],
+      "exclude_current_process_tree": true
+    }
+  },
+  "thresholds_ms": {
+    "midterm_mean": 2000.0,
+    "midterm_p95": 2000.0,
+    "absolute_max": 2000.0,
+    "final_mean": 1000.0,
+    "final_p95": 1000.0,
+    "final_proportion_at_or_below": 0.95,
+    "engineering_standard_p95": 250.0,
+    "engineering_kilometer_p95": 750.0
+  },
+  "g3_replay_cohort": {
+    "schema_version": "xunce-mid-dual-g3-replay-cohort/v1",
+    "selection_contract": "input_side_stratified_sha256_rank_seed20260727/v1",
+    "selection_seed": 20260727,
+    "result_fields_used": false,
+    "platform_counts": {
+      "legged": 3,
+      "hopper": 3
+    },
+    "strata_per_platform": [
+      "standard/reachable",
+      "standard/hard_reachable",
+      "kilometer/hard_reachable"
+    ]
+  },
+  "platform_stacks": {
+    "wheel": {
+      "profile_id": "scout-mini-wheel-kinematic-sqp/v1",
+      "profile_api": "path_planner.v2.profiles.WheelKinematicSQPProfileV2",
+      "provider_api": "path_planner.v2.providers.WheelKinematicSQPProviderV2",
+      "l2_recheck_api": "path_planner.v2.validation.validate_route_l2",
+      "capability_id": "wheel_kinematic_corridor_sqp/v2",
+      "simulation_proxy": false,
+      "max_traversable_slope_deg": 30.0
+    },
+    "legged": {
+      "profile_id": "legged-static-crawl-simulation-proxy-midterm/v1",
+      "profile_api": "path_planner.v2.profiles.LeggedProfileV2",
+      "provider_api": "path_planner.v2.providers.LeggedPrimitiveProviderV2",
+      "l2_recheck_api": "path_planner.v2.validation.validate_legged_route_l2",
+      "capability_id": "legged_static_crawl_simulation_proxy/v2",
+      "simulation_proxy": true,
+      "max_traversable_slope_deg": 30.0
+    },
+    "hopper": {
+      "profile_id": "hopper-generic-internal-computational-simulation-proxy-midterm/v1",
+      "profile_api": "path_planner.v2.hopper_authority.hopper_generic_internal_simulation_proxy_midterm_v1",
+      "provider_api": "path_planner.v2.providers.HopperPrimitiveProviderV2",
+      "l2_recheck_api": "path_planner.v2.validation.validate_hopper_route_l2",
+      "capability_id": "simulation_proxy_generic_internal_lunar_ballistic/v2",
+      "simulation_proxy": true,
+      "max_traversable_slope_deg": 30.0
+    }
+  },
+  "schemas": {
+    "input_audit": "xunce-mid-dual-g2-input-audit/v1",
+    "provider_request": "xunce-mid-dual-g2-provider-request/v1",
+    "truth_provider_crosswalk": "xunce-mid-dual-g2-truth-provider-crosswalk/v1",
+    "execution_bundle": "xunce-mid-dual-g2-execution-bundle/v1",
+    "artifact_bound_approval": "xunce-mid-dual-g2-artifact-bound-approval/v1"
+  }
+}

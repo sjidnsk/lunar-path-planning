@@ -1,0 +1,105 @@
+name: Platform Compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      run_ubuntu_drake:
+        description: "Run optional Ubuntu Drake profile if pydrake is already available"
+        required: false
+        default: "false"
+
+jobs:
+  non-drake:
+    name: ${{ matrix.os }} non-Drake
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            profile: windows-non-drake
+          - os: ubuntu-latest
+            profile: ubuntu-non-drake
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build pytest numpy pydantic
+          python -m build --wheel
+          python -m pip install -e dev-platform-constraints
+          python -m pip install -e path-planner
+          python -m pip install dist/*.whl
+
+      - name: CPU import and device contract smoke
+        shell: bash
+        run: |
+          python -c 'import lunar_exploration_ppo; from lunar_exploration_ppo.configs.schema import resolve_device; assert resolve_device("cpu", cuda_available=False) == "cpu"'
+
+      - name: Stage 6 standard configuration contract
+        shell: bash
+        run: |
+          python -m pytest tests/ppo_highres_frontier/test_stage6_standard_config.py -m "not external_evidence" -q
+
+      - name: Platform compatibility tests
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          python -m pytest \
+            tests/test_bootstrap_env.py \
+            tests/test_bootstrap_ubuntu_conda.py \
+            tests/test_platform_smoke.py \
+            tests/test_no_new_python_bash_dependencies.py \
+            tests/test_platform_validation_matrix.py \
+            tests/test_mainline_repository_surface.py \
+            tests/test_retired_routes_absent.py \
+            -q
+
+      - name: G2 input contract
+        shell: bash
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          python -m pytest tests/test_xunce_mid_dual_g2_inputs.py -q
+
+      - name: Platform matrix dry-run
+        shell: bash
+        run: python scripts/run_platform_validation_matrix.py --profile "${{ matrix.profile }}" --dry-run
+
+  ubuntu-drake:
+    name: ubuntu-latest Drake optional
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ubuntu_drake == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Probe Drake runtime
+        run: python -c "import pydrake; print('pydrake ok')"
+
+      - name: Run optional Drake profile
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: python scripts/run_platform_validation_matrix.py --profile ubuntu-drake

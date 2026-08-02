@@ -1,0 +1,156 @@
+{
+  "action_space_version": "frontier_index_continuous_theta/v1",
+  "allow_cpu_fallback": false,
+  "audit_updates": [
+    1,
+    10,
+    50,
+    100
+  ],
+  "candidate_snapshot_contract": "rollout_time_candidate_snapshot_no_update_reextract/v1",
+  "catalog_split_counts": {
+    "test": 150,
+    "train": 700,
+    "unseen": 64,
+    "validation": 150
+  },
+  "checkpoint": {
+    "complete_marker_required": true,
+    "latest_keep_count": 1,
+    "periodic_keep_count": 5,
+    "restore_last_complete_only": true,
+    "save_every_update": true,
+    "schema_version": "stage6_complete_checkpoint/v1",
+    "vector_env_state_count": 8
+  },
+  "data": {
+    "dem_bytes": 310140246,
+    "dem_path": "D:/CodexDownloads/lunar-path-planning/data/raw/high_resolution_lunar_terrain/lunar_south_pole_usgs_lro_dem_slope_4m/MOON_LRO_NAC_DEM_89S210E_4mp.tif",
+    "dem_sha256": "7c431d32d977cd6b66572a0fae874ec5eae91be16aa21c4149ac897c677add22",
+    "physical_slope_source": "dem_float32_metric_gradient_4m/v1",
+    "slope_bytes": 70131711,
+    "slope_product_semantics": "rgb_visualization_provenance_only/v1",
+    "slope_provenance_path": "D:/CodexDownloads/lunar-path-planning/data/raw/high_resolution_lunar_terrain/lunar_south_pole_usgs_lro_dem_slope_4m/MOON_LRO_NAC_Slope_89S210E_4mp.tif",
+    "slope_sha256": "df741123daec2d935b12481a579ce4443ce6c2e8916b13906ecd7801961112dd"
+  },
+  "device": "cuda",
+  "evaluation": {
+    "baseline_episodes_per_method_split": 64,
+    "baseline_methods": [
+      "random_valid_frontier",
+      "nearest_frontier",
+      "max_potential_gain_frontier",
+      "gain_over_cost_frontier"
+    ],
+    "baseline_theta_source": "candidate_recommended_theta/v1",
+    "bootstrap_resamples": 2000,
+    "bootstrap_seed": 20260716,
+    "ppo_theta_source": "policy_theta_mu/v1",
+    "test_episodes": 64,
+    "unseen_episodes": 64
+  },
+  "goal_id": "ppo-highres-frontier-map-exploration",
+  "network_architecture_version": "cross_attention_frontier_policy/v1",
+  "observation_schema_version": "policy_observation/v1",
+  "output_root": "D:/xunce/out/ppo_frontier",
+  "planner_version": "stage1_path_planner_adapter/v1",
+  "ppo": {
+    "adam_eps": 1e-05,
+    "amp_enabled": false,
+    "clip_eps": 0.2,
+    "compute_dtype": "float32",
+    "effective_minibatch_size": 256,
+    "frontier_entropy_coef": 0.01,
+    "gae_lambda": 0.95,
+    "gamma": 0.995,
+    "learning_rate": 0.0003,
+    "max_grad_norm": 0.5,
+    "optimizer": "AdamW",
+    "physical_microbatch_size": 32,
+    "ppo_epochs": 4,
+    "target_kl": 0.03,
+    "theta_entropy_enabled": false,
+    "value_clip_eps": 0.2,
+    "value_loss_coef": 0.5,
+    "weight_decay": 0.0001
+  },
+  "resources": {
+    "preflight_d_free_gib_min": 100.0,
+    "rss_hard_stop_at_or_above_gib": 20.0,
+    "rss_warning_gib": 16.0,
+    "runtime_d_free_gib_hard_stop_below": 50.0,
+    "vram_hard_stop_at_or_above_gib": 10.1,
+    "vram_warning_gib": 9.0
+  },
+  "reward_version": "stage1_coverage_gain_reward/v1",
+  "rollout": {
+    "batch_size": 1024,
+    "diagnostic_empty_reset_counts_toward_quota": false,
+    "multiprocessing_start_method": "spawn",
+    "num_envs": 8,
+    "steps_per_env": 128
+  },
+  "run_id": null,
+  "safety": {
+    "max_traversable_slope_deg": 30.0,
+    "min_clearance_m": 0.5215874761,
+    "safety_margin_m": 0.1,
+    "traversability_threshold": 0.5,
+    "vehicle_radius_m": 0.4215874761
+  },
+  "scale": {
+    "coverable_mask_exact": true,
+    "coverage_denominator": "reachable_observable_free_highres_cells/v1",
+    "frontier_top_m": 1024,
+    "highres_cell_size_m": 0.5,
+    "highres_shape": [
+      256,
+      256
+    ],
+    "local_crop_shape": [
+      96,
+      96
+    ],
+    "lowres_cell_size_m": 4.0,
+    "lowres_shape": [
+      32,
+      32
+    ],
+    "max_steps": 128,
+    "profile": "Standard v1",
+    "roi_size_m": 128,
+    "stagnation_no_gain_steps": 16,
+    "success_threshold": 0.99,
+    "truth_source_kind": "procedural_lunar_rock_crater_proxy/v1"
+  },
+  "schema_version": "ppo_highres_frontier_stage6_config/v1",
+  "stage5_authority": {
+    "authorized_stage": "ppo_highres_frontier_stage6_standard_training_eval/v1",
+    "checkpoint_sha256": "d1d80e6478262a68d01208ddc1e8721768b56109e8dd009e862dd668cb39dc4c",
+    "commit_sha256": "b635740ee021258ef31811ec87c60add839fc5f9",
+    "commit_tree": "edec4c4dbed7f91efa9856a9df899c594bbcf04c",
+    "gate_path": "D:/xunce/out/ppo_frontier/s5-task6-fix-r1-20260714T223702Z/s5/gate.json",
+    "gate_sha256": "5fc93a7fb0d1d23c1c2ee99db14e15f6880c422d1ce85a83946542ebbe238bdf",
+    "manifest_sha256": "edee94cf2a0f39f89cf040d850af154e060b07c6a66d0bfc47386d5b05ee5672",
+    "performance_advantage_established": false,
+    "policy_state_sha256": "51fecca55af92838f302951ae1272063cd945ef481579af5f6600469d9a7fe86",
+    "review_sha256": "3c69d565f27bdabf64cf1ca4728be5da420ffa5057444f29af9b717bd2d9d9db"
+  },
+  "stage_id": "ppo_highres_frontier_stage6_standard_training_eval/v1",
+  "terminal_bootstrap": 0.0,
+  "training": {
+    "initialization_source": "stage4_smoke_policy_weights_fresh_adamw/v1",
+    "periodic_keep_count": 5,
+    "periodic_updates": [
+      50,
+      100
+    ],
+    "seeds": [
+      20260716
+    ],
+    "updates_per_seed": 100,
+    "validation_episodes": 16,
+    "validation_every_updates": 10,
+    "validation_policy": "deterministic_argmax_frontier_mean_theta/v1"
+  }
+}

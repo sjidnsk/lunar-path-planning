@@ -1,0 +1,114 @@
+{
+  "actual_sample_counts": {
+    "g1_episodes_per_split": 24,
+    "g1_split_count": 2,
+    "g2_formal_calls": 645,
+    "g3_interface_replays": 6,
+    "g3_wheel_episodes": 10
+  },
+  "output_root": "D:/xunce/out/mid_dual/aggregate",
+  "reference_sample_counts": {
+    "g1_episodes_per_split": 64,
+    "g1_split_count": 2,
+    "g2_formal_calls": 1950,
+    "g3_interface_replays": 18,
+    "g3_wheel_episodes": 30
+  },
+  "required_phase_ids": [
+    "p01"
+  ],
+  "scale_profile": "midterm_reduced_w8x3_update80/v1",
+  "schema_version": "xunce-mid-dual-aggregate-config/v1",
+  "source_contracts": {
+    "g1": {
+      "config_schema_version": "xunce-mid-dual-g1-effective-config/v1",
+      "gate_id": "g1",
+      "input_audit_schema_version": "xunce-mid-dual-g1-input-audit/v1",
+      "output_base": "D:/xunce/out/mid_dual/g1",
+      "report_audit_schema_version": "xunce-mid-dual-source-report-audit/v1",
+      "report_renderer_id": "xunce-mid-dual-g1-report-renderer/v1",
+      "required_lineage_sources": [
+        "configs/xunce_mid_dual_g1_coverage_v1.json",
+        "configs/ppo_highres_frontier_stage6_v1.json",
+        "scripts/run_xunce_mid_dual_g1_coverage.py",
+        "scripts/xunce_mid_dual_contracts.py",
+        "scripts/xunce_mid_dual_artifacts.py",
+        "scripts/xunce_artifact_io.py",
+        "scripts/xunce_artifact_paths.py",
+        "src/lunar_exploration_ppo/eval/midterm_reduced.py",
+        "src/lunar_exploration_ppo/eval/standard.py",
+        "src/lunar_exploration_ppo/env/coverage_cache.py",
+        "src/lunar_exploration_ppo/env/standard_training.py",
+        "src/lunar_exploration_ppo/env/env.py",
+        "src/lunar_exploration_ppo/integrations/path_planner_adapter.py"
+      ],
+      "required_phase_ids": [
+        "p01",
+        "p02",
+        "p03",
+        "p04",
+        "p05",
+        "p06",
+        "p07"
+      ],
+      "runner_id": "run_xunce_mid_dual_g1_coverage/v1",
+      "schema_version": "xunce-mid-dual-source-contract/v1"
+    },
+    "g2": {
+      "config_schema_version": "xunce-mid-dual-g2-planning-time-config/v1",
+      "gate_id": "g2",
+      "input_audit_schema_version": "xunce-mid-dual-g2-input-audit/v1",
+      "output_base": "D:/xunce/out/mid_dual/g2",
+      "report_audit_schema_version": "xunce-mid-dual-source-report-audit/v1",
+      "report_renderer_id": "xunce-mid-dual-g2-canonical-report/v1",
+      "required_lineage_sources": [
+        "configs/xunce_mid_dual_g2_planning_time_v1.json",
+        "scripts/run_xunce_mid_dual_g2_planning_time.py",
+        "scripts/xunce_mid_dual_g2_inputs.py",
+        "scripts/xunce_mid_dual_contracts.py",
+        "scripts/xunce_mid_dual_artifacts.py",
+        "scripts/xunce_artifact_io.py",
+        "scripts/xunce_artifact_paths.py"
+      ],
+      "required_phase_ids": [
+        "p01",
+        "p02",
+        "p03",
+        "p04"
+      ],
+      "runner_id": "xunce-mid-dual-g2-planning-time-runner/v1",
+      "schema_version": "xunce-mid-dual-source-contract/v1"
+    },
+    "g3": {
+      "config_schema_version": "xunce-mid-dual-g3-effective-config/v1",
+      "gate_id": "g3",
+      "input_audit_schema_version": "xunce-mid-dual-g3-input-audit/v1",
+      "output_base": "D:/xunce/out/mid_dual/g3",
+      "report_audit_schema_version": "xunce-mid-dual-source-report-audit/v1",
+      "report_renderer_id": "xunce-mid-dual-g3-canonical-report/v1",
+      "required_lineage_sources": [
+        "configs/xunce_mid_dual_g3_closed_loop_v1.json",
+        "scripts/run_xunce_mid_dual_g3_closed_loop.py",
+        "scripts/freeze_xunce_mid_dual_scenarios.py",
+        "scripts/run_xunce_mid_dual_g1_coverage.py",
+        "scripts/xunce_mid_dual_g1_existing_run_assessment.py",
+        "scripts/run_xunce_mid_dual_g2_planning_time.py",
+        "scripts/xunce_mid_dual_g2_inputs.py",
+        "scripts/xunce_mid_dual_contracts.py",
+        "scripts/xunce_mid_dual_artifacts.py",
+        "scripts/xunce_artifact_io.py",
+        "scripts/xunce_artifact_paths.py",
+        "src/lunar_exploration_ppo/eval/midterm_reduced.py",
+        "src/lunar_exploration_ppo/eval/standard.py",
+        "src/lunar_exploration_ppo/env/standard_training.py",
+        "src/lunar_exploration_ppo/integrations/path_planner_adapter.py"
+      ],
+      "required_phase_ids": [
+        "p01",
+        "p02"
+      ],
+      "runner_id": "run_xunce_mid_dual_g3_closed_loop/v1",
+      "schema_version": "xunce-mid-dual-source-contract/v1"
+    }
+  }
+}

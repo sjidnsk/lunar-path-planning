@@ -1,0 +1,18 @@
+{
+  "schema_version": "mid-dual-scenario-freeze/v1",
+  "selection_seed": "midterm-reduced-scenario-freeze-20260726/v1",
+  "coverage_denominator_source": "reachable_observable_free_highres_cells/v1",
+  "coverage_denominator_algorithm": "exact_reachable_safe_pose_range_los/v1",
+  "source_manifest_schema": "mid-dual-scenario-source-manifest/v1",
+  "reconstruction_index_schema": "mid-dual-denominator-reconstruction-index/v1",
+  "publication_mode": "data_files_then_completion_manifest/v1",
+  "cohort_sizes": {
+    "test_q24": 24,
+    "test_c24": 24,
+    "unseen24": 24,
+    "g3_test_q5": 5,
+    "g3_unseen5": 5,
+    "validation3": 3,
+    "replay3": 3
+  }
+}

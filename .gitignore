@@ -1,15 +1,29 @@
 # Local reference workspace excluded from the parent repository.
 /a_gcs_ws-2.0.1/
+/a_gcs_ws-2.0.1-direction-cone-curvature/
+/model-explorer/
+/visual-workbench/
 
 # Python test/runtime caches.
 __pycache__/
 *.py[cod]
+/.superpowers/
+/build/
+/dist/
+*.egg-info/
+
+# Foundation checkpoints and runtime artifacts stay outside Git.
+*.ckpt
+*.pt
+*.pth
+/artifacts/
 
 # Generated validation outputs.
 /outputs/
 
 # Local Understand Anything knowledge graph artifacts.
 /.understand-anything/
+/.ua/
 
 # vscode settings and workspace files.
 .vscode/

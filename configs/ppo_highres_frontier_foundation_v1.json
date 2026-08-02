@@ -1,0 +1,48 @@
+{
+  "schema_version": "ppo_highres_frontier_foundation/v1",
+  "goal_id": "ppo-highres-frontier-map-exploration",
+  "stage_id": "foundation",
+  "repository_identity": {
+    "source": "foundation_linked_worktree_identity/v1",
+    "worktree_root": "C:/Users/77634/.codex/worktrees/ca49/lunar-path-planning",
+    "branch": "codex/ppo-highres-frontier-map-exploration",
+    "git_dir": "D:/codex/project/lunar-path-planning/.git/worktrees/lunar-path-planning1",
+    "git_common_dir": "D:/codex/project/lunar-path-planning/.git"
+  },
+  "synthetic_source_kind": "synthetic_terrain_obstacle_proxy/v1",
+  "physical_obstacle_cells_written": false,
+  "value_prior_source": "constant_neutral/v1",
+  "coordinate_convention": "world_xy_grid_col_row_cell_center/v1",
+  "theta_convention": "radians_world_x_ccw_normalized_minus_pi_to_pi/v1",
+  "grid_resolution_m": 0.5,
+  "world_origin_xy_m": [0.0, 0.0],
+  "cell_00_world_center_xy_m": [0.25, 0.25],
+  "vehicle_radius_m": 0.4215874761,
+  "safety_margin_m": 0.1,
+  "min_clearance_m": 0.5215874761,
+  "traversability_threshold": 0.5,
+  "max_traversable_slope_deg": 30.0,
+  "sensor_model_id": "path-tangent-plus-endpoint-theta-fov-90-range-20m-los/v1",
+  "initial_observation": {
+    "source": "reset_start_pose_los_scan/v1",
+    "range_m": 20.0,
+    "fov_deg": 90.0,
+    "counts_reward": false,
+    "counts_step": false
+  },
+  "verified_data_sources": {
+    "policy_access": "metadata_only_no_policy_read/v1",
+    "dem": {
+      "path": "D:/CodexDownloads/lunar-path-planning/data/raw/high_resolution_lunar_terrain/lunar_south_pole_usgs_lro_dem_slope_4m/MOON_LRO_NAC_DEM_89S210E_4mp.tif",
+      "size_bytes": 310140246,
+      "sha256": "7c431d32d977cd6b66572a0fae874ec5eae91be16aa21c4149ac897c677add22"
+    },
+    "slope": {
+      "path": "D:/CodexDownloads/lunar-path-planning/data/raw/high_resolution_lunar_terrain/lunar_south_pole_usgs_lro_dem_slope_4m/MOON_LRO_NAC_Slope_89S210E_4mp.tif",
+      "size_bytes": 70131711,
+      "sha256": "df741123daec2d935b12481a579ce4443ce6c2e8916b13906ecd7801961112dd"
+    }
+  },
+  "device": "cpu",
+  "output_root": "D:/xunce/out/ppo_frontier"
+}

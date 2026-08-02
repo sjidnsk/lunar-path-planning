@@ -1,0 +1,33 @@
+{
+  "components": [
+    {
+      "license": "Python-2.0",
+      "name": "Python standard library",
+      "use": "runtime, hashing, geometry, finite graph, packaging"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "NumPy",
+      "use": "canonical typed terrain array containers only"
+    },
+    {
+      "license": "BSD-3-Clause",
+      "name": "Rasterio 1.5.0",
+      "source_record_sha256": "08be47698f18e22a44aef866a02c72fe22572918b9bc28cb07e03c1de9bf2045",
+      "use": "decode the exact LOLA JP2 bytes into frozen 5x5 ROI samples"
+    },
+    {
+      "license": "MIT/X",
+      "name": "GDAL 3.12.1 with JP2OpenJPEG",
+      "use": "local raster backend used only through Rasterio for LOLA JP2 decode"
+    }
+  ],
+  "retained_external_sources": [
+    {
+      "license_record_required": true,
+      "name": "LOLA LRO-L-LOLA-4-GDR-V1.0",
+      "role": "kilometer 20 m macro elevation provenance only"
+    }
+  ],
+  "schema_version": "g2-t2-licenses/v2"
+}

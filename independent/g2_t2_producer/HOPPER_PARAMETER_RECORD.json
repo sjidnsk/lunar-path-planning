@@ -1,0 +1,26 @@
+{
+  "arc_clearance_margin_m": "0.125",
+  "body_envelope_radius_m": "0.375",
+  "energy_model": {
+    "evaluator_relative_path": "producer/hopper_energy_evaluator.py",
+    "evaluator_source_sha256": "0b71881db637e620a020165263f97877b575961e41f8484c2dccc3a786e9d243",
+    "max_energy_decimal": "1.000000",
+    "model_id": "quadratic-normalized-speed/v1",
+    "reference_speed_m_s": "2.500"
+  },
+  "evidence_class": "candidate_engineering_proxy",
+  "formal_evidence_eligible": false,
+  "landing_footprint_radius_m": "0.625",
+  "launch_reference_height_m": "0.750",
+  "parameter_set_id": "hopper-generic-internal-proxy/v2",
+  "physical_capability_claimed": false,
+  "schema_version": "g2-hopper-candidate/v2",
+  "simulation_proxy": true,
+  "status": "pending_external_evidence",
+  "stop_condition": {
+    "evaluator_relative_path": "producer/hopper_stop_evaluator.py",
+    "evaluator_source_sha256": "c1a89d2ff400b13ef08f14adef961456c04f2319beb798e5409961f2e0204464",
+    "max_touchdown_speed_m_s": "2.500",
+    "model_id": "touchdown-speed-upper-bound/v1"
+  }
+}

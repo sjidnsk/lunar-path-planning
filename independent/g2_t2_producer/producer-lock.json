@@ -1,0 +1,25 @@
+{
+  "canonical_encoding": {
+    "json": "utf-8-lf-sorted-keys-no-nan-no-negative-zero",
+    "npz": "zip-stored-fixed-metadata-npy-v2-no-pickle"
+  },
+  "dependencies": {
+    "gdal_runtime": {
+      "jp2_driver": "JP2OpenJPEG",
+      "license": "MIT/X",
+      "version": "3.12.1"
+    },
+    "numpy": "2.2.6",
+    "rasterio": {
+      "init_source_sha256": "08be47698f18e22a44aef866a02c72fe22572918b9bc28cb07e03c1de9bf2045",
+      "license": "BSD-3-Clause",
+      "version": "1.5.0"
+    }
+  },
+  "python": {
+    "implementation": "CPython",
+    "minimum": "3.11",
+    "tested": "3.12.13"
+  },
+  "schema_version": "g2-t2-producer-lock/v2"
+}

@@ -1,0 +1,127 @@
+{
+  "schema_version": "xunce-mid-dual-g1-repair-config/v1",
+  "gate_id": "g1",
+  "runner_id": "run_xunce_mid_dual_g1_repair/v1",
+  "scale_profile": "midterm_reduced_w8x3_update80/v1",
+  "output_base": "D:/xunce/out/mid_dual/g1",
+  "parent": {
+    "root": "D:/xunce/out/mid_dual/g1/g1-formal-20260727-0650-cst",
+    "config_path": "D:/xunce/out/mid_dual/g1/g1-formal-20260727-0650-cst/config.json",
+    "config_file_sha256": "571b741df72ac8e5b87fbb8eeb1188a5ede49a447594a7109f2eaf1d0b8e0a9a",
+    "formal_config_sha256": "82e0d9a034bbf609af5b73a70fcfd78cc18c5f89d4c09c8e45097b441fe357a6",
+    "p04_results_path": "D:/xunce/out/mid_dual/g1/g1-formal-20260727-0650-cst/phases/p04/a01/results.jsonl",
+    "p04_results_sha256": "425d6393409d78fbeb0fb0619212c8927b713a971cd20e04fef7ba3df1853bab"
+  },
+  "scenario_manifest": {
+    "path": "D:/xunce/inputs/mid_dual/scenarios/37a3e639b4decfaf/manifest.json",
+    "sha256": "37a3e639b4decfaf660ff66408c5c7109808c5f44aa22c18e98cd901050bb54a"
+  },
+  "checkpoint": {
+    "path": "D:/xunce/out/ppo_frontier/s6-standard-single-r1-20260724T000124Z/s6/checkpoints/seed-20260716/update-00000080/checkpoint.pt",
+    "sha256": "35e04c86f9f973af028fb08f0175d42ab45378d09e1f2b96ee6aad6e4c12b5b5",
+    "policy_state_sha256": "3123e6adde99be41e3bd5cc2f3843068e5416892395926d759c2c6a243ffd381",
+    "device": "cuda",
+    "dtype": "float32",
+    "update": 80
+  },
+  "repair_cases": [
+    {
+      "episode_index": 3,
+      "scenario_id": "unseen/scenario-0036/standard-proxy/v1",
+      "record_id": "unseen/scenario-0036",
+      "lane_id": "lane-3",
+      "evaluation_seed": 2026072703
+    },
+    {
+      "episode_index": 10,
+      "scenario_id": "unseen/scenario-0018/standard-proxy/v1",
+      "record_id": "unseen/scenario-0018",
+      "lane_id": "lane-2",
+      "evaluation_seed": 2026072710
+    },
+    {
+      "episode_index": 23,
+      "scenario_id": "unseen/scenario-0062/standard-proxy/v1",
+      "record_id": "unseen/scenario-0062",
+      "lane_id": "lane-7",
+      "evaluation_seed": 2026072723
+    }
+  ],
+  "execution": {
+    "cohort": "unseen24",
+    "evaluation_seed_start": 2026072700,
+    "max_steps": 128,
+    "environment_success_threshold": 0.99,
+    "formal_config_sha256_for_environment": "82e0d9a034bbf609af5b73a70fcfd78cc18c5f89d4c09c8e45097b441fe357a6"
+  },
+  "repair_lineage": {
+    "audit_root": "D:/xunce/tmp/g1-start-fallback-repair-audit",
+    "required_artifacts": [
+      {
+        "name": "repair_only_patch",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/repair-only-v2.patch",
+        "sha256": "57fe0d4655f2d9dead34f1c437eb4905cfce1ac0de5a84aaa9dbbc19132ce819"
+      },
+      {
+        "name": "repair_diff_audit",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/repair-diff-audit-v2.json",
+        "sha256": "9141f795d5cf8d60f7c32d7d190215d66656a938db829321ebca130ae851d370"
+      },
+      {
+        "name": "pre_stage6_dirty_patch",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/pre-stage6-dirty.patch",
+        "sha256": "4bf00523075e30ea28bd92219d35f7c38ce32040322e26f48638516064298134"
+      },
+      {
+        "name": "pre_audit",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/pre-audit.json",
+        "sha256": "85218593abc994c9884e5d686b1461d0480e7fc4f41f11fea98e6049c8ceac6f"
+      },
+      {
+        "name": "pre_frontier",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/pre-frontier.py.bin",
+        "sha256": "3beb24e45024417ea19d2ad19b5b74d8c19a0c4d2748020d46249523232f4dae"
+      },
+      {
+        "name": "pre_frontier_oracle",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/pre-frontier_oracle.py.bin",
+        "sha256": "4de4df0a2902c4a00b292332794aa2da1ec8678d4c3c26bb3b4d363dd25f7b15"
+      },
+      {
+        "name": "post_frontier",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/post-v2-frontier.py.bin",
+        "sha256": "2fff448478730c5059b558fbfc771c6dae775a4c2dd7a2346293dc8c12eceeaf"
+      },
+      {
+        "name": "post_frontier_oracle",
+        "path": "D:/xunce/tmp/g1-start-fallback-repair-audit/post-v2-frontier_oracle.py.bin",
+        "sha256": "ed59309b75251152e3ac736f8f0db9c686d5b4ab09a22b01d20ef921c0fcf5e3"
+      }
+    ],
+    "runtime_sources": [
+      {
+        "path": "src/lunar_exploration_ppo/env/frontier.py",
+        "sha256": "a08745cc50b005213fbd08cf86bebc1a05d2cd4e68e95814c3dfe03f43052181"
+      },
+      {
+        "path": "src/lunar_exploration_ppo/env/frontier_oracle.py",
+        "sha256": "ed59309b75251152e3ac736f8f0db9c686d5b4ab09a22b01d20ef921c0fcf5e3"
+      }
+    ]
+  },
+  "phases": [
+    "p01_contract",
+    "p02_dry_run",
+    "p03_per_scenario_primary",
+    "p04_merge_recompute",
+    "p05_finalize"
+  ],
+  "replay": {
+    "status": "not_run_pending",
+    "scenario_count": 3
+  },
+  "figures": {
+    "status": "pending",
+    "renderer": "independent_python_renderer/v1"
+  }
+}
