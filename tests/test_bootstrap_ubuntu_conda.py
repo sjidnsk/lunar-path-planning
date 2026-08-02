@@ -51,7 +51,7 @@ class BootstrapUbuntuCondaTests(unittest.TestCase):
         output = result.stdout + result.stderr
         self.assertEqual(result.returncode, 0, output)
         self.assertIn("DRY RUN", output)
-        self.assertIn("git submodule update --init --recursive path-planner dev-platform-constraints", output)
+        self.assertIn("Submodules: path-planner dev-platform-constraints", output)
         self.assertNotIn("a_gcs_ws-2.0.1", output)
         self.assertIn("conda env create/update", output)
         self.assertIn("environment.yml", output)
@@ -61,7 +61,10 @@ class BootstrapUbuntuCondaTests(unittest.TestCase):
         self.assertIn("dev_platform_constraints import ok", output)
         self.assertIn("python -m pytest", output)
         self.assertIn("python -m unittest discover -s tests", output)
-        self.assertIn("python -m pip install -e path-planner -e dev-platform-constraints", output)
+        self.assertIn(
+            "python -m pip install -e . -e path-planner -e dev-platform-constraints",
+            output,
+        )
         self.assertNotIn("model-explorer", output)
         self.assertNotIn("visual-workbench", output)
 
