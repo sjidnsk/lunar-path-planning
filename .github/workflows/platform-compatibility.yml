@@ -54,7 +54,7 @@ jobs:
       - name: Stage 6 standard configuration contract
         shell: bash
         run: |
-          python -m pytest tests/ppo_highres_frontier/test_stage6_standard_config.py -q
+          python -m pytest tests/ppo_highres_frontier/test_stage6_standard_config.py -m "not external_evidence" -q
 
       - name: Platform compatibility tests
         shell: bash

@@ -32,7 +32,15 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     commands = [
-        [sys.executable, "-m", "pytest", *PARENT_NON_DRAKE_SMOKE_TESTS, "-q"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            *PARENT_NON_DRAKE_SMOKE_TESTS,
+            "-m",
+            "not external_evidence",
+            "-q",
+        ],
         [sys.executable, "-m", "pytest", "-m", "not drake", "-q"],
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
     ]

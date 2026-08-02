@@ -282,6 +282,7 @@ def test_stage6_config_rejects_unknown_fields_and_contract_drift() -> None:
         module.Stage6Config.model_validate(payload)
 
 
+@pytest.mark.external_evidence
 def test_stage5_gate_is_canonical_hash_chained_and_read_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -310,6 +311,7 @@ def test_stage5_gate_is_canonical_hash_chained_and_read_only(
     assert hashlib.sha256(STAGE5_GATE.read_bytes()).hexdigest() == before
 
 
+@pytest.mark.external_evidence
 @pytest.mark.parametrize(
     ("mutation", "match"),
     [
@@ -338,6 +340,7 @@ def test_stage5_gate_bytes_fail_closed_on_tamper(mutation, match: str) -> None:
         workflow.verify_stage5_gate_bytes(tampered, repo_root=ROOT)
 
 
+@pytest.mark.external_evidence
 def test_stage5_gate_bytes_reject_noncanonical_json() -> None:
     workflow = _workflow_module()
     value = json.loads(STAGE5_GATE.read_text(encoding="utf-8"))

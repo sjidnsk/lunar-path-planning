@@ -63,6 +63,54 @@ def test_platform_ci_excludes_identity_bound_foundation_gate_suite() -> None:
     assert 'resolve_device("cpu", cuda_available=False) == "cpu"' in workflow
 
 
+def test_platform_profiles_exclude_only_explicit_external_evidence_replay() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow = (repo_root / ".github/workflows/platform-compatibility.yml").read_text(
+        encoding="utf-8"
+    )
+    stage6_source = (
+        repo_root / "tests/ppo_highres_frontier/test_stage6_standard_config.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(stage6_source)
+
+    external_evidence_tests = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            ast.unparse(decorator) == "pytest.mark.external_evidence"
+            for decorator in node.decorator_list
+        )
+    }
+
+    assert external_evidence_tests == {
+        "test_stage5_gate_is_canonical_hash_chained_and_read_only",
+        "test_stage5_gate_bytes_fail_closed_on_tamper",
+        "test_stage5_gate_bytes_reject_noncanonical_json",
+    }
+    assert '-m "not external_evidence"' in workflow
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_platform_smoke.py",
+            "--profile",
+            "windows-non-drake",
+            "--dry-run",
+        ],
+        cwd=repo_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output
+    assert re.search(
+        r"test_stage6_standard_config\.py -m [\"']not external_evidence[\"'] -q",
+        output,
+    )
+
+
 def test_platform_ci_excludes_tests_that_access_retired_submodule_sources() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     workflow = (repo_root / ".github/workflows/platform-compatibility.yml").read_text(encoding="utf-8")
